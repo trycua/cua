@@ -306,6 +306,45 @@ echo ""
 
 # --- Build -----------------------------------------------------------------------
 
+# The web UI (as the release build does: pnpm install --frozen-lockfile,
+# pnpm build, which builds the app core's WebAssembly and then the pages).
+# CI=true keeps pnpm from asking questions. Its build shares no target directory with the Rust build below, so
+# the two run side by side (a cold wasm build is minutes). Its output goes to a
+# log that is shown when it fails.
+WEB_PID=""
+WEB_LOG=""
+if [ "$BUILD_WEB" = 1 ]; then
+    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build) in the background"
+    WEB_LOG="$(mktemp -t cua-local-webui)"
+    (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build) >"$WEB_LOG" 2>&1 &
+    WEB_PID=$!
+fi
+wait_for_web_ui() {
+    [ -n "$WEB_PID" ] || return 0
+    if wait "$WEB_PID"; then
+        ok "the web UI is built"
+        rm -f "$WEB_LOG"
+    else
+        cat "$WEB_LOG" >&2
+        rm -f "$WEB_LOG"
+        die "the web UI build failed (see above). Nothing was installed."
+    fi
+    WEB_PID=""
+}
+if [ ! -f "$WEBUI_DIST/index.html" ]; then
+    web_ui_missing
+    exit 1
+fi
+
+printf '%sCua Spaces Local installer%s\n' "$BOLD$BLUE" "$NORMAL"
+echo "  source:  $REPO_ROOT"
+echo "  config:  $CONFIG"
+echo "  app:     $APP_DEST"
+echo "  cli:     $CLI_LINK"
+echo ""
+
+# --- Build -----------------------------------------------------------------------
+
 # The web UI first (as the release build does: pnpm install --frozen-lockfile,
 # pnpm build, which builds the app core's WebAssembly and then the pages): it
 # is the quick one to fail. CI=true keeps pnpm from asking questions.
@@ -315,12 +354,13 @@ if [ "$BUILD_WEB" = 1 ]; then
         die "the web UI build failed (see above). Nothing was installed."
     fi
 fi
-if [ ! -f "$WEBUI_DIST/index.html" ]; then
-    web_ui_missing
-    exit 1
-fi
-
 if [ "$SKIP_RUST_BUILD" = 0 ]; then
+    # sccache, when installed, shares compiled crates between checkouts and
+    # survives a cargo clean. A set $RUSTC_WRAPPER (even empty) overrides this.
+    if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
+        export RUSTC_WRAPPER=sccache
+        log "using sccache for the Rust builds"
+    fi
     if ! command -v cargo >/dev/null 2>&1 && [ -f "$HOME/.cargo/env" ]; then
         # shellcheck disable=SC1091
         . "$HOME/.cargo/env"
@@ -333,6 +373,11 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
     log "building cua-spacesd from this checkout (cargo, release)"
     (cd "$SPACESD_DIR" && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+fi
+wait_for_web_ui
+if [ ! -f "$WEBUI_DIST/index.html" ]; then
+    web_ui_missing
+    exit 1
 fi
 [ -x "$SPACESD_BIN" ] || die "cargo did not produce $SPACESD_BIN"
 

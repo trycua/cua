@@ -6,7 +6,13 @@ name: "CD: Image macOS"
 # input test, with `cua images release` over libs/images/macos/release.json
 # (the same command publishes from a Mac by hand):
 #
-#   base --> 26-slim --> 26 (full, the default) --> 26-xcode[-X.Y]
+#   base --> 26-slim --> 26 (full, the default) --> xcode (built and gated, never published)
+#
+# The xcode tier (the macOS Space with developer tools) carries Xcode, which
+# Apple's terms do not let us redistribute: a manual run can build and gate it
+# when the runner has the pinned .xip, but nothing pushes it (release-tier.sh
+# and check-tag-safety.sh refuse). Each user's Mac derives it from the
+# published full tier and its own Xcode (libs/images/macos/derive-local.sh).
 #
 # Stages per tier: build -> gates (strict doctor + ax probe, live input on a
 # clone) -> [publish: <pin>-raw via push.sh -> annotated pin (tier, content
@@ -28,7 +34,7 @@ name: "CD: Image macOS"
 #     gate slim and full, never publish.
 #
 # Every job is gated on vars.CUA_MACOS_LUME_RUNNER (the self-hosted runner's
-# extra label); without it the workflow plans and stops. The Xcode tier needs
+# extra label); without it the workflow plans and stops. The Xcode gate build needs
 # the pinned .xip in the runner's ~/XcodesCache (Apple requires a signed-in
 # download; libs/images/macos/versions.env names the file and its SHA-1).
 # Runner needs: lume (`lume serve`), crane, oras, jq, uv, gh, Rust (the cua CLI
@@ -92,13 +98,13 @@ jobs:
             run=false
           fi
           case "$EVENT" in
-            push) upto=xcode publish=true ;;
+            push) upto=full publish=true ;;
             workflow_dispatch) upto="$UPTO_INPUT" publish="$PUBLISH_INPUT" ;;
             schedule)
               if [ "$(date -u +%-d)" -gt 7 ]; then
                 echo "::notice::not the first Saturday of the month"; run=false
               fi
-              upto=xcode publish=true only_changed=true ;;
+              upto=full publish=true only_changed=true ;;
             pull_request)
               [ "$SAME_REPO" = true ] || { echo "::notice::fork pull requests do not run on the self-hosted Mac"; run=false; } ;;
           esac
@@ -174,7 +180,9 @@ jobs:
             case "$tier" in slim) tag=26-slim ;; full) tag=26 ;; xcode) tag=26-xcode ;; esac
             live="$(crane manifest "ghcr.io/trycua/macos:$tag" 2>/dev/null |
               jq -r '.annotations["ai.cua.image.content-key"] // ""' || true)"
-            if [ "$ONLY_CHANGED" = true ] && [ "$key" = "$live" ]; then
+            if [ "$tier" = xcode ]; then
+              echo "::notice::the xcode tier is built and gated only; it is never published"
+            elif [ "$ONLY_CHANGED" = true ] && [ "$key" = "$live" ]; then
               echo "::notice::$tier unchanged ($key); not publishing"
             else
               publish_tiers="$publish_tiers $tier"

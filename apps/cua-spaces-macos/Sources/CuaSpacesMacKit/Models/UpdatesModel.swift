@@ -166,14 +166,18 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
     public nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) { tell("not_found") }
 
-    /// The silent path (`automaticallyDownloadsUpdates`): Sparkle never asks
-    /// the user driver, and installs on quit. Taking the install here makes
-    /// that update "downloaded" too, with the immediate install as Restart.
+    /// The silent path (`automaticallyDownloadsUpdates`): the update is
+    /// downloaded and the page offers "Restart to update" through
+    /// `immediateInstallHandler`. Returning false leaves Sparkle in charge of
+    /// the install, so the update is also applied when the app quits. Returning
+    /// true would promise that the app installs it, and only the click does:
+    /// users who never click (the app lives in the menu bar and notch) stayed
+    /// on the old version for ever (CUA-3065).
     public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                                     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         let version = item.displayVersionString
         MainActor.assumeIsolated { driver.silentlyDownloaded(version: version, install: immediateInstallHandler) }
-        return true
+        return false
     }
 
     /// A cycle that ended with nothing to show clears a pending "checking".

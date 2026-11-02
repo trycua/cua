@@ -526,7 +526,7 @@ update found by a scheduled check downloads and extracts at once; Sparkle's
 ready-to-install reply is then held, and nothing restarts the app until the
 page calls `update.install` ("Restart to update"). With "check for and
 download updates automatically" on (the default), Sparkle's silent path reaches the same state through
-`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`. The page
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`, which returns false so Sparkle also installs the downloaded update when the app quits. The page
 reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
 `downloading`, `downloaded` or `error`) and refetches on the `update.changed`

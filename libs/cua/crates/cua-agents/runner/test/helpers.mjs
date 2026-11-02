@@ -18,16 +18,34 @@ export function sdkRoot() {
     path.join(os.homedir(), ".cua", "tools", "acp-sdk", SDK_VERSION),
     path.join(os.tmpdir(), `cua-acp-sdk-${SDK_VERSION}`),
   ].filter(Boolean);
-  // The entry the runner imports, not just package.json: a cache an interrupted
-  // install or a temp-dir sweep left half-written is installed again.
-  const has = (d) => fs.existsSync(path.join(d, "node_modules", "@agentclientprotocol", "sdk", "dist", "acp.js"));
+  // The entry the runner imports and its zod dependency, not just package.json:
+  // a cache an interrupted or racing install or a temp-dir sweep left
+  // half-written is installed again.
+  const has = (d) =>
+    ["@agentclientprotocol/sdk/dist/acp.js", "zod/v4/index.js"].every((f) =>
+      fs.existsSync(path.join(d, "node_modules", ...f.split("/"))),
+    );
   for (const c of candidates) if (has(c)) return c;
   const target = candidates[candidates.length - 1];
-  // npm takes a half-written package for installed: start that cache over.
-  fs.rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
-  fs.mkdirSync(target, { recursive: true });
-  const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--prefix", target, `@agentclientprotocol/sdk@${SDK_VERSION}`], { stdio: "ignore" });
-  return r.status === 0 && has(target) ? target : null;
+  // Install into a private directory, then move it into place, so parallel test
+  // processes never see (or delete) each other's half-written node_modules.
+  const tmp = fs.mkdtempSync(`${target}-install-`);
+  const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--prefix", tmp, `@agentclientprotocol/sdk@${SDK_VERSION}`], { stdio: "ignore" });
+  if (r.status !== 0 || !has(tmp)) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return has(target) ? target : null;
+  }
+  if (!has(target)) {
+    fs.rmSync(target, { recursive: true, force: true });
+    try {
+      fs.renameSync(tmp, target);
+      return target;
+    } catch {
+      // another process won the race
+    }
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return has(target) ? target : null;
 }
 
 export class Box {

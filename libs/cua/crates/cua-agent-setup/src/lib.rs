@@ -63,6 +63,31 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Whether the config file at `path` holds nothing but its servers object
+/// (`mcpServers`, `mcp_servers`): what cua writes into a file the agent never
+/// created. Unreadable or unparsable (comments, another format): no.
+fn holds_only_servers(path: &Path, m: &McpSpec) -> bool {
+    let Some(key) = m.key_path.first() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if text.trim().is_empty() {
+        return true;
+    }
+    match m.format {
+        Format::Json => serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v.as_object().map(|o| o.keys().all(|k| k == key)))
+            .unwrap_or(false),
+        Format::Toml => text
+            .parse::<toml_edit::DocumentMut>()
+            .is_ok_and(|d| d.as_table().iter().all(|(k, _)| k == *key)),
+        Format::Yaml => false,
+    }
+}
+
 /// Errors.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -656,6 +681,40 @@ impl AgentSetup {
             .unwrap_or_else(|| m.file.resolve(&self.env))
     }
 
+    /// Whether `marker` (one of `a`'s markers) holds only what cua's own
+    /// setup writes there: an MCP config file cua created with nothing but
+    /// its servers in it, or a folder with nothing but that file and the
+    /// skills folder (an empty folder is not). Cua's setup must not make an agent look installed
+    /// (Claude Code "Ready" on a Mac without it, after `~/.claude.json` and
+    /// `~/.claude/skills` were written).
+    fn only_cua_wrote(&self, marker: &Path, a: &registry::AgentSpec) -> bool {
+        let mcp = a.mcp.as_ref().map(|m| (self.mcp_file(m), m));
+        let skills = a.skills.map(|l| l.resolve(&self.env));
+        let cua_config = |f: &Path| {
+            mcp.as_ref()
+                .is_some_and(|(file, m)| file == f && holds_only_servers(f, m))
+        };
+        if marker.is_file() {
+            return cua_config(marker);
+        }
+        let Ok(entries) = std::fs::read_dir(marker) else {
+            return false;
+        };
+        // An empty folder is the agent's (cua writes something into each).
+        let mut cua_only = false;
+        for e in entries.flatten() {
+            let p = e.path();
+            if e.file_name() == ".DS_Store" {
+                continue;
+            }
+            if !(cua_config(&p) || skills.as_ref().is_some_and(|s| s.starts_with(&p))) {
+                return false;
+            }
+            cua_only = true;
+        }
+        cua_only
+    }
+
     /// Detects every registry agent (read-only).
     pub fn detect(&self) -> Vec<AgentStatus> {
         let state = State::load(&self.state_path).unwrap_or_default();
@@ -742,7 +801,7 @@ impl AgentSetup {
         }
         for m in a.markers {
             let p = m.resolve(&self.env);
-            if p.exists() {
+            if p.exists() && !self.only_cua_wrote(&p, a) {
                 evidence.push(format!("path:{}", p.display()));
             }
         }

@@ -177,7 +177,14 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   return (
     <div className={cn("mt-auto", footer.state === "signedIn" ? "px-2.5 pt-1 pb-2.5" : "border-t px-3 py-2.5")} data-signin={footer.state}>
       {unfinished ? (
-        <Link to="/onboarding" className="mb-2 block text-xs text-muted-foreground hover:text-foreground">
+        // A real button, not a small grey line: a new user who skipped the
+        // first run has to find it again (CUA-3063).
+        <Link
+          to="/onboarding"
+          data-finish-setup
+          className="mb-2 flex items-center gap-2 rounded-lg bg-accent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent/70"
+        >
+          <CuaKey size={18} />
           Finish setting up
         </Link>
       ) : null}

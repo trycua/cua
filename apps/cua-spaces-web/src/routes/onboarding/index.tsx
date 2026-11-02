@@ -6,7 +6,7 @@ import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-rea
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
-import { readSavedOnboarding } from "@/bridge/onboarding";
+import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
@@ -29,9 +29,16 @@ export const Route = createFileRoute("/onboarding/")({
   // root route does for a host that opens the app at `/`. Every other way in
   // (the sidebar's "Finish setting up", Settings, the command palette) has
   // no `due` and always shows the first run.
-  validateSearch: (s: Record<string, unknown>): { due?: true } => (s.due === 1 || s.due === "1" || s.due === true ? { due: true as const } : {}),
+  // `?fresh=1` is the Mac app's first launch on this computer: what the
+  // page kept from an earlier install (a "Skip for now", a half-done run) is
+  // forgotten, so a new user always sees the first run (CUA-3063).
+  validateSearch: (s: Record<string, unknown>): { due?: true; fresh?: true } => {
+    const on = (v: unknown) => v === 1 || v === "1" || v === true;
+    return { ...(on(s.due) ? { due: true as const } : {}), ...(on(s.fresh) ? { fresh: true as const } : {}) };
+  },
   beforeLoad: ({ search }) => {
-    if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
+    if (search.fresh) writeSavedOnboarding(null);
+    else if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
   },
   component: OnboardingPage,
 });

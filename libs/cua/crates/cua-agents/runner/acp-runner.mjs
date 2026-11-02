@@ -663,8 +663,7 @@ const env = { ...process.env, ...(cfg.env ?? {}), ...secrets };
 // (cfg.keyCheck: url, headers with ${NAME} references into the run's env,
 // keyEnv), ask the provider once, in parallel with the agent's start. Only
 // a definitive "this key is invalid" (HTTP 401, or a 403 that says so, with
-// the provider's JSON error body) counts: no key, a base-URL or sign-in
-// override, a network error, a timeout, a 429 or a 5xx all resolve to null
+// the provider's JSON error body) counts: no key, a sign-in override, a network error, a timeout, a 429 or a 5xx all resolve to null
 // and the run goes on exactly as before, so the check can never block one.
 const KEY_CHECK_TIMEOUT_MS = 3000;
 
@@ -696,7 +695,12 @@ async function checkKey(spec) {
     if (res.status !== 401 && res.status !== 403) return null;
     const error = JSON.parse(await res.text())?.error;
     if (!error || typeof error !== "object") return null;
-    const invalid = error.type === "authentication_error" || error.code === "invalid_api_key";
+    // A custom endpoint (a gateway) words its 401 in its own shape: any 401
+    // with a JSON error is a rejection there.
+    const invalid =
+      error.type === "authentication_error" ||
+      error.code === "invalid_api_key" ||
+      (spec.anyAuthError === true && res.status === 401);
     if (res.status === 403 && !invalid) return null;
     const why = providerMessage(error) || "the API key was rejected.";
     return { status: res.status, message: `Failed to authenticate. ${spec.provider ?? "Provider"} API Error: ${res.status} ${why}` };

@@ -524,7 +524,7 @@ pub fn durable_driver_spec(
         "exitWhenIdle": true,
         "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
         "authMethod": h.auth_method,
-        "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
+        "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
         "mcpBridge": "~/.cua/bin/mcp-remote",
         "modeKinds": h.mode_kinds,
         "guardModeKinds": guard_mode_kinds(h),

@@ -27,6 +27,76 @@ use super::BrowserEngine;
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
 
+/// Own only the preparing grant's socket hold until the probe succeeds.
+/// Cancellation may happen while awaiting CDP or the optional consent handler.
+struct PendingSocketProbe {
+    pool: super::cdp_ws::CdpPool,
+    ws_url: String,
+    generation: Option<u64>,
+}
+
+impl PendingSocketProbe {
+    async fn release(&mut self) {
+        if let Some(generation) = self.generation {
+            self.pool
+                .release_existing(
+                    &self.ws_url,
+                    generation,
+                    super::cdp_ws::SharedSocketRelease::Close,
+                )
+                .await;
+            self.generation = None;
+        }
+    }
+}
+
+impl Drop for PendingSocketProbe {
+    fn drop(&mut self) {
+        let Some(generation) = self.generation.take() else {
+            return;
+        };
+        let pool = self.pool.shared_handle();
+        let ws_url = self.ws_url.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                pool.release_existing(
+                    &ws_url,
+                    generation,
+                    super::cdp_ws::SharedSocketRelease::Close,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+async fn claim_responsive_existing_profile_socket(
+    pool: &super::cdp_ws::CdpPool,
+    ws_url: &str,
+    generation: u64,
+) -> anyhow::Result<Arc<super::cdp_ws::CdpConnection>> {
+    let connection = pool.claim_existing(ws_url, generation).await?;
+    let mut pending = PendingSocketProbe {
+        pool: pool.shared_handle(),
+        ws_url: ws_url.to_owned(),
+        generation: Some(generation),
+    };
+    if let Err(error) = connection
+        .call(None, "Target.getTargets", serde_json::json!({}))
+        .await
+    {
+        // A completed WebSocket handshake alone does not prove the browser
+        // can answer CDP. Release this grant's hold so a later claim can
+        // redial when it was the last holder; preserve any peer's socket.
+        pending.release().await;
+        return Err(anyhow::anyhow!(
+            "the approved browser socket did not answer its liveness probe: {error}"
+        ));
+    }
+    pending.generation = None;
+    Ok(connection)
+}
+
 fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
     match profile.mode {
         PrepareProfileMode::IsolatedNew => {
@@ -1322,7 +1392,11 @@ impl BrowserEngine {
             }
         }
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
-            self.pool.claim_existing(&endpoint.ws_url, grant.generation),
+            claim_responsive_existing_profile_socket(
+                &self.pool,
+                &endpoint.ws_url,
+                grant.generation,
+            ),
             |action| {
                 self.platform
                     .handle_existing_profile_consent(BrowserConsentRequest {
@@ -1365,7 +1439,11 @@ impl BrowserEngine {
         // each genuinely new browser-level socket, the one fresh dial handles
         // one exact browser-owned prompt against the same PID and window.
         let retry = claim_with_delayed_consent(
-            self.pool.claim_existing(&endpoint.ws_url, grant.generation),
+            claim_responsive_existing_profile_socket(
+                &self.pool,
+                &endpoint.ws_url,
+                grant.generation,
+            ),
             |action| {
                 self.platform
                     .handle_existing_profile_consent(BrowserConsentRequest {

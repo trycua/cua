@@ -627,6 +627,13 @@ pub struct CdpPool {
 }
 
 impl CdpPool {
+    /// Share the pool for internal asynchronous cleanup without creating new state.
+    pub(super) fn shared_handle(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_shared_socket_ttls(SHARED_SOCKET_IDLE_TTL, SHARED_SOCKET_ABSOLUTE_TTL)
     }

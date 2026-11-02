@@ -35,23 +35,39 @@ pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
+    pub response_ready: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl MockReply {
     pub fn ok(result: Value) -> Self {
         Self {
             events: Vec::new(),
-            result: Ok(result),
             suppress_response: false,
+            response_ready: None,
+            result: Ok(result),
         }
     }
 
     pub fn err(code: i64, message: &str) -> Self {
         Self {
             events: Vec::new(),
-            result: Err((code, message.to_owned())),
             suppress_response: false,
+            response_ready: None,
+            result: Err((code, message.to_owned())),
         }
+    }
+
+    /// Keep the socket open without answering this command.
+    pub fn silent() -> Self {
+        Self {
+            suppress_response: true,
+            ..Self::ok(serde_json::json!({}))
+        }
+    }
+
+    pub fn after_notification(mut self, ready: Arc<tokio::sync::Notify>) -> Self {
+        self.response_ready = Some(ready);
+        self
     }
 
     /// The exact shape Chromium uses for an unimplemented method.
@@ -129,6 +145,9 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if let Some(ready) = reply.response_ready {
+                            ready.notified().await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

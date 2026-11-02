@@ -20,6 +20,18 @@ It exposes `org.cua.WinRects` on the session bus:
   whether the request was accepted. cua-driver verifies focus through a second
   `GetRects` snapshot before sending focus-bound portal/libei input, preventing
   input from leaking into whichever application happened to be focused.
+- `Move(id,x,y) -> bool` (API 11): place a window on the screen, which a
+  Wayland client cannot ask for itself. `x`/`y` are the frame top-left corner in
+  stage pixels, the same space `GetRects` reports; the id is the same stable
+  sequence `Activate` takes. A maximized window is unmaximized first, because
+  Mutter ignores a geometry request while maximized. The call answers whether
+  the request was accepted, not where the window landed: read a fresh
+  `GetRects` afterwards — the same accepted-then-verify contract `Activate`
+  already uses. Refused (with `false`) for a fullscreen window, for a window
+  that does not allow moving, and for an id that is no longer mapped.
+  Resizing is deliberately not offered: a Wayland client owns its own size, and
+  `move_resize_frame` on it sends a `xdg_toplevel.configure` the client is free
+  to ignore, so a `Resize` method would report success while nothing changed.
 - `Capture() -> png_base64`: capture the compositor stage through Shell's
   screenshot API. cua-driver crops it with the same authoritative geometry.
 - `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()`: position and hide

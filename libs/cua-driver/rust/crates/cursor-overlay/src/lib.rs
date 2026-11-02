@@ -17,6 +17,7 @@ pub mod cursor_options;
 pub mod cursor_pose;
 pub mod motion;
 pub mod motion_defaults;
+pub mod pose_stream;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;

@@ -54,6 +54,8 @@ pub fn tip_axis() -> f64 {
 pub const HALO_RADIUS_PT: f32 = 14.0;
 /// Halo opacity at its centre; it fades to 0 at the edge.
 pub const HALO_PEAK_ALPHA: f32 = 0.11;
+/// Halo gradient stops: (offset from the centre 0..1, share of the peak).
+pub const HALO_STOPS: [(f32, f32); 3] = [(0.0, 1.0), (0.45, 0.55), (1.0, 0.0)];
 
 fn smoothstep(x: f64) -> f64 {
     let t = x.clamp(0.0, 1.0);
@@ -195,11 +197,10 @@ pub fn paint_halo(
         Point::from_xy(cx, cy),
         Point::from_xy(cx, cy),
         radius,
-        vec![
-            GradientStop::new(0.0, color(peak)),
-            GradientStop::new(0.45, color(peak * 0.55)),
-            GradientStop::new(1.0, color(0.0)),
-        ],
+        HALO_STOPS
+            .iter()
+            .map(|&(offset, share)| GradientStop::new(offset, color(peak * share)))
+            .collect(),
         SpreadMode::Pad,
         tiny_skia::Transform::identity(),
     ) else {

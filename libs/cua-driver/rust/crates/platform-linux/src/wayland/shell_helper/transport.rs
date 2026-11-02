@@ -107,6 +107,8 @@ async fn invoke(
             | "GetConnectionUnixProcessID"
             | "GetConnectionUnixUser"
             | "SetCursorColor"
+            | "SetCursorLook"
+            | "PlayCursorPath"
             | "SetSessionLabel",
             [value],
         ) => send!((value.as_str(),)),

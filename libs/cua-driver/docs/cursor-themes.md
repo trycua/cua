@@ -29,6 +29,11 @@ opaque at the centre and fading to nothing at its edge. It moves, floats and
 turns with the arrow and has no click effect. Turn it off with
 `cua-driver config set cursor.halo off`.
 
+On GNOME, where the Shell helper draws the cursor inside the compositor, the
+helper plays the same planned path with the same float, halo and rotation
+(helper v11 and later). An older helper glides straight to the target
+without them.
+
 ### Extras
 
 Apart from the float and the halo, everything beyond the plain arrow is off by

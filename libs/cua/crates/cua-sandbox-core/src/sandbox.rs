@@ -2003,7 +2003,7 @@ impl Sandboxes {
     /// Gives the local sandbox `name` another shape (vCPUs, memory, a larger
     /// disk): it stops and boots again from its own disk, and is waited for
     /// as [`Self::resume`] waits. Its disk is kept; its memory and running
-    /// processes are not. Fleet and contrib sandboxes are refused.
+    /// processes are not. Cloud and contrib sandboxes are refused.
     pub async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> Result<()> {
         match self.kind_of(name)? {
             (ProviderKind::Local, _) => {

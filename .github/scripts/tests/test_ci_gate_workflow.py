@@ -17,7 +17,6 @@ SCRIPT = STEPS['Wait for every other workflow on the pull request head']['run']
 @pytest.mark.parametrize('filename', [
     'ci-contributor-attribution.yml',
     'ci-release-metadata.yml',
-    'fleet-mirror-guard.yml',
 ])
 def test_required_workflow_queue_wiring(filename):
     workflow = yaml.safe_load((WORKFLOWS / filename).read_text())

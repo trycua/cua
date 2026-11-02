@@ -86,7 +86,7 @@ test('entry pages link only to existing routes', async () => {
   }
 });
 
-test('removed Sandbox and Fleet pages redirect to the page that replaced them', async () => {
+test('removed Sandbox and cloud pages redirect to the page that replaced them', async () => {
   const { redirects } = JSON.parse(await readFile(path.join(content, 'redirects.json'), 'utf8'));
   const expected: Record<string, string> = {
     'cua-sdk/guides/choose-an-image': 'cua-sdk/guides/images',

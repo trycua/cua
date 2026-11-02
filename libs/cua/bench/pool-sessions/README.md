@@ -2,7 +2,7 @@
 
 Short browser sessions at a high rate across all your machines (`cua sb run --on auto`): every session gets a fresh Space, keeps
 a headless Chromium open for `SESSION_S` seconds opening a new page about every 10 s, and the Space is
-deleted when it ends. This is the workload behind the fleet benchmark's numbers.
+deleted when it ends. This is the workload behind the pool benchmark's numbers.
 
 | File | What it does |
 |---|---|

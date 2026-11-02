@@ -1,10 +1,10 @@
 # Discovery foundation validation
 
-> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
-> record of validation run on it; the Fleet references below are historical.
+> Note (18 Oct 2026): Cua Cloud ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the cloud references below are historical.
 
 The discovery-only plugin passed a native build and lifecycle checks on Cua
-Cloud Fleet on September 4, 2026. These results support review of the foundation;
+Cloud cloud on September 4, 2026. These results support review of the foundation;
 the full promotion gates in [the test plan](../tests/README.md) remain open.
 
 The [September 5 merge-readiness pass](#merge-readiness-revalidation-september-5-2026)
@@ -29,7 +29,7 @@ followed by a NUL byte. It excludes this subsequently added validation report.
 | CMake / Ninja                  | `4.4.3` / `1.13.2`    |
 | Shared C++ runtime             | `libstdc++.so.6.0.36` |
 
-This Fleet image matches the Hyprland baseline but has older Omarchy and
+This cloud image matches the Hyprland baseline but has older Omarchy and
 Cua Driver versions than the complete acceptance target. Driver integration
 was not exercised by this plugin run.
 
@@ -82,12 +82,12 @@ Hyprland. Debugger attachment was unavailable, so static linkage remains the
 leading suspected cause rather than a backtrace-confirmed diagnosis.
 
 Correcting the runtime search path produced a module linked to the compositor's
-shared C++ runtime. A fresh Fleet passed the repeated lifecycle checks above.
+shared C++ runtime. A fresh cloud passed the repeated lifecycle checks above.
 The build now rejects modules without a shared C++ runtime dependency.
 
 ## Follow-up at `3789f0e6e`
 
-A second Fleet run on September 4, 2026 (September 5 UTC), tested commit
+A second cloud run on September 4, 2026 (September 5 UTC), tested commit
 `3789f0e6eeb350587fe48c4da35b327975a5bd9c` through the Cua Sandbox SDK.
 The image had the same component versions listed above. The source archive
 contained the committed plugin directory and repository license, with SHA-256
@@ -104,7 +104,7 @@ CTests passed. The downloaded artifacts matched the guest hashes:
 
 Additional native checks passed:
 
-- Two simultaneous Hyprland `0.56.2` processes, nested under the Fleet desktop,
+- Two simultaneous Hyprland `0.56.2` processes, nested under the cloud desktop,
   exposed distinct discovery sockets and epochs. The live discovery harness
   passed all six mutation refusals and its compositor-state comparison in each.
 - Restarting one nested compositor closed its old connection and removed its
@@ -147,7 +147,7 @@ treated as proof of deletion.
 ## Reproducible lifecycle follow-up at `0a67bf5c8`
 
 The checked-in [nested lifecycle runner](../tests/nested_lifecycle.py) passed on Cua
-Cloud Fleet at `0a67bf5c844f5b358651737fb3545aaed5522007` on September 5, 2026
+Cloud cloud at `0a67bf5c844f5b358651737fb3545aaed5522007` on September 5, 2026
 (UTC), through the Cua Sandbox SDK. The committed plugin, workflow, and license
 archive had SHA-256
 `960beaebeba6b4b10e9b08cdeb56e3843313b5e41a4154ca95693615e2a06ce0`.
@@ -179,19 +179,19 @@ runner or executable sources.
 ## Outstanding acceptance gates
 
 System installation with `pacman -U`, dependency-upgrade refusal, the complete
-Fleet baseline, and physical-host certification remain unverified. Native
+Cloud baseline, and physical-host certification remain unverified. Native
 two-instance and clean-restart evidence is limited to nested compositors.
 Second-seat delivery, target tokens, operator authorization, driver
 integration, and the application/foreground-grab matrix remain future work.
 
-The initial source differed from the first Fleet-tested tree only in documentation and
+The initial source differed from the first cloud-tested tree only in documentation and
 formatting: shutdown wording describes the worker join accurately, this report
 records the evidence, and Markdown/Python formatting follows repository tools.
 The Python harness's parsed syntax tree is checked against the tested copy.
 Plugin C++ source, CMake files, and packaging are unchanged.
 
 The guest configuration was restored, the plugin unloaded, and both initial
-disposable Fleet pools deleted with fresh lookups confirming their removal.
+disposable cloud pools deleted with fresh lookups confirming their removal.
 The follow-up report changes only this Markdown file after testing
 `3789f0e6e`; it does not change the plugin, packaging, CI, or test harness.
 
@@ -205,7 +205,7 @@ compositor access; four regression tests cover that guard and packet exchange.
 The plugin remains version `0.1.0`, discovery-only, and outside the Driver
 installation/release path. There are no Rust delivery changes in this PR.
 
-A fresh disposable Cua Cloud Fleet claim used Omarchy `4.0.1-1`, Hyprland
+A fresh disposable Cua Cloud claim used Omarchy `4.0.1-1`, Hyprland
 `0.56.2-1`, and portal `1.4.1-1`. The installed Driver remained `0.22.2` and
 was not replaced or used as input-delivery evidence. Hyprland's ELF compiler
 record and the selected plugin compiler both reported GCC `16.1.1 20260728`;
@@ -247,4 +247,4 @@ in this foundation's scope or results.
 
 The claim and pool were deleted after evidence collection. A fresh successful
 SDK namespace inventory found zero matching namespaces. The local evidence
-archive is retained; no Fleet image or package was published.
+archive is retained; no cloud image or package was published.

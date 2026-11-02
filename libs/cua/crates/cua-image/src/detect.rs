@@ -275,7 +275,7 @@ mod tests {
     const GZ: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
 
     #[test]
-    fn fleet_containerdisk_is_detected_from_its_config() {
+    fn containerdisk_is_detected_from_its_config() {
         // Verbatim shape of public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34.
         let cfg = json!({"os": "linux", "architecture": "amd64", "config": {},
             "history": [{"created_by": "COPY disk.img /disk/disk.img # buildkit"}]});
@@ -365,7 +365,7 @@ mod tests {
 
     /// Live, read-only: the public catalog refs classify as expected.
     #[tokio::test]
-    async fn live_fleet_refs_classify() {
+    async fn live_cloud_refs_classify() {
         if std::env::var("CUA_E2E_IMAGE").as_deref() != Ok("1") {
             eprintln!("skipping: set CUA_E2E_IMAGE=1");
             return;

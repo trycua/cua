@@ -405,7 +405,7 @@ Gives a local VM another shape: `cpus` vCPUs, `memory_mb` MiB of
 memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
 VM stops and boots again from its own disk, so its memory and
 running processes do not survive; its files do. Returns once it is
-ready again. A disk never shrinks. Containers, Fleet and other
+ready again. A disk never shrinks. Containers, cloud and other
 providers' sandboxes are refused (`Unsupported`).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>

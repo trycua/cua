@@ -3,7 +3,6 @@ title: 'RFC 2512: Carry typed Driver envelopes through an existing MCP endpoint'
 created: 2026-09-09
 status: accepted
 discussion: https://github.com/trycua/cua/issues/2512
-parent_rfc: 2512-python-fleet-first-slice.md
 ---
 
 > **Status (Sep 2026):** historical design record. computer-server was removed in the consolidation: sandboxes now run cua-env-driver (port 3211), which hosts cua-driver's MCP at `/mcp` and is reached through the cua SDK (`libs/cua`). References below to computer-server as a current or compatibility service describe the state when this RFC was written.
@@ -17,7 +16,7 @@ carrying its existing versioned envelopes through an explicitly enabled MCP
 extension, without making ordinary `tools/call` the application contract.
 Keep computer-server and every existing Sandbox operation unchanged.
 
-This is a transport addendum to the [accepted first slice](2512-python-fleet-first-slice.md),
+This is a transport addendum to the accepted first slice,
 not a replacement for that decision. The maintainer selected the phased
 existing-route investigation and tested, unmerged implementation proposals.
 The maintainer approved the same-port extension for tested, unmerged stacked
@@ -80,7 +79,7 @@ deployed-image qualification, authentication proof, or desktop E2E evidence.
 The inspected wrapper implementation is
 [stdioToStatefulStreamableHttp.ts at v3.4.3](https://github.com/supercorp-ai/supergateway/blob/v3.4.3/src/gateways/stdioToStatefulStreamableHttp.ts).
 Its ordinary per-request response stream can be buffered; this proposal does
-not require a long-lived unsolicited-event stream in the Fleet SDK.
+not require a long-lived unsolicited-event stream in the cloud SDK.
 
 ## Candidate same-port design
 
@@ -127,7 +126,7 @@ claim that PR supplies the typed extension or modern HTTP support.
 
 Tests must distinguish HTTP session separation from Driver context isolation.
 A tools list, mock carrier, successful wrapper test, or published image is not
-typed Fleet E2E sign-off. Record untested rows rather than weakening checks.
+typed cloud E2E sign-off. Record untested rows rather than weakening checks.
 
 ## Rollback and authorization
 

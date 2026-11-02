@@ -435,7 +435,7 @@ Live TypeSafe validation is an out-of-band procedure: it runs only directly on
 a disposable Tahoe Lume guest, with the credential supplied from that guest's
 local Keychain to the bounded chooser process. That procedure is maintained
 privately and publishes hashes and outcomes only, never the key value or
-fleet details.
+machine details.
 
 Final focused verification passed 36 Python tests, 24 TypeScript tests,
 TypeScript typechecking, workflow YAML parsing, and `git diff --check`.

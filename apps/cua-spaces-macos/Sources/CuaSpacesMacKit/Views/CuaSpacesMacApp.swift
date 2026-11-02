@@ -390,7 +390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for a start view (`applyStartView` opens its own page). The page
         // draws the launch (`startup.get`) until the live services are in.
         if !Self.launchedAtLogin {
-            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed) {
+            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed,
+                                                    firstLaunch: model.onboarding.firstLaunch) {
+                model.onboarding.markSeen()
                 WebUIWindowController.show(model: model, at: route)
             } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
                 WebUIWindowController.show(model: model)

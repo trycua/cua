@@ -788,6 +788,13 @@ pub async fn ensure() -> Result<String> {
             "the built-in Linux runtime runs on macOS; install Docker",
         ));
     }
+    // Its VM would never start here: say so now, not after a minute of
+    // retries ending in "exit status 1".
+    if host::mac_virtualization_supported() == Some(false) {
+        return Err(VmmError::other(
+            cua_create_failure::preflight::MAC_UNSUPPORTED,
+        ));
+    }
     check_path_length()?;
     let started = std::time::Instant::now();
     let fresh = !exists();

@@ -85,6 +85,9 @@ pub async fn gather_waiting(req: &Request, patience: std::time::Duration) -> Fac
     }
     if req.runs == Runs::Vm {
         facts.virtualization = virtualization(req.host);
+    } else if req.host == Host::Macos && mac_unsupported() && linux_needs_builtin_runtime().await {
+        // A Linux container here runs in the built-in runtime's VM.
+        facts.virtualization = Some(VirtGap::MacUnsupported);
     }
     if req.host == Host::Macos && req.guest == Guest::Macos {
         facts.local_network_blocked = local_network_blocked(patience).await;
@@ -192,7 +195,24 @@ fn virtualization(host: Host) -> Option<VirtGap> {
             }
             Err(_) => Some(VirtGap::KvmMissing),
         },
-        Host::Macos => None,
+        Host::Macos => mac_unsupported().then_some(VirtGap::MacUnsupported),
+    }
+}
+
+/// This Mac cannot run virtual machines (it is one itself, or an Intel Mac
+/// without hardware virtualization). A Mac that cannot tell counts as able.
+fn mac_unsupported() -> bool {
+    crate::host::mac_virtualization_supported() == Some(false)
+}
+
+/// Whether a Linux container create here would use the built-in runtime
+/// (a VM) rather than a container engine already answering on this Mac.
+async fn linux_needs_builtin_runtime() -> bool {
+    use crate::managed::LinuxSource;
+    match LinuxSource::current() {
+        LinuxSource::System => false,
+        LinuxSource::Builtin => true,
+        LinuxSource::Auto => crate::managed::exists() || engine().await != Engine::Ready,
     }
 }
 

@@ -1339,3 +1339,35 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     let a = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
     assert!(a.installed && a.signed_in, "{a:?}");
 }
+
+/// Cua's own setup (its entry in a new `~/.claude.json`, its skills under
+/// `~/.claude/skills`) is no sign Claude Code is installed: the first run
+/// showed "Ready" on a Mac without it (CUA-3063).
+#[test]
+fn what_cua_writes_does_not_make_an_agent_installed() {
+    let t = T::new();
+    let s = t.setup();
+    let claude = |s: &AgentSetup| {
+        s.detect()
+            .into_iter()
+            .find(|a| a.id == "claude-code")
+            .unwrap()
+    };
+    assert!(!claude(&s).installed);
+    s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
+    s.install_skills(&ids(&["claude-code"]), &[], false)
+        .unwrap();
+    let after = claude(&s);
+    assert!(after.cua_configured, "{after:?}");
+    assert!(!after.installed, "{:?}", after.evidence);
+    // Codex: cua's config.toml alone is not Codex either.
+    s.configure_mcp(&ids(&["codex"]), &server()).unwrap();
+    let codex = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
+    assert!(!codex.installed, "{:?}", codex.evidence);
+    // What the agent writes itself does count.
+    t.write(".claude/settings.json", "{}");
+    assert!(claude(&s).installed);
+    let t = T::new();
+    t.write(".claude.json", "{\"numStartups\": 3}");
+    assert!(claude(&t.setup()).installed);
+}

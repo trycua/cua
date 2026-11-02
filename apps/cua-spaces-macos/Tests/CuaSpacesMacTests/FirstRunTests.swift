@@ -49,6 +49,26 @@ struct FirstRunTests {
         #expect(MainUIRoute.onboarding.webPath == "/onboarding", "Show again has no due: it always shows")
     }
 
+    /// The app's first launch here opens the first run whatever the page
+    /// kept from an earlier install (a stale "Skip for now" hid it behind
+    /// the sidebar's small "Finish setting up", CUA-3063); from the next
+    /// launch on, `due` applies again.
+    @Test func theFirstLaunchAlwaysShowsTheFirstRun() throws {
+        #expect(MainUIRoute.firstLaunch.webPath == "/onboarding?fresh=1")
+        #expect(MainUIRouter.launchRoute(onboarded: false, firstLaunch: true) == .firstLaunch)
+        #expect(MainUIRouter.launchRoute(onboarded: true, firstLaunch: true) == nil)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-firstlaunch-\(UUID().uuidString)")
+        let path = dir.appendingPathComponent("onboarding.json").path
+        let first = OnboardingModel(statePath: path)
+        #expect(first.firstLaunch && !first.completed)
+        first.markSeen()
+        #expect(!first.firstLaunch)
+        let next = OnboardingModel(statePath: path)
+        #expect(!next.firstLaunch && !next.completed, "seen, not done")
+        #expect(MainUIRouter.launchRoute(onboarded: next.completed, firstLaunch: next.firstLaunch) == .firstRunDue)
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     // MARK: - onboarding.get, onboarding.complete
 
     @Test func theFirstRunIsDueUntilItFinishesAndPersists() async throws {

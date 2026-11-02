@@ -2,7 +2,7 @@
 """Fast-path A/B bench and race tests against FastPathFixture (CUA-3102).
 
 Runs on macOS with a Cua Driver daemon and the fixture running:
-  swiftc -O tests/fixtures/apps/macos/appkit/FastPathFixture.swift -o /tmp/FastPathFixture
+  swiftc -O tests/fixtures/apps/macos/fast-path/FastPathFixture.swift -o /tmp/FastPathFixture
   /tmp/FastPathFixture /tmp/fpfix &
   python3 scripts/fast-path-bench.py --out /tmp/fast-path-results.json
 

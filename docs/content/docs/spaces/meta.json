@@ -43,6 +43,7 @@
     "guides/uninstall",
     "---Advanced---",
     "guides/relay-security",
+    "guides/ip-options-guard",
     "guides/your-tailnet",
     "examples",
     "reference"

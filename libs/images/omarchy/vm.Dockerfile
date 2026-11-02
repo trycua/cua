@@ -23,7 +23,7 @@ USER root
 COPY omarchy/files/mkinitcpio-cua.conf /etc/cua-image/mkinitcpio-cua.conf
 RUN set -eu; \
     pacman -Q | sort >/tmp/rootfs-packages; \
-    pkgs="linux mkinitcpio cloud-init cloud-guest-utils openssh qemu-guest-agent e2fsprogs dosfstools"; \
+    pkgs="linux mkinitcpio cloud-init cloud-guest-utils openssh qemu-guest-agent e2fsprogs dosfstools nftables"; \
     for attempt in 1 2 3 4; do \
       if [ "$attempt" = 1 ]; then pacman -S --noconfirm --needed $pkgs && break; \
       else pacman -Syu --noconfirm --needed $pkgs && break; fi; \
@@ -41,6 +41,13 @@ RUN set -eu; \
 
 COPY common/vm/files/fstab /etc/fstab
 COPY common/vm/files/99-cua-cloud.cfg /etc/cloud/cloud.cfg.d/99-cua-cloud.cfg
+# CVE-2026-98432 interim guard (IPv4 options dropped before TCP); remove once the
+# snapshot's kernel is at or above the fixed version for its series.
+COPY common/vm/files/cua-ipopts/cua-ipopts-guard /opt/cua/bin/cua-ipopts-guard
+COPY common/vm/files/cua-ipopts/cua-ipopts.nft /etc/cua-image/cua-ipopts.nft
+COPY common/vm/files/cua-ipopts/cua-ipopts.service /etc/systemd/system/cua-ipopts.service
+COPY common/vm/files/cua-ipopts/90-cua-ipopts.conf /etc/sysctl.d/90-cua-ipopts.conf
+RUN chmod 0755 /opt/cua/bin/cua-ipopts-guard && systemctl enable cua-ipopts.service
 COPY omarchy/files/kubevirt.nmconnection /etc/NetworkManager/system-connections/kubevirt.nmconnection
 RUN chmod 600 /etc/NetworkManager/system-connections/kubevirt.nmconnection \
  && rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id

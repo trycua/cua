@@ -4260,7 +4260,10 @@ mod tests {
             r("python:3.12", Some("slim")),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |x: &str| cua_image::catalog::find(x).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |x: &str| {
+            cua_image::catalog::find(x).is_none_or(|e| e.published || e.derived_from.is_some())
+        };
         for (got, want, os) in [
             (
                 r("linux", Some("slim")),

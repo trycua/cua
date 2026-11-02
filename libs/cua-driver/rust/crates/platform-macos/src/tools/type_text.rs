@@ -96,26 +96,33 @@ fn def() -> &'static ToolDef {
     })
 }
 
-fn screen_sharing_delivery_error(
-    is_screen_sharing: bool,
+fn input_forwarder_delivery_error(
+    input_forwarder: Option<crate::input::keyboard::InputForwarder>,
     foreground: bool,
     window_id: Option<u32>,
 ) -> Option<ToolResult> {
-    if !is_screen_sharing || (foreground && window_id.is_some()) {
+    let input_forwarder = input_forwarder?;
+    if foreground && window_id.is_some() {
         return None;
     }
+    let (target, code) = match input_forwarder {
+        crate::input::keyboard::InputForwarder::ScreenSharing => {
+            ("Screen Sharing", "SCREEN_SHARING_REQUIRES_FOREGROUND_HID")
+        }
+        crate::input::keyboard::InputForwarder::Utm => ("UTM", "UTM_REQUIRES_FOREGROUND_HID"),
+    };
     Some(
-        ToolResult::error(
-            "Screen Sharing text input requires delivery_mode:\"foreground\" and window_id \
+        ToolResult::error(format!(
+            "{target} text input requires delivery_mode:\"foreground\" and window_id \
              so Cua Driver can deliver physical HID key transitions safely.",
-        )
+        ))
         .with_structured(serde_json::json!({
-            "code": "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "code": code,
             "effect": "refused",
             "escalation": {
                 "recommended": "foreground",
-                "reason": "Screen Sharing forwards physical keycodes; background PID-routed \
-                           Unicode events can corrupt guest text.",
+                "reason": format!("{target} forwards physical keycodes; background PID-routed \
+                           Unicode events can corrupt guest text."),
                 "requires": ["window_id"]
             }
         })),
@@ -190,8 +197,8 @@ impl Tool for TypeTextTool {
         };
         let delay_ms = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
-        if let Some(error) = screen_sharing_delivery_error(
-            crate::input::keyboard::is_screen_sharing_pid(pid),
+        if let Some(error) = input_forwarder_delivery_error(
+            crate::input::keyboard::input_forwarder_for_pid(pid),
             delivery_mode.is_foreground(),
             window_id,
         ) {
@@ -1409,9 +1416,9 @@ fn type_text_in_key_window(
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
-        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
+        let input_forwarder_target = crate::input::keyboard::is_input_forwarder_pid(pid);
         if let Some(refusal) = synthesis_preflight(
-            if screen_sharing_target {
+            if input_forwarder_target {
                 TextDeliveryRoute::PhysicalSynthesis
             } else {
                 TextDeliveryRoute::UnicodeSynthesis
@@ -1450,8 +1457,8 @@ fn type_text_in_key_window(
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
-            Some(wid) if screen_sharing_target => {
-                // Screen Sharing forwards physical HID transitions to the
+            Some(wid) if input_forwarder_target => {
+                // Input forwarders relay physical HID transitions to the
                 // guest. PID-routed Unicode events all carry keycode 0 (the A
                 // key), so a guest sees "aaaa"; modifier flags alone likewise
                 // turn Cmd+V into plain "v". The explicit foreground rung may
@@ -2299,18 +2306,28 @@ mod tests {
     }
 
     #[test]
-    fn screen_sharing_text_fails_closed_without_foreground_window() {
-        for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
-            let result = screen_sharing_delivery_error(true, foreground, window_id)
-                .expect("unsafe Screen Sharing route must be refused");
-            assert_eq!(result.is_error, Some(true));
-            let structured = result.structured_content.unwrap();
-            assert_eq!(structured["code"], "SCREEN_SHARING_REQUIRES_FOREGROUND_HID");
-            assert_eq!(structured["effect"], "refused");
-            assert_eq!(structured["escalation"]["recommended"], "foreground");
-            assert_eq!(structured["escalation"]["requires"][0], "window_id");
+    fn input_forwarder_text_preserves_screen_sharing_contract_and_names_utm() {
+        use crate::input::keyboard::InputForwarder;
+
+        for (target, code) in [
+            (
+                InputForwarder::ScreenSharing,
+                "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            ),
+            (InputForwarder::Utm, "UTM_REQUIRES_FOREGROUND_HID"),
+        ] {
+            for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
+                let result = input_forwarder_delivery_error(Some(target), foreground, window_id)
+                    .expect("unsafe input-forwarder route must be refused");
+                assert_eq!(result.is_error, Some(true));
+                let structured = result.structured_content.unwrap();
+                assert_eq!(structured["code"], code);
+                assert_eq!(structured["effect"], "refused");
+                assert_eq!(structured["escalation"]["recommended"], "foreground");
+                assert_eq!(structured["escalation"]["requires"][0], "window_id");
+            }
         }
-        assert!(screen_sharing_delivery_error(true, true, Some(7)).is_none());
-        assert!(screen_sharing_delivery_error(false, false, None).is_none());
+        assert!(input_forwarder_delivery_error(Some(InputForwarder::Utm), true, Some(7)).is_none());
+        assert!(input_forwarder_delivery_error(None, false, None).is_none());
     }
 }

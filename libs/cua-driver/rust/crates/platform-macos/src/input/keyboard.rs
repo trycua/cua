@@ -12,7 +12,15 @@ use core_graphics::{
 use foreign_types::ForeignType;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
+const UTM_BUNDLE_ID: &str = "com.utmapp.UTM";
 const SHIFT_KEY_CODE: u16 = 56;
+
+/// Applications that relay physical keyboard events to another display surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputForwarder {
+    ScreenSharing,
+    Utm,
+}
 
 /// Default key down→up gap and inter-key pacing.
 const DEFAULT_KEY_GAP: std::time::Duration = std::time::Duration::from_millis(8);
@@ -29,20 +37,28 @@ fn key_gap_sleep() {
     std::thread::sleep(key_gap());
 }
 
-fn is_screen_sharing_bundle_id(bundle_id: &str) -> bool {
-    bundle_id == SCREEN_SHARING_BUNDLE_ID
+fn input_forwarder_for_bundle_id(bundle_id: &str) -> Option<InputForwarder> {
+    match bundle_id {
+        SCREEN_SHARING_BUNDLE_ID => Some(InputForwarder::ScreenSharing),
+        UTM_BUNDLE_ID => Some(InputForwarder::Utm),
+        _ => None,
+    }
 }
 
-/// Whether `pid` is Apple's Screen Sharing client.
+/// Returns the input forwarder represented by `pid`, if it has one.
 ///
-/// Screen Sharing is an input forwarder rather than a text consumer: it relays
-/// physical virtual-key transitions to the guest and ignores the Unicode string
-/// attached to a synthetic keycode-0 event. Keep that special case explicit so
-/// ordinary PID-routed text input retains its layout-independent Unicode path.
-pub fn is_screen_sharing_pid(pid: i32) -> bool {
+/// Input forwarders relay physical virtual-key transitions to a guest and can
+/// ignore the Unicode string attached to a synthetic keycode-0 event. Keep
+/// those special cases explicit so ordinary PID-routed text input retains its
+/// layout-independent Unicode path.
+pub fn input_forwarder_for_pid(pid: i32) -> Option<InputForwarder> {
     crate::apps::bundle_id_for_pid(pid)
         .as_deref()
-        .is_some_and(is_screen_sharing_bundle_id)
+        .and_then(input_forwarder_for_bundle_id)
+}
+
+pub fn is_input_forwarder_pid(pid: i32) -> bool {
+    input_forwarder_for_pid(pid).is_some()
 }
 
 /// Press and release a single key, delivered to `pid` without stealing focus.
@@ -1083,9 +1099,25 @@ mod tests {
     }
 
     #[test]
-    fn screen_sharing_detection_is_exact_and_case_sensitive() {
-        assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
-        assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
-        assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
+    fn input_forwarder_detection_is_exact_and_case_sensitive() {
+        assert_eq!(
+            input_forwarder_for_bundle_id("com.apple.ScreenSharing"),
+            Some(InputForwarder::ScreenSharing)
+        );
+        assert_eq!(
+            input_forwarder_for_bundle_id("com.utmapp.UTM"),
+            Some(InputForwarder::Utm)
+        );
+        for bundle_id in [
+            "com.apple.screensharing",
+            "com.utmapp.utm",
+            "com.microsoft.rdc.macos",
+        ] {
+            assert_eq!(
+                input_forwarder_for_bundle_id(bundle_id),
+                None,
+                "{bundle_id}"
+            );
+        }
     }
 }

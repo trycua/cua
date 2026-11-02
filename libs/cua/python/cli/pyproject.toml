@@ -10,7 +10,7 @@ build-backend = "hatchling.build"
 # through it. Built by ../build_wheel.py.
 [project]
 name = "cua-cli"
-version = "0.9.0"
+version = "0.10.0"
 description = "The cua command line (the Rust `cua` CLI) for the cua Python package"
 readme = "README.md"
 license = { text = "MIT" }

@@ -11,7 +11,7 @@ with nothing to set up inside the Space.
 ## Connect a provider
 
 Open **Settings, Connections** and scroll to **Providers**, below **Coding
-apps** and **On another machine**. Each row is one provider on one line: its
+apps** and **On another computer**. Each row is one provider on one line: its
 icon, its name, a grey line saying what is saved (for example **Signed in as
 you@example.com (Claude Max)** or **API key ending 4f2a**) or **Not
 connected**, and then either **Connect** or a check and **Connected**.
@@ -28,8 +28,8 @@ more than one key for the provider, it lists them, each with **Remove**, and
 such as **Work key**. The first key is the one the row shows and the one every
 app uses unless you tell an app otherwise (see [Pick which key an app uses](#pick-which-key-an-app-uses)).
 
-The sheet shows only the ways that apply on this machine. For Anthropic that
-can be your Claude sign-in (found on this machine, for Claude Code only) or an
+The sheet shows only the ways that apply on this computer. For Anthropic that
+can be your Claude sign-in (found on this computer, for Claude Code only) or an
 API key. For OpenAI it is an API key, or your ChatGPT sign-in for Codex.
 Every other provider takes an API key. Anthropic, OpenAI, OpenRouter, Google
 AI Studio, xAI, DeepSeek, Kimi and Custom endpoint are up front; press **Show
@@ -95,10 +95,10 @@ providers as fallbacks when you have not chosen one, and turns off borrowing sig
 Hermes cannot reach its provider, the run fails and the thread shows the
 **Connect** card for it.
 
-### A server on your own machine
+### A server on your own computer
 
 Use **Custom endpoint** with the server's base URL, for example LM Studio or
-Ollama. A Space that is isolated from your machine cannot reach a server on it,
+Ollama. A Space that is isolated from your computer cannot reach a server on it,
 and Cua does not change that for you: allow the port for that Space in its
 network settings first. The key is optional.
 
@@ -112,7 +112,7 @@ checked, and providers Cua has not run end to end yet, are not listed.
 
 | Provider | How to connect | Works with |
 | --- | --- | --- |
-| Anthropic | Your sign-in on this machine, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
+| Anthropic | Your sign-in on this computer, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenAI | Plan sign-in, API key | Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenRouter | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
 | Google AI Studio | API key | Gemini CLI, Antigravity, OpenCode, Goose, Pi, Hermes |

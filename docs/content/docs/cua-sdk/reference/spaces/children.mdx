@@ -22,7 +22,7 @@ Methods of [`Spaces`](/cua-sdk/reference/spaces#spaces).
 
 Lets a Space make child Spaces of its own, or stops it. While on,
 `cua`, the SDKs and the agent's tools in that Space create, list and
-delete Spaces that belong to it (on the same machine, never wider
+delete Spaces that belong to it (on the same computer, never wider
 than it, ending no later than it), through a channel only it can
 reach. Off ends its capability at once; children it made keep running
 until deleted or their lifetime ends. Only for a Space the machine of
@@ -267,6 +267,6 @@ Returned by [`Spaces.orphans`](#spacesorphans).
 | --- | --- | --- | --- |
 | `space` | `String` |  | The child. |
 | `parent` | `String` |  | Its parent's id. |
-| `state` | `String` |  | `ending` (its parent is provably gone: it ends after the grace) or `listed` (not this machine's to judge: it stays until deleted or its own lifetime ends). |
+| `state` | `String` |  | `ending` (its parent is provably gone: it ends after the grace) or `listed` (not this computer's to judge: it stays until deleted or its own lifetime ends). |
 | `why` | `String` |  | Why. |
 | `ends_in_secs` / `endsInSecs` | `i64` |  | Seconds until it ends (`ending` only). |

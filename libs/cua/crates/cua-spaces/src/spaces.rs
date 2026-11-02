@@ -3277,7 +3277,7 @@ impl Spaces {
     }
 
     /// `local:<name>` when `name` is a plain name (no `kind:` prefix) of a
-    /// sandbox Cua made on this machine (a recorded one) that no Space
+    /// sandbox Cua made on this computer (a recorded one) that no Space
     /// record names. Only recorded sandboxes: a VM the runtime has that Cua
     /// never made (another tool's Lume VM) is never deleted by name here.
     fn unregistered_local(&self, name: &str) -> Option<SpaceId> {

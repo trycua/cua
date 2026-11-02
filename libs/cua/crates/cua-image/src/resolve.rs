@@ -532,7 +532,7 @@ pub async fn resolve_with(
 ) -> Result<ResolvedImage> {
     let found = resolve_listed(src, reference, backend, arch).await;
     // The macOS Space with developer tools is published like the other macOS
-    // images; where it is not (yet, or at all) it is built on this machine
+    // images; where it is not (yet, or at all) it is built on this computer
     // from its parent, so it resolves as the parent's Lume build under its
     // own name. The digest is then the parent's: a new parent is a new build.
     let input = NormalizedRef::parse(reference)?;

@@ -7,9 +7,9 @@
 //!   ancestor, another tree or a guessed id is "not found", word for word
 //!   what a missing Space gets.
 //! - A create or fork makes a child of the caller: one level deeper (up to
-//!   its tree's limit), on this machine, with the caller's egress rules,
+//!   its tree's limit), on this computer, with the caller's egress rules,
 //!   and a lifetime no longer than the caller's (4 hours by default).
-//! - Everything else (other machines, clouds, volumes, shares, the
+//! - Everything else (other computers, clouds, volumes, shares, the
 //!   daemon's own token and settings) is refused.
 //!
 //! The caller is the Space whose channel the request came in on (the host
@@ -33,9 +33,9 @@ use cua_sandbox_core::placement::On;
 type R<T> = std::result::Result<Response<T>, Status>;
 
 /// The label that mirrors a child's parent. The record's tree fields
-/// (`SpaceMeta.parent`, `root`, `depth`) are what counts on this machine.
+/// (`SpaceMeta.parent`, `root`, `depth`) are what counts on this computer.
 pub const LABEL_PARENT: &str = cua_spaces::tree::PARENT_LABEL;
-/// The root of the tree, for a child placed on another machine or a cloud
+/// The root of the tree, for a child placed on another computer or a cloud
 /// (whose registry does not hold its parent).
 pub const LABEL_ROOT: &str = "cua.root";
 /// The depth, for a child placed elsewhere (0 for a Space a person made).
@@ -175,8 +175,8 @@ impl Scoped {
                 "a child's parent is the Space that makes it; leave parent empty",
             ));
         }
-        // Where: this machine (the default), the least-loaded of the
-        // owner's machines and linked clouds (`auto`), one of the owner's
+        // Where: this computer (the default), the least-loaded of the
+        // owner's computers and linked clouds (`auto`), one of the owner's
         // machines (`host:<m>`), or a linked cloud. This daemon creates it
         // with the owner's own sign-in and cloud links; the Space asking
         // never holds them.
@@ -190,7 +190,7 @@ impl Scoped {
             On::Local | On::Auto | On::Host(_) | On::Provider(_) => {}
             On::Cloud | On::Direct(_) | On::Relay(_) => {
                 return Err(Status::failed_precondition(format!(
-                    "a child goes on this machine, `auto`, one of your machines \
+                    "a child goes on this computer, `auto`, one of your computers \
                      (`host:<name>`) or a linked cloud; on={location:?} is not one"
                 )));
             }
@@ -248,13 +248,13 @@ impl Scoped {
             r.name = self.next_child_name("c");
         }
         if local {
-            // This machine records it in the caller's tree: the record's
+            // This computer records it in the caller's tree: the record's
             // parent, root and depth, its network no more open than the
             // caller's, the tree's own network.
             r.parent = self.space.clone();
             self.allow_depth(claims);
         } else {
-            // Another machine or a cloud does not hold the caller's record:
+            // Another computer or a cloud does not hold the caller's record:
             // the network goes with the request, cut down to the caller's,
             // and labels carry the tree.
             let asked = match r.network_settings.as_ref() {
@@ -408,7 +408,7 @@ fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
     }
 }
 
-/// What a child placed off this machine costs per hour: what the elastic
+/// What a child placed off this computer costs per hour: what the elastic
 /// pool would add to place it (0 when it fits on a machine already running).
 /// A child the pool can't place is refused with the pool's reason.
 async fn priced(
@@ -499,7 +499,7 @@ pub(crate) fn links_of(spaces: &cua_spaces::Spaces) -> tree::Links {
 }
 
 /// A record's parent: its tree field, else the label a child placed from
-/// another machine carries.
+/// another computer carries.
 pub(crate) fn parent_of(m: &cua_spaces::registry::SpaceMeta) -> Option<String> {
     m.parent
         .clone()
@@ -901,7 +901,7 @@ impl SpaceService for Scoped {
             .await?
             .into_inner();
         // Through this channel's own passthrough, never the daemon's
-        // loopback listener, its token or another machine's route.
+        // loopback listener, its token or another computer's route.
         let key = crate::passthrough::space_key(&space.id);
         resp.env_url = if resp.env_url.is_empty() || origin.is_empty() {
             String::new()

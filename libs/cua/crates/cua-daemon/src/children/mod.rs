@@ -170,7 +170,7 @@ pub(crate) fn admit(
     })
 }
 
-/// The orphans of this machine as the reaper judges them now (without
+/// The orphans of this computer as the reaper judges them now (without
 /// changing what it remembers).
 pub(crate) fn orphans(shared: &Shared) -> Vec<cua_proto::daemon::v1::Orphan> {
     use reaper::Verdict;
@@ -267,7 +267,7 @@ pub(crate) fn channel_app(shared: Arc<Shared>, space: String) -> axum::Router {
             // A caller header is never identity here: the channel is.
             crate::server::strip_forwarded_caller(req.headers_mut());
             let Some(authority) = shared.spawn_authority() else {
-                return unauthenticated(grpc, "child Spaces are off on this machine");
+                return unauthenticated(grpc, "child Spaces are off on this computer");
             };
             // An experiment: while it is off, no capability does anything.
             if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {

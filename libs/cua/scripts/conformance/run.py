@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runtime conformance, live: the same cases against every runtime this machine has.
+"""Runtime conformance, live: the same cases against every runtime this computer has.
 
 The roster and what each entry must do come from `entries.json`, which is generated from
 `cua_vmm::conformance` (a test keeps the file in step). A Space behaves the same on every runtime:
@@ -26,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 ENTRIES = json.loads((HERE / "entries.json").read_text())
 HOST_OS = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
 SECRET = re.compile(r"(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w+|sk-ant-\S+)")
-# Words in an error that mean "this machine lacks what the runtime needs" (a skip, not a failure).
+# Words in an error that mean "this computer lacks what the runtime needs" (a skip, not a failure).
 MISSING = ("not installed", "is not set up", "cua-vz", "cua-microvm-init", "/dev/kvm", "needs macOS", "not available", "Missing")
 
 

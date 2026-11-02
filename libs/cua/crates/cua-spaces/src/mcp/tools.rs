@@ -1190,7 +1190,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             let (opts, missing) = ag::start_options(&a)?;
             // An agent run may make child Spaces of its own Space: this
             // machine keeps the Space's spawn channel while that is on
-            // (only for a Space this machine runs).
+            // (only for a Space this computer runs).
             let id = s.id().to_string();
             if id.starts_with("local:")
                 && spaces.registry().get(&id).ok().flatten().is_some()

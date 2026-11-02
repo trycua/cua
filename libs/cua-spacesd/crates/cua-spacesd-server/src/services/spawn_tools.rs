@@ -36,7 +36,7 @@ Other Spaces, including its parent and siblings, are not reachable.";
 fn defs() -> Vec<Value> {
     let space = json!({"type": "string", "description": "A child's name or id."});
     vec![
-        json!({"name": "create_space", "description": format!("Creates a child Space of this Space, on the same machine, and waits until it is ready. It keeps this Space's network rules and ends no later than this Space. {SCOPE}"),
+        json!({"name": "create_space", "description": format!("Creates a child Space of this Space, on the same computer, and waits until it is ready. It keeps this Space's network rules and ends no later than this Space. {SCOPE}"),
         "inputSchema": {"type": "object", "properties": {
             "name": {"type": "string", "description": "Name (default: <this Space>.c<n>)."},
             "image": {"type": "string", "description": "Image (default: the Linux image)."},

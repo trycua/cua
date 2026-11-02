@@ -709,7 +709,7 @@ pub struct SpaceInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_enforced: Option<crate::egress::Enforcement>,
     /// Its network settings ([`crate::network`]), with a note when its
-    /// network is not what was asked. `None` when this machine keeps no
+    /// network is not what was asked. `None` when this computer keeps no
     /// record of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<crate::network::SpaceNetwork>,

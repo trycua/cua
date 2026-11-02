@@ -18131,7 +18131,7 @@ export type SpaceNetworkInfo = {
     /**
      * `enforced` (rules on the host, outside the guest), `no_network`
      * (its runtime can't protect it yet), `open` (No protection) or
-     * `refused`; empty when unknown (a Space another machine runs).
+     * `refused`; empty when unknown (a Space another computer runs).
      */
     enforcement: string,
     /**
@@ -20089,7 +20089,7 @@ export type SpaceInfo = {
      */
     egressEnforced?: EgressEnforcement,
     /**
-     * Its network settings; `None` for a Space this machine keeps no
+     * Its network settings; `None` for a Space this computer keeps no
      * record of, or one created before they existed (it gets them on its
      * next start).
      */
@@ -20699,7 +20699,7 @@ export type SpaceOrphan = {
     parent: string,
     /**
      * `ending` (its parent is provably gone: it ends after the grace) or
-     * `listed` (not this machine's to judge: it stays until deleted or its
+     * `listed` (not this computer's to judge: it stays until deleted or its
      * own lifetime ends).
      */
     state: string,
@@ -42085,7 +42085,7 @@ export interface SpacesLike {
 /**
  * Lets a Space make child Spaces of its own, or stops it. While on,
  * `cua`, the SDKs and the agent's tools in that Space create, list and
- * delete Spaces that belong to it (on the same machine, never wider
+ * delete Spaces that belong to it (on the same computer, never wider
  * than it, ending no later than it), through a channel only it can
  * reach. Off ends its capability at once; children it made keep running
  * until deleted or their lifetime ends. Only for a Space the machine of
@@ -42112,7 +42112,7 @@ export interface SpacesLike {
  * child stays within its parent's unless `widen`; `tree` gives its
  * children the same settings. They hold at once where the runtime can
  * change a running guest's network, else from its next start
- * (`applied`). A Space another machine runs is `Unsupported`.
+ * (`applied`). A Space another computer runs is `Unsupported`.
  */
     setNetwork(space: string, settings: NetworkSettings, widen: boolean, tree: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SetNetworkResult>;
 /**
@@ -44802,7 +44802,7 @@ private constructor(pointer: UniffiHandle) {
 /**
  * Lets a Space make child Spaces of its own, or stops it. While on,
  * `cua`, the SDKs and the agent's tools in that Space create, list and
- * delete Spaces that belong to it (on the same machine, never wider
+ * delete Spaces that belong to it (on the same computer, never wider
  * than it, ending no later than it), through a channel only it can
  * reach. Off ends its capability at once; children it made keep running
  * until deleted or their lifetime ends. Only for a Space the machine of
@@ -44912,7 +44912,7 @@ private constructor(pointer: UniffiHandle) {
  * child stays within its parent's unless `widen`; `tree` gives its
  * children the same settings. They hold at once where the runtime can
  * change a running guest's network, else from its next start
- * (`applied`). A Space another machine runs is `Unsupported`.
+ * (`applied`). A Space another computer runs is `Unsupported`.
  */
     async setNetwork(space: string, settings: NetworkSettings, widen: boolean, tree: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<SetNetworkResult> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -49418,7 +49418,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_routines() !== 22768) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_routines");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_children() !== 33485) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_children() !== 63927) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_children");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_egress() !== 12366) {
@@ -49427,7 +49427,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_lifetime() !== 62609) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_lifetime");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_network() !== 31983) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_network() !== 64671) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_network");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() !== 8418) {

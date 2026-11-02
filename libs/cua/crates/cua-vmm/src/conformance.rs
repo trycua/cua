@@ -10,7 +10,7 @@
 //! * [`Case`] lists them. The same list runs against every [`Entry`]: the
 //!   hermetic tests run it on the backends that have a fake (Apple's
 //!   `container` has one), and `libs/cua/scripts/conformance/run.py` runs
-//!   it live on the runtimes this machine has (opt in; it cleans up what it
+//!   it live on the runtimes this computer has (opt in; it cleans up what it
 //!   makes), writing the matrix.
 //! * [`capabilities`] is what a backend says about itself, and nothing
 //!   else: the guests and architectures it runs, whether it can pause,

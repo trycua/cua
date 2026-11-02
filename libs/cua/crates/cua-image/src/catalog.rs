@@ -137,7 +137,7 @@ pub fn require_published(reference: String) -> Result<String> {
     }
 }
 
-/// The published image `reference` is built from on this machine, when the
+/// The published image `reference` is built from on this computer, when the
 /// catalog lists it as derived ([`CatalogEntry::derived_from`]). A digest on
 /// `reference` is ignored: it names the parent's.
 pub fn derived_from(reference: &str) -> Option<&'static str> {

@@ -14350,7 +14350,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this machine, never wider than it (`cua spaces children`). Agent runs turn this on by themselves",
+       "help": "Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this computer, never wider than it (`cua spaces children`). Agent runs turn this on by themselves",
        "hidden": false,
        "name": "children",
        "repeatable": false,
@@ -14919,7 +14919,7 @@
      "usage": "cua spaces egress [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this machine, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends",
+     "abstract": "Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this computer, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends",
      "after_help": "Examples:\n  cua spaces children studio on\n  cua spaces children studio off",
      "aliases": [],
      "arguments": [

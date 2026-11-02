@@ -9,7 +9,7 @@
 //! reservation becomes the child's use when it exists, and is dropped when
 //! the create fails.
 //!
-//! Children on this machine cost nothing per hour; children in a linked
+//! Children on this computer cost nothing per hour; children in a linked
 //! cloud cost what the cloud bills, and the account's own cloud budget is
 //! checked as well (the stricter wins).
 
@@ -87,7 +87,7 @@ pub struct Ask {
     pub vcpus: u32,
     /// Memory (MiB).
     pub memory_mb: u64,
-    /// $ per hour (0 on this machine).
+    /// $ per hour (0 on this computer).
     pub usd_per_hour: f64,
 }
 

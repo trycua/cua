@@ -46,7 +46,7 @@ pub fn backend_kind(word: &str) -> Option<cua_vmm::BackendKind> {
     })
 }
 
-/// The note a Space on this machine's `backend` gets for `settings`: why
+/// The note a Space on this computer's `backend` gets for `settings`: why
 /// it has no network (its runtime can't protect it yet), or that the user
 /// chose No protection. `None` when its rules are enforced.
 pub fn note_for(backend: &str, settings: &NetworkSettings) -> Option<String> {
@@ -559,7 +559,7 @@ impl Spaces {
     /// its parent's (no more open) unless `widen`, which records who widened
     /// it. With `tree`, its children get the new settings too (each
     /// intersected with its own parent's). Says whether they hold now or
-    /// from its next start. A Space on this machine only: a Space another
+    /// from its next start. A Space on this computer only: a Space another
     /// machine runs keeps its settings there.
     pub async fn set_network(
         &self,

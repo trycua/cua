@@ -11,7 +11,7 @@
 //! - that has been so for the whole grace period (15 minutes), across
 //!   passes, measured by this host's clock.
 //!
-//! Anything else is never ended here: a parent on another machine that does
+//! Anything else is never ended here: a parent on another computer that does
 //! not answer is a partition, not proof. Such a child stays and is listed
 //! as an orphan; its own lifetime (no longer than its parent's, set when it
 //! was made) is the backstop that works with every daemon down. A read of
@@ -115,7 +115,7 @@ pub fn judge(seen: &[Seen], memory: &mut Memory, now: u64) -> BTreeMap<String, V
         let verdict = if !parent.starts_with("local:") {
             Verdict::Orphan {
                 why: format!(
-                    "its parent {parent} runs on another machine; only that machine or its \
+                    "its parent {parent} runs on another computer; only that computer or its \
                      own lifetime ends it"
                 ),
             }

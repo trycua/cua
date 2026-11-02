@@ -4369,7 +4369,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_resources() != 12146.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 33485.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366.toShort()) {
@@ -4378,7 +4378,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 31983.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418.toShort()) {
@@ -21309,7 +21309,7 @@ public interface SpacesInterface {
     /**
      * Lets a Space make child Spaces of its own, or stops it. While on,
      * `cua`, the SDKs and the agent's tools in that Space create, list and
-     * delete Spaces that belong to it (on the same machine, never wider
+     * delete Spaces that belong to it (on the same computer, never wider
      * than it, ending no later than it), through a channel only it can
      * reach. Off ends its capability at once; children it made keep running
      * until deleted or their lifetime ends. Only for a Space the machine of
@@ -21339,7 +21339,7 @@ public interface SpacesInterface {
      * child stays within its parent's unless `widen`; `tree` gives its
      * children the same settings. They hold at once where the runtime can
      * change a running guest's network, else from its next start
-     * (`applied`). A Space another machine runs is `Unsupported`.
+     * (`applied`). A Space another computer runs is `Unsupported`.
      */
     suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean): SetNetworkResult
 
@@ -23336,7 +23336,7 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
     /**
      * Lets a Space make child Spaces of its own, or stops it. While on,
      * `cua`, the SDKs and the agent's tools in that Space create, list and
-     * delete Spaces that belong to it (on the same machine, never wider
+     * delete Spaces that belong to it (on the same computer, never wider
      * than it, ending no later than it), through a channel only it can
      * reach. Off ends its capability at once; children it made keep running
      * until deleted or their lifetime ends. Only for a Space the machine of
@@ -23425,7 +23425,7 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
      * child stays within its parent's unless `widen`; `tree` gives its
      * children the same settings. They hold at once where the runtime can
      * change a running guest's network, else from its next start
-     * (`applied`). A Space another machine runs is `Unsupported`.
+     * (`applied`). A Space another computer runs is `Unsupported`.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -44778,7 +44778,7 @@ data class SpaceInfo (
     var `egressEnforced`: EgressEnforcement?
     ,
     /**
-     * Its network settings; `None` for a Space this machine keeps no
+     * Its network settings; `None` for a Space this computer keeps no
      * record of, or one created before they existed (it gets them on its
      * next start).
      */
@@ -45072,7 +45072,7 @@ data class SpaceNetworkInfo (
     /**
      * `enforced` (rules on the host, outside the guest), `no_network`
      * (its runtime can't protect it yet), `open` (No protection) or
-     * `refused`; empty when unknown (a Space another machine runs).
+     * `refused`; empty when unknown (a Space another computer runs).
      */
     var `enforcement`: kotlin.String
     ,
@@ -45177,7 +45177,7 @@ data class SpaceOrphan (
     ,
     /**
      * `ending` (its parent is provably gone: it ends after the grace) or
-     * `listed` (not this machine's to judge: it stays until deleted or its
+     * `listed` (not this computer's to judge: it stays until deleted or its
      * own lifetime ends).
      */
     var `state`: kotlin.String

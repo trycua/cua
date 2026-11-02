@@ -393,7 +393,7 @@ pub struct SpaceNetworkInfo {
     pub widenings: Vec<String>,
     /// `enforced` (rules on the host, outside the guest), `no_network`
     /// (its runtime can't protect it yet), `open` (No protection) or
-    /// `refused`; empty when unknown (a Space another machine runs).
+    /// `refused`; empty when unknown (a Space another computer runs).
     pub enforcement: String,
     /// Where the rules are enforced, or why its network is cut.
     pub point: String,
@@ -608,7 +608,7 @@ pub struct SpaceInfo {
     /// Where `egress` is enforced; `None` without one.
     #[serde(default)]
     pub egress_enforced: Option<EgressEnforcement>,
-    /// Its network settings; `None` for a Space this machine keeps no
+    /// Its network settings; `None` for a Space this computer keeps no
     /// record of, or one created before they existed (it gets them on its
     /// next start).
     #[serde(default)]
@@ -1518,7 +1518,7 @@ pub struct SpaceOrphan {
     /// Its parent's id.
     pub parent: String,
     /// `ending` (its parent is provably gone: it ends after the grace) or
-    /// `listed` (not this machine's to judge: it stays until deleted or its
+    /// `listed` (not this computer's to judge: it stays until deleted or its
     /// own lifetime ends).
     pub state: String,
     /// Why.
@@ -4479,7 +4479,7 @@ impl Spaces {
     /// child stays within its parent's unless `widen`; `tree` gives its
     /// children the same settings. They hold at once where the runtime can
     /// change a running guest's network, else from its next start
-    /// (`applied`). A Space another machine runs is `Unsupported`.
+    /// (`applied`). A Space another computer runs is `Unsupported`.
     pub async fn set_network(
         &self,
         space: String,
@@ -4563,7 +4563,7 @@ impl Spaces {
 
     /// Lets a Space make child Spaces of its own, or stops it. While on,
     /// `cua`, the SDKs and the agent's tools in that Space create, list and
-    /// delete Spaces that belong to it (on the same machine, never wider
+    /// delete Spaces that belong to it (on the same computer, never wider
     /// than it, ending no later than it), through a channel only it can
     /// reach. Off ends its capability at once; children it made keep running
     /// until deleted or their lifetime ends. Only for a Space the machine of
@@ -4585,7 +4585,7 @@ impl Spaces {
                     }
                     if enabled && !id.starts_with("local:") {
                         return Err(CuaError::Unsupported(
-                            "child Spaces are available for Spaces this machine runs".into(),
+                            "child Spaces are available for Spaces this computer runs".into(),
                         ));
                     }
                     s.set_children(&id, enabled)?;

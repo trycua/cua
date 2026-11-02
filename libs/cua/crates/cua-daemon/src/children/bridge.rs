@@ -1,4 +1,4 @@
-//! Keeps the spawn channel of every running Space on this machine that has
+//! Keeps the spawn channel of every running Space on this computer that has
 //! children on, and ends the capabilities of Spaces that are gone.
 //!
 //! For each such Space the host mints a capability, starts the guest's end
@@ -28,7 +28,7 @@ const NO_FEATURE_RETRY: Duration = Duration::from_secs(60);
 /// How often orphaned children are judged.
 const REAP_EVERY: Duration = Duration::from_secs(60);
 
-/// What the reaper sees of this machine's registry, or `None` when it can
+/// What the reaper sees of this computer's registry, or `None` when it can
 /// not be read (then nothing is decided).
 pub(crate) fn seen(shared: &Shared) -> Option<Vec<super::reaper::Seen>> {
     let spaces = shared.runtime.spaces();
@@ -49,7 +49,7 @@ pub(crate) fn seen(shared: &Shared) -> Option<Vec<super::reaper::Seen>> {
     )
 }
 
-/// Judges the children of this machine and ends the ones whose parent is
+/// Judges the children of this computer and ends the ones whose parent is
 /// provably gone for the grace period (each with everything below it).
 pub(crate) fn reap(shared: &Arc<Shared>) {
     use super::reaper::{Memory, Verdict, judge};
@@ -102,7 +102,7 @@ pub(crate) fn reap(shared: &Arc<Shared>) {
     }
 }
 
-/// Only Spaces this machine runs itself hold a channel to it.
+/// Only Spaces this computer runs itself hold a channel to it.
 fn runs_here(id: &str) -> bool {
     id.starts_with("local:")
 }

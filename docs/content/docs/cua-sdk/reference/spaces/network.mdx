@@ -124,7 +124,7 @@ Replaces a Space's network settings (see `NetworkSettings`). A
 child stays within its parent's unless `widen`; `tree` gives its
 children the same settings. They hold at once where the runtime can
 change a running guest's network, else from its next start
-(`applied`). A Space another machine runs is `Unsupported`.
+(`applied`). A Space another computer runs is `Unsupported`.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -266,7 +266,7 @@ Returned by [`Spaces.network`](#spacesnetwork).
 | `settings` | [`NetworkSettings`](#networksettings-record) |  | Its settings. |
 | `summary` | `String` |  | One plain line ("Internet only"). |
 | `widenings` | `Vec<String>` |  | What the settings open beyond `internet`, one plain line each. |
-| `enforcement` | `String` |  | `enforced` (rules on the host, outside the guest), `no_network` (its runtime can't protect it yet), `open` (No protection) or `refused`; empty when unknown (a Space another machine runs). |
+| `enforcement` | `String` |  | `enforced` (rules on the host, outside the guest), `no_network` (its runtime can't protect it yet), `open` (No protection) or `refused`; empty when unknown (a Space another computer runs). |
 | `point` | `String` |  | Where the rules are enforced, or why its network is cut. |
 | `note` | `Option<String>` |  | Why its network is not what was asked; `None` otherwise. |
 | `parent` | `Option<String>` |  | Its parent and its tree's top-level Space; `None` for a top-level Space. |

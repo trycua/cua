@@ -828,13 +828,13 @@ fn dedup(it: impl Iterator<Item = IpAddr>) -> Vec<IpAddr> {
 /// Where a Space runs, as [`network_support`] sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Placement {
-    /// On this machine.
+    /// On this computer.
     Local,
-    /// On one of your machines (a pool host): its own runtime enforces.
+    /// On one of your computers (a pool host): its own runtime enforces.
     PoolHost,
     /// In your own cloud account or a Spaces provider (`on=<provider>`).
     Provider,
-    /// On a provider because this machine was full (`on=auto` overflow).
+    /// On a provider because this computer was full (`on=auto` overflow).
     Overflow,
 }
 
@@ -896,7 +896,7 @@ const WHY_FIRECRACKER_OS: &str = "Firecracker microVMs run on Linux only";
 const WHY_VZ_OS: &str = "Apple microVMs run on a Mac only";
 const WHY_MAC_OS: &str = "this runtime runs on a Mac only";
 const WHY_PROVIDER: &str = "Spaces in your cloud account can't protect your network yet. \
-     Create it on this machine or one of yours, or choose No protection.";
+     Create it on this computer or one of yours, or choose No protection.";
 
 /// What `kind` does with network settings on host OS `os` (`linux`,
 /// `macos`, `windows`) at `placement`. Every combination has an answer:
@@ -1011,7 +1011,7 @@ pub fn plan(
     })
 }
 
-/// What a start of `kind` on this machine does with `spec`'s network, for
+/// What a start of `kind` on this computer does with `spec`'s network, for
 /// a runtime that has no point to enforce rules (Lume, Vz, QEMU on macOS
 /// or Windows, Apple Containerization): [`NetworkPlan::NoNetwork`] (start
 /// it with no network), [`NetworkPlan::Open`] (`unprotected`, or the old
@@ -1102,7 +1102,7 @@ pub fn support_table_markdown() -> String {
                 "| {} | {} | {} | {} | {} |\n",
                 kind.as_str(),
                 match placement {
-                    Placement::Local | Placement::PoolHost => "this machine or one of yours",
+                    Placement::Local | Placement::PoolHost => "this computer or one of yours",
                     Placement::Provider | Placement::Overflow => "your cloud account",
                 },
                 cell("linux"),

@@ -151,7 +151,7 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--allow"></span>`--allow` | string |  | Allow this destination, also where a block covers it (IP or CIDR; repeat for more). Alias: `--egress-allow`. Repeatable. |
 | <span id="cua-spaces-create--parent"></span>`--parent` | string |  | Create it as a child of this Space: it joins the parent's tree (they reach each other) and its network is no more open than the parent's. With `--parent`, the children are deleted, stopped and suspended with it. |
 | <span id="cua-spaces-create--durable"></span>`--durable` | boolean | `false` | Keep it on your machines (with `--on auto`): when its machine goes away it is created again on another one, with the same name (its disk starts fresh). `cua spaces delete <name>` deletes it for good. |
-| <span id="cua-spaces-create--children"></span>`--children` | boolean | `false` | Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this machine, never wider than it (`cua spaces children`). Agent runs turn this on by themselves. |
+| <span id="cua-spaces-create--children"></span>`--children` | boolean | `false` | Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this computer, never wider than it (`cua spaces children`). Agent runs turn this on by themselves. |
 | <span id="cua-spaces-create--forkable"></span>`--forkable` | boolean | `false` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it. |
 | <span id="cua-spaces-create--widen"></span>`--widen` | boolean | `false` | With --parent: let its network be more open than its parent's (recorded on the Space). |
 
@@ -248,7 +248,7 @@ cua spaces egress studio --clear
 
 ### `cua spaces children`
 
-Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this machine, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends.
+Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this computer, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends.
 
 ```text output
 cua spaces children [OPTIONS] <SPACE> <STATE>

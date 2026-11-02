@@ -77,7 +77,7 @@ pub(crate) mod imp {
         Ok(())
     }
 
-    /// Turns children on for `space`: only a Space this machine runs can
+    /// Turns children on for `space`: only a Space this computer runs can
     /// hold a channel to it.
     fn turn_on_children(
         spaces: &cua_spaces::Spaces,
@@ -91,7 +91,7 @@ pub(crate) mod imp {
         }
         if !space.id.starts_with("local:") {
             return Err(tonic::Status::failed_precondition(
-                "child Spaces are available for Spaces this machine runs; turn them on \
+                "child Spaces are available for Spaces this computer runs; turn them on \
                  on the machine that runs this Space",
             ));
         }

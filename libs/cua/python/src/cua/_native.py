@@ -1303,13 +1303,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_routines() != 22768:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 33485:
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 31983:
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -43829,7 +43829,7 @@ class SpacesProtocol(typing.Protocol):
         """
         Lets a Space make child Spaces of its own, or stops it. While on,
         `cua`, the SDKs and the agent's tools in that Space create, list and
-        delete Spaces that belong to it (on the same machine, never wider
+        delete Spaces that belong to it (on the same computer, never wider
         than it, ending no later than it), through a channel only it can
         reach. Off ends its capability at once; children it made keep running
         until deleted or their lifetime ends. Only for a Space the machine of
@@ -43859,7 +43859,7 @@ class SpacesProtocol(typing.Protocol):
         child stays within its parent's unless `widen`; `tree` gives its
         children the same settings. They hold at once where the runtime can
         change a running guest's network, else from its next start
-        (`applied`). A Space another machine runs is `Unsupported`.
+        (`applied`). A Space another computer runs is `Unsupported`.
 """
         raise NotImplementedError
     async def set_tree_budget(self, space: str,limits: TreeBudgetLimits) -> TreeBudget:
@@ -45702,7 +45702,7 @@ class Spaces(SpacesProtocol):
         """
         Lets a Space make child Spaces of its own, or stops it. While on,
         `cua`, the SDKs and the agent's tools in that Space create, list and
-        delete Spaces that belong to it (on the same machine, never wider
+        delete Spaces that belong to it (on the same computer, never wider
         than it, ending no later than it), through a channel only it can
         reach. Off ends its capability at once; children it made keep running
         until deleted or their lifetime ends. Only for a Space the machine of
@@ -45789,7 +45789,7 @@ class Spaces(SpacesProtocol):
         child stays within its parent's unless `widen`; `tree` gives its
         children the same settings. They hold at once where the runtime can
         change a running guest's network, else from its next start
-        (`applied`). A Space another machine runs is `Unsupported`.
+        (`applied`). A Space another computer runs is `Unsupported`.
 """
 
         _UniffiFfiConverterString.check_lower(space)

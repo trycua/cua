@@ -467,7 +467,7 @@ Examples:
         durable: bool,
         /// Let it make child Spaces of its own: `cua`, the SDKs and the
         /// agent's tools in it create, list and delete Spaces that belong to
-        /// it, on this machine, never wider than it (`cua spaces children`).
+        /// it, on this computer, never wider than it (`cua spaces children`).
         /// Agent runs turn this on by themselves.
         #[arg(long)]
         children: bool,
@@ -612,7 +612,7 @@ Examples:
     },
     /// Let a Space make child Spaces of its own, or stop it. While on,
     /// `cua`, the SDKs and the agent's tools inside it create, list and
-    /// delete Spaces that belong to it: on this machine, with its egress
+    /// delete Spaces that belong to it: on this computer, with its egress
     /// rules, ending no later than it, through a channel only it can reach.
     /// Off ends its capability at once; children it made keep running
     /// until deleted or their lifetime ends.

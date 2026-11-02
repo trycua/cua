@@ -59,9 +59,9 @@ An agent gets the same as tools in its Space's own MCP server:
 
 ## What a child gets
 
-- **Where.** A child runs on the same machine as its parent unless it asks
-  for `--on auto` (the least-loaded of your machines and linked clouds),
-  `--on host:<name>` or a linked cloud (`--on aws`). This machine's cua daemon
+- **Where.** A child runs on the same computer as its parent unless it asks
+  for `--on auto` (the least-loaded of your computers and linked clouds),
+  `--on host:<name>` or a linked cloud (`--on aws`). This computer's cua daemon
   creates it with your own sign-in and cloud links. The Space asking never
   holds them. A Windows child needs a machine with virtualization: a Windows
   PC of yours, or a cloud host that offers it. Hetzner Cloud servers can't
@@ -101,12 +101,12 @@ The channel a Space uses answers for its own children and nothing else.
 - **Other Spaces.** Your other Spaces, its parent and its siblings look
   the same as a Space that does not exist.
 - **Your account.** It holds no account sign-in, cloud link or key, so it
-  can't share, connect clouds or reach your other machines.
+  can't share, connect clouds or reach your other computers.
 - **A copied capability.** The capability it holds works only on its own
   channel. A copy taken from a snapshot, a fork or another Space is
   refused.
 
 The channel is not a network port. The Space's own cua-spacesd keeps it on
-the Space's loopback and hands each connection to this machine's cua daemon
+the Space's loopback and hands each connection to this computer's cua daemon
 over the connection the daemon opened. The daemon knows which Space is
 asking from the connection, never from what the Space says.

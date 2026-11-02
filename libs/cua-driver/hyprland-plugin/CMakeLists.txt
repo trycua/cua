@@ -233,6 +233,13 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
     endif()
     message(STATUS "Building against Hyprland headers ${HYPRLAND_VERSION}")
 
+    # 0.57 moved window state behind CWindow::backend() (see src/hyprland_compat.hpp).
+    if(HYPRLAND_VERSION VERSION_GREATER_EQUAL "0.57.0")
+        set(cua_hyprland_window_backend_api 1)
+    else()
+        set(cua_hyprland_window_backend_api 0)
+    endif()
+
     cua_detect_hyprland_api(cua_hyprland_socket1_api
         "${HYPRLAND_INCLUDE_DIRS}" "${HYPRLAND_CFLAGS_OTHER}")
     if(cua_hyprland_socket1_api STREQUAL "1")
@@ -246,8 +253,10 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
-            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2" AND
+           NOT HYPRLAND_VERSION STREQUAL "0.57.0")
+            message(FATAL_ERROR
+                "Input is pinned to Hyprland 0.56.2 or 0.57.0 (found ${HYPRLAND_VERSION})")
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
     endif()
@@ -278,6 +287,7 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
     target_compile_definitions(cua_hyprland_plugin PRIVATE
         CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}"
         CUA_HYPRLAND_SOCKET1_API=${cua_hyprland_socket1_api}
+        CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api}
         _GNU_SOURCE)
     target_compile_options(cua_hyprland_plugin PRIVATE
         -Wall -Wextra -Wpedantic -Werror -Wno-return-type-c-linkage)

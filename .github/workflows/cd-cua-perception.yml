@@ -203,7 +203,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             input_artifact: cua-perception-input-linux-x86_64
             worker: cua-perception
@@ -404,7 +404,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - runner: blacksmith-6vcpu-macos-26
             target: aarch64-apple-darwin

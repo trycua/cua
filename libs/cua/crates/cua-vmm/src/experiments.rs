@@ -153,6 +153,50 @@ pub fn set_enabled(gate: Gate, on: Option<bool>) {
     GATE_OVERRIDES[gate.slot()].store(v, Ordering::Relaxed);
 }
 
+/// Holds `gate` on or off until dropped, then follows the environment and the
+/// file again. The override is process-wide and test harnesses run tests on
+/// parallel threads, so holders of the same gate take turns: a test that
+/// flips a gate takes one of these instead of calling [`set_enabled`].
+#[must_use = "the override ends when this is dropped"]
+pub struct Override {
+    gate: Gate,
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
+
+/// One turn lock per gate (as many as [`GATE_OVERRIDES`]).
+static GATE_TURNS: [std::sync::Mutex<()>; 8] = [
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+];
+
+/// Waits for `gate`'s turn, then holds it `on` (see [`Override`]).
+pub fn hold(gate: Gate, on: bool) -> Override {
+    let turn = GATE_TURNS[gate.slot()]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    set_enabled(gate, Some(on));
+    Override { gate, _turn: turn }
+}
+
+impl Override {
+    /// Switches the held gate without giving up the turn.
+    pub fn set(&self, on: bool) {
+        set_enabled(self.gate, Some(on));
+    }
+}
+
+impl Drop for Override {
+    fn drop(&mut self) {
+        set_enabled(self.gate, None);
+    }
+}
+
 /// What [`EXPERIMENTS_ENV`] says about `gate`: `Some(true)` when listed,
 /// `Some(false)` as `-name`, `None` when it does not mention it.
 pub fn env_says(value: Option<&str>, gate: Gate) -> Option<bool> {

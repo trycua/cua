@@ -753,7 +753,11 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
         tasks.push(tokio::spawn(async move {
             loop {
                 if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
-                    rt.spaces().reconcile_network().await;
+                    // A shutdown never waits for a pass that is still working.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = rt.spaces().reconcile_network() => {}
+                    }
                 }
                 tokio::select! {
                     _ = rx.changed() => return,

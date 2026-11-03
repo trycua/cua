@@ -226,7 +226,10 @@ pub async fn run(every: Duration, shed: Shed, mut shutdown: tokio::sync::watch::
             _ = shutdown.changed() => return,
             _ = tokio::time::sleep(every) => {}
         }
-        let outcome = check(&measure_self, &raise_open_file_limit, &shed).await;
+        let outcome = tokio::select! {
+            _ = shutdown.changed() => return,
+            outcome = check(&measure_self, &raise_open_file_limit, &shed) => outcome,
+        };
         let Outcome::Healed {
             before,
             raised,

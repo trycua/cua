@@ -65,6 +65,9 @@ pub mod share_hub;
 mod share_link;
 #[cfg(feature = "server")]
 mod share_svc;
+/// VMs and containers failed Space creates left behind.
+#[cfg(feature = "spaces")]
+pub mod space_orphans;
 #[cfg(feature = "server")]
 mod spaces_svc;
 pub mod storage;

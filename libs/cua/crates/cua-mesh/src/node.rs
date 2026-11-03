@@ -969,22 +969,33 @@ impl Drop for Forward {
     }
 }
 
+/// A TCP listener and a UDP socket on one port of `ip`. TCP and UDP have
+/// separate port spaces, and Windows excludes ranges per protocol and hands
+/// ports out in order, so TCP-first picks can all land in a block that
+/// refuses UDP: picks alternate which protocol chooses the number, and
+/// refused ones stay bound until the end so they are not handed out again.
 async fn bind_pair(ip: std::net::IpAddr) -> Result<(TcpListener, Option<UdpSocket>)> {
-    for _ in 0..16 {
-        let tcp = TcpListener::bind((ip, 0))
-            .await
-            .map_err(|e| Error::Io(e.to_string()))?;
-        let port = tcp
-            .local_addr()
-            .map_err(|e| Error::Io(e.to_string()))?
-            .port();
-        if let Ok(udp) = UdpSocket::bind((ip, port)).await {
-            return Ok((tcp, Some(udp)));
+    let io = |e: std::io::Error| Error::Io(e.to_string());
+    let mut refused_tcp = Vec::new();
+    let mut refused_udp = Vec::new();
+    for pick in 0..16 {
+        if pick % 2 == 0 {
+            let tcp = TcpListener::bind((ip, 0)).await.map_err(io)?;
+            let port = tcp.local_addr().map_err(io)?.port();
+            match UdpSocket::bind((ip, port)).await {
+                Ok(udp) => return Ok((tcp, Some(udp))),
+                Err(_) => refused_tcp.push(tcp),
+            }
+        } else if let Ok(udp) = UdpSocket::bind((ip, 0)).await {
+            let port = udp.local_addr().map_err(io)?.port();
+            match TcpListener::bind((ip, port)).await {
+                Ok(tcp) => return Ok((tcp, Some(udp))),
+                Err(_) => refused_udp.push(udp),
+            }
         }
     }
-    let tcp = TcpListener::bind((ip, 0))
-        .await
-        .map_err(|e| Error::Io(e.to_string()))?;
+    tracing::warn!(%ip, "mesh forward without UDP: no port free for both TCP and UDP");
+    let tcp = TcpListener::bind((ip, 0)).await.map_err(io)?;
     Ok((tcp, None))
 }
 

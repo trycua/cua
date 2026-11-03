@@ -17,6 +17,9 @@ import { validate, type Schema } from "../../cua-spaces-web/src/bridge/contracts
 import { OP_SHAPES, SHAPE_DEFS } from "../../cua-spaces-web/src/bridge/contracts/shapes";
 import { HOST_COVERAGE } from "../../cua-spaces-web/src/bridge/coverage";
 import { THREAD_OPERATIONS } from "../../cua-spaces-web/src/bridge/ops/thread";
+import { testCore, wasmBuilt } from "../../cua-spaces-web/src/bridge/__tests__/testCore";
+import type { WizardEnv } from "../../cua-spaces-web/src/bridge/contracts/new-space";
+import { homeCreateRequest, type HomeOffer } from "../../cua-spaces-web/src/lib/prepare/home-request";
 import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/bridge/protocol";
 import { createBridge, type Bridge } from "../src/bridge";
 import { runtimeWord } from "../src/model/backend";
@@ -266,6 +269,21 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(row.detail).toBe("Another computer · Downloading macOS (first time only)…");
     release();
     await create;
+  });
+
+  // CUA-3193: the new setup ended on "Preparing stopped: config.image: string". The page's
+  // first-Space create, from the wizard's Linux offer (the real core), through this host's create.
+  it.skipIf(!wasmBuilt)("makes the new setup's first Space through the real create", async () => {
+    const core = await testCore();
+    const mac = JSON.parse(readFileSync(path.resolve(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/parity/first-run.json"), "utf8")).machineBase as WizardEnv;
+    // The page's offers (`firstSpaceOffers`): the core's, for this machine's env.
+    const offers = core.call<HomeOffer[]>("wizard.firstSpaceOffers", { env: mac, hostOs: "macos" });
+    const { os, ...config } = homeCreateRequest(offers, "home-claude-code");
+    const made = (await call("spaces.create", { pendingId: "pending:home", config, os })) as { id: string; name: string };
+    expect(made).toMatchObject({ name: "home-claude-code" });
+    expect(backend.created.at(-1)).toMatchObject({ image: config.image, name: "home-claude-code", on: "local" });
+    // What it used to send: no image, which this host refuses with its argument check.
+    expect(await code("spaces.create", { pendingId: "pending:old", config: { os: "linux", name: "home-claude-code" }, os: "linux" })).toBe("bad_args");
   });
 
   it("refuses a create it cannot run", async () => {

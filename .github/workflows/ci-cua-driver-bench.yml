@@ -23,7 +23,7 @@ jobs:
   harness:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Harness tests (no GUI, no model)
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - name: Check out Cua

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 // Drives the cua-spacesd HTML5 viewer like a user: open the link `cua sb
 // view` printed, wait for the stream, click the bottom-right (white) cell of
 // the x11-pad grid, type "ok", then capture. Writes <out>.json, <out>.png and

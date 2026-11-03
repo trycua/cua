@@ -21,6 +21,7 @@ import { KeySheet } from "@/components/agents/key-sheet";
 import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connected-apps";
 import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
+import { usePrepare } from "@/lib/prepare/store";
 
 export const Route = createFileRoute("/onboarding/")({
   // `?due=1` is a host opening the first run because it is not done (the Mac
@@ -53,8 +54,16 @@ export const Route = createFileRoute("/onboarding/")({
  * keycap art, as plain rows.
  */
 function OnboardingPage() {
-  const fr = useFirstRun();
   const navigate = useNavigate();
+  const prepare = usePrepare();
+  // The new setup (Labs): the last screen ends on Home, the prompt box and the suggestions, while the
+  // first Space keeps getting ready behind it (preparing started at launch). The clock for "setup
+  // finished to ready" starts here.
+  const openHome = () => {
+    prepare.driver?.onboardingDone();
+    void navigate({ to: "/home" });
+  };
+  const fr = useFirstRun(true, undefined, openHome);
   const { view } = fr;
 
   const leave = () => {
@@ -63,6 +72,7 @@ function OnboardingPage() {
   };
   const finish = async () => {
     try {
+      prepare.driver?.onboardingDone();
       await fr.finish();
       await navigate({ to: "/spaces" });
     } catch (e) {
@@ -100,7 +110,7 @@ function OnboardingPage() {
           {view.later}
         </button>
       </header>
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
         {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
         <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
         <div className="flex w-full max-w-[520px] shrink-0 flex-col">
@@ -117,6 +127,13 @@ function OnboardingPage() {
     </div>
   );
 }
+
+/**
+ * Every page's action row (Set up and Not now, Continue, Sign in ...). It sticks to the bottom of the
+ * scrolling content area, so a short window never pushes it out of reach: the page's content scrolls
+ * above it. Back and Skip for now stay where they are.
+ */
+const ACTION_ROW = "sticky bottom-0 z-20 mt-8 flex flex-wrap items-center gap-3 bg-gradient-to-t from-[#F4F5F7] via-[#F4F5F7]/90 to-transparent pt-6 pb-4 dark:from-[#07080a] dark:via-[#07080a]/90";
 
 /** "Skip for now": a ghost pill, readable on the starfield, quieter than Continue. */
 const SKIP_PILL =
@@ -226,7 +243,7 @@ function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <div aria-hidden className="mb-4 h-7" />
       <Heading>{w.title}</Heading>
       <Lede>{w.lede}</Lede>
-      <div className="mt-8">
+      <div className={ACTION_ROW}>
         <Primary label={w.primary.label} onClick={() => void fr.act(w.primary.id)} />
       </div>
     </div>
@@ -388,7 +405,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
             })}
             <OtherMachineRow />
           </Rows>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
+          <div className={ACTION_ROW}>
             <Primary label="Check again" onClick={() => void fr.act("recheck")} data-first-run-recheck="" />
             <Secondary label="Continue without one" onClick={() => void fr.act("skip")} />
           </div>
@@ -455,7 +472,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           })}
           <OtherMachineRow />
         </Rows>
-        <div className="mt-8 flex flex-wrap items-center gap-3">
+        <div className={ACTION_ROW}>
           {all || failed.length ? (
             <>
               <Primary label="Continue" onClick={() => void fr.act(c.primary.id)} />
@@ -606,7 +623,7 @@ function AdvancedConnect({ fr, view }: { fr: FirstRunHook; view: FirstRunView })
           {c.consent}
         </p>
       ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
         {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
         {c.mode ? (
@@ -683,7 +700,7 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         ))}
         {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
       </Rows>
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
         {d.secondary ? <Secondary label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} describedBy={d.note ? "first-run-devices-note" : undefined} /> : null}
       </div>
@@ -727,7 +744,7 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         {c.primary ? (
           <Primary label={c.busy ? "Installing…" : c.primary.label} onClick={() => !c.busy && void fr.act(c.primary!.id)} data-first-run-cli-primary={c.primary.id} />
         ) : null}
@@ -753,7 +770,7 @@ function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <p className="mt-4 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
         {p.note}
       </p>
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         {p.primary ? <Primary label={p.primary.label} onClick={() => void fr.act(p.primary!.id)} data-first-run-permissions-primary={p.primary.id} /> : null}
         {p.secondary ? <Secondary label={p.secondary.label} onClick={() => void fr.act(p.secondary!.id)} data-first-run-permissions-secondary={p.secondary.id} /> : null}
       </div>
@@ -818,7 +835,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
-      <div className="mt-8 flex items-center gap-3">
+      <div className={ACTION_ROW}>
         <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}
         </Button>

@@ -19,9 +19,9 @@ use crate::{
     CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
     cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview, drive_page,
     drive_settings, driver_preview, experiments, host, local_network, login_item, machines, notch,
-    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon, telemetry,
-    tips, upsell, window, wizard,
+    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, prepare,
+    presence, relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon,
+    telemetry, tips, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -79,6 +79,7 @@ pub const METHODS: &[&str] = &[
     "wizard.view",
     "wizard.createArgs",
     "wizard.firstSpaceOffers",
+    "firstPrompts.choose",
     "wizard.pickerImages",
     "wizard.pickerGroups",
     "wizard.findImage",
@@ -330,6 +331,11 @@ pub const METHODS: &[&str] = &[
     "checklist.reduce",
     "checklist.view",
     "checklist.observeFrom",
+    "prepare.reduce",
+    "prepare.view",
+    "prepare.metrics",
+    "prepare.hidden",
+    "prepare.listed",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -569,6 +575,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
         "wizard.firstSpaceOffers" => out(wizard::first_space_offers(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "firstPrompts.choose" => out(crate::first_prompts::choose_for(
             &a.get("env")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
@@ -1451,6 +1462,28 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "checklist.observeFrom" => out(checklist::observe_from(
             &a.get::<Option<checklist::ChecklistSeen>>("seen")?
+                .unwrap_or_default(),
+        )),
+        "prepare.reduce" => out(prepare::reduce(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<prepare::Action>("action")?,
+        )),
+        "prepare.view" => out(prepare::view(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.hidden" => out(prepare::hidden_spaces(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.listed" => out(prepare::listed(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<Vec<String>>("ids")?,
+        )),
+        "prepare.metrics" => out(prepare::metrics(
+            &a.get::<Option<prepare::State>>("state")?
                 .unwrap_or_default(),
         )),
         "palette.keybindings" => out(palette::keybindings()),

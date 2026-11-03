@@ -461,6 +461,17 @@
        "repeatable": false,
        "short_name": null,
        "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Only the sign-in, as `--sign-in`, and nothing else: no Cua skills and no MCP entry are added to any agent, Claude Code is never run to refresh its own sign-in, and nothing is written outside the Cua home (the access token goes to Keyvault, never printed). For a demo, or a home Space that only needs the credential. On a Mac, macOS asks once to let Cua read the Keychain item \"Claude Code-credentials\": that prompt is yours to answer",
+       "hidden": false,
+       "name": "sign-in-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
       }
      ],
      "hidden": false,
@@ -732,6 +743,17 @@
        "help": "Also make a sign-in for each agent's runs in your Spaces and keep it in Keyvault on This Mac: the sign-in Claude Code already has (read from where Claude Code keeps it, as an access token only; Claude Code's own sign-in is never changed) and Codex's own device sign-in (a link and a code to enter there, in a folder Cua owns); Hermes uses the providers connected in Cua Spaces (Settings, Connections). Only Claude Code's own sign-in is read, and only its access token is kept; Codex's own `auth.json` is never read or changed",
        "hidden": false,
        "name": "sign-in",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Only the sign-in, as `--sign-in`, and nothing else: no Cua skills and no MCP entry are added to any agent, Claude Code is never run to refresh its own sign-in, and nothing is written outside the Cua home (the access token goes to Keyvault, never printed). For a demo, or a home Space that only needs the credential. On a Mac, macOS asks once to let Cua read the Keychain item \"Claude Code-credentials\": that prompt is yours to answer",
+       "hidden": false,
+       "name": "sign-in-only",
        "repeatable": false,
        "short_name": null,
        "takes_value": false

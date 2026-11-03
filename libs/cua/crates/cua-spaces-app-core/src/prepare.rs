@@ -1247,7 +1247,7 @@ mod tests {
             Action::Phase {
                 now_ms: 3_000,
                 phase: "pulling".into(),
-                detail: "ghcr.io/trycua/linux:24.04-headless".into(),
+                detail: "ghcr.io/trycua/linux:24.04-slim".into(),
                 done: Some(1),
                 total: Some(300),
                 per_second: None,

@@ -121,7 +121,7 @@
           "type": "phase",
           "nowMs": 1100000,
           "phase": "pulling",
-          "detail": "ghcr.io/trycua/linux:24.04-headless",
+          "detail": "ghcr.io/trycua/linux:24.04-slim",
           "done": 100663296,
           "total": 383778816,
           "perSecond": 4194304

@@ -87,6 +87,10 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   experiments: { status: "run", screen: "settings/advanced" },
   "placement-picker": { status: "run", screen: "new-space" },
   machines: { status: "run", screen: "machines" },
+  prepare: {
+    status: "skip",
+    reason: "The new setup (Settings, Advanced, Labs) draws prepare.view as is; bridge/prepare-core.ts drives the wasm core and src/__tests__/first-run-parity.test.ts replays the flow",
+  },
   "first-run": {
     status: "skip",
     reason: "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",

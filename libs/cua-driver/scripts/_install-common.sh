@@ -75,6 +75,38 @@
 #
 # Returns: always 0. Caller threads this through unconditionally; the
 # behaviour is "kill what we can, never block the install".
+cua_driver_is_serve_process() {
+    local pid="$1"
+    [ -r "/proc/$pid/cmdline" ] || return 1
+
+    local arg is_first=1 skip_next=0
+    while IFS= read -r -d '' arg; do
+        if [ "$is_first" = "1" ]; then
+            is_first=0
+            continue
+        fi
+        if [ "$skip_next" = "1" ]; then
+            skip_next=0
+            continue
+        fi
+        case "$arg" in
+            --pid-file|--socket|--expected-pid|--permission-mode)
+                skip_next=1
+                ;;
+            -*)
+                ;;
+            serve)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done < "/proc/$pid/cmdline"
+
+    return 1
+}
+
 stop_cua_driver_daemons() {
     printf '==> stopping any running cua-driver daemons before swap\n'
 
@@ -139,10 +171,8 @@ stop_cua_driver_daemons() {
                 user_pids=$(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true)
                 for pid in $user_pids; do
                     [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
-                    if [ -r "/proc/$pid/cmdline" ]; then
-                        if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qw "serve"; then
-                            kill "$pid" 2>/dev/null || true
-                        fi
+                    if cua_driver_is_serve_process "$pid"; then
+                        kill "$pid" 2>/dev/null || true
                     fi
                 done
             fi
@@ -211,10 +241,8 @@ show_cua_driver_daemon_survivors() {
         local linux_survivor_pids="" pid
         for pid in $(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true); do
             [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
-            if [ -r "/proc/$pid/cmdline" ]; then
-                if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qw "serve"; then
-                    linux_survivor_pids="${linux_survivor_pids:+$linux_survivor_pids }$pid"
-                fi
+            if cua_driver_is_serve_process "$pid"; then
+                linux_survivor_pids="${linux_survivor_pids:+$linux_survivor_pids }$pid"
             fi
         done
         if [ -z "$linux_survivor_pids" ]; then

@@ -323,7 +323,9 @@ pub fn write_rules_named(dir: &Path, r: &Rules, domains: &crate::egress::Domains
     Ok(())
 }
 
-/// The gateway process of the VM in `dir`, from its pid file.
+/// The gateway process of the VM in `dir`, from its pid file. Only Unix
+/// signals it (Windows has no SIGHUP; its gateway polls the rules).
+#[cfg(any(unix, test))]
 fn gateway_pid(dir: &Path) -> Option<i32> {
     let pid: i32 = std::fs::read_to_string(dir.join(PID_FILE))
         .ok()?

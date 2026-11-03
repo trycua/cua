@@ -90,6 +90,15 @@ export function useCiRunners(): CiRunnersHook {
   current.current = state;
   // Stale answers (a poll that finishes after a newer one) never replace newer data.
   const seq = useRef(0);
+  // An answer that lands after the page is gone changes nothing.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      seq.current += 1;
+    };
+  }, []);
 
   const load = useCallback(
     async (live: boolean) => {
@@ -102,6 +111,7 @@ export function useCiRunners(): CiRunnersHook {
           setError(null);
         }
       } catch (e) {
+        if (!alive.current) return;
         if (isUnsupported(e)) setUnsupported(true);
         else if (mine === seq.current) setError(message(e));
       }
@@ -145,6 +155,7 @@ export function useCiRunners(): CiRunnersHook {
       } catch (e) {
         answer = { state: "failed", message: message(e) };
       }
+      if (!alive.current) return;
       const before = current.current?.connect.url ?? null;
       reduce({ type: "connectAnswer", answer });
       if (answer.state === "waiting" && answer.url && (first || answer.url !== before)) open(answer.url);
@@ -179,11 +190,14 @@ export function useCiRunners(): CiRunnersHook {
           const org = before.connect.org.trim();
           data.call("ci.connectToken", { org, ...(extra?.token?.trim() ? { token: extra.token.trim() } : {}) }).then(
             (a) => {
+              if (!alive.current) return;
               const ok = a.state === "connected";
               reduce({ type: "tokenDone", ok, message: ok ? null : (a.message ?? null) });
               if (ok) void load(true);
             },
-            (e: unknown) => reduce({ type: "tokenDone", ok: false, message: message(e) }),
+            (e: unknown) => {
+              if (alive.current) reduce({ type: "tokenDone", ok: false, message: message(e) });
+            },
           );
           break;
         }
@@ -206,6 +220,7 @@ export function useCiRunners(): CiRunnersHook {
       data.call("ci.repositories", allowed ? { allow: [name] } : { remove: [name] }).then(
         () => void load(true),
         (e: unknown) => {
+          if (!alive.current) return;
           setNotice(message(e));
           void load(true);
         },
@@ -220,10 +235,12 @@ export function useCiRunners(): CiRunnersHook {
       setOverview((o) => (o ? { ...o, targets: o.targets.map((t) => (t.target === target ? { ...t, goal } : t)) } : o));
       data.call("ci.goal", { target, goal }).then(
         (r) => {
+          if (!alive.current) return;
           setNotice(r.applied ? null : "Saved. It applies when the running jobs end and the service restarts.");
           void load(true);
         },
         (e: unknown) => {
+          if (!alive.current) return;
           setNotice(message(e));
           void load(true);
         },
@@ -237,8 +254,12 @@ export function useCiRunners(): CiRunnersHook {
       if (!data) return;
       setLogs((l) => ({ ...l, [ref.jobKey]: { lines: l[ref.jobKey]?.lines ?? null, error: null } }));
       data.call("ci.log", ref).then(
-        (r) => setLogs((l) => ({ ...l, [ref.jobKey]: { lines: r.lines, error: null } })),
-        (e: unknown) => setLogs((l) => ({ ...l, [ref.jobKey]: { lines: null, error: message(e) } })),
+        (r) => {
+          if (alive.current) setLogs((l) => ({ ...l, [ref.jobKey]: { lines: r.lines, error: null } }));
+        },
+        (e: unknown) => {
+          if (alive.current) setLogs((l) => ({ ...l, [ref.jobKey]: { lines: null, error: message(e) } }));
+        },
       );
     },
     [data],

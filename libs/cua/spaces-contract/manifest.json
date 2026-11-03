@@ -763,7 +763,7 @@
             "type": "boolean"
           },
           "via": {
-            "description": "Where its internet traffic leaves: `internet` (its own network) or\n`space:<name>` (a Space of its tree). This machine and a SOCKS5\nproxy are the user's to choose (`cua network set --via`). Unset:\nthe exit it has. A child keeps its parent's.",
+            "description": "Where its internet traffic leaves: `internet` (its own network) or\n`space:<name>` (a Space of its tree). This computer and a SOCKS5\nproxy are the user's to choose (`cua network set --via`). Unset:\nthe exit it has. A child keeps its parent's.",
             "type": "string"
           }
         },
@@ -2674,10 +2674,6 @@
             "description": "A custom model endpoint base URL.",
             "type": "string"
           },
-          "brief": {
-            "description": "Standing instructions: the first message each run takes carries them\nin front of its text (the thread shows only the message).",
-            "type": "string"
-          },
           "daily_at": {
             "description": "A schedule: every day at `HH:MM` local time (with `prompt`).",
             "type": "string"
@@ -2814,10 +2810,6 @@
           "space": {
             "description": "The Space it works in (id or name).",
             "type": "string"
-          },
-          "standby": {
-            "description": "Keep a run open with its session ready, so a message starts its turn\nat once (the agent is started in the background, and again if it\nends). Default false.",
-            "type": "boolean"
           },
           "title": {
             "description": "The schedule's title. Default: the first words of `prompt`.",

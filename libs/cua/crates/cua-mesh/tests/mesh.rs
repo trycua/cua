@@ -507,6 +507,9 @@ async fn a_revoked_device_fails_fast_with_the_reason() {
         static_auth(vec![("x-test-device".into(), "dev-c".into())]),
     );
     cfg.name = "c".into();
+    // The reconnect after the relay's close waits up to ~11 s (backoff plus
+    // the spread); the speed-up keeps that inside the deadline below.
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let client = Mesh::start(cfg).await.unwrap();
     client.wait_ready(READY).await.unwrap();
     serve_echo(&machine);

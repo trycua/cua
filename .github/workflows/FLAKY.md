@@ -4,6 +4,22 @@ Rule: a flake is fixed at its root cause (race, timeout, port, shared state),
 not with retries or raised limits. A check stays here only until its fix
 merges. An entry without an owner is a bug in this file.
 
+While the fix is in progress, a flake can be quarantined in
+[`.github/flaky/quarantine.json`](../flaky/quarantine.json), with an owner, an issue
+and an expiry (7 days for a new flake, never more than 90):
+
+- A `test` entry: the test runner retries the test once, and a quarantined
+  failure is reported but does not fail its job.
+- A `job` entry (check name glob, workflow name glob and a `signature` regex
+  from the failure log): `ci-gate` reruns the failed jobs once. If they fail
+  again with that signature, the gate reports a quarantined flake and passes.
+  Any other failure in the same job still fails the gate.
+
+`ci-gate` reads the list from the base commit, so a PR cannot quarantine its
+own failure. An expired entry fails `CI: flaky quarantine` on every PR. The
+nightly `Flaky job scan` opens or updates a `flaky` issue for every job that
+failed and then passed on a rerun of the same commit.
+
 | Check | Symptom | Root cause | Owner | Status |
 |---|---|---|---|---|
 | `relay e2e (docker)`: `cua-relay` `tests/metering.rs` `past_the_allowance_the_session_continues_with_an_upgrade_prompt` | fails on slow runners | test slept 300 ms and assumed both streams were counted and open for 50 ms | relay (CUA-1952 fix: PR 93, injectable clock) | fix in review |

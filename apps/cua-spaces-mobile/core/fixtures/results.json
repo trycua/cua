@@ -666,8 +666,88 @@
       },
       "hostOs": "linux"
     },
-    "error": "invalid: unknown method firstPrompts.choose",
-    "method": "firstPrompts.choose"
+    "method": "firstPrompts.choose",
+    "result": {
+      "caps": {
+        "kvm": false,
+        "macos": false,
+        "macosCached": false,
+        "windows": false,
+        "windowsCached": false
+      },
+      "examples": [
+        {
+          "family": "shopping-research",
+          "id": "price-compare",
+          "needs": [
+            "linux-space"
+          ],
+          "text": "Make a fresh Linux Space with Cua and use its browser to research the three best-reviewed noise cancelling headphones under 300 dollars right now. Compare their prices at four stores, including the maker's own site, read the most recent reviews, and screenshot each price you rely on. Then write me a short buying guide with the sources linked. Do not buy anything, and do not sign in anywhere. Delete the Space when you are done.",
+          "why": "Real research with prices, reviews and screenshots, done while you do something else."
+        },
+        {
+          "family": "trip-planning",
+          "id": "trip-weekend",
+          "needs": [
+            "linux-space"
+          ],
+          "text": "Plan a long weekend in Lisbon for two, three weeks from now. In a fresh Linux Space with a browser, compare live hotel prices and availability for three nights on at least three booking sites, check which neighborhoods have the best recent reviews, and screenshot your top three options. Write me a one page itinerary with links and a total cost estimate. Stop and ask me before anything that costs money. Delete the Space when you are done.",
+          "why": "A trip planned from live availability, with a stop before anything costs money."
+        },
+        {
+          "family": "two-space-dev",
+          "id": "two-space-load",
+          "needs": [
+            "linux-space"
+          ],
+          "text": "Make two fresh Linux Spaces with Cua. In the first, write and start a small web app that serves a page with a thousand generated rows and a search box, and tell me its address inside the network. From the second Space, open it in a browser and use the search box, then load test it with a growing number of parallel requests until responses slow down. Send me the screenshots, a table of response times for each load level, and the point where it started to struggle. Delete both Spaces when you are done.",
+          "why": "A server and its users in two separate Spaces, which is how it fails for real."
+        }
+      ],
+      "lede": "Reproduce this bug on a fresh Linux Space",
+      "suggestions": [
+        {
+          "detail": "It signs in the safe way, reads the tracking page and tells you if it is late.",
+          "family": "orders-claims-forms",
+          "id": "order-tracking",
+          "needs": [
+            "linux-space",
+            "fill-in",
+            "account"
+          ],
+          "os": "linux",
+          "prompt": "Find out where my latest order is. In a fresh Linux Space with a browser, open the store site below. If it needs me to sign in, ask for the login through the Keyvault, or show me the browser window so I can sign in myself, and never ask me to type a password to you. Then tell me the order's status and expected delivery date, screenshot the tracking page, and say if anything looks late. The store: ",
+          "title": "Find out where my order is",
+          "why": "Finds out where your order is without you opening a thing, and signs in without seeing a password."
+        },
+        {
+          "detail": "It drives the screens in a browser and pushes the server until it slows.",
+          "family": "two-space-dev",
+          "id": "server-ui-load",
+          "needs": [
+            "linux-space",
+            "fill-in"
+          ],
+          "os": "linux",
+          "prompt": "Run my app's server in one Space and test it from another. Make two fresh Linux Spaces, install what the project needs and start the server in the first, then from the second drive its main screens in a browser and load test it with a growing number of parallel users. Give me screenshots, a table of response times for each level, and where it starts to break. My project: ",
+          "title": "Run my app in one Space and load test it from another",
+          "why": "Finds out how your app behaves under real users, from a separate Space."
+        },
+        {
+          "detail": "It builds it with no access to your machine and reports what it touches.",
+          "family": "untrusted-code",
+          "id": "untrusted-pr",
+          "needs": [
+            "linux-space",
+            "fill-in"
+          ],
+          "os": "linux",
+          "prompt": "Try an unfamiliar change in a sandbox. Make a fresh Linux Space with no access to my machine, check out the pull request or package below, build it and run its tests, and tell me every network address it contacted and every file it wrote outside its own folder, so I can decide whether to merge or install it. The link: ",
+          "title": "Try an unfamiliar change in a sandbox",
+          "why": "See what unfamiliar code touches before it gets near your machine."
+        }
+      ]
+    }
   },
   {
     "args": {

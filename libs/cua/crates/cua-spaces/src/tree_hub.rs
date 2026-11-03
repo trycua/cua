@@ -29,7 +29,9 @@
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+#[cfg(unix)]
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::error::Result;
 
@@ -196,6 +198,7 @@ async fn serve_one(spaces: &crate::Spaces, id: &str, tree: &str, stream: tokio::
 /// Connects to `port` on Space `id`'s loopback over its tunnel, answers
 /// `OK` (or `NO <why>`) on `stream` and carries the connection. The caller
 /// has already checked that the connection may be made.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) async fn carry_into_guest<S>(spaces: &crate::Spaces, id: &str, stream: &mut S, port: u16)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,

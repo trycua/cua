@@ -625,6 +625,7 @@ pub(crate) struct Inner {
     pub(crate) tree_hubs: crate::tree_hub::TreeHubTable,
     /// The tree overlay across your computers ([`crate::overlay`]).
     #[cfg(feature = "spaces-hotspot")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) overlay: crate::overlay::Table,
     /// The topology hint last written into each running Space (a hash).
     #[cfg(feature = "spaces-hotspot")]

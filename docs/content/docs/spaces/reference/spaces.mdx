@@ -253,7 +253,7 @@ Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `
 | `network` | `string` | required | `internet`, `none`, or `custom` / `custom:none` with `allow` and `deny`. Opening more than the Space has now is the user's to do (`cua network set`, or the app): refused here. |
 | `space` | `string` | required | Space id or name. |
 | `tree` | `boolean` | none | Its child Spaces take the same settings (each within its parent's). |
-| `via` | `string` | none | Where its internet traffic leaves: `internet` (its own network) or `space:<name>` (a Space of its tree). This machine and a SOCKS5 proxy are the user's to choose (`cua network set --via`). Unset: the exit it has. A child keeps its parent's. |
+| `via` | `string` | none | Where its internet traffic leaves: `internet` (its own network) or `space:<name>` (a Space of its tree). This computer and a SOCKS5 proxy are the user's to choose (`cua network set --via`). Unset: the exit it has. A child keeps its parent's. |
 
 #### Result
 

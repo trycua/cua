@@ -34,3 +34,9 @@ A warm Space is claimed on every kind of Space Cua runs, and its coding apps are
 ## How fast
 
 Measured on a Mac with 36 GB of memory and Cua's built-in Linux runtime, creating ten Spaces in a row three seconds apart, then starting Claude Code in each and waiting for a session that accepts a message. With Warm start on, a Create takes the waiting Space in about 0.1 s and the session opens about 1 s later, so the agent is ready about 1.1 s after Create (1.0 to 1.4 s each). The next Space is ready again in about 2 s, which is faster than the next request. Without the experiment the same ten Creates took about 22 s each, most of it installing Claude Code (16 s) and opening its session (4 s). The very first Create after installing Cua still has to download the runtime and the image, about 70 s on a fast connection; once Warm start has finished its first Space, about two minutes after the app starts, Create takes about 1.2 s.
+
+Per app, creating ten Spaces in a row three seconds apart and waiting for the app to accept a message (medians): Codex 0.9 s, Claude Code 1.1 s, OpenCode 1.8 s, Hermes 2.8 s; without the experiment 14 s, 21 s, 20 s and 46 s. Hermes and OpenCode spend that time loading their own code when a session opens (Hermes imports about a second of Python), which a Space cannot do before it has your credentials.
+
+## What it costs
+
+The Space Cua keeps ready is prepared once and saved: the saved copy takes about 5.7 GB of the runtime's disk (the slim image is 1.8 GB unpacked; the four apps add 2 GB), and the waiting Space holds about 200 MB of memory. Preparing the first one takes two to four minutes in the background; when the app starts again it finds the saved copy and has a Space ready in about 5 s.

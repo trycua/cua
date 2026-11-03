@@ -44,7 +44,7 @@ env:
 jobs:
   contract:
     name: buf lint / format / breaking
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -63,7 +63,7 @@ jobs:
 
   codegen:
     name: cua-proto codegen + tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     defaults:
       run:
@@ -98,7 +98,7 @@ jobs:
   # crates is `crates.io dry run` in ci-cua-sdk.yml.)
   tarball:
     name: proto tarball + generated Go client
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

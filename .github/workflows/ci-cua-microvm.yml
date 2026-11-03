@@ -56,7 +56,7 @@ env:
 jobs:
   unit:
     name: unit (linux)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     defaults:
       run:
@@ -97,7 +97,7 @@ jobs:
 
   macos:
     name: unit (macos)
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

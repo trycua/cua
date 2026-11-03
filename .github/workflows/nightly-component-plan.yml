@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       should_build: ${{ steps.plan.outputs.shouldBuild }}
       version: ${{ steps.plan.outputs.version }}
@@ -130,7 +130,7 @@ jobs:
   report-attribution-warning:
     needs: plan
     if: needs.plan.outputs.attribution_issues != '' && needs.plan.outputs.attribution_issues != '[]'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       issues: write

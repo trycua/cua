@@ -235,7 +235,7 @@ jobs:
       github.repository_owner == 'trycua' &&
       needs.run.result == 'success' &&
       needs.run.outputs.released == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

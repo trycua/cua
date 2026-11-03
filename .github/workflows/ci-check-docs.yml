@@ -57,7 +57,7 @@ jobs:
   # decide to skip.
   scope:
     name: Select affected generators
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -247,7 +247,7 @@ jobs:
     name: Check Documentation Sync
     if: always()
     needs: [scope, native-reference]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Require routing and every selected check to pass

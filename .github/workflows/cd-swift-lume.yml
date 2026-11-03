@@ -73,7 +73,7 @@ env:
 
 jobs:
   notarize:
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     outputs:
       version: ${{ steps.set_version.outputs.version }}
     steps:
@@ -278,7 +278,7 @@ jobs:
   release:
     needs: notarize
     if: startsWith(github.ref, 'refs/tags/lume-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:

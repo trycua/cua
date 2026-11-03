@@ -99,7 +99,7 @@ jobs:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -145,7 +145,7 @@ jobs:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: The bundled builds are reported stale
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -36,7 +36,7 @@ concurrency:
 jobs:
   dispatch:
     name: Notify trycua/cloud
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
     timeout-minutes: 5
     steps:

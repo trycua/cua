@@ -91,7 +91,7 @@ jobs:
   changes:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: "cua-spacesd / changes"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -271,7 +271,7 @@ jobs:
     # Not shipped yet (renames fail in the Windows NFS client): run on
     # demand while the Windows mount is finished.
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch') }}
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 60
     defaults:
       run:
@@ -329,7 +329,7 @@ jobs:
     name: relay e2e (docker)
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)')) }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     defaults:
       run:
@@ -355,7 +355,7 @@ jobs:
     name: "cua-spacesd / result"
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (always()) }}
     needs: [changes, test, relay-e2e]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - env:

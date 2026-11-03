@@ -22,7 +22,7 @@ concurrency:
 jobs:
   lint:
     name: Python Lint & Format
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Checkout repository

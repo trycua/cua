@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:

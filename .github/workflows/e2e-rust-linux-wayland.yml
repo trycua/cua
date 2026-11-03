@@ -53,7 +53,7 @@ concurrency:
 jobs:
   source:
     name: "Resolve exact source"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -81,7 +81,7 @@ jobs:
   wayland:
     name: "Linux / ${{ inputs.environment }} / ${{ matrix.lane }}"
     needs: source
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -144,7 +144,7 @@ jobs:
     if: always()
     needs: [source, wayland]
     name: "Linux / Wayland summary"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

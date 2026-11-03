@@ -66,7 +66,7 @@ env:
 jobs:
   bins:
     if: (inputs.stage || 'probe') != 'probe'
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 90
     env:
       TARGET: x86_64-pc-windows-msvc
@@ -135,7 +135,7 @@ jobs:
 
   cli:
     if: (inputs.stage || 'probe') != 'probe'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
@@ -160,7 +160,7 @@ jobs:
   image:
     needs: [bins, cli]
     if: ${{ !cancelled() && needs.bins.result != 'failure' && needs.cli.result != 'failure' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 300
     permissions:
       contents: read
@@ -246,7 +246,7 @@ jobs:
   verify:
     needs: [cli, image]
     if: ${{ !cancelled() && needs.image.result == 'success' && (inputs.stage || 'probe') == 'publish' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 120
     permissions:
       contents: read
@@ -292,7 +292,7 @@ jobs:
   promote:
     needs: [cli, image, verify]
     if: ${{ !cancelled() && needs.verify.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       # contents: write for the image-doctor-ledger branch (attest).
       contents: write

@@ -29,7 +29,7 @@ concurrency:
 jobs:
   publish:
     name: Publish the installer and uninstaller scripts to cua-install-latest
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: Check the scripts

@@ -22,7 +22,7 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v4
       - run: uname -a
@@ -31,7 +31,7 @@ jobs:
         working-directory: ./libs/lume
   build:
     name: Release build
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v4
       - run: uname -a

@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-26]
+        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-6vcpu-macos-26]
     defaults:
       run:
         working-directory: libs/cua
@@ -84,7 +84,7 @@ jobs:
     name: nightly KVM (density tests + bench guard)
     # Also on a pull request labelled ci:vm-density.
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -71,7 +71,7 @@ jobs:
     if: |
       github.event_name != 'release' ||
       startsWith(github.event.release.tag_name, 'cua-driver-rs-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     outputs:
       version: ${{ steps.pick.outputs.version }}
@@ -153,7 +153,7 @@ jobs:
     needs: resolve-version
     # Don't block the PR if no release binary exists yet.
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     env:
       # The released binary's smoke commands must never create client telemetry
@@ -296,7 +296,7 @@ jobs:
     name: "Distro compat summary"
     needs: [resolve-version, distro-smoke]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Check results

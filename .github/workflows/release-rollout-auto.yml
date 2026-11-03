@@ -39,7 +39,7 @@ jobs:
   decide:
     name: "Rollout decision${{ inputs.dry_run && ' (dry run)' || '' }}"
     if: github.repository == 'trycua/cua'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

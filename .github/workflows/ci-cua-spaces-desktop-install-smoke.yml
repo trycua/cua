@@ -31,7 +31,7 @@ concurrency:
 jobs:
   resolve:
     name: Find a run with live artifacts
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
       run_id: ${{ steps.pick.outputs.run_id }}
@@ -55,7 +55,7 @@ jobs:
   windows:
     name: Windows x64 install, launch, uninstall
     needs: resolve
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 20
@@ -148,7 +148,7 @@ jobs:
   linux:
     name: Linux x64 deb and AppImage
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 25

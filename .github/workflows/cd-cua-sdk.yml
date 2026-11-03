@@ -80,7 +80,7 @@ env:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
@@ -146,12 +146,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: linux-x64-gnu, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
-          - { label: linux-arm64-gnu, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
-          - { label: darwin-arm64, runner: macos-26, target: aarch64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
-          - { label: darwin-x64, runner: macos-26, target: x86_64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
-          - { label: win32-x64-msvc, runner: windows-latest, target: x86_64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
-          - { label: win32-arm64-msvc, runner: windows-11-arm, target: aarch64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
+          - { label: linux-x64-gnu, runner: blacksmith-4vcpu-ubuntu-2404, target: x86_64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
+          - { label: linux-arm64-gnu, runner: blacksmith-4vcpu-ubuntu-2404-arm, target: aarch64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
+          - { label: darwin-arm64, runner: blacksmith-6vcpu-macos-26, target: aarch64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
+          - { label: darwin-x64, runner: blacksmith-6vcpu-macos-26, target: x86_64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
+          - { label: win32-x64-msvc, runner: blacksmith-4vcpu-windows-2025, target: x86_64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
+          - { label: win32-arm64-msvc, runner: blacksmith-4vcpu-windows-2025, target: aarch64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
     defaults:
       run:
         shell: bash
@@ -365,13 +365,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux, arch: x86_64, runner: ubuntu-latest, native: linux-x64-gnu, lib: libcua_sdk.so }
-          - { platform: linux, arch: arm64, runner: ubuntu-24.04-arm, native: linux-arm64-gnu, lib: libcua_sdk.so }
+          - { platform: linux, arch: x86_64, runner: blacksmith-4vcpu-ubuntu-2404, native: linux-x64-gnu, lib: libcua_sdk.so }
+          - { platform: linux, arch: arm64, runner: blacksmith-4vcpu-ubuntu-2404-arm, native: linux-arm64-gnu, lib: libcua_sdk.so }
           # One wheel per macOS arch: a universal2 wheel is over PyPI's 100 MB file limit.
-          - { platform: darwin, arch: arm64, runner: macos-26, native: darwin-arm64, lib: libcua_sdk.dylib }
-          - { platform: darwin, arch: x86_64, runner: macos-15-intel, native: darwin-x64, lib: libcua_sdk.dylib }
-          - { platform: windows, arch: x86_64, runner: windows-latest, native: win32-x64-msvc, lib: cua_sdk.dll }
-          - { platform: windows, arch: arm64, runner: windows-11-arm, native: win32-arm64-msvc, lib: cua_sdk.dll }
+          - { platform: darwin, arch: arm64, runner: blacksmith-6vcpu-macos-26, native: darwin-arm64, lib: libcua_sdk.dylib }
+          - { platform: darwin, arch: x86_64, runner: blacksmith-6vcpu-macos-15, native: darwin-x64, lib: libcua_sdk.dylib }
+          - { platform: windows, arch: x86_64, runner: blacksmith-4vcpu-windows-2025, native: win32-x64-msvc, lib: cua_sdk.dll }
+          - { platform: windows, arch: arm64, runner: blacksmith-4vcpu-windows-2025, native: win32-arm64-msvc, lib: cua_sdk.dll }
     defaults:
       run:
         shell: bash
@@ -462,7 +462,7 @@ jobs:
 
   npm:
     needs: [version, native]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Free disk space
         run: |
@@ -517,7 +517,7 @@ jobs:
 
   xcframework:
     needs: version
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     # A normal build takes 80-100 min (iOS + macOS slices). Nothing waits on
     # it except attach-xcframework, so the CLI, registries and installer feed
     # ship without it.
@@ -552,7 +552,7 @@ jobs:
   # of the Rust crates. Runs on every build, publishing or not.
   protos-and-crates:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     permissions:
       contents: read
@@ -589,7 +589,7 @@ jobs:
     # CLI or the installer feed. attach-xcframework adds it to the release.
     needs: [version, wheels, npm, native, protos-and-crates]
     if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
       id-token: write
@@ -776,7 +776,7 @@ jobs:
   crates:
     needs: [version, publish]
     if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
       contents: read
@@ -806,7 +806,7 @@ jobs:
   attach-xcframework:
     needs: [version, xcframework, publish]
     if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     permissions:
       contents: write

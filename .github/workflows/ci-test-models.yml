@@ -27,7 +27,7 @@ jobs:
   # `test-all-models` and `test-summary` both derive from this job's output, so
   # the matrix and the summary's EXPECTED_MODELS filter cannot drift apart.
   resolve-models:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       models: ${{ steps.list.outputs.models }}
     steps:
@@ -53,7 +53,7 @@ jobs:
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered
   test-all-models:
     needs: resolve-models
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -242,7 +242,7 @@ jobs:
   test-summary:
     if: ${{ always() }}
     needs: [resolve-models, test-all-models]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq

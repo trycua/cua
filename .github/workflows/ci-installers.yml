@@ -33,7 +33,7 @@ jobs:
   lint:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: shellcheck + shfmt + manifest unit tests
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
@@ -54,7 +54,7 @@ jobs:
   installer-smoke-linux:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Linux containers)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +99,7 @@ jobs:
   installer-smoke-macos:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     steps:
       - uses: actions/checkout@v4
       - name: install.sh test suite (includes the .dmg mount into --prefix)
@@ -112,7 +112,7 @@ jobs:
   installer-smoke-windows:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (Windows, install.ps1)
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - uses: actions/checkout@v4
       - name: Pester

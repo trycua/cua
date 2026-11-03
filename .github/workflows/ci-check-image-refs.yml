@@ -22,7 +22,7 @@ concurrency:
 jobs:
   image-refs:
     name: Image refs come from the catalog
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

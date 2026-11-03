@@ -43,7 +43,7 @@ concurrency:
 jobs:
   linux:
     name: "Linux (Xvfb + GTK3) / live agent loop"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -78,7 +78,7 @@ jobs:
 
   windows:
     name: "Windows (WinForms) / live agent loop"
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

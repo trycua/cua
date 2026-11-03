@@ -100,7 +100,7 @@ permissions:
 jobs:
   macos-uninstall:
     name: macOS uninstall regressions
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -124,7 +124,7 @@ jobs:
         run: /bin/bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
 
   windows-uninstall:
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 5
     permissions:
       contents: read
@@ -140,7 +140,7 @@ jobs:
         run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
 
     steps:

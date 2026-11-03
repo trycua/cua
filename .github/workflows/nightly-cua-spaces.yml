@@ -56,7 +56,7 @@ jobs:
   plan:
     name: Plan
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
@@ -137,7 +137,7 @@ jobs:
   publish:
     name: Publish to the nightly feed
     needs: [plan, build]
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 30
     # Holds the Sparkle EdDSA key; restricted to main.
     environment: cua-driver-release-signing
@@ -235,7 +235,7 @@ jobs:
     name: Cost summary
     needs: [plan, build, publish]
     if: always() && needs.plan.outputs.skip != 'true' && needs.plan.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read

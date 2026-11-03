@@ -47,7 +47,7 @@ concurrency:
 jobs:
   check-code-blocks:
     name: Check docs code-block dispositions
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -80,7 +80,7 @@ jobs:
 
   check-internal-links:
     name: Check Internal Links (next-validate-link)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
 
   check-external-links:
     name: Check External Links (lychee)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

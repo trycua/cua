@@ -39,7 +39,7 @@ concurrency:
 jobs:
   source:
     name: "Resolve exact source"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -66,11 +66,11 @@ jobs:
       matrix:
         include:
           - label: Windows
-            os: windows-latest
+            os: blacksmith-4vcpu-windows-2025
             artifact: rust-browser-windows
             products: chrome,edge
           - label: Linux X11
-            os: ubuntu-latest
+            os: blacksmith-4vcpu-ubuntu-2404
             artifact: rust-browser-linux-x11
             products: chrome
     runs-on: ${{ matrix.os }}

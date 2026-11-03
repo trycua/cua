@@ -42,7 +42,7 @@ jobs:
   fuzz:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     strategy:
       fail-fast: false

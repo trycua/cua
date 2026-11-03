@@ -150,7 +150,7 @@ env:
 jobs:
   meta:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       stamp: ${{ steps.meta.outputs.stamp }}
@@ -225,9 +225,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-24.04
+            runner: blacksmith-4vcpu-ubuntu-2404
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -247,9 +247,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-24.04
+            runner: blacksmith-4vcpu-ubuntu-2404
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -348,7 +348,7 @@ jobs:
   docker-bake:
     needs: [meta, cli, release]
     if: ${{ !cancelled() && needs.release.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
       CUA_HOME: ${{ github.workspace }}/.cua-home
@@ -467,7 +467,7 @@ jobs:
     # skipped ancestor would otherwise skip every job below it (publish=true then
     # pushes nothing while the run still reports success).
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.meta.outputs.publish == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       tiers: ${{ steps.changes.outputs.tiers }}
     steps:
@@ -518,7 +518,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
         tier: ${{ fromJSON(needs.changes.outputs.tiers) }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       packages: write
@@ -579,7 +579,7 @@ jobs:
       max-parallel: 1
       matrix:
         tier: ${{ fromJSON(needs.changes.outputs.tiers) }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
       packages: write
@@ -628,7 +628,7 @@ jobs:
       matrix:
         # The docker tier only once it publishes (CUA_LINUX_PUBLISH_DOCKER_TIER).
         tier: ${{ fromJSON(vars.CUA_LINUX_PUBLISH_DOCKER_TIER == 'true' && '["slim","full","docker"]' || '["slim","full"]') }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
       packages: write
@@ -692,7 +692,7 @@ jobs:
   # pushed or re-tagged. Dispatch with doctor_children=arm64@sha256:...,...
   doctor-children-plan:
     if: github.event_name == 'workflow_dispatch' && inputs.doctor_children != ''
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
@@ -772,7 +772,7 @@ jobs:
 
   tag-safety-test:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: scripts/images/test-check-tag-safety.sh
@@ -796,7 +796,7 @@ jobs:
   report-schedule-failure:
     needs: [meta, spacesd, cli, release, plain, changes, push, publish]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       issues: write

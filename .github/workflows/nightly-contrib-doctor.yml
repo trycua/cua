@@ -38,7 +38,7 @@ env:
 jobs:
   lane:
     name: doctor on ${{ matrix.provider }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -145,7 +145,7 @@ jobs:
     name: regenerate the support matrix
     needs: lane
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write

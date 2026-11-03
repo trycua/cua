@@ -50,7 +50,7 @@ jobs:
   hermetic:
     name: hermetic chaos (mock Spaces, bounded seeds)
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -73,7 +73,7 @@ jobs:
   spaces:
     name: real Spaces chaos (QEMU), many seeds
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -91,7 +91,7 @@ jobs:
   core:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: app core (Rust) + FFI mirror gate
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     defaults:
       run:
         working-directory: libs/cua
@@ -130,7 +130,7 @@ jobs:
   ffi:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Cua Spaces app library (built once)
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
     # cancelled steady progress on PRs that miss main's cached library.
     timeout-minutes: 90
@@ -170,7 +170,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI app (swift tests, bridge contract)
     needs: ffi
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -244,7 +244,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI and Electron bindings are up to date
     needs: ffi
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 4
@@ -288,7 +288,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: SwiftUI app (bundle, launch check, XCUITest)
     needs: ffi
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

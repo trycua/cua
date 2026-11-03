@@ -30,7 +30,7 @@ jobs:
 
   test:
     # Golden trajectories shared with the Rust crate, plus the API tests.
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js 24.x

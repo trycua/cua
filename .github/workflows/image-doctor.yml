@@ -130,7 +130,7 @@ env:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       container: ${{ steps.plan.outputs.container }}
       qemu: ${{ steps.plan.outputs.qemu }}
@@ -346,7 +346,7 @@ jobs:
   parity:
     needs: plan
     if: needs.plan.outputs.parity == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -472,7 +472,7 @@ jobs:
   summary:
     needs: [plan, container, conformance, claim-token, qemu, parity, windows, lume]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       status: ${{ steps.verdict.outputs.status }}
     steps:

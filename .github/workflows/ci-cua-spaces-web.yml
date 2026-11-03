@@ -54,7 +54,7 @@ jobs:
   test:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: typecheck, tests, bridge contract, build
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust and the wasm32 target
@@ -117,7 +117,7 @@ jobs:
       fail-fast: false
       matrix:
         host: [browser, electron]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust and the wasm32 target

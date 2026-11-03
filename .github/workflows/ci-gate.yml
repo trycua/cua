@@ -13,7 +13,7 @@ permissions:
 jobs:
   ci-gate:
     name: ci-gate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 360
     steps:
       # Which workflows this gate may ignore, from the paths the PR changes, the area map

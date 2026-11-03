@@ -51,7 +51,7 @@ jobs:
   test:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Test ${{ matrix.package }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     strategy:
       fail-fast: false # Test all packages even if one fails
@@ -122,7 +122,7 @@ jobs:
     # hermetic suite never touches the host or a cloud;
     # the live runtime suites are excluded (they are gated separately).
     name: Test cua-sandbox (hermetic, on the cua SDK)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
@@ -171,7 +171,7 @@ jobs:
 
   summary:
     name: Test Summary
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [test, cua-sandbox]
     if: ${{ !cancelled() }}
 

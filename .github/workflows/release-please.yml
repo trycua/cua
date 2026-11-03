@@ -55,7 +55,7 @@ env:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
     steps:
       - name: Generate release GitHub App token

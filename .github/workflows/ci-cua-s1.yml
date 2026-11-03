@@ -22,7 +22,7 @@ concurrency:
 jobs:
   test:
     name: Lint, test, and train smoke (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -157,7 +157,7 @@ jobs:
     # (S1_DEVICE=mps). This job covers the offline unit suite and the four-b
     # dependency resolution on macOS arm64; it does not download weights.
     name: macOS unit (Python 3.12)
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     timeout-minutes: 20
     env:
       CUA_TELEMETRY_ENABLED: "false"

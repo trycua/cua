@@ -70,11 +70,11 @@ jobs:
       matrix:
         include:
           - target: linux-x64
-            os: ubuntu-latest
+            os: blacksmith-4vcpu-ubuntu-2404
           - target: macos-x64
-            os: macos-15-intel
+            os: blacksmith-6vcpu-macos-15
           - target: windows-x64
-            os: windows-latest
+            os: blacksmith-4vcpu-windows-2025
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -92,7 +92,7 @@ jobs:
         run: cargo test --locked -p cua-perception
 
   contract:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

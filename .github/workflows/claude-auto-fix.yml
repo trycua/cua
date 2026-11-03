@@ -18,7 +18,7 @@ jobs:
   auto-fix:
     name: Auto-fix CI Failure
     # Use ubuntu-22.04 to avoid AppArmor restrictions on bubblewrap in 24.04
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     if: github.event.label.name == 'auto-fix'
     steps:
       - name: Determine context

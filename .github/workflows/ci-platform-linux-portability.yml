@@ -48,7 +48,7 @@ env:
 jobs:
   platform-linux-off-linux:
     name: platform-linux compiles on macOS
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

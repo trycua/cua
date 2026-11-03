@@ -90,7 +90,7 @@ env:
 jobs:
   source:
     name: Resolve reviewed candidates and signed artifact
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.validate.outputs.sha }}
       jev_sha: ${{ steps.validate.outputs.jev_sha }}
@@ -224,7 +224,7 @@ jobs:
   mock-preflight:
     name: Secret-free mock and static contracts
     needs: source
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -263,8 +263,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: windows, runner: windows-latest, target: x86_64-pc-windows-msvc, driver: review-cua-driver.exe, desktop_session: windows-interactive}
-          - {platform: linux-x11, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, driver: review-cua-driver, desktop_session: x11-openbox}
+          - {platform: windows, runner: blacksmith-4vcpu-windows-2025, target: x86_64-pc-windows-msvc, driver: review-cua-driver.exe, desktop_session: windows-interactive}
+          - {platform: linux-x11, runner: blacksmith-4vcpu-ubuntu-2404, target: x86_64-unknown-linux-gnu, driver: review-cua-driver, desktop_session: x11-openbox}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: authorized-live-jev-use-demo

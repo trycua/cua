@@ -88,7 +88,7 @@ env:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: bench.json, documents and tag safety (offline)
@@ -102,7 +102,7 @@ jobs:
     # A dispatch, or a call (which sees its caller's event).
     if: github.event_name != 'pull_request'
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
       stamp: ${{ steps.m.outputs.stamp }}
@@ -209,7 +209,7 @@ jobs:
   index:
     if: inputs.push && inputs.promote_stamp == ''
     needs: [meta, build]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       packages: write
@@ -331,7 +331,7 @@ jobs:
   promote:
     needs: [meta, verify]
     if: ${{ !cancelled() && needs.verify.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       # contents: write for the image-doctor-ledger branch (attest) and the
       # catalog branch; pull-requests: write to open the catalog PR.

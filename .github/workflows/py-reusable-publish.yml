@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   build-and-publish:
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     permissions:
       contents: read
     outputs:

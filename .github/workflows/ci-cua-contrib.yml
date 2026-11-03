@@ -66,7 +66,7 @@ jobs:
   rust:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: providers against their API mocks
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     defaults:
       run:
@@ -103,7 +103,7 @@ jobs:
   modal-helper:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-modal-helper (Modal's Go SDK)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     defaults:
       run:
@@ -141,7 +141,7 @@ jobs:
   matrix:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: support matrix (recorded doctor reports)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -155,7 +155,7 @@ jobs:
   e2e:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-bench and docs on --on daytona (mocks)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

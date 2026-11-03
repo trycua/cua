@@ -67,7 +67,7 @@ jobs:
   pacman:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Arch native pacman updates
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     container: archlinux:base-devel
     timeout-minutes: 30
     defaults:
@@ -123,7 +123,7 @@ jobs:
   unit:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Linux unit and compile
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # 10 to 14 minutes warm. The headroom covers a run with neither the
     # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
     timeout-minutes: 45

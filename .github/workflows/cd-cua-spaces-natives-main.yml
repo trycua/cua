@@ -66,12 +66,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
-          - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
-          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
-          - { label: darwin-arm64, runner: macos-26, target: aarch64-apple-darwin }
-          - { label: darwin-x64, runner: macos-26, target: x86_64-apple-darwin }
+          - { label: win32-x64, runner: blacksmith-4vcpu-windows-2025, target: x86_64-pc-windows-msvc }
+          - { label: win32-arm64, runner: blacksmith-4vcpu-windows-2025, target: aarch64-pc-windows-msvc }
+          - { label: linux-x64, runner: blacksmith-4vcpu-ubuntu-2204, target: x86_64-unknown-linux-gnu }
+          - { label: linux-arm64, runner: blacksmith-4vcpu-ubuntu-2204-arm, target: aarch64-unknown-linux-gnu }
+          - { label: darwin-arm64, runner: blacksmith-6vcpu-macos-26, target: aarch64-apple-darwin }
+          - { label: darwin-x64, runner: blacksmith-6vcpu-macos-26, target: x86_64-apple-darwin }
     defaults:
       run:
         working-directory: apps/cua-spaces-desktop

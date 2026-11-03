@@ -12,7 +12,7 @@ permissions:
 jobs:
   auto-release:
     if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Generate App Token
         id: app-token

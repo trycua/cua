@@ -50,7 +50,7 @@ env:
 
 jobs:
   bench:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 120
     env:
       # The pre-rename repo (docker-latest) is frozen (legacy repos

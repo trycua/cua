@@ -65,7 +65,7 @@ concurrency:
 jobs:
   source:
     name: "Resolve exact source"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -223,7 +223,7 @@ jobs:
     if: inputs.lane == 'all' || inputs.lane == 'installer'
     name: "Windows / installer and update smoke"
     needs: source
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 45
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
@@ -352,7 +352,7 @@ jobs:
     if: always()
     needs: [source, shared, native, capture, installer]
     name: "Windows / matrix summary"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -510,7 +510,7 @@ jobs:
     if: success() && inputs.lane == 'all'
     needs: [source, shared, native, capture, installer]
     name: "Windows / canonical certification"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Determine approved runner policy class

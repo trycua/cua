@@ -23,7 +23,7 @@ jobs:
   harness:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Harness tests (no GUI, no model)
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 20
     steps:
       - name: Check out Cua
@@ -46,7 +46,7 @@ jobs:
 
   linux-desktop:
     name: Linux headless desktop contracts (no model)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Check out Cua
@@ -69,7 +69,7 @@ jobs:
   taskpack:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Task pack tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - name: Check out Cua
@@ -117,7 +117,7 @@ jobs:
   lint:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Python lint and format
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Check out Cua

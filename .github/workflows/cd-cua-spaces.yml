@@ -246,7 +246,7 @@ jobs:
   # cua-spacesd is not published (Cua Spaces 0.3.0 pinned a draft).
   spacesd-published:
     name: cua-spacesd pin is published
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     defaults:
       run:
@@ -274,7 +274,7 @@ jobs:
     if: >-
       (github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run)
       && needs.electron-plan.outputs.macos == 'true'
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     defaults:
       run:
@@ -325,7 +325,7 @@ jobs:
     if: >-
       (github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run)
       && needs.electron-plan.outputs.macos == 'true'
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     defaults:
       run:
@@ -714,9 +714,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64, os: ubuntu-22.04, bundles: "deb,appimage" }
-          - { name: linux-arm64, os: ubuntu-22.04-arm, bundles: "deb,appimage" }
-          - { name: windows-x64, os: windows-latest, bundles: "nsis,msi" }
+          - { name: linux-x64, os: blacksmith-4vcpu-ubuntu-2204, bundles: "deb,appimage" }
+          - { name: linux-arm64, os: blacksmith-4vcpu-ubuntu-2204-arm, bundles: "deb,appimage" }
+          - { name: windows-x64, os: blacksmith-4vcpu-windows-2025, bundles: "nsis,msi" }
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 4
@@ -935,7 +935,7 @@ jobs:
   electron-plan:
     name: Electron plan
     needs: spacesd-published
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     defaults:
       run:
@@ -1088,7 +1088,7 @@ jobs:
   # for every job that bundles it: the SwiftUI app, the Electron apps.
   electron-web:
     name: Web UI
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 60
     defaults:
       run:
@@ -1190,7 +1190,7 @@ jobs:
     name: Electron native (${{ matrix.label }})
     needs: electron-plan
     if: needs.electron-plan.outputs.build == 'true'
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -1228,7 +1228,7 @@ jobs:
     name: Electron darwin (arm64, universal)
     needs: [electron-plan, electron-native-mac, electron-web]
     if: needs.electron-plan.outputs.build == 'true'
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     defaults:
       run:
@@ -1497,7 +1497,7 @@ jobs:
     name: Electron windows (${{ matrix.arch }})
     needs: [electron-plan, electron-native, electron-web]
     if: needs.electron-plan.outputs.desktop == 'true' && needs.electron-plan.outputs.windows == 'true'
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -1654,7 +1654,7 @@ jobs:
     name: Electron windows (x64, arm64)
     needs: [electron-plan, electron-windows-pkg]
     if: needs.electron-plan.outputs.desktop == 'true' && needs.electron-plan.outputs.windows == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
       contents: read
@@ -1706,7 +1706,7 @@ jobs:
     name: Electron linux (${{ matrix.arch }})
     needs: [electron-plan, electron-native, electron-web]
     if: needs.electron-plan.outputs.desktop == 'true' && needs.electron-plan.outputs.linux == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -1786,7 +1786,7 @@ jobs:
     name: Electron linux (x64, arm64)
     needs: [electron-plan, electron-linux-pkg]
     if: needs.electron-plan.outputs.desktop == 'true' && needs.electron-plan.outputs.linux == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       # Both architectures' installers, feeds and the signing note as
@@ -1811,7 +1811,7 @@ jobs:
       && (needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')
       && (needs.electron-plan.outputs.linux != 'true' || needs.electron-linux.result == 'success')
       && (needs.electron-mac.result == 'success' || needs.electron-mac.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     defaults:
       run:
@@ -1921,7 +1921,7 @@ jobs:
   request-staging-smoke:
     name: Request the staging smoke
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     defaults:
       run:
@@ -1955,7 +1955,7 @@ jobs:
   promote-check:
     name: Promote check (report only)
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v') && vars.CUA_SPACES_PROMOTE_CHECK == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     continue-on-error: true
     defaults:
@@ -2006,7 +2006,7 @@ jobs:
   staging-gate:
     name: Staging smoke is green
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Waits up to 2 hours for the smoke that request-staging-smoke starts:
     # the smoke can sit in trycua/cloud's queue for half an hour before it
     # runs (v0.17.0-beta.2's posted 35 minutes after the request, after a
@@ -2039,7 +2039,7 @@ jobs:
       && (needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')
       && (needs.electron-plan.outputs.build != 'true' || needs.electron-mac.result == 'success')
       && (needs.electron-plan.outputs.publish_electron != 'true' || needs.electron-publish.result == 'success')
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 60
     defaults:
       run:
@@ -2150,7 +2150,7 @@ jobs:
       && needs.staging-gate.result == 'success'
       && (needs.build-linux-windows.result == 'success' || needs.build-linux-windows.result == 'skipped')
       && (needs.electron-plan.outputs.publish_electron != 'true' || needs.electron-publish.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
       # Keyless Sigstore signing of the installer assets.
@@ -2406,7 +2406,7 @@ jobs:
       && startsWith(github.ref, 'refs/tags/cua-spaces-v')
       && github.repository == 'trycua/cua'
       && needs.electron-plan.outputs.prerelease != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     permissions:
       contents: read

@@ -48,7 +48,7 @@ env:
 jobs:
   guard-logic:
     # The guard's own logic, on every change to it (no VM).
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: check.py tests
@@ -56,7 +56,7 @@ jobs:
 
   bench:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

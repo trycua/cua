@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-26]
+        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-6vcpu-macos-26]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -97,7 +97,7 @@ jobs:
     name: E2B SDK surface
     # Not on main pushes: those exist to keep the hermetic job's Rust cache warm.
     if: github.event_name != 'push'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -122,7 +122,7 @@ jobs:
     # Paid E2B sandboxes and a live provider: the weekly run and manual runs only,
     # never the main pushes that keep the Rust cache warm.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     env:
       E2B_API_KEY: ${{ secrets.E2B_API_KEY }}

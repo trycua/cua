@@ -69,7 +69,7 @@ env:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       run: ${{ steps.plan.outputs.run }}
       upto: ${{ steps.plan.outputs.upto }}
@@ -224,7 +224,7 @@ jobs:
   tracking-issue:
     needs: [plan, tiers]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       issues: write
     steps:

@@ -21,7 +21,7 @@ jobs:
   validate:
     needs: installer-compatibility
     if: always() && github.event_name != 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Require successful installer certification
         env:

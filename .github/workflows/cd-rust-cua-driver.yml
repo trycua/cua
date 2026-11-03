@@ -98,7 +98,7 @@ jobs:
   # remain available for iteration and skip this check.
   release-attribution-preflight:
     name: release attribution preflight
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.candidate.outputs.version }}
     steps:
@@ -203,10 +203,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: blacksmith-4vcpu-ubuntu-2404
           - arch: arm64
             target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
     # Build INSIDE a Debian 11 (bullseye) container instead of directly on
     # the host. ubuntu-latest is now Ubuntu 24.04, whose glibc is 2.39 — a
     # binary linked there imports GLIBC_2.39 symbols (e.g. posix_spawn's
@@ -329,7 +329,7 @@ jobs:
   build-windows:
     name: windows-${{ matrix.arch }}
     needs: release-attribution-preflight
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     environment: cua-driver-release-signing
     strategy:
       fail-fast: false
@@ -517,10 +517,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: blacksmith-4vcpu-windows-2025
             release_arch: x86_64
             node_arch: x64
-          - os: windows-11-arm
+          - os: blacksmith-4vcpu-windows-2025
             release_arch: arm64
             node_arch: arm64
     steps:
@@ -584,7 +584,7 @@ jobs:
   build-macos-universal:
     name: darwin-universal
     needs: release-attribution-preflight
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     # Notarize on tag push (real release); on workflow_dispatch honor the
     # `notarize` input so we can iterate on the build pipeline without
     # touching the Apple notary service.
@@ -1004,7 +1004,7 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1056,7 +1056,7 @@ jobs:
   verify-release-artifacts:
     name: release artifact contract
     needs: [build-linux, build-windows, build-macos-universal]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1096,7 +1096,7 @@ jobs:
   verify-mcp-client-discovery:
     name: packaged MCP client discovery
     needs: build-linux
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -1250,7 +1250,7 @@ jobs:
   request-staging-smoke:
     name: Request the staging smoke
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1280,7 +1280,7 @@ jobs:
   staging-gate:
     name: staging smoke is green
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
     timeout-minutes: 40
     permissions:
@@ -1311,7 +1311,7 @@ jobs:
       - e2e-macos
       - e2e-standalone-browsers
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # id-token: keyless Sigstore bundles for every release asset. The
     # attribution collector reads pull requests and issues.
     permissions:
@@ -1643,7 +1643,7 @@ jobs:
   advance-installer-version:
     name: advance public installer version
     needs: [release, verify-published-signatures, verify-published-installers]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 240
     steps:
       # The orchestration helpers and the withdrawn list come from the exact

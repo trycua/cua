@@ -29,7 +29,7 @@ concurrency:
 jobs:
   ale-compat:
     name: ALE tasks and harness (${{ matrix.deps }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false

@@ -62,7 +62,7 @@ jobs:
   probe:
     if: inputs.mode != 'lume'
     name: hosted environment probe
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 20
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -132,7 +132,7 @@ jobs:
     if: inputs.mode != 'lume'
     needs: probe
     name: hosted ${{ matrix.lane }} lane
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -228,7 +228,7 @@ jobs:
     if: ${{ always() && inputs.mode != 'lume' }}
     needs: [probe, matrix]
     name: hosted certification result
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
@@ -272,7 +272,7 @@ jobs:
   register-lume:
     if: inputs.mode == 'lume'
     name: Register direct Lume certification
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: authorized-live-jev-use-demo
     timeout-minutes: 10
     env:

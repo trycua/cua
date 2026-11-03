@@ -40,7 +40,7 @@ jobs:
     # and the preflight checks the driver's embedded git sha against the
     # source under test, so a stale driver can never pass.
     name: "Linux / desktop readiness in a Cua sandbox"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
       CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -75,7 +75,7 @@ jobs:
   windows:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: "Windows / lightweight desktop readiness"
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 15
     env:
       CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

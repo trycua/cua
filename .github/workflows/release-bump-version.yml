@@ -35,7 +35,7 @@ permissions: {}
 jobs:
   authorize:
     name: Authorize version bump
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Allow only the release owner or trusted automation
         env:
@@ -54,7 +54,7 @@ jobs:
 
   bump-version:
     needs: authorize
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
     steps:

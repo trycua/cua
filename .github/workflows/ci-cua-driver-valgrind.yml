@@ -37,7 +37,7 @@ jobs:
     name: Driver server E2E Memcheck
     # Memcheck results depend on the image's valgrind/glibc pairing, so pin
     # the runner instead of tracking ubuntu-latest migrations.
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

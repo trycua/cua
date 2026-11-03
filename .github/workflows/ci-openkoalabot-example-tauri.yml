@@ -46,7 +46,7 @@ jobs:
   check:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cargo check + core tests + vitest
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: 4

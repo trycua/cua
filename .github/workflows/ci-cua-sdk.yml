@@ -73,7 +73,7 @@ jobs:
   reuse:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: reuse PR results
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -409,7 +409,7 @@ jobs:
   crates-dry-run:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: crates.io dry run
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: reuse
     timeout-minutes: 60
     steps:
@@ -510,7 +510,7 @@ jobs:
     # The generated binding must compile (an exported `close` once clashed
     # with AutoCloseable.close; uniffi.toml renames such methods).
     name: kotlin compile
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: reuse
     timeout-minutes: 20
     container: gradle:8.10.2-jdk17
@@ -526,7 +526,7 @@ jobs:
   build-sdk:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build SDK (linux, release)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: reuse
     timeout-minutes: 60
     defaults:
@@ -556,7 +556,7 @@ jobs:
   build-fixtures:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build test fixtures (linux)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: reuse
     timeout-minutes: 60
     defaults:
@@ -586,7 +586,7 @@ jobs:
   build-cli:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build cua and cua-spaces CLIs (linux)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: reuse
     timeout-minutes: 60
     defaults:
@@ -757,7 +757,7 @@ jobs:
   browser:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: browser (wasm32) build + smoke
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [reuse, build-fixtures]
     timeout-minutes: 45
     defaults:
@@ -800,7 +800,7 @@ jobs:
   swift:
     name: swift smoke (macOS)
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full'))) }}
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 60
     defaults:

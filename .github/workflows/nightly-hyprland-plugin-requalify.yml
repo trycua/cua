@@ -62,7 +62,7 @@ env:
 
 jobs:
   detect:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -109,7 +109,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.count != '0'
     name: ${{ matrix.channel }} hyprland ${{ matrix.hyprland }}, plugin ${{ matrix.ref }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -172,7 +172,7 @@ jobs:
   report:
     needs: [detect, requalify]
     if: always() && needs.detect.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write

@@ -59,7 +59,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       # The native + wasm SDK builds (plus the restored rust-cache) overflow the
@@ -112,7 +112,7 @@ jobs:
 
   changes:
     name: scope (macOS Swift sample)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
@@ -147,7 +147,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

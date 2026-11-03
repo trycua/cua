@@ -27,7 +27,7 @@ concurrency:
 jobs:
   reproducible:
     name: reproducible image (linux/amd64)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

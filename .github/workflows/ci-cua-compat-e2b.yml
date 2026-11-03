@@ -38,7 +38,7 @@ concurrency:
 jobs:
   coverage:
     name: coverage matrix and recordings
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -72,7 +72,7 @@ jobs:
 
   surface:
     name: surface snapshots (${{ matrix.sdk }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     strategy:
       fail-fast: false

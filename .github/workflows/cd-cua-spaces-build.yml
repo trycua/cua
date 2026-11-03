@@ -111,7 +111,7 @@ jobs:
     name: Plan
     # The signing environment is restricted to main; so is this workflow.
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
@@ -191,7 +191,7 @@ jobs:
     name: cua-spacesd pin is published
     needs: plan
     if: needs.plan.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
@@ -207,7 +207,7 @@ jobs:
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: [plan, spacesd-published]
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -250,7 +250,7 @@ jobs:
   web:
     name: Web UI
     needs: plan
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 60
     permissions:
       contents: read
@@ -296,7 +296,7 @@ jobs:
   build-macos:
     name: darwin-universal (SwiftUI)
     needs: [plan, spacesd-published, macos-rust, web]
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 180
     # Holds the Apple signing secrets; restricted to main.
     environment: cua-driver-release-signing
@@ -542,10 +542,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
-          - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
-          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { label: win32-x64, runner: blacksmith-4vcpu-windows-2025, target: x86_64-pc-windows-msvc }
+          - { label: win32-arm64, runner: blacksmith-4vcpu-windows-2025, target: aarch64-pc-windows-msvc }
+          - { label: linux-x64, runner: blacksmith-4vcpu-ubuntu-2204, target: x86_64-unknown-linux-gnu }
+          - { label: linux-arm64, runner: blacksmith-4vcpu-ubuntu-2204-arm, target: aarch64-unknown-linux-gnu }
     defaults:
       run:
         working-directory: apps/cua-spaces-desktop
@@ -567,7 +567,7 @@ jobs:
   electron-windows-pkg:
     name: Electron windows (${{ matrix.arch }})
     needs: [plan, electron-native, web]
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -718,7 +718,7 @@ jobs:
   electron-linux-pkg:
     name: Electron linux (${{ matrix.arch }})
     needs: [plan, electron-native, web]
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 120
     permissions:
       contents: read
@@ -788,7 +788,7 @@ jobs:
   assemble:
     name: Assemble the build set
     needs: [plan, build-macos, electron-windows-pkg, electron-linux-pkg]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     permissions:
       contents: read
@@ -856,7 +856,7 @@ jobs:
   verify:
     name: Verify the signed build
     needs: [plan, assemble, build-macos, electron-windows-pkg]
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 60
     permissions:
       contents: read
@@ -919,7 +919,7 @@ jobs:
   attest:
     name: Attest the build set
     needs: [plan, verify]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     permissions:
       contents: read
@@ -940,7 +940,7 @@ jobs:
     name: Cost summary
     needs: [plan, assemble, verify, attest]
     if: always() && needs.plan.result == 'success' && inputs.channel != 'nightly'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read

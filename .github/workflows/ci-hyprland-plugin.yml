@@ -28,7 +28,7 @@ jobs:
   unit:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Linux protocol, transport, and mocked plugin API
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     env:
       # The keyboard layout and foreground modifier tests compile real XKB

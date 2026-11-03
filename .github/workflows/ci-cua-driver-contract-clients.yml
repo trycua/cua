@@ -83,7 +83,7 @@ jobs:
   changes:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: "contract clients / changes"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -294,7 +294,7 @@ jobs:
     name: Generated contract and SDK bindings
     needs: changes
     if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'Generated contract and SDK bindings')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -504,7 +504,7 @@ jobs:
     name: "contract clients / result"
     if: always()
     needs: [changes, mcp-client-discovery, runtime-parity, verify]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - env:

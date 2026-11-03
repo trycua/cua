@@ -83,7 +83,7 @@ jobs:
   # single-quoted block, which left build-macos-golden.sh unrunnable for its
   # entire life.
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - name: Golden coverage + syntax gate
@@ -91,7 +91,7 @@ jobs:
 
   build-sign:
     needs: coverage
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     env:
       KEYCHAIN_PASSWORD: temporary-golden-keychain-pwd
       # `secrets` is NOT an allowed context in a step-level `if:`. Referencing it

@@ -153,7 +153,7 @@ jobs:
   sign:
     name: sign verified ${{ inputs.target_triple }} catalog
     needs: package
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: cua-perception-candidate-signing
     steps:
       - name: Check out trusted release tooling

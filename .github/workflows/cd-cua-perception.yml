@@ -62,7 +62,7 @@ jobs:
       github.repository == 'trycua/cua' &&
       (github.event_name == 'push' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -154,7 +154,7 @@ jobs:
   reviewed-model:
     name: Fetch the reviewed detector conversion
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     # The reviewed conversion is an asset of an unpublished (draft) release,
     # and GitHub lists draft release assets only to tokens with push access.
@@ -203,16 +203,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: blacksmith-4vcpu-ubuntu-2404
             target: x86_64-unknown-linux-gnu
             input_artifact: cua-perception-input-linux-x86_64
             worker: cua-perception
           # Match the production Driver build and hosted desktop E2E image.
-          - runner: macos-26
+          - runner: blacksmith-6vcpu-macos-26
             target: aarch64-apple-darwin
             input_artifact: cua-perception-input-macos-aarch64
             worker: cua-perception
-          - runner: windows-latest
+          - runner: blacksmith-4vcpu-windows-2025
             target: x86_64-pc-windows-msvc
             input_artifact: cua-perception-input-windows-x86_64
             worker: cua-perception.exe
@@ -404,11 +404,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: blacksmith-4vcpu-ubuntu-2404
             target: x86_64-unknown-linux-gnu
-          - runner: macos-26
+          - runner: blacksmith-6vcpu-macos-26
             target: aarch64-apple-darwin
-          - runner: windows-latest
+          - runner: blacksmith-4vcpu-windows-2025
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -548,7 +548,7 @@ jobs:
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/cua-perception-v') &&
       needs.resolve.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
       actions: read

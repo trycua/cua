@@ -25,7 +25,7 @@ env:
 jobs:
   source:
     name: Validate canonical source
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.validate.outputs.sha }}
     steps:
@@ -61,7 +61,7 @@ jobs:
   mock:
     name: Deterministic mock Jev
     needs: source
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     env:
       CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver

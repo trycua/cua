@@ -49,7 +49,7 @@ concurrency:
 jobs:
   decide:
     name: "E2E gate / decide"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       run: ${{ steps.decide.outputs.run }}
@@ -151,7 +151,7 @@ jobs:
     if: >-
       needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Hosted macOS runners queue for an hour or more under load, and the queue
     # time sits inside the dispatched run, so it counts against the wait below.
     timeout-minutes: 260
@@ -243,7 +243,7 @@ jobs:
     name: "E2E gate / result"
     if: always()
     needs: [decide, linux, windows, macos, macos-pr, browsers]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Evaluate lanes
@@ -274,7 +274,7 @@ jobs:
     name: "E2E gate / nightly report"
     if: always() && needs.decide.outputs.mode == 'nightly'
     needs: [decide, linux, windows, macos, macos-pr, browsers]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read

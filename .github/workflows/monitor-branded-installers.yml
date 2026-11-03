@@ -71,7 +71,7 @@ jobs:
       github.event_name != 'release' ||
       startsWith(github.event.release.tag_name, 'cua-driver-rs-v') ||
       startsWith(github.event.release.tag_name, 'lume-v')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       failures: ${{ steps.endpoints.outputs.failures }}
     steps:
@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-26, windows-latest]
+        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-6vcpu-macos-26, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -255,7 +255,7 @@ jobs:
     name: Report installer canary failures
     needs: [check, canary]
     if: always() && (needs.check.result == 'failure' || needs.canary.result == 'failure')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Open or update monitoring issues
         env:

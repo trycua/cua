@@ -75,7 +75,7 @@ env:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
@@ -124,7 +124,7 @@ jobs:
   check-version:
     needs: version
     if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -150,12 +150,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, profile: release }
-          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, profile: release }
+          - { arch: x86_64, runner: blacksmith-4vcpu-ubuntu-2404, target: x86_64-unknown-linux-gnu, profile: release }
+          - { arch: aarch64, runner: blacksmith-4vcpu-ubuntu-2404-arm, target: aarch64-unknown-linux-gnu, profile: release }
           # The static headless daemon injected into OCI images (the small
           # `static` profile of libs/cua-spacesd/Cargo.toml).
-          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-musl, profile: static }
-          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, profile: static }
+          - { arch: x86_64, runner: blacksmith-4vcpu-ubuntu-2404, target: x86_64-unknown-linux-musl, profile: static }
+          - { arch: aarch64, runner: blacksmith-4vcpu-ubuntu-2404-arm, target: aarch64-unknown-linux-musl, profile: static }
     defaults:
       run:
         shell: bash
@@ -202,7 +202,7 @@ jobs:
     needs: version
     name: macos universal
     # macOS 26: the ScreenCaptureKit dependency needs that SDK.
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 120
     env:
       # Hoisted so step conditions never read `secrets` directly.
@@ -362,7 +362,7 @@ jobs:
   windows:
     needs: version
     name: windows x86_64
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 90
     # The Azure Artifact Signing vars live in this environment (as for the
     # Cua Driver release); without it they read empty and signing is skipped.
@@ -465,7 +465,7 @@ jobs:
   release:
     needs: [version, check-version, linux, macos, windows]
     if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
       # Keyless Sigstore signing of the release assets.

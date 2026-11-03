@@ -48,7 +48,7 @@ concurrency:
 jobs:
   rust:
     name: providers against their API mocks
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     defaults:
       run:

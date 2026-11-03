@@ -382,7 +382,7 @@ mod portal_video {
     use crate::wayland::portal::RestoreToken;
     use crate::wayland::portal_screencast::{
         run_frame_stream, Frame, FrameFlow, FrameSink, RawFormat, ScreencastSession, StreamOptions,
-        CONSENT_TIMEOUT,
+        CONSENT_TIMEOUT, PORTAL_CALL_TIMEOUT,
     };
     use ashpd::desktop::screencast::SourceType;
     use ashpd::enumflags2::BitFlags;
@@ -454,7 +454,10 @@ mod portal_video {
                     result
                 }
             });
-            let start_deadline = CONSENT_TIMEOUT + FIRST_FRAME_TIMEOUT + ENCODER_PROBE * 2;
+            // Session setup and the PipeWire remote are each bounded by
+            // PORTAL_CALL_TIMEOUT on either side of the consent wait.
+            let start_deadline =
+                PORTAL_CALL_TIMEOUT * 2 + CONSENT_TIMEOUT + FIRST_FRAME_TIMEOUT + ENCODER_PROBE * 2;
             match ready_rx.recv_timeout(start_deadline) {
                 Ok(Ok(())) => Ok(Self {
                     stop,

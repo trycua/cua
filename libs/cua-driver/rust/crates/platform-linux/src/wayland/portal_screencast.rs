@@ -345,6 +345,15 @@ fn stream_loss(new: &pipewire::stream::StreamState, core_error: Option<&str>) ->
     }
 }
 
+/// Why removing registry global `removed` ends a capture of `node_id`, if it
+/// does: only the portal's own node going away means the source is gone.
+fn source_removed(removed: u32, node_id: u32) -> Option<&'static str> {
+    (removed == node_id).then_some(
+        "portal ScreenCast stream disconnected: the compositor removed the source \
+         (session closed or sharing revoked)",
+    )
+}
+
 impl<S: FrameSink> Pump<S> {
     fn finish(&mut self, mainloop: &pipewire::main_loop::MainLoopRc, outcome: anyhow::Result<()>) {
         if self.outcome.is_none() {
@@ -426,14 +435,9 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
             let pump = pump.clone();
             let mainloop = mainloop.clone();
             move |id| {
-                if id == node_id {
-                    pump.borrow_mut().finish(
-                        &mainloop,
-                        Err(anyhow::anyhow!(
-                            "portal ScreenCast stream disconnected: the compositor removed the \
-                             source (session closed or sharing revoked)"
-                        )),
-                    );
+                if let Some(reason) = source_removed(id, node_id) {
+                    pump.borrow_mut()
+                        .finish(&mainloop, Err(anyhow::anyhow!(reason)));
                 }
             }
         })
@@ -735,6 +739,13 @@ mod tests {
             packed,
             [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 19, 20]
         );
+    }
+
+    #[test]
+    fn only_the_cast_node_leaving_the_registry_ends_the_capture() {
+        let reason = source_removed(44, 44).expect("the cast node was removed");
+        assert!(reason.contains("removed the source"), "{reason}");
+        assert_eq!(source_removed(47, 44), None, "other globals come and go");
     }
 
     #[test]

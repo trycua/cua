@@ -4703,6 +4703,15 @@ mod tests {
         let offers = first_space_offers(&e, SpaceOs::Linux);
         let ids: Vec<&str> = offers.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(ids, ["linux", "omarchy"]);
+        // The Linux Space Home creates for a new agent: the `warm-pools`
+        // experiment keeps this image (and this size) ready in the daemon
+        // (`cua_daemon::local::warm_pools_image`, which asserts the same
+        // reference), so a change to either must change both.
+        assert_eq!(offers[0].image, "ghcr.io/trycua/linux:24.04");
+        assert_eq!(
+            (offers[0].args.cpus, offers[0].args.memory_mb),
+            (Some(2), Some(4096))
+        );
         let o = &offers[1];
         assert_eq!(o.image, "ghcr.io/trycua/omarchy:edge");
         assert_eq!(o.os, SpaceOs::Linux);

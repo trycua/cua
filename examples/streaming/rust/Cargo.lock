@@ -1462,6 +1462,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
  "cua-byoc",
  "cua-cluster",
  "cua-create-failure",

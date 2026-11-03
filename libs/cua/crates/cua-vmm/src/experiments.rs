@@ -24,17 +24,21 @@ pub enum Gate {
     /// Child Spaces: a Space makes Spaces of its own through a channel only
     /// it can reach, inside a budget for its tree (`cua spaces children`).
     ChildSpaces,
+    /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
+    /// AWS x86 pool host with nested KVM.
+    WindowsKvm,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
-    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces, Gate::ChildSpaces];
+    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces, Gate::ChildSpaces, Gate::WindowsKvm];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "secure-spaces",
             Gate::ChildSpaces => "child-spaces",
+            Gate::WindowsKvm => "windows-kvm",
         }
     }
 
@@ -43,6 +47,7 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "secure_spaces",
             Gate::ChildSpaces => "child_spaces",
+            Gate::WindowsKvm => "windows_kvm",
         }
     }
 
@@ -57,6 +62,7 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "Secure Spaces",
             Gate::ChildSpaces => "Child Spaces",
+            Gate::WindowsKvm => "Windows on KVM",
         }
     }
 
@@ -68,6 +74,9 @@ impl Gate {
             }
             Gate::ChildSpaces => {
                 "A Space can make Spaces of its own, inside a budget, and keep a command running."
+            }
+            Gate::WindowsKvm => {
+                "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
             }
         }
     }
@@ -191,6 +200,21 @@ mod tests {
         assert_eq!(super::switch(home.path(), g), Some(true));
         super::set_switch(home.path(), g, false).unwrap();
         assert_eq!(super::switch(home.path(), g), Some(false));
+    }
+
+    #[test]
+    fn windows_kvm_is_a_named_experiment_and_off_by_default() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(Gate::parse("windows_kvm"), Some(Gate::WindowsKvm));
+        assert_eq!(Gate::WindowsKvm.name(), "windows-kvm");
+        assert!(Gate::ALL.contains(&Gate::WindowsKvm));
+        assert!(
+            !super::enabled_in(home.path(), Gate::WindowsKvm)
+                || super::env_says(
+                    std::env::var(EXPERIMENTS_ENV).ok().as_deref(),
+                    Gate::WindowsKvm
+                ) == Some(true)
+        );
     }
 
     #[test]

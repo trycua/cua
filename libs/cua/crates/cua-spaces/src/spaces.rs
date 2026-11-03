@@ -2339,10 +2339,12 @@ impl Spaces {
         }
         let sink = opts.progress.take().map(|p| p.0);
         let (key, on) = self.create_key(&mut opts)?;
-        // A Mac cannot create a Windows VM locally yet. The selected host
-        // may be a Linux or Windows machine that can run it, so do not apply
-        // the coordinator's local runtime restriction to remote placement.
-        if on == On::Local {
+        // A Mac cannot create a Windows VM locally yet. With the `windows-kvm`
+        // experiment on, the selected remote host may be a Linux or Windows
+        // machine that can run it, so the coordinator's local restriction
+        // applies only to local placement. Off: it applies everywhere.
+        if on == On::Local || !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm)
+        {
             refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
         }
         // The record is written before the Space connects, and the volume

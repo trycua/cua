@@ -399,7 +399,10 @@ impl OrgAccess {
     /// `refused` (the API just answered 401 to it), mints a new one. Callers
     /// that were refused together mint once: whoever comes second finds a
     /// different, fresh token already cached and uses it.
-    async fn service_token_replacing(&self, refused: Option<&str>) -> Result<Option<String>, String> {
+    async fn service_token_replacing(
+        &self,
+        refused: Option<&str>,
+    ) -> Result<Option<String>, String> {
         let (Some(url), Some(secret)) = (&self.config.token_url, &self.config.client_secret) else {
             return Ok(None);
         };
@@ -472,7 +475,9 @@ impl OrgAccess {
             let Some(used) = token.as_deref() else {
                 // No service token configured: nothing to refresh.
                 self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-                return Err(format!("{TOKEN_REFUSED} (HTTP 401, no service token configured)"));
+                return Err(format!(
+                    "{TOKEN_REFUSED} (HTTP 401, no service token configured)"
+                ));
             };
             if refreshed {
                 self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
@@ -1188,7 +1193,10 @@ mod tests {
                         if accepted.iter().any(|t| auth == format!("Bearer {t}")) {
                             (axum::http::StatusCode::OK, r#"{"plan":"pro"}"#)
                         } else {
-                            (axum::http::StatusCode::UNAUTHORIZED, r#"{"error":"unauthorized"}"#)
+                            (
+                                axum::http::StatusCode::UNAUTHORIZED,
+                                r#"{"error":"unauthorized"}"#,
+                            )
                         }
                     }
                 }),
@@ -1225,8 +1233,14 @@ mod tests {
         assert_eq!(mints.load(Ordering::Relaxed), 2);
         let m = org.metrics();
         assert!(m.contains("cua_relay_org_api_errors_total 0\n"), "{m}");
-        assert!(m.contains("cua_relay_org_service_token_refused_total 1\n"), "{m}");
-        assert!(m.contains("cua_relay_org_service_token_fetches_total 2\n"), "{m}");
+        assert!(
+            m.contains("cua_relay_org_service_token_refused_total 1\n"),
+            "{m}"
+        );
+        assert!(
+            m.contains("cua_relay_org_service_token_fetches_total 2\n"),
+            "{m}"
+        );
     }
 
     #[tokio::test]

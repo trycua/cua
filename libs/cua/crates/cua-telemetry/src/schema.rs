@@ -1960,7 +1960,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "error_subclass",
                 Kind::Enum(ERROR_SUBCLASSES),
-"The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, runtime_install_failed, vm_never_started, local_network_denied, capacity_vms, ...); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
+                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, runtime_install_failed, vm_never_started, local_network_denied, capacity_vms, ...); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
             ),
         ],
         purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts, and how often one automatic retry saves a create.",

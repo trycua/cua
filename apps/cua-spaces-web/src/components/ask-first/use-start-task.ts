@@ -6,6 +6,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { firstMessage, newPendingId, threadOpAvailable, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type AgentMember, type HostStatus } from "@/bridge";
 import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
 import { sendWithSummon } from "@/components/space-thread/summon";
+import { useStarNudge } from "@/components/star-nudge";
 import { useConnectors } from "@/hooks/use-connectors";
 import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
 
@@ -31,6 +32,7 @@ export function useStartTask(): {
   const { startRun } = useAgents();
   const { offers } = useFirstSpaceOffers();
   const record = useFeatureRecorder();
+  const promptSent = useStarNudge();
   const { core } = useBridge();
   // The job goes straight to its Space: the page is the Space's, and
   // the job is its first message, @mentioning the agent (the same summon as the composer's).
@@ -108,6 +110,7 @@ export function useStartTask(): {
       const target = taskTarget(where);
       const task = addAskTask({ prompt: prompt.trim(), agent, os: whereOs(where), spaceId: target.kind === "space" ? target.spaceId : null, onHost: target.kind === "host" });
       record("ask_first_task_started");
+      promptSent();
       // Straight to the Space: the one picked, the one being made (its page follows the create), or this Mac's.
       const go = (spaceId: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } });
       if (target.kind === "space") {

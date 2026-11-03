@@ -11,6 +11,7 @@ import { isMacPlatform } from "@/lib/utils";
 
 import { harnessName, queuedNote, summonPlan, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
+import { useStarNudge } from "@/components/star-nudge";
 import { toast } from "@/components/ui/toast";
 
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
@@ -141,6 +142,7 @@ export function SpaceCall({
   }, [layout, onLayout]);
   // @ any agent: those in the Space and those that can start in it; sending summons them (`summon.*`).
   const summon = useSummon({ spaceId, thread, roster, canAdd: canAdd || creating });
+  const promptSent = useStarNudge();
   const notes = useWakeNotes(spaceId);
   const shown = useMemo(() => ({ ...roster, handles: summon.handles }), [roster, summon.handles]);
   const noteView = (n: NonNullable<typeof notes>[number]) => (
@@ -237,6 +239,8 @@ export function SpaceCall({
     const replyTo = reply && r.addressee.handles.includes(reply.handle) ? reply.seq : null;
     await summon.send(r.text, view ?? null, replyTo);
     replying.current = null;
+    // A message to an agent is a prompt (the star nudge counts them).
+    if (r.addressee.handles.length > 0) promptSent();
     // The first time a message is addressed for you, say so quietly.
     const told = address.told || r.auto;
     setAddress(spaceId, { ...r.next, told });

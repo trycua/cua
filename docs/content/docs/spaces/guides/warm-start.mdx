@@ -30,3 +30,7 @@ A warm Space is claimed on every kind of Space Cua runs, and its coding apps are
 ## See it
 
 `cua daemon status` shows how many warm Spaces this computer holds. The daemon log says when a Space is claimed and how long the claim took. With the experiment on, every step of an agent's start is also written to `phases.jsonl` in the `persistent` folder of the Cua home, with the time since your message, so you can read how long a start took.
+
+## How fast
+
+Measured on a Mac with 36 GB of memory and Cua's built-in Linux runtime, creating ten Spaces in a row three seconds apart, then starting Claude Code in each and waiting for a session that accepts a message. With Warm start on, a Create takes the waiting Space in about 0.1 s and the session opens about 1 s later, so the agent is ready about 1.1 s after Create (1.0 to 1.4 s each). The next Space is ready again in about 2 s, which is faster than the next request. Without the experiment the same ten Creates took about 22 s each, most of it installing Claude Code (16 s) and opening its session (4 s). The very first Create after installing Cua still has to download the runtime and the image, about 70 s on a fast connection; once Warm start has finished its first Space, about two minutes after the app starts, Create takes about 1.2 s.

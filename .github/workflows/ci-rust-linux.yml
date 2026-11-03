@@ -123,7 +123,7 @@ jobs:
   unit:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Linux unit and compile
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     # 10 to 14 minutes warm. The headroom covers a run with neither the
     # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
     timeout-minutes: 45

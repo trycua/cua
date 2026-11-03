@@ -3,10 +3,11 @@
 
 import { useNavigate, useRouter } from "@tanstack/react-router";
 
-import { firstMessage, newPendingId, threadOpAvailable, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type AgentMember, type HostStatus } from "@/bridge";
+import { firstMessage, newPendingId, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type HostStatus } from "@/bridge";
+import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
-import { sendWithSummon } from "@/components/space-thread/summon";
 import { useConnectors } from "@/hooks/use-connectors";
+import { getDriver } from "@/lib/prepare/store";
 import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
 
 /** Task and Space pairs whose thread already has the task's job. */
@@ -36,24 +37,7 @@ export function useStartTask(): {
   // the job is its first message, @mentioning the agent (the same summon as the composer's).
   const { input: connectors } = useConnectors();
 
-  /** What summoning reads for `spaceId`: its agents now and this device's connectors. */
-  const summonInput = async (spaceId: string) => {
-    const members = ((await host!.call("thread.members", { spaceId }).catch(() => null))?.members ?? []) as AgentMember[];
-    return { members: members.map((m) => ({ handle: m.name, harness: m.harness, label: m.name })), people: [], canAdd: true, connectors };
-  };
-  const send = (spaceId: string, input: Awaited<ReturnType<typeof summonInput>>) => (text: string) =>
-    sendWithSummon({ core, data: host!, spaceId, input, text, post: (t) => host!.call("thread.post", { spaceId, text: t }) });
-  const canSummon = () => !!host && threadOpAvailable(host.mode, "thread.agentAdd");
-
-  /** The job as the Space's first message, through the summon; false when this agent can't join a Space. */
-  const summonIn = async (spaceId: string, agent: string, prompt: string): Promise<boolean> => {
-    if (!canSummon()) return false;
-    const input = await summonInput(spaceId);
-    const first = firstMessage(core, input, agent, prompt);
-    if (!first?.handle) return false;
-    await send(spaceId, input)(first.text);
-    return true;
-  };
+  const { summonInput, send, summonIn, canSummon } = useSummonIn();
 
   const run = (id: string, target: TaskTarget, place?: { pendingId?: string; queued?: boolean; onCreated?: (spaceId: string) => void }) =>
     void (async () => {
@@ -103,6 +87,18 @@ export function useStartTask(): {
   return {
     start: ({ prompt, agent, where }) => {
       const target = taskTarget(where);
+      // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
+      // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
+      const preparing = getDriver();
+      const prep = preparing?.state;
+      if (preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux") {
+        const spaceId = prep.homeSpaceId;
+        const task = addAskTask({ prompt: prompt.trim(), agent, os: "linux", spaceId, pendingId: spaceId ? null : prep.pendingId, onHost: false });
+        record("ask_first_task_started");
+        preparing.send({ id: task.id, text: prompt.trim(), agent });
+        void navigate({ to: "/spaces/$spaceId", params: { spaceId: spaceId ?? prep.pendingId! } });
+        return;
+      }
       const task = addAskTask({ prompt: prompt.trim(), agent, os: whereOs(where), spaceId: target.kind === "space" ? target.spaceId : null, onHost: target.kind === "host" });
       record("ask_first_task_started");
       // Straight to the Space: the one picked or the one being made (its page follows the create); this Mac opens the task's page.

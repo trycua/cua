@@ -258,6 +258,7 @@ describe('app core parity flows (webview)', () => {
       'github-connection',
       'thread-cards',
       'ci-runners',
+      'prepare',
     ]);
   });
 

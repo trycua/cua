@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 
 import type { SpaceThread, ThreadEntry, ThreadItem } from "@/bridge";
+import { usePreparedQueue } from "@/lib/prepare/store";
 
 interface Queued {
   id: string;
@@ -23,6 +24,21 @@ interface Queued {
 const useQueue = create<{ byPending: Record<string, Queued[]>; resolved: Record<string, string> }>(() => ({ byPending: {}, resolved: {} }));
 
 let n = 0;
+
+/**
+ * Where messages for the home being prepared go instead of the in-memory
+ * queue: the preparing driver keeps them (so a quit loses none) and sends
+ * each exactly once. Set by `PrepareRoot`.
+ */
+export interface PrepareSink {
+  /** The row (or Space) is the home being prepared. */
+  owns(spaceId: string): boolean;
+  send(text: string): void;
+}
+let prepareSink: PrepareSink | null = null;
+export function setPrepareSink(sink: PrepareSink | null): void {
+  prepareSink = sink;
+}
 
 /** Queues `text` for the Space being made under `pendingId`. */
 export function enqueue(pendingId: string, text: string): void {
@@ -77,7 +93,15 @@ function entryOf(q: Queued, i: number, me: string, name = ""): ThreadEntry {
 /** The queued messages that belong to `spaceId` (its own pending id, or a pending id that became it). */
 export function useQueued(spaceId: string): Queued[] {
   const { byPending, resolved } = useQueue();
-  return useMemo(() => Object.entries(byPending).flatMap(([pending, qs]) => (pending === spaceId || resolved[pending] === spaceId ? qs : [])), [byPending, resolved, spaceId]);
+  const prepared = usePreparedQueue(spaceId);
+  return useMemo(
+    () => [
+      ...Object.entries(byPending).flatMap(([pending, qs]) => (pending === spaceId || resolved[pending] === spaceId ? qs : [])),
+      // The home's messages kept by the preparing driver, until each is in the thread.
+      ...prepared.map((m): Queued => ({ id: m.id, text: m.text, tsMs: m.sentMs })),
+    ],
+    [byPending, resolved, spaceId, prepared],
+  );
 }
 
 /** Queued messages as thread items. */
@@ -102,7 +126,11 @@ export function creatingThread(pendingId: string): SpaceThread {
     error: null,
     hasMoreBefore: false,
     loadEarlier: async () => {},
-    post: async (text) => (enqueue(pendingId, text), null),
+    post: async (text) => {
+      if (prepareSink?.owns(pendingId)) prepareSink.send(text.trim());
+      else enqueue(pendingId, text);
+      return null;
+    },
     answer: async () => {},
     setRights: async () => {},
     removeAgent: null,

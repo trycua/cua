@@ -10,7 +10,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider } from "@/bridge";
+import { BridgeProvider, setFlagOverride } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { noCore, testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow, ConnectionReport } from "@/bridge/contracts/agents";
@@ -20,6 +20,7 @@ import { readFirstRun, resetFirstRunCache, useFirstRun, writeFirstRun } from "@/
 import { CLOSED_NEW_SPACE, updateNewSpaceSession } from "@/bridge/new-space";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { connectedAppsState, resetConnectedAppsState } from "@/hooks/use-connected-apps";
+import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
@@ -30,7 +31,12 @@ beforeEach(() => {
   updateNewSpaceSession(() => CLOSED_NEW_SPACE);
   resetConnectedAppsState();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setFlagOverride("spaces_ask_first_home", null);
+  setFlagOverride("spaces_new_onboarding", null);
+  resetPrepare();
+});
 
 type Calls = { op: string; args: unknown }[];
 
@@ -214,6 +220,85 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(primary()!.disabled).toBe(false);
     fireEvent.click(primary()!);
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
+  });
+
+  it("with the new setup on there is no Try it screen: the last screen ends the run on Home while the Space is prepared", { timeout: 40_000 }, async () => {
+    setFlagOverride("spaces_ask_first_home", true);
+    setFlagOverride("spaces_new_onboarding", true);
+    resetPrepare();
+    const calls: Calls = [];
+    const { router } = await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+      answer: (op, out) => (op === "agents.setup" || op === "agents.signIn" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
+    });
+    // Preparing started with the app, before any screen was answered.
+    await waitFor(() => expect(getDriver()?.state?.wanted).toBe(true), { timeout: 15_000 });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
+    click("[data-first-run-set-up]");
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    // The dots say three screens: Welcome, Pick your agent, Add your other computers.
+    expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 3 of 3");
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
+    // No "Try it" screen and no prompt to copy; the person lands on Home.
+    expect(document.body.textContent).not.toMatch(/Try it in/);
+    expect(document.querySelector("textarea[data-first-run-prompt]")).toBeNull();
+    await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
+    // The clock for "onboarding finished to ready" started when the last button was pressed.
+    expect(getDriver()?.state?.onboardingDoneMs).not.toBeNull();
+  });
+
+  it("every page of the run shows its buttons: Welcome, Pick your agent (Set up, Not now, Back), Add your other machines (Sign in, Not now, Back)", { timeout: 40_000 }, async () => {
+    setFlagOverride("spaces_ask_first_home", true);
+    setFlagOverride("spaces_new_onboarding", true);
+    resetPrepare();
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false },
+      answer: (op, out) => (op === "agents.setup" || op === "agents.signIn" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
+    });
+    const buttons = () => [...document.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).filter(Boolean);
+    // Page 1.
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    expect(buttons()).toEqual(expect.arrayContaining(["Get started", "Skip for now"]));
+    expect(document.querySelector("[data-first-run-back]")).toBeNull();
+    click("[data-onboarding-primary]");
+    // Page 2: the agent rows with the one Set up and Not now, Back, and the page flow still going to Continue.
+    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
+    expect(document.querySelector("[data-first-run-agent=codex]")).not.toBeNull();
+    expect(buttons()).toEqual(expect.arrayContaining(["Set up", "Not now", "Back", "Skip for now"]));
+    click("[data-first-run-set-up]");
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
+    expect(document.querySelector("[data-first-run-agent=codex]")!.textContent).toContain("Ready");
+    expect(buttons()).toEqual(expect.arrayContaining(["Continue", "Back"]));
+    click("[data-onboarding-primary]");
+    // The last page.
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(buttons()).toEqual(expect.arrayContaining(["Sign in", "Not now", "Back"]));
+  });
+
+  it("with the new setup off the Try it screen is still last", async () => {
+    setFlagOverride("spaces_new_onboarding", false);
+    resetPrepare();
+    await mount({ agents: onlyCodex });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
+    click("[data-first-run-set-up]");
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 3 of 4");
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
   });
 
   it("counts each screen viewed and finished, a skipped one, and Skip for now, as fixed words only", async () => {

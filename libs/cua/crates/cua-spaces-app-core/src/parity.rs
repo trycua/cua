@@ -268,6 +268,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/ci-runners.json"),
         include_str!("../parity/golden/ci-runners.json"),
     ),
+    (
+        "prepare",
+        include_str!("../parity/prepare.json"),
+        include_str!("../parity/golden/prepare.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -1164,6 +1169,90 @@ pub mod frame {
         })
     }
 
+    /// The preparing block, as lines: the headline, a status line only when the
+    /// steps cannot say it, each step with its state, detail and (the current
+    /// one only) its thin bar, each queued
+    /// message with its note, the hint under the box and the button.
+    pub fn prepare(v: &Value) -> Value {
+        let mut out: Vec<Value> = Vec::new();
+        out.push(Value::String(format!(
+            "{}: {}",
+            str_of(&v["phase"]),
+            str_of(&v["title"])
+        )));
+        if let Some(l) = v["line"].as_str() {
+            out.push(Value::String(l.to_string()));
+        }
+        for st in v["steps"].as_array().into_iter().flatten() {
+            let mut l = format!("{} ({})", str_of(&st["label"]), str_of(&st["state"]));
+            if let Some(d) = st["detail"].as_str() {
+                l.push_str(&format!(" - {d}"));
+            }
+            if let Some(f) = st["fraction"].as_f64() {
+                l.push_str(&format!(" [bar {}%]", (f * 100.0).round() as i64));
+            }
+            out.push(Value::String(l));
+        }
+        for q in v["queued"].as_array().into_iter().flatten() {
+            out.push(Value::String(format!(
+                "queued: {} ({})",
+                str_of(&q["text"]),
+                str_of(&q["note"])
+            )));
+        }
+        if let Some(h) = v["composerHint"].as_str() {
+            out.push(Value::String(format!("hint: {h}")));
+        }
+        if let Some(a) = v["action"]["label"].as_str() {
+            out.push(Value::String(format!("button: {a}")));
+        }
+        Value::Array(out)
+    }
+
+    /// What the host was told to do, one line each.
+    pub fn prepare_effects(effects: &[Value]) -> Value {
+        Value::Array(
+            effects
+                .iter()
+                .map(|e| {
+                    let mut l = str_of(&e["type"]).to_string();
+                    if let Some(id) = e["id"].as_str() {
+                        l.push_str(&format!(" {id}"));
+                    }
+                    if let Some(at) = e["atMs"].as_i64() {
+                        l.push_str(&format!(" at {at}"));
+                    }
+                    Value::String(l)
+                })
+                .collect(),
+        )
+    }
+
+    /// The numbers, as `name=value` lines (`-` for not reached).
+    pub fn prepare_metrics(m: &Value) -> Value {
+        let n = |v: &Value| match v.as_i64() {
+            Some(x) => x.to_string(),
+            None => "-".to_string(),
+        };
+        let mut out = vec![Value::String(format!(
+            "runtime={} image={} home={} agent={} prepare={} onboarding_to_ready={}",
+            n(&m["runtimeMs"]),
+            n(&m["imageMs"]),
+            n(&m["homeMs"]),
+            n(&m["agentMs"]),
+            n(&m["prepareMs"]),
+            n(&m["onboardingToReadyMs"])
+        ))];
+        for x in m["messages"].as_array().into_iter().flatten() {
+            out.push(Value::String(format!(
+                "message {} delivered={} first_token={}",
+                str_of(&x["id"]),
+                n(&x["sendToDeliveredMs"]),
+                n(&x["sendToFirstTokenMs"])
+            )));
+        }
+        Value::Array(out)
+    }
     /// One Settings row: `- id kind: label = value ~placeholder [button] {options} (disabled) ?help <link>`.
     pub fn setting_row(r: &Value) -> String {
         let options = r["options"]
@@ -2350,6 +2439,7 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "github-connection" => run_github_connection(&flow, h),
         "thread-cards" => run_thread_cards(&flow, h),
         "ci-runners" => run_ci_runners(&flow, h),
+        "prepare" => run_prepare(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -3842,6 +3932,7 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         // A machine: its one-click offers are the wizard's for that
         // machine's env (`wizard.firstSpaceOffers`), as the page reads them.
         let mut offered = Value::Null;
+        let mut prompts = Value::Null;
         if case["machine"].is_object() {
             let m = &case["machine"];
             let env = patched(&f["machineBase"], &m["env"]);
@@ -3875,6 +3966,20 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
             );
             input["offers"] = json!(list);
             input["hostOs"] = m["hostOs"].clone();
+            // The example jobs for that machine (`firstPrompts.choose`).
+            let p = c(
+                h,
+                "firstPrompts.choose",
+                json!({ "env": env, "hostOs": m["hostOs"] }),
+            )?;
+            prompts = json!({
+                "caps": p["caps"],
+                "lede": p["lede"],
+                "examples": p["examples"].as_array().into_iter().flatten()
+                    .map(|x| x["id"].clone()).collect::<Vec<_>>(),
+                "cards": p["suggestions"].as_array().into_iter().flatten()
+                    .map(|x| x["id"].clone()).collect::<Vec<_>>(),
+            });
         }
         let v = c(h, "firstRun.view", json!({ "input": input }))?;
         let s = |v: &Value| v.as_str().unwrap_or("").to_string();
@@ -3892,6 +3997,9 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         });
         if !offered.is_null() {
             frame["offers"] = offered;
+        }
+        if !prompts.is_null() {
+            frame["prompts"] = prompts;
         }
         let row = |r: &Value| {
             format!(
@@ -5410,6 +5518,43 @@ fn run_ci_runners(f: &Value, h: &dyn Host) -> Result<Value, String> {
         frames.push(json!({ "step": step["step"], "page": frame::ci_runners(&v) }));
     }
     Ok(json!({ "flow": "ci-runners", "frames": frames }))
+}
+
+/// Preparing the ask-first Space: each step sends actions (`prepare.reduce`),
+/// then draws the page (`prepare.view`), what the host is told to do next
+/// and the numbers (`prepare.metrics`).
+fn run_prepare(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    let mut state = Value::Null;
+    let roster = f["roster"].clone();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        // A step may begin on a fresh install.
+        if step["fresh"].as_bool() == Some(true) {
+            state = Value::Null;
+        }
+        let mut effects: Vec<Value> = Vec::new();
+        for a in step["actions"].as_array().into_iter().flatten() {
+            let r = c(h, "prepare.reduce", json!({ "state": state, "action": a }))?;
+            state = r["state"].clone();
+            effects.extend(r["effects"].as_array().cloned().unwrap_or_default());
+        }
+        let v = c(h, "prepare.view", json!({ "state": state }))?;
+        let m = c(h, "prepare.metrics", json!({ "state": state }))?;
+        // What a list shows of the roster: the warming home is not in it until a person wrote into it.
+        let listed = c(
+            h,
+            "prepare.listed",
+            json!({ "state": state, "ids": roster }),
+        )?;
+        frames.push(json!({
+            "step": step["step"],
+            "page": frame::prepare(&v),
+            "list": listed,
+            "effects": frame::prepare_effects(&effects),
+            "metrics": frame::prepare_metrics(&m),
+        }));
+    }
+    Ok(json!({ "flow": "prepare", "frames": frames }))
 }
 
 /// The account area: the Pro banner (Free only, not closable) and the

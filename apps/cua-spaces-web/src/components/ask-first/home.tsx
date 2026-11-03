@@ -16,6 +16,8 @@ import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
+import { PrepareLine } from "@/components/prepare/prepare-line";
+import { usePrepare } from "@/lib/prepare/store";
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -65,6 +67,8 @@ export function AskFirstHome() {
   const chosenAgent = agent ?? mostUsed ?? TASK_AGENTS.find((a) => installed.has(a.id))?.id ?? "claude-code";
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
   const [picked, setWhere] = useState<TaskWhere | null>(null);
+  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  const prep = usePrepare();
   const [whereOpen, setWhereOpen] = useState(false);
   const pick = useWherePick(agentName(chosenAgent));
   const where = currentWhere(picked, kinds, pickable);
@@ -78,7 +82,10 @@ export function AskFirstHome() {
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
   const { chats } = useAgentChats(attempts);
-  const first = !chats?.length && listed.counted.length === 0;
+  // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
+  // is asked for, the welcome and its suggestions stay.
+  const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
+  const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
@@ -102,6 +109,8 @@ export function AskFirstHome() {
           compact={!first}
           autoFocus
         />
+        {/* Preparing is silent: only a failed prepare says so, with Try again. */}
+        <PrepareLine view={prep.view} onRetry={() => prep.driver?.retry()} />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -109,6 +118,7 @@ export function AskFirstHome() {
                 <button
                   type="button"
                   key={s.title}
+                  data-home-card=""
                   onClick={() => {
                     setText(s.prompt);
                     setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });

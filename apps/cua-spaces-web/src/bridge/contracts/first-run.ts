@@ -153,6 +153,8 @@ export interface FirstRunInput {
   cli?: FirstRunCli;
   /** The CLI's name (`SettingsSnapshot.cli`); null: the plan's file name, else `cua`. */
   cliName?: string | null;
+  /** Ask first is on: no Try it screen, and the last screen's button opens the ask-first Space. */
+  askFirst?: boolean;
 }
 
 export interface FirstRunButton {

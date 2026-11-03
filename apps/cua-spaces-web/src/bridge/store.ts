@@ -9,6 +9,7 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
+import { hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
 import { cloudsInput, cloudsView } from "./clouds";
 import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
@@ -186,6 +187,9 @@ export interface CreateSpaceRequest extends SpaceCreateConfig {
   /** The host also posts a system notification when it is ready (the
    * first run's extra Space, which keeps going after the window closes). */
   notifyWhenReady?: boolean;
+  /** The image is the app's own choice (the agent home's), not a reference the person typed: it is not
+   * checked against the catalog's published list, and a pull that cannot happen says why in plain words. */
+  appImage?: boolean;
 }
 
 export interface StoreOptions {
@@ -311,7 +315,13 @@ export class BridgeStore {
     this.details = new SpaceDetailStore(adapter, core);
     this.thisMachine = new ThisMachineStore(adapter, core, () => this.refresh("machines"));
     this.telemetry = new TelemetryForwarder(adapter, () => this.telemetryView());
+    // The Machines page follows what the lists hide (the warming home appears once a person wrote into it).
+    this.offHidden = onHiddenSpacesChange(() => {
+      if (!this.disposed && this.resources.spaces.data) this.publishMachines();
+    });
   }
+
+  private offHidden?: () => void;
 
   /* ---- usage events (telemetry.ts) ---- */
 
@@ -587,6 +597,8 @@ export class BridgeStore {
       const shown = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === p.id);
       const name = shown?.name || p.name.trim() || "a Space";
       // Why, in the words the failed row shows.
+      // The warming home's failure is Home's to say (Try again there), not a notification.
+      if (hiddenSpaceIdsNow(this.core).includes(p.id)) continue;
       this.extras.record({ kind: "error", title: `Couldn't create ${name}`, body: shown?.progress?.error ?? p.error });
     }
   }
@@ -626,7 +638,7 @@ export class BridgeStore {
   }
 
   private beginCreate(req: CreateSpaceRequest, id?: string): { pendingId: string; done: Promise<Space> } {
-    if (req.image) {
+    if (req.image && !req.appImage) {
       const problem = validateImageRef(this.core, req.image);
       if (problem) return { pendingId: "", done: Promise.reject(new Error(problem)) };
     }
@@ -636,7 +648,7 @@ export class BridgeStore {
   }
 
   private async runCreate(req: CreateSpaceRequest, pendingId: string): Promise<Space> {
-    const { os: _os, notifyWhenReady, ...config } = req;
+    const { os: _os, notifyWhenReady, appImage: _appImage, ...config } = req;
     const os = osOf(req);
     const on = config.on ?? this.settingsSnap?.values.defaultLocation ?? "local";
     // A Space on one of your machines or in your own cloud lists as a relay machine.
@@ -671,7 +683,8 @@ export class BridgeStore {
       // Plain words: a fresh computer inside this one (never "VM" or "container").
       const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
       const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this machine" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
-      this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
+      // Nor is the warming home "ready" news until a person wrote into it.
+      if (!hiddenSpaceIdsNow(this.core).some((h) => h === space.id || h === pendingId)) this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;
@@ -850,7 +863,9 @@ export class BridgeStore {
   /* ---- machines ---- */
 
   private publishMachines(): void {
-    const spaces = (this.resources.spaces.data as Space[] | undefined) ?? [];
+    // The home warming for Home's box is on no machine's list until a person wrote into it (the core's rule).
+    const warming = new Set(hiddenSpaceIdsNow(this.core));
+    const spaces = ((this.resources.spaces.data as Space[] | undefined) ?? []).filter((s) => !warming.has(s.id));
     let machines: Machine[] = toMachines(this.machineRows, spaces, this.core, this.machinesNow);
     const override = this.hostOverride;
     if (override) {
@@ -1599,6 +1614,7 @@ export class BridgeStore {
 
   dispose(): void {
     this.disposed = true;
+    this.offHidden?.();
     this.extras.dispose();
     this.unsubscribe?.();
     this.details.dispose();

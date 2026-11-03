@@ -5,8 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
 use crate::error::{Result, VmmError};
 use crate::host;
 use crate::types::Arch;
@@ -85,7 +83,11 @@ pub async fn install(root: &Path) -> Result<PathBuf> {
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
     let result = async {
-        let pkg = staging.join("container.pkg");
+        // The package is kept (as a partial file) between tries and runs: a
+        // dropped connection or a quit resumes it instead of fetching 118 MB again.
+        let dl = root.join("install").join(".download");
+        std::fs::create_dir_all(&dl)?;
+        let pkg = dl.join(format!("container-{VERSION}.pkg"));
         download(&pkg_url(), &pkg, PKG_SHA256).await?;
         let expanded = staging.join("x");
         let out = tokio::process::Command::new("/usr/sbin/pkgutil")
@@ -115,35 +117,28 @@ pub async fn install(root: &Path) -> Result<PathBuf> {
     .await;
     let _ = std::fs::remove_dir_all(&staging);
     let bin = result?;
+    let _ = std::fs::remove_dir_all(root.join("install").join(".download"));
     tracing::info!(bin = %bin.display(), version = VERSION, "installed Apple container");
     Ok(bin)
 }
 
-/// Streams `url` into `dest`, checking its SHA-256 against `sha256`.
+/// Downloads `url` into `dest` (resuming and retrying, [`crate::fetch`]),
+/// checking its SHA-256 against `sha256`.
 async fn download(url: &str, dest: &Path, sha256: &str) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
     tracing::info!(url, dest = %dest.display(), "downloading");
-    let fail = |e: reqwest::Error| VmmError::other(format!("download {url}: {e}"));
-    let mut resp = reqwest::get(url)
-        .await
-        .map_err(fail)?
-        .error_for_status()
-        .map_err(fail)?;
-    let mut f = tokio::fs::File::create(dest).await?;
-    let mut h = Sha256::new();
-    while let Some(chunk) = resp.chunk().await.map_err(fail)? {
-        h.update(&chunk);
-        f.write_all(&chunk).await?;
-    }
-    f.flush().await?;
-    let got = format!("{:x}", h.finalize());
-    if got != sha256 {
-        let _ = std::fs::remove_file(dest);
-        return Err(VmmError::other(format!(
-            "download {url}: SHA-256 {got} does not match the pinned {sha256}"
-        )));
-    }
-    Ok(())
+    crate::fetch::fetch(
+        &crate::fetch::Fetch {
+            url,
+            bearer: None,
+            size: Some(PKG_BYTES),
+            sha256,
+        },
+        dest,
+        &crate::fetch::Policy::default(),
+        &mut |_| {},
+    )
+    .await
+    .map_err(Into::into)
 }
 
 pub use crate::auto::ContainerizationReport;

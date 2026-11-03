@@ -14,12 +14,7 @@ use serde_json::{Value, json};
 
 const OFF: &str = "Phone app is an experiment that is off. Turn it on with `cua experiments enable mobile` (or in the app: Settings, Advanced, Labs).";
 
-/// The experiment switch is process-wide: the tests of this file take turns.
-static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 async fn setup() -> (MockServer, tempfile::TempDir, McpServer, String) {
-    // This process has no switch file and no CUA_EXPERIMENTS: the gate is off.
-    cua_spaces::experiments::set_enabled(cua_spaces::experiments::Gate::Mobile, Some(false));
     let srv = MockServer::start(MockAuth::default()).await;
     let home = tempfile::tempdir().unwrap();
     let spaces = cua_spaces_ext::register(
@@ -43,7 +38,7 @@ async fn call(mcp: &McpServer, tool: &str, args: Value) -> Result<Value, String>
 
 #[tokio::test]
 async fn every_phone_call_is_refused_while_the_experiment_is_off() {
-    let _turn = TURN.lock().await;
+    let _off = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::Mobile, false);
     let (_srv, _home, mcp, space) = setup().await;
     for tool in cua_spaces_ext::persistent::phone::TOOLS {
         let err = call(
@@ -59,7 +54,7 @@ async fn every_phone_call_is_refused_while_the_experiment_is_off() {
 
 #[tokio::test]
 async fn the_phones_extras_on_the_thread_tools_are_refused_and_the_thread_is_unchanged() {
-    let _turn = TURN.lock().await;
+    let _off = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::Mobile, false);
     let (_srv, _home, mcp, space) = setup().await;
     // A plain post and a plain read work as they always did.
     call(
@@ -93,8 +88,7 @@ async fn the_phones_extras_on_the_thread_tools_are_refused_and_the_thread_is_unc
 
 #[test]
 fn no_event_is_reported_for_an_alert_while_the_experiment_is_off() {
-    let _turn = TURN.blocking_lock();
-    cua_spaces::experiments::set_enabled(cua_spaces::experiments::Gate::Mobile, Some(false));
+    let gate = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::Mobile, false);
     struct Count(std::sync::atomic::AtomicUsize);
     impl cua_spaces_ext::push_client::Transport for Count {
         fn send(
@@ -122,7 +116,7 @@ fn no_event_is_reported_for_an_alert_while_the_experiment_is_off() {
     });
     assert_eq!(count.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     // On: it is sent.
-    cua_spaces::experiments::set_enabled(cua_spaces::experiments::Gate::Mobile, Some(true));
+    gate.set(true);
     rt.block_on(async {
         cua_spaces_ext::push_client::report(cua_push::PushEvent {
             id: "approval:room:2".into(),

@@ -21,7 +21,8 @@ keyring = ["dep:keyring"]
 cua-driver-contract = { path = "../cua-driver-contract" }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `unbounded_depth` lets the CDP reader accept deep DOM replies under its own bound.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

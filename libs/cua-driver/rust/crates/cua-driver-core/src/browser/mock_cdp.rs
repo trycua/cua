@@ -35,6 +35,9 @@ pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
+    /// Sent verbatim as the reply's `result`, for payloads a `Value` cannot
+    /// model or that the decoder must reject.
+    pub raw_result: Option<String>,
 }
 
 impl MockReply {
@@ -43,6 +46,7 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(result),
             suppress_response: false,
+            raw_result: None,
         }
     }
 
@@ -51,12 +55,20 @@ impl MockReply {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
             suppress_response: false,
+            raw_result: None,
         }
     }
 
     /// The exact shape Chromium uses for an unimplemented method.
     pub fn method_not_found(method: &str) -> Self {
         Self::err(-32601, &format!("'{method}' wasn't found"))
+    }
+
+    pub fn raw(result: String) -> Self {
+        Self {
+            raw_result: Some(result),
+            ..Self::ok(Value::Null)
+        }
     }
 
     pub fn with_events(mut self, events: Vec<MockEvent>) -> Self {
@@ -139,7 +151,11 @@ impl MockCdpServer {
                         if let Some(sid) = &call.session_id {
                             response["sessionId"] = json!(sid);
                         }
-                        if ws.send(Message::Text(response.to_string())).await.is_err() {
+                        let response = match reply.raw_result {
+                            Some(raw) => format!("{{\"id\":{id},\"result\":{raw}}}"),
+                            None => response.to_string(),
+                        };
+                        if ws.send(Message::Text(response)).await.is_err() {
                             return;
                         }
                     }

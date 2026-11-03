@@ -140,11 +140,12 @@ func TestCreateParams(t *testing.T) {
 
 func TestErrorKinds(t *testing.T) {
 	cases := map[string]error{
-		"not_found": modal.NotFoundError{Exception: "gone"},
-		"invalid":   modal.InvalidError{Exception: "bad"},
-		"auth":      status.Error(codes.Unauthenticated, "token"),
-		"timeout":   context.DeadlineExceeded,
-		"other":     errors.New("boom"),
+		"not_found":   modal.NotFoundError{Exception: "gone"},
+		"invalid":     modal.InvalidError{Exception: "bad"},
+		"auth":        status.Error(codes.Unauthenticated, "token"),
+		"timeout":     context.DeadlineExceeded,
+		"unavailable": status.Error(codes.Unavailable, "try later"),
+		"other":       errors.New("boom"),
 	}
 	for want, err := range cases {
 		if got := wrap(err).kind; got != want {

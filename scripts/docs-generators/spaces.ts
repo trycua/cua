@@ -48,14 +48,26 @@ export const PAGES: Array<{ slug: string; title: string; description: string; ca
   {
     slug: 'spaces',
     title: 'Spaces tools',
-    description: 'Create, run, stream, share and serve from a Space: the Spaces tools with their parameters, results and errors.',
-    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services', 'hotspot', 'sharing', 'cloud'],
+    description: 'Create, run, stream and serve from a Space: the Spaces tools with their parameters, results and errors.',
+    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services', 'hotspot'],
+  },
+  {
+    slug: 'sharing-and-cloud',
+    title: 'Sharing and cloud tools',
+    description: 'Share a Space with other accounts, and create Spaces in your own cloud: the tools with their parameters, results and errors.',
+    categories: ['sharing', 'cloud'],
   },
   {
     slug: 'agents',
     title: 'Agent, teleport and storage tools',
     description: 'Run agents in a Space, teleport apps, and use Keyvault and Cua Volume: the tools with their parameters, results and errors.',
     categories: ['agents', 'persistent-agents', 'teleport', 'keyvault', 'volume'],
+  },
+  {
+    slug: 'threads',
+    title: 'Thread and member tools',
+    description: "Each Space's conversation: post, read and mention, join as a member, and the view a message was sent from.",
+    categories: ['thread'],
   },
 ];
 

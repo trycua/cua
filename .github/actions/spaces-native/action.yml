@@ -69,7 +69,7 @@ runs:
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
     # Dependencies and build products of a cold build (a source change).
     - if: steps.cache.outputs.cache-hit != 'true'
-      uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      uses: ./.github/actions/rust-cache
       with:
         workspaces: libs/cua -> target
         shared-key: spaces-native-${{ inputs.label }}
@@ -101,3 +101,14 @@ runs:
         pnpm install --frozen-lockfile
         pnpm native -- --target "$TARGET"
         test -d "native/$LABEL" || { echo "::error::pnpm native wrote no native/$LABEL"; exit 1; }
+    # Linux: the static cua-spacesd the bundled cua injects into images that
+    # lack one, next to cua (inject.rs looks there), from the cua-spacesd
+    # release libs/cua-spacesd/VERSION pins. Fetched on a cache hit too: the
+    # cache key covers the pin, but older entries predate this file.
+    - if: runner.os == 'Linux' && startsWith(inputs.label, 'linux-')
+      name: Bundle the static cua-spacesd
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: .github/scripts/fetch_static_spacesd.sh "${CUA_RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" "$LABEL" "apps/cua-spaces-desktop/native/$LABEL"

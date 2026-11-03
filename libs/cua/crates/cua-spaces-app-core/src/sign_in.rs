@@ -202,7 +202,7 @@ pub enum SignInFooterState {
 pub struct SignInFooterInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works through client credentials (an API key).
+    /// The Cua account works through client credentials (an API key).
     pub cloud_configured: bool,
     /// Signing in is possible here.
     pub can_sign_in: bool,

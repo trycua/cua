@@ -13,10 +13,6 @@ use crate::ax::tree::{walk_native_chrome_bounded, AXNode, TreeWalkResult};
 
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
-
 fn normalized_text(node: &AXNode) -> String {
     let mut parts = Vec::new();
     for text in [
@@ -144,7 +140,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
             if (is_allow && is_cancel)
                 || (chinese && (is_allow || is_cancel) && has_text(node, "在“设置”中关闭"))
             {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "a browser consent button matched conflicting decisions",
                 ));
@@ -157,7 +153,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
             }
         }
         if chinese && (allows.len() != 1 || cancels.len() != 1) {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "localized browser consent requires unique positive allow and cancel actions",
             ));
@@ -167,7 +163,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
     match matches.as_slice() {
         [] => Ok(None),
         [element] => Ok(Some(*element)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple browser consent actions matched the requested decision",
         )),
@@ -189,7 +185,7 @@ impl ConsentTrees {
         let incomplete = tree.truncated || tree.walk.truncated();
         self.0.push(tree.nodes);
         if incomplete {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent observation was truncated",
             ));
@@ -228,7 +224,7 @@ fn settled_after_scan(
         return Ok(Some(BrowserConsentOutcome::Accepted));
     }
     if deadline_expired {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "Chrome remote-debugging consent did not settle for reconnect attempt {attempt}"
@@ -265,20 +261,20 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
         let pressed = match candidates.as_slice() {
             [element] => unsafe { perform_action(*element as AXUIElementRef, "AXPress") },
             [] => {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "the exact remote-debugging consent sheet exposed no semantic cancel action",
                 ));
             }
             _ => {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "multiple Chrome-owned remote-debugging consent sheets exposed semantic cancel actions",
                 ));
             }
         };
         if pressed != kAXErrorSuccess {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact browser consent cancel action became stale before AXPress",
             ));
@@ -286,7 +282,7 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
         drop(trees);
         dismissed = true;
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the remote-debugging consent sheet remained after its exact cancel action",
             ));
@@ -299,13 +295,13 @@ pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
     let pid = i32::try_from(request.pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser pid is outside the macOS process-id range",
         )
     })?;
     let window_id = u32::try_from(request.window_id).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser window is outside the macOS window-id range",
         )
@@ -317,7 +313,7 @@ pub async fn handle(
         let trees = tokio::task::spawn_blocking(move || read_consent_trees(pid, window_id))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not inspect the browser consent UI: {error}"),
                 )
@@ -349,7 +345,7 @@ pub async fn handle(
                 .perform(|| unsafe { perform_action(*element as AXUIElementRef, "AXPress") });
             drop(trees);
             if pressed != kAXErrorSuccess {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "the exact browser consent action became stale before AXPress",
                 ));
@@ -365,13 +361,13 @@ pub async fn handle(
         }
         drop(trees);
         if candidates.len() > 1 {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "multiple Chrome-owned remote-debugging consent sheets exposed semantic allow actions",
             ));
         }
         if saw_prompt && !prompt_present {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "the person dismissed the browser consent sheet",
             ));

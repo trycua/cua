@@ -71,6 +71,15 @@ pub fn check_listen(listen: SocketAddr, allow_any_address: bool) -> Result<Optio
     )))
 }
 
+/// The address this machine reaches other networks from (its LAN
+/// address, for a client on the LAN). No packet is sent: connecting a UDP
+/// socket only picks a route.
+pub fn lan_ip() -> Option<IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?;
+    s.local_addr().ok().map(|a| a.ip())
+}
+
 /// This machine's Tailscale IPv4 address, when the `tailscale` CLI is
 /// installed and answers (`tailscale ip -4`).
 pub fn tailscale_ip() -> Option<IpAddr> {
@@ -115,7 +124,7 @@ pub(crate) fn shell_quote(word: &str) -> String {
 }
 
 /// `host:port`, bracketing an IPv6 address.
-pub(crate) fn authority(ip: IpAddr, port: u16) -> String {
+pub fn authority(ip: IpAddr, port: u16) -> String {
     match ip {
         IpAddr::V6(v6) => format!("[{v6}]:{port}"),
         v4 => format!("{v4}:{port}"),
@@ -125,6 +134,57 @@ pub(crate) fn authority(ip: IpAddr, port: u16) -> String {
 /// The command a laptop runs to add this machine: `cua spaces add
 /// <addr> [--host] --name <name> --token <token>` (`--host` when it
 /// provides Spaces, so `on="host:<name>"` finds it).
+/// The login of this machine's tailnet user (`tailscale status --json`:
+/// the `Self` node's user), with Tailscale or a Headscale-coordinated
+/// client alike. `None` when no tailnet client answers.
+pub fn tailnet_login() -> Option<String> {
+    let candidates = [
+        "tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ];
+    for bin in candidates {
+        let Ok(out) = std::process::Command::new(bin)
+            .args(["status", "--json"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        if out.status.success() {
+            return self_login(&String::from_utf8_lossy(&out.stdout));
+        }
+    }
+    None
+}
+
+/// The `Self` node's user login in `tailscale status --json` output.
+pub fn self_login(status_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(status_json).ok()?;
+    let uid = v.get("Self")?.get("UserID")?;
+    let key = match uid {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        _ => return None,
+    };
+    v.get("User")?
+        .get(&key)?
+        .get("LoginName")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// The command that adds a `--tailnet` host on a teammate's machine: no
+/// token, the tailnet login is the credential.
+pub fn tailnet_pairing_command(address: &str, name: &str, host: bool) -> String {
+    format!(
+        "cua spaces add {}{} --name {}",
+        shell_quote(address),
+        if host { " --host" } else { "" },
+        shell_quote(name),
+    )
+}
+
 pub fn pairing_command(address: &str, name: &str, token: &str, host: bool) -> String {
     format!(
         "cua spaces add {}{} --name {} --token {}",
@@ -138,6 +198,18 @@ pub fn pairing_command(address: &str, name: &str, token: &str, host: bool) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tailnet_self_login_is_read_from_status() {
+        let json = r#"{"Self":{"UserID":1234,"HostName":"mini"},
+            "User":{"1234":{"ID":1234,"LoginName":"alice@example.com","DisplayName":"Alice"}}}"#;
+        assert_eq!(self_login(json).as_deref(), Some("alice@example.com"));
+        assert_eq!(self_login("{}"), None);
+        assert_eq!(
+            tailnet_pairing_command("100.101.1.2:3211", "mini", true),
+            "cua spaces add 100.101.1.2:3211 --host --name mini"
+        );
+    }
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()

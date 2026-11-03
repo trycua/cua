@@ -27,3 +27,5 @@ ureq = { version = "3", optional = true, default-features = false, features = ["
 
 [dev-dependencies]
 tempfile.workspace = true
+# The fixed provider words are the registry's ids (tests/privacy.rs).
+cua-connections.workspace = true

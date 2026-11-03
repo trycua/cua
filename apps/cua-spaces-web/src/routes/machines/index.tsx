@@ -3,27 +3,34 @@
 
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ChevronRightIcon, CircleAlertIcon, InfoIcon, LockIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  useConnectCloud,
   useDevices,
   useMachines,
   useNewSpaceWizard,
   useSession,
   useThisMachine,
+  type CloudsView,
   type Machine,
   type MachinesView,
   type MachinesViewIssue,
   type MachinesViewMachine,
   type MachinesViewRemove,
   type MachinesViewToggle,
+  type PendingMachine,
 } from "@/bridge";
-import { AddMachineDialog } from "@/components/add-machine-dialog";
-import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
+import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { EnrollSheet, PendingDetail, PendingRow, RecentAccess, TrustSection, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
+import { accessFor } from "@/lib/machines-account";
+import { CloudDetail, CloudDot } from "@/components/clouds/cloud-detail";
+import { CloudLogo } from "@/components/cloud-logo";
 import { UpsellPrompt } from "@/components/upsell-prompt";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { RestartDialog, useUpdateIndicator } from "@/components/shell/update-indicator";
+import { MachineRowMenu } from "@/components/spaces/space-menu";
 import { ThisMachineExtras } from "@/components/this-machine";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -32,14 +39,15 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/machines/")({
   component: MachinesPage,
-  // `?add=1` opens "Add a computer" (the getting-started checklist links here).
-  // `?join=<code>` opens "Join with a code" with the code filled in (a `cua://add/<code>` link
-  // opened on this computer); `relay` names a relay other than the production one.
+  // `?add=1` opens "Add a computer".
+  // `?join=<code>` opens it on "Enter a code" with the code filled in (a `cua://add/<code>`
+  // link opened on this computer); `relay` names a relay other than the production one.
   validateSearch: (s: Record<string, unknown>): { add?: true; join?: string; relay?: string } => ({
     ...(s.add === 1 || s.add === "1" || s.add === true ? { add: true as const } : {}),
     ...(typeof s.join === "string" && s.join ? { join: s.join.slice(0, 200) } : {}),
@@ -48,6 +56,25 @@ export const Route = createFileRoute("/machines/")({
 });
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The view without the sign-ins that are waiting to be added (they are the top group). */
+function withoutPending(view: MachinesView, pending: readonly PendingMachine[]): MachinesView {
+  const waiting = new Set(pending.flatMap((p) => (p.kind === "sign-in" && p.device ? [p.device] : [])));
+  if (waiting.size === 0) return view;
+  return {
+    ...view,
+    machines: view.machines.filter((m) => !waiting.has(m.id)),
+    groups: view.groups.map((g) => ({ ...g, ids: g.ids.filter((id) => !waiting.has(id)) })).filter((g) => g.ids.length > 0),
+  };
+}
+
+/** "3 machines, 2 online", and what waits. */
+function summaryText(view: MachinesView | null, waiting: number): string {
+  const total = view?.machines.length ?? 0;
+  const online = view?.machines.filter((m) => m.online).length ?? 0;
+  const base = `${total} machine${total === 1 ? "" : "s"}, ${online} online`;
+  return waiting > 0 ? `${base}, ${waiting} waiting` : base;
+}
 
 /** How often the page asks the machines for their health while it is open. */
 const HEALTH_EVERY_MS = 60_000;
@@ -61,7 +88,11 @@ const HEALTH_EVERY_MS = 60_000;
  * actions (open, start, stop, teleport, drop files) stay on the Space.
  */
 function MachinesPage() {
-  const { data: machines = [], isLoading, error, setupGuide, view, checkHealth } = useMachines();
+  const { data: machines = [], isLoading, error, view: fullView, checkHealth, remove } = useMachines();
+  const { account, pending, now } = useMachinesAccount();
+  const actions = usePendingActions();
+  // A machine waiting to be added is in the top group, not in the list below.
+  const view = useMemo(() => (fullView ? withoutPending(fullView, pending) : fullView), [fullView, pending]);
   // Each machine's issues come from its own daemon: asked on opening the
   // page and every minute while it stays open.
   useEffect(() => {
@@ -74,71 +105,87 @@ function MachinesPage() {
   const [query, setQuery] = useState("");
   const { add, join, relay } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const [adding, setAddingState] = useState(add === true);
+  const [adding, setAddingState] = useState(add === true || join !== undefined);
   const setAdding = (open: boolean) => {
     setAddingState(open);
-    if (!open && add) void navigate({ search: {}, replace: true });
+    if (!open && (add || join)) void navigate({ search: {}, replace: true });
   };
   useEffect(() => {
-    if (add) setAddingState(true);
-  }, [add]);
-  const [joining, setJoiningState] = useState(join !== undefined);
-  const setJoining = (open: boolean) => {
-    setJoiningState(open);
-    if (!open && join) void navigate({ search: {}, replace: true });
-  };
-  useEffect(() => {
-    if (join) setJoiningState(true);
-  }, [join]);
+    if (add || join) setAddingState(true);
+  }, [add, join]);
   const shown = view?.machines ?? [];
-  const selected = selectedMachine(shown, selectedId);
+  // A cloud is selected as `cloud:<id>`; a machine by its id.
+  const cloudPage = selectedId?.startsWith("cloud:") ? view?.clouds?.pages.find((c) => c.id === selectedId.slice(6)) : undefined;
+  const pendingPage = selectedId?.startsWith("pending:") ? pending.find((p) => `pending:${p.id}` === selectedId) : undefined;
+  const selected = cloudPage || pendingPage ? undefined : selectedMachine(shown, selectedId?.startsWith("cloud:") || selectedId?.startsWith("pending:") ? null : selectedId);
   const row = (id: string) => machines.find((m) => m.id === id);
 
   return (
-    <Page className="max-w-6xl">
+    <Page contained className="max-w-6xl">
       <PageHeader
-        title="Computers"
-        description={isLoading ? "Loading computers…" : view?.machines.length ? view.summary : "Computers that can run your Spaces."}
+        title="Machines"
+        description={isLoading ? "Loading machines…" : view?.machines.length || pending.length ? summaryText(view, pending.length) : "Machines that can run your Spaces."}
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={() => setJoining(true)} data-join-with-code-open>
-              Join with a code
-            </Button>
-            <Button onClick={() => setAdding(true)} data-machines-add>
-              <PlusIcon /> Add a computer
-            </Button>
-          </div>
+          <Button onClick={() => setAdding(true)} data-machines-add>
+            <PlusIcon /> Add machine
+          </Button>
         }
       />
       {error ? (
-        <EmptyState icon={<ServerIcon />} title="Couldn't load computers">
+        <EmptyState icon={<ServerIcon />} title="Couldn't load machines">
           {error.message}
         </EmptyState>
       ) : isLoading || (!view && machines.length > 0) ? (
         <LoadingState />
-      ) : !view || view.machines.length === 0 ? (
+      ) : !view || (view.machines.length === 0 && pending.length === 0) ? (
         <EmptyState
           icon={<ServerIcon />}
-          title="No computers yet"
+          title="Add your first machine"
           action={
-            <Button onClick={() => setAdding(true)}>
-              <PlusIcon /> Add a computer
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setAdding(true)} data-machines-add-this>
+                <PlusIcon /> This machine
+              </Button>
+              <Button variant="outline" onClick={() => setAdding(true)} data-machines-add-other>
+                Another machine
+              </Button>
+            </div>
           }
         >
-          Set up a Mac, Linux or Windows computer and it shows here, ready to run Spaces.
+          Set up a Mac, Linux or Windows machine and it shows here, ready to run Spaces.
         </EmptyState>
       ) : (
-        <div className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] items-start gap-8">
-          <div>
-            <MachineList view={view} rows={machines} query={query} onQuery={setQuery} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,320px)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-8" data-machines-split="">
+          <div className="min-h-0 overflow-y-auto overscroll-contain pr-1 pb-10" data-machines-list-scroll="">
+            <MachineList
+              view={view}
+              rows={machines}
+              query={query}
+              onQuery={setQuery}
+              selectedId={cloudPage ? `cloud:${cloudPage.id}` : pendingPage ? `pending:${pendingPage.id}` : (selected?.id ?? null)}
+              onSelect={setSelectedId}
+              pending={pending}
+              pendingTitle={account?.pendingTitle ?? "Waiting for you"}
+              pendingBusy={actions.busy}
+              onAdd={actions.add}
+              onNotMe={actions.notMe}
+            />
             <UpsellPrompt surface="machine" active={machines.length >= 2 && machines.some((m) => m.via === "relay")} className="mt-3" />
           </div>
-          {selected ? <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} /> : null}
+          <div className="min-h-0 overflow-y-auto overscroll-contain pb-10" data-machines-detail-scroll="">
+            {cloudPage ? (
+              <CloudDetail key={cloudPage.id} page={cloudPage} onGone={() => setSelectedId(null)} />
+            ) : pendingPage ? (
+              <PendingDetail key={pendingPage.id} machine={pendingPage} now={now} busy={actions.busy === pendingPage.id} onAdd={() => actions.add(pendingPage)} onNotMe={() => actions.notMe(pendingPage)} />
+            ) : selected ? (
+              <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} />
+            ) : null}
+          </div>
         </div>
       )}
-      <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
-      <JoinWithCodeDialog open={joining} onOpenChange={setJoining} initialCode={join ?? ""} initialRelay={relay ?? null} />
+      <EnrollSheet />
+      {actions.notMeDialog((machine) => remove(machine, null))}
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -152,6 +199,11 @@ function MachineList({
   onQuery,
   selectedId,
   onSelect,
+  pending,
+  pendingTitle,
+  pendingBusy,
+  onAdd,
+  onNotMe,
 }: {
   view: MachinesView;
   rows: Machine[];
@@ -159,27 +211,67 @@ function MachineList({
   onQuery: (q: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  pending: PendingMachine[];
+  pendingTitle: string;
+  pendingBusy: string | null;
+  onAdd: (p: PendingMachine) => void;
+  onNotMe: (p: PendingMachine) => void;
 }) {
   const { remove } = useMachines();
+  const connect = useConnectCloud();
   const [openOld, setOpenOld] = useState(false);
   const [removingOld, setRemovingOld] = useState(false);
   const byId = useMemo(() => new Map(view.machines.map((m) => [m.id, m] as const)), [view]);
   const q = query.trim().toLowerCase();
   const matches = (m: MachinesViewMachine) => !q || `${m.name} ${m.line}`.toLowerCase().includes(q);
   const removeOld = view.groups.find((g) => g.removeAll)?.removeAll ?? null;
+  const clouds = view.clouds;
+  // The selected row stays in view in the list's own scroll (arrow keys, a click on a cloud, a new selection).
+  const listRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!selectedId) return;
+    const sel = selectedId.startsWith("cloud:") ? `[data-cloud-id="${CSS.escape(selectedId.slice(6))}"]` : `[data-machine-id="${CSS.escape(selectedId)}"]`;
+    listRef.current?.querySelector<HTMLElement>(sel)?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedId]);
+  const cloudMatches = (c: CloudsView["group"]["rows"][number]) => !q || `${c.name} ${c.line}`.toLowerCase().includes(q);
+  const cloudIds = (clouds?.group.rows ?? []).filter(cloudMatches).map((c) => `cloud:${c.id}`);
   const ids = view.machines.map((m) => m.id);
   const step = (from: string, by: number) => {
-    const visible = ids.filter((id) => matches(byId.get(id)!) && (openOld || !view.groups.find((g) => g.collapsed)?.ids.includes(id)));
+    const visible = [
+      ...ids.filter((id) => matches(byId.get(id)!) && (openOld || !view.groups.find((g) => g.collapsed)?.ids.includes(id))),
+      ...cloudIds,
+    ];
     const i = visible.indexOf(from);
     const next = visible[Math.max(0, Math.min(visible.length - 1, i + by))];
     if (next) {
       onSelect(next);
-      document.querySelector<HTMLElement>(`[data-machine-id="${CSS.escape(next)}"]`)?.focus();
+      document.querySelector<HTMLElement>(`[data-machine-id="${CSS.escape(next)}"], [data-cloud-id="${CSS.escape(next.replace("cloud:", ""))}"]`)?.focus();
     }
   };
 
+  // The clouds come first (the core's `order`): a long machine list never pushes them out of view.
+  const cloudsSection = clouds && (cloudIds.length > 0 || !q) ? (
+          <div key="clouds" data-cloud-group="clouds">
+            <div className="px-2 pt-3.5 pb-1 text-[11px] font-semibold tracking-[0.02em] text-muted-foreground">{clouds.group.title}</div>
+            {clouds.group.rows.filter(cloudMatches).map((c) => (
+              <CloudRow key={c.id} cloud={c} selected={selectedId === `cloud:${c.id}`} onSelect={() => onSelect(`cloud:${c.id}`)} onStep={(by) => step(`cloud:${c.id}`, by)} />
+            ))}
+            {!q ? (
+              <button
+                type="button"
+                onClick={() => connect.show()}
+                data-connect-a-cloud=""
+                className="flex w-full cursor-default items-center gap-2.5 rounded-lg px-2 py-[7px] text-left text-[13px] text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                <PlusIcon className="size-3.5 shrink-0" />
+                {clouds.group.connectLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null;
+
   return (
-    <section aria-label="Machine list" className="min-w-0">
+    <section ref={listRef} aria-label="Machine list" className="min-w-0">
       <label className="mb-1 flex h-[30px] items-center gap-2 rounded-lg border bg-card px-2.5 text-muted-foreground focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand/15">
         <SearchIcon className="size-3.5 shrink-0" />
         <input
@@ -191,8 +283,21 @@ function MachineList({
           className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70"
         />
       </label>
-      <div role="listbox" aria-label="Computers">
-        {view.groups.map((g) => {
+      {pending.length > 0 ? (
+        <div data-machine-group="pending" data-pending-count={pending.length}>
+          <div className="px-2 pt-3.5 pb-1 text-[11px] font-semibold tracking-[0.02em] text-muted-foreground">{pendingTitle}</div>
+          {pending
+            .filter((p) => !q || p.name.toLowerCase().includes(q))
+            .map((p) => (
+              <PendingRow key={p.id} machine={p} selected={selectedId === `pending:${p.id}`} busy={pendingBusy === p.id} onSelect={() => onSelect(`pending:${p.id}`)} onAdd={() => onAdd(p)} onNotMe={() => onNotMe(p)} />
+            ))}
+        </div>
+      ) : null}
+      <div role="listbox" aria-label="Machines">
+        {(view.order ?? ["clouds", ...view.groups.map((g) => g.id)]).map((section) => {
+          if (section === "clouds") return cloudsSection;
+          const g = view.groups.find((x) => x.id === section);
+          if (!g) return null;
           const members = g.ids.map((id) => byId.get(id)).filter((m): m is MachinesViewMachine => Boolean(m));
           const visible = members.filter(matches);
           if (!visible.length && q) return null;
@@ -267,6 +372,49 @@ function MachineList({
   );
 }
 
+/** A cloud in the list: its dot, name, one short line, and its logo at the size of the OS icons. */
+function CloudRow({
+  cloud: c,
+  selected,
+  onSelect,
+  onStep,
+}: {
+  cloud: CloudsView["group"]["rows"][number];
+  selected: boolean;
+  onSelect: () => void;
+  onStep: (by: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      data-cloud-id={c.id}
+      data-health={c.health}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          onStep(e.key === "ArrowDown" ? 1 : -1);
+        }
+      }}
+      className={cn(
+        "flex w-full cursor-default items-center gap-2.5 rounded-lg px-2 py-[7px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
+        selected ? "bg-brand/15" : "hover:bg-accent/60",
+      )}
+    >
+      <CloudDot health={c.health} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium">{c.name}</span>
+        <span className="block truncate text-xs text-muted-foreground" data-cloud-line="">
+          {c.line}
+        </span>
+      </span>
+      <CloudLogo cloud={c.logo} size={14} />
+    </button>
+  );
+}
+
 /** Green when usable, grey when not; amber or red when the machine has
  * issues (`health`). */
 function StatusDot({ online, health, className }: { online: boolean; health?: string; className?: string }) {
@@ -330,6 +478,7 @@ function MachineRow({
 
 function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void }) {
   const { data: session } = useSession();
+  const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
   const { remove } = useMachines();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -344,6 +493,8 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
     void (async () => {
       try {
         for (const a of t.actions) await host.run(a);
+        // Turning this Mac's desktop on shows its row in the Spaces list again, if it was hidden.
+        if (m.current && t.id === "desktop" && !t.on) showDesktop("this-mac");
       } catch (e) {
         fail(`Couldn't change ${t.label}`)(e);
       } finally {
@@ -359,6 +510,9 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
   // A switch is read-only on another machine: dimmed when it can't be
   // reached at all (offline), plain with a note when it is.
   const dim = (t: MachinesViewToggle) => !t.editable && !m.togglesNote;
+  // Another machine's Space limit, read-only: its host reports it with its other limits.
+  const spaceLimit = !m.current ? row?.limits?.find((l) => l.resource === "spaces" && l.limit > 0)?.limit : undefined;
+  const helpOf = (t: MachinesViewToggle) => (t.id === "spaces" && t.on && spaceLimit ? `Spaces can be created here (up to ${spaceLimit})` : t.help);
 
   // Its shared desktop first, then its Spaces, all drawn as Space rows.
   const rows: { id: string; name: string; os: string; status: string; running: boolean; label?: string }[] = [...(m.desktop ? [m.desktop] : []), ...m.spaces];
@@ -390,20 +544,16 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         ) : null}
       </div>
       <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-machine-status>
-        <StatusDot online={m.online} className="size-[7px]" />
+        <StatusDot online={m.online} health={m.health} className="size-[7px]" />
         {m.status}
-        {m.sharedBy ? (
-          <>
-            <span className="text-muted-foreground/50">·</span> {m.sharedBy}
-          </>
-        ) : null}
+        {m.sharedBy ? <span className="ml-2">{m.sharedBy}</span> : null}
       </p>
 
       <MachineIssues machine={m} hidePermissions={Boolean(m.current && row?.panel?.permissionsTitle)} onFail={fail} />
 
-      <div className="mt-[22px] overflow-hidden rounded-xl border bg-card" data-machine-toggles>
+      <div className="mt-[22px] border-y" data-machine-toggles>
         {m.notice ? (
-          <div className="flex items-center gap-2 border-b px-4 py-2.5 text-xs text-muted-foreground" data-machine-notice>
+          <div className="flex items-center gap-2 border-b py-2.5 text-xs text-muted-foreground" data-machine-notice>
             <InfoIcon className="size-3.5 shrink-0" />
             <span className="flex-1">{m.notice}</span>
             {m.noticeAction && m.current ? (
@@ -414,12 +564,14 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
           </div>
         ) : null}
         {m.toggles.map((t, i) => (
-          <div key={t.id} className={cn("flex items-center justify-between gap-5 px-4 py-3.5", i > 0 && "border-t")} data-machine-toggle={t.id}>
+          <div key={t.id} className={cn("flex items-center justify-between gap-5 py-3.5", i > 0 && "border-t")} data-machine-toggle={t.id}>
             <div className={cn(dim(t) && "opacity-50")}>
               <div className="text-[13px] font-medium" id={`toggle-${t.id}`}>
                 {t.label}
               </div>
-              <div className="mt-px text-xs text-muted-foreground">{t.help}</div>
+              <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={t.id}>
+                {helpOf(t)}
+              </div>
             </div>
             <Switch
               checked={t.on}
@@ -432,7 +584,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
           </div>
         ))}
         {m.togglesNote ? (
-          <div className="flex items-center gap-2 border-t px-4 py-2.5 text-xs text-muted-foreground" data-machine-toggles-note>
+          <div className="flex items-center gap-2 border-t py-2.5 text-xs text-muted-foreground" data-machine-toggles-note>
             {m.team ? <UsersIcon className="size-3.5" /> : <LockIcon className="size-3.5" />}
             {m.togglesNote}
           </div>
@@ -441,37 +593,40 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
 
       {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
 
-      <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
-      <div className="overflow-hidden rounded-xl border bg-card" data-machine-spaces>
-        {rows.map((s, i) => (
-          <Link
-            key={s.id}
-            to="/spaces/$spaceId"
-            params={{ spaceId: s.id }}
-            title={`Open ${s.name}`}
-            data-space-row={s.id}
-            className={cn("flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/60", i > 0 && "border-t")}
-          >
-            <span className="truncate font-mono text-xs">{s.name}</span>
-            {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
-            {s.os ? (
-              <>
-                <span className="text-muted-foreground/50">·</span>
-                <span className="truncate text-muted-foreground">{s.os}</span>
-              </>
-            ) : null}
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <StatusDot online={s.running} className="size-[7px]" />
-              {s.status}
-            </span>
-            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
-          </Link>
-        ))}
-        {m.spacesEmpty ? <p className={cn("px-4 py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
-        <div className="border-t px-3 py-2.5">
-          <NewSpaceHere machine={m} />
-        </div>
-      </div>
+      {m.spacesTitle ? (
+        <>
+          <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
+          <div className="border-y" data-machine-spaces>
+            {rows.map((s, i) => (
+              <div key={s.id} className={cn("group/row relative", i > 0 && "border-t")}>
+                <Link
+                  to="/spaces/$spaceId"
+                  params={{ spaceId: s.id }}
+                  title={`Open ${s.name}`}
+                  data-space-row={s.id}
+                  className="flex items-center gap-2.5 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
+                >
+                  <span className="truncate font-mono text-xs">{s.name}</span>
+                  {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
+                  {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <StatusDot online={s.running} className="size-[7px]" />
+                    {s.status}
+                  </span>
+                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
+                </Link>
+                {/* Not This Mac's own desktop: it is never a notch tile. */}
+                {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
+              </div>
+            ))}
+            {m.spacesEmpty ? <p className={cn("py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
+            <div className="border-t py-2.5">
+              <NewSpaceHere machine={m} />
+            </div>
+          </div>
+        </>
+      ) : null}
+
 
       <div className="mt-6">
         <button
@@ -486,32 +641,36 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         </button>
         {detailsOpen ? (
           <div className="mt-2" data-machine-details>
-            <dl className="overflow-hidden rounded-xl border bg-card">
+            <dl className="border-y">
               {m.details.map((f, i) => (
-                <div key={f.label} className={cn("grid grid-cols-[140px_1fr] px-4 py-2.5 text-[13px]", i > 0 && "border-t")}>
+                <div key={f.label} className={cn("grid grid-cols-[140px_1fr] py-2.5 text-[13px]", i > 0 && "border-t")}>
                   <dt className="text-muted-foreground">{f.label}</dt>
                   <dd className="select-text">{f.value}</dd>
                 </div>
               ))}
             </dl>
+            {m.current && account?.thisMachine ? <TrustSection trust={account.thisMachine} onTrust={devices.startEnroll} /> : null}
             {m.current ? <ThisMachineExtras panel={row?.panel ?? null} part="logs" /> : null}
           </div>
         ) : null}
       </div>
 
-      {m.remove ? (
-        <span title={m.remove.help ?? undefined} className="mt-7 inline-flex">
-          <button
-            type="button"
-            disabled={!m.remove.enabled}
-            onClick={() => setRemoving(m.remove!)}
-            className="cursor-default py-1 text-[13px] text-destructive hover:underline hover:underline-offset-2 disabled:opacity-50 disabled:hover:no-underline"
-            data-machine-remove={m.id}
-          >
-            {m.remove.label}
-          </button>
-        </span>
-      ) : null}
+      <div className="mt-7 flex flex-wrap items-center gap-x-5" data-machine-actions="">
+        {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
+        {m.remove ? (
+          <span title={m.remove.help ?? undefined} className="inline-flex">
+            <button
+              type="button"
+              disabled={!m.remove.enabled}
+              onClick={() => setRemoving(m.remove!)}
+              className="cursor-default py-1 text-[13px] text-destructive hover:underline hover:underline-offset-2 disabled:opacity-50 disabled:hover:no-underline"
+              data-machine-remove={m.id}
+            >
+              {m.remove.label}
+            </button>
+          </span>
+        ) : null}
+      </div>
 
       {removing ? (
         <ConfirmDialog
@@ -552,9 +711,9 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
   return (
     <>
       <h3 className="mt-[22px] mb-2 text-xs font-semibold text-muted-foreground">{m.issuesTitle || "Issues"}</h3>
-      <div className="overflow-hidden rounded-xl border bg-card" data-machine-issues>
+      <div className="border-y" data-machine-issues>
         {issues.map((i, n) => (
-          <div key={i.id} className={cn("flex items-center gap-2.5 px-4 py-2.5", n > 0 && "border-t")} data-machine-issue={i.id} data-level={i.level}>
+          <div key={i.id} className={cn("flex items-center gap-2.5 py-2.5", n > 0 && "border-t")} data-machine-issue={i.id} data-level={i.level}>
             {i.level === "fail" ? (
               <CircleAlertIcon aria-label="Problem" className="size-3.5 shrink-0 text-destructive" />
             ) : i.level === "info" ? (
@@ -638,7 +797,7 @@ function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: M
 
 function LoadingState() {
   return (
-    <div aria-busy="true" aria-label="Loading computers" className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] items-start gap-8">
+    <div aria-busy="true" aria-label="Loading machines" className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] items-start gap-8">
       <div className="space-y-1">
         <div className="mb-3 h-[30px] animate-pulse rounded-lg bg-muted" />
         {[0, 1, 2].map((i) => (

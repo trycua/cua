@@ -1,0 +1,212 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Cua AI, Inc.
+#
+# Lets Cua Spaces create machines in this AWS account without any stored
+# key: Cua's issuer signs a 15-minute token for your Cua account, and this
+# role trusts only that account's tokens. Everything Cua creates is tagged
+# cua-managed=true, and the role can stop, start or delete only what carries
+# that tag. It creates no IAM users, keys or policies of its own.
+#
+# Remove the trust at any time by deleting this stack. Disconnecting in Cua
+# stops new tokens at once.
+#
+# The inline policy is policy/aws-policy.json (the least-privilege policy
+# the docs publish) plus a read of Cost Explorer for the spend Cua shows. A
+# test keeps them identical.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cua Spaces access through OIDC federation (no stored keys)
+
+Parameters:
+  CuaAccount:
+    Type: String
+    Description: Your Cua account's issuer id (Cua fills it in; it is in the link Cua gave you)
+    AllowedPattern: "^[A-Za-z0-9_-]{6,64}$"
+  IssuerHost:
+    Type: String
+    Default: oidc.cua.ai
+    Description: Cua's token issuer (change only for a self-hosted issuer)
+    AllowedPattern: "^[a-z0-9.-]+(:[0-9]+)?$"
+
+Resources:
+  CuaOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !Sub "https://${IssuerHost}/a/${CuaAccount}"
+      ClientIdList:
+        - sts.amazonaws.com
+      Tags:
+        - Key: cua-trust
+          Value: "true"
+
+  CuaSpacesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cua-spaces
+      Description: Cua Spaces creates and manages only the machines it tags cua-managed=true
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {"Federated": "${CuaOidcProvider}"},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "${IssuerHost}/a/${CuaAccount}:aud": "sts.amazonaws.com",
+                  "${IssuerHost}/a/${CuaAccount}:sub": "account:${CuaAccount}"
+                }
+              }
+            }
+          ]
+        }
+      Policies:
+        - PolicyName: cua-spaces
+          # BEGIN cua-policy
+          PolicyDocument:
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "CuaIdentityAndRead",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sts:GetCallerIdentity",
+                    "ec2:DescribeImages",
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeInstanceTypeOfferings",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeVpcs"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "CuaResolvePublicImageParameters",
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameters",
+                  "Resource": "arn:aws:ssm:*::parameter/aws/service/*"
+                },
+                {
+                  "Sid": "CuaLaunchTaggedInstancesAndVolumes",
+                  "Effect": "Allow",
+                  "Action": "ec2:RunInstances",
+                  "Resource": [
+                    "arn:aws:ec2:*:*:instance/*",
+                    "arn:aws:ec2:*:*:volume/*"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestTag/cua-managed": "true"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaLaunchInstancesWithIMDSv2Only",
+                  "Effect": "Deny",
+                  "Action": "ec2:RunInstances",
+                  "Resource": "arn:aws:ec2:*:*:instance/*",
+                  "Condition": {
+                    "StringNotEquals": {
+                      "ec2:MetadataHttpTokens": "required"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaLaunchUsesExistingNetworkAndImages",
+                  "Effect": "Allow",
+                  "Action": "ec2:RunInstances",
+                  "Resource": [
+                    "arn:aws:ec2:*::image/*",
+                    "arn:aws:ec2:*:*:subnet/*",
+                    "arn:aws:ec2:*:*:network-interface/*",
+                    "arn:aws:ec2:*:*:security-group/*"
+                  ]
+                },
+                {
+                  "Sid": "CuaCreateTaggedSecurityGroups",
+                  "Effect": "Allow",
+                  "Action": "ec2:CreateSecurityGroup",
+                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestTag/cua-managed": "true"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaCreateSecurityGroupsInAVpc",
+                  "Effect": "Allow",
+                  "Action": "ec2:CreateSecurityGroup",
+                  "Resource": "arn:aws:ec2:*:*:vpc/*"
+                },
+                {
+                  "Sid": "CuaTagOnlyWhatItCreates",
+                  "Effect": "Allow",
+                  "Action": "ec2:CreateTags",
+                  "Resource": [
+                    "arn:aws:ec2:*:*:instance/*",
+                    "arn:aws:ec2:*:*:volume/*",
+                    "arn:aws:ec2:*:*:security-group/*"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "ec2:CreateAction": [
+                        "RunInstances",
+                        "CreateSecurityGroup"
+                      ],
+                      "aws:RequestTag/cua-managed": "true"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaManageItsOwnInstances",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:StartInstances",
+                    "ec2:StopInstances",
+                    "ec2:TerminateInstances",
+                    "ec2:GetConsoleOutput"
+                  ],
+                  "Resource": "arn:aws:ec2:*:*:instance/*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/cua-managed": "true"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaManageItsOwnSecurityGroups",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:DeleteSecurityGroup"
+                  ],
+                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/cua-managed": "true"
+                    }
+                  }
+                },
+                {
+                  "Sid": "CuaReadCostOfWhatItCreates",
+                  "Effect": "Allow",
+                  "Action": "ce:GetCostAndUsage",
+                  "Resource": "*"
+                }
+              ]
+            }
+          # END cua-policy
+      Tags:
+        - Key: cua-trust
+          Value: "true"
+
+Outputs:
+  RoleArn:
+    Description: The role Cua assumes (Cua derives it from the account id)
+    Value: !GetAtt CuaSpacesRole.Arn
+  IssuerUrl:
+    Description: The issuer this account trusts
+    Value: !Sub "https://${IssuerHost}/a/${CuaAccount}"

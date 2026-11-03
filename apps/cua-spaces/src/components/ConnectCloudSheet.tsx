@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   cloudConnectInitial,
@@ -11,7 +11,7 @@ import {
   type CloudConnectInput,
   type CloudConnectState,
 } from '../model/cloudConnect';
-import { connectInput, type CloudBridge } from '../native/cloud';
+import { connectInput, type CloudBridge, type CloudTargetWire } from '../native/cloud';
 import { SmallSheet } from './Devices';
 import { useT } from "../i18n";
 
@@ -39,6 +39,28 @@ export function ConnectCloudSheet({
   const [input, setInput] = useState<CloudConnectInput>({ providers: [] });
   const [state, setState] = useState<CloudConnectState>(cloudConnectInitial);
   const v = cloudConnectView(input, state);
+  // Hetzner's API token: memory only, never in the core's state; dropped when Connect finishes or the sheet closes.
+  const [token, setTokenText] = useState('');
+  const tokenRef = useRef('');
+  const setToken = (text: string) => {
+    const was = tokenRef.current !== '';
+    tokenRef.current = text;
+    setTokenText(text);
+    if (was !== (text !== '')) setState((s) => reduceCloudConnect(input, s, { type: 'set-token-entered', entered: text !== '' }));
+  };
+  const dropToken = () => {
+    tokenRef.current = '';
+    setTokenText('');
+  };
+  useEffect(() => () => {
+    tokenRef.current = '';
+  }, []);
+  const withToken = (t: CloudTargetWire & { uses_token?: boolean }): CloudTargetWire => {
+    const out = { ...t };
+    delete out.uses_token;
+    if (t.uses_token && tokenRef.current) out.token = tokenRef.current;
+    return out;
+  };
 
   useEffect(() => {
     void bridge.status().then(
@@ -63,7 +85,7 @@ export function ConnectCloudSheet({
       if (!request) return;
       try {
         if (request.kind === 'test') {
-          const r = await bridge.test(request.target);
+          const r = await bridge.test(withToken(request.target));
           setState((s) =>
             reduceCloudConnect(input, s, {
               type: 'tested',
@@ -73,11 +95,13 @@ export function ConnectCloudSheet({
             })
           );
         } else {
-          const r = await bridge.connect(request.target, request.make_default);
+          const r = await bridge.connect(withToken(request.target), request.make_default);
+          dropToken();
           setState((s) => reduceCloudConnect(input, s, { type: 'connected', label: r.label ?? r.title }));
           onConnected();
         }
       } catch (e) {
+        if (request.kind === 'connect') dropToken();
         setState((s) => reduceCloudConnect(input, s, { type: 'failed', error: message(e) }));
       }
     },
@@ -128,6 +152,21 @@ export function ConnectCloudSheet({
         </ul>
         {v.field && text(v.field, 'set-value')}
         {v.profileField && text(v.profileField, 'set-profile')}
+        {v.tokenField && (
+          <label className="dw-field">
+            <span>{v.tokenField.label}</span>
+            <input
+              className="dw-input"
+              type="password"
+              aria-label={v.tokenField.label}
+              placeholder={v.tokenField.placeholder}
+              value={token}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => setToken(event.target.value)}
+            />
+          </label>
+        )}
         {v.field && (
           <label className="dw-check">
             <input
@@ -164,7 +203,14 @@ export function ConnectCloudSheet({
           </p>
         )}
         <div className="dv-sheet-actions">
-          <button type="button" className="dw-btn" onClick={onClose}>
+          <button
+            type="button"
+            className="dw-btn"
+            onClick={() => {
+              dropToken();
+              onClose();
+            }}
+          >
             {v.cancelLabel}
           </button>
           <button

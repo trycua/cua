@@ -209,7 +209,7 @@ export function DevicesSection({
                   <span className="st-label">{row.title}</span>
                   <span className="dv-detail">
                     {row.detail}
-                    {row.lastSeen != null && ` · ${l.lastSeen} ${relativeTime(row.lastSeen * 1000, nowMs)}`}
+                    {row.lastSeen != null && `, ${l.lastSeen} ${relativeTime(row.lastSeen * 1000, nowMs)}`}
                   </span>
                 </div>
                 {row.actions.includes("approve") && prompt && (

@@ -62,9 +62,17 @@ that are easy to miss:
   additive and pass `buf breaking`.
 - Sandboxes are daemon-agnostic: lifecycle and readiness must not assume
   cua-spacesd or any other in-guest service.
-- `libs/fleet` is a read-only mirror. Never edit it.
 - Tests that start VMs, containers, or host input are opt-in
   (off by default) and clean up what they create.
+
+## Before you push: `bin/ci`
+
+Run `bin/ci` before every push, and `bin/ci --fix` when it reports a failure
+it can repair (formatting, lockfiles, generated bindings and reference docs).
+It runs the CI checks your diff against `origin/main` affects, in a few
+minutes, and prints the exact fix command for each failure. A green `bin/ci`
+does not replace CI: the end-to-end, image and native Windows lanes still run
+there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
 
 ## Cross-platform Cua Driver behavior
 

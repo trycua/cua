@@ -1,0 +1,16 @@
+{
+ "sources": [
+  {
+   "type": "command",
+   "kind": "space",
+   "argv": [
+    "sh",
+    "-c",
+    "\"$CUA\" spaces list --json"
+   ],
+   "env": [],
+   "pointer": "/spaces",
+   "id_field": "display_name"
+  }
+ ]
+}

@@ -1,0 +1,38 @@
+{
+ "rules": [
+  {
+   "path": "sdk_version",
+   "mode": "ignore",
+   "reason": "the SDK under test, not behaviour; the fixture is chosen per version"
+  },
+  {
+   "path": "no_internet.ok.outbound",
+   "mode": "regex",
+   "pattern": "refused",
+   "reason": "allow_internet_access=False gives a Cua VM no network at all (network=none); live E2B 2.42/2.56 still let 1.1.1.1:443 through (recorded 2026-10-19). Cua is stricter, which is what the flag asks for."
+  },
+  {
+   "path": "sdk.version",
+   "mode": "ignore",
+   "reason": "the SDK under test; the recording is chosen per version"
+  },
+  {
+   "path": "cases.cmd_exit_codes.steps.s7.raised.error",
+   "mode": "regex",
+   "pattern": "signal: segmentation fault|unknown|Command exited with code -1 and error:\\n",
+   "reason": "signals the process contract has no name for are named from ProcessEnd.signal_number, new in this change; Linux guest images ship the older cua-spacesd until the next image release, which reports 'unknown'"
+  },
+  {
+   "path": "cases.tpl_build_bad_image.steps.s0.raised.message",
+   "mode": "regex",
+   "pattern": ".*(not found|cannot be booted).*",
+   "reason": "E2B pulls the image from a registry and says it does not exist; Cua Spaces boot only images that carry cua-spacesd and cannot pull OCI images, so the build fails with the reason it cannot boot it"
+  },
+  {
+   "path": "cases.cmd_exit_codes.steps.s7.raised.message",
+   "mode": "regex",
+   "pattern": "signal: segmentation fault|unknown|Command exited with code -1 and error:\\n",
+   "reason": "same as the Python rule: older Linux guest images report 'unknown' for signals the process contract has no name for"
+  }
+ ]
+}

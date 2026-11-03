@@ -28,6 +28,20 @@ on:
       - ".github/actions/cua-sandbox/**"
       - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-contrib/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-cli/**"
+      - "libs/python/cua-sandbox/**"
+      - "libs/cua-bench/cua_bench/**"
+      - "docs/content/docs/cua-sdk/guides/contrib-providers.mdx"
+      - ".github/actions/cua-sandbox/**"
+      - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
+      - ".github/workflows/ci-cua-contrib.yml"
   workflow_dispatch:
 
 permissions:
@@ -35,7 +49,7 @@ permissions:
 
 concurrency:
   group: ci-cua-contrib-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -64,7 +78,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib
@@ -78,7 +92,10 @@ jobs:
           && cargo test --locked -p cua-sandbox-core --test contrib -- --test-threads=4
       - name: The CLI builds with and without contrib
         run: |
-          if cargo tree --locked -p cua-cli -e normal -i aws-sdk-ec2; then exit 1; fi
+          # The default CLI must not pull the AWS SDK (only --features byoc does).
+          # cargo tree exits 0 with "nothing to print" when the crate is in the
+          # lockfile but not in this tree, so test its output, not its status.
+          if cargo tree --locked -p cua-cli -e normal -i aws-sdk-ec2 2>/dev/null | grep -q .; then exit 1; fi
           cargo check --locked -p cua-cli
           cargo check --locked -p cua-cli --features contrib
           cargo check --locked -p cua-cli --features byoc
@@ -142,10 +159,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The debug builds plus uv's Python wheels (pyarrow) outgrew the runner's
+      # free disk (ENOSPC unpacking into the uv cache).
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+          free-more: "true"
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib-e2e

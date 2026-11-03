@@ -99,6 +99,23 @@ impl Seed {
         Ok(self)
     }
 
+    /// Adds a cloud-config `part` next to the user-data (a MIME multipart
+    /// whose `merge_how` appends lists, so both sides' `bootcmd` run).
+    pub fn with_part(mut self, part: &str) -> Self {
+        const END: &str = "--==cua-vmm-seed==--\n";
+        if self.user_data.trim().is_empty() {
+            self.user_data = part.to_string();
+        } else if let Some(head) = self.user_data.strip_suffix(END) {
+            // Already ours, multipart: one more part in it.
+            let more = multipart(&[part]);
+            let body = more.split_once("\n\n").map(|(_, b)| b).unwrap_or_default();
+            self.user_data = format!("{head}{body}");
+        } else {
+            self.user_data = multipart(&[&self.user_data, part]);
+        }
+        self
+    }
+
     /// Render the seed as an ISO 9660 image.
     pub fn to_iso(&self) -> Vec<u8> {
         let mut files: Vec<(&str, &[u8])> = vec![
@@ -299,8 +316,10 @@ pub fn guest_env_cloud_config(env: &BTreeMap<String, String>) -> Result<Option<S
 ///   mirrors the file to `/run/cua-env/env-token` (`0600`, the
 ///   driver's user). Other images get a plain `/run/cua`. On later boots
 ///   the persistent copy is installed at `/run/cua/env-token` again.
-/// - `runcmd` (re)starts the token sync and cua-spacesd, so a driver that
-///   raced cloud-init picks the token up.
+/// - `runcmd` starts the token sync (a no-op when it runs) and restarts
+///   cua-spacesd ONLY if it started before cloud-init's files were in place
+///   ([`restart_if_raced`]); a driver ordered after `cloud-init.service`
+///   already has everything and a restart would fail the calls in flight.
 /// - every other variable → `/etc/cua/spacesd.env` (`0600`), the driver
 ///   unit's `EnvironmentFile`. The token never goes into an environment
 ///   file or the command's environment.
@@ -379,14 +398,19 @@ pub fn guest_cloud_config(
     }
     let mut runcmd = String::new();
     if token.is_some() {
+        // `start`, not `restart`: the sync helper polls and watches its
+        // source file, so a token written after it started is mirrored
+        // without a restart, and an idle helper that waits for the mount
+        // starts syncing on its own.
         runcmd.push_str(
-            "  - [sh, -c, 'systemctl restart cua-env-token-sync.service >/dev/null 2>&1 || true']\n",
+            "  - [sh, -c, 'systemctl start cua-env-token-sync.service >/dev/null 2>&1 || true']\n",
         );
     }
     if token.is_some() || !env.is_empty() {
-        runcmd.push_str(
-            "  - [sh, -c, 'systemctl try-restart cua-spacesd.service >/dev/null 2>&1 || true']\n",
-        );
+        runcmd.push_str(&format!(
+            "  - [sh, -c, '{}']\n",
+            restart_if_raced("cua-spacesd.service")
+        ));
     }
     if command.is_some() {
         runcmd.push_str(&format!(
@@ -398,6 +422,28 @@ pub fn guest_cloud_config(
         out.push_str(&runcmd);
     }
     Ok(Some(out))
+}
+
+/// A shell command that restarts `unit` only if it started before
+/// `cloud-init.service` finished, i.e. before the token and the environment
+/// file this seed writes were in place.
+///
+/// Images order cua-spacesd after `cloud-init.service`, so on a normal boot
+/// it starts with everything in place and must NOT be restarted: `runcmd`
+/// runs in `cloud-final`, a second or two after cua-spacesd first answers,
+/// and a restart there fails every call in flight or opened in that window
+/// (`Aborted`, `SendRequest`). Without the ordering (an older or foreign
+/// image) the unit started early and the restart is what makes it read the
+/// seed, so it stays. Unknown timestamps restart, as before.
+///
+/// No single quotes: it sits in a single-quoted YAML scalar.
+pub fn restart_if_raced(unit: &str) -> String {
+    format!(
+        "ts() {{ systemctl show -p ActiveEnterTimestampMonotonic \"$1\" 2>/dev/null | cut -d= -f2; }}; \
+         ci=$(ts cloud-init.service); up=$(ts {unit}); \
+         if [ \"${{ci:-0}}\" -gt 0 ] 2>/dev/null && [ \"${{up:-0}}\" -gt \"${{ci:-0}}\" ] 2>/dev/null; then exit 0; fi; \
+         systemctl try-restart {unit} >/dev/null 2>&1 || true"
+    )
 }
 
 /// Where the token lives in the guest, like a mounted secret.
@@ -427,6 +473,70 @@ fn token_bootcmd() -> String {
         sync_dropin = GUEST_TOKEN_SYNC_DROPIN,
         persistent = GUEST_TOKEN_PERSISTENT,
         runtime = GUEST_TOKEN_RUNTIME,
+    )
+}
+
+/// Where cua-spacesd reads its token in await-token-file mode (kept by the
+/// guest's token sync from [`GUEST_TOKEN_RUNTIME`]).
+pub const GUEST_TOKEN_SYNCED: &str = "/run/cua-env/env-token";
+
+/// Environment of [`renew_identity_script`]: the guest's new token, host
+/// entropy (hex), the host clock (`<secs>.<nanos>`), the hostname, and
+/// `1` when the guest becomes a new machine (otherwise only the token,
+/// clock and hostname change: a claimed pool member is already a machine
+/// of its own).
+pub const RENEW_ENV: [&str; 5] = [
+    "CUA_NEW_TOKEN",
+    "CUA_ENTROPY",
+    "CUA_NOW",
+    "CUA_HOSTNAME",
+    "CUA_NEW_MACHINE",
+];
+
+/// A root shell script that gives a guest restored from a shared memory
+/// snapshot (or a claimed one) its own identity, for guests seeded by this
+/// module (their token lives in files cua-spacesd follows, so `Init`
+/// cannot rotate it):
+///
+/// * the clock, stepped to the host's, and the hostname;
+/// * for a new machine: host entropy mixed into the random pool and the
+///   kernel's CRNG re-seeded (`RNDRESEEDCRNG`), `/etc/machine-id`
+///   regenerated and new SSH host keys (in the background: key generation
+///   takes a moment);
+/// * last, the token: [`GUEST_TOKEN_RUNTIME`] and
+///   [`GUEST_TOKEN_PERSISTENT`], then the driver's copy
+///   [`GUEST_TOKEN_SYNCED`] (it follows that file at once, and drops every
+///   session, the caller's too), so the snapshot's token stops working.
+///
+/// Inputs come from [`RENEW_ENV`], never the command line.
+pub fn renew_identity_script() -> String {
+    format!(
+        r#"set -eu
+umask 077
+new_machine=${{CUA_NEW_MACHINE:-0}}
+case "${{CUA_NOW:-}}" in ?*) date -u -s "@$CUA_NOW" >/dev/null 2>&1 || true ;; esac
+case "${{CUA_HOSTNAME:-}}" in ?*) hostname "$CUA_HOSTNAME" && echo "$CUA_HOSTNAME" >/etc/hostname || true ;; esac
+if [ "$new_machine" = 1 ]; then
+  case "${{CUA_ENTROPY:-}}" in ?*) printf %s "$CUA_ENTROPY" >/dev/urandom || true ;; esac
+  python3 -c 'import fcntl,os; fd=os.open("/dev/urandom", os.O_WRONLY); fcntl.ioctl(fd, 0x5207)' 2>/dev/null || true
+  rm -f /etc/machine-id && systemd-machine-id-setup >/dev/null 2>&1 || true
+  setsid -f sh -c 'rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && ssh-keygen -A' >/dev/null 2>&1 </dev/null || true
+fi
+# Last: the driver drops every session (this one too) once it follows the
+# new token.
+if [ -n "${{CUA_NEW_TOKEN:-}}" ]; then
+  for f in {runtime} {persistent}; do
+    if [ -d "$(dirname "$f")" ]; then printf %s "$CUA_NEW_TOKEN" >"$f.new" && mv -f "$f.new" "$f"; fi
+  done
+  if [ -e {synced} ]; then
+    owner=$(stat -c %u:%g {synced})
+    printf %s "$CUA_NEW_TOKEN" >{synced}.new && chown "$owner" {synced}.new && mv -f {synced}.new {synced}
+  fi
+fi
+"#,
+        runtime = GUEST_TOKEN_RUNTIME,
+        persistent = GUEST_TOKEN_PERSISTENT,
+        synced = GUEST_TOKEN_SYNCED,
     )
 }
 
@@ -707,6 +817,99 @@ mod tests {
         [(ENV_TOKEN_VAR.to_string(), token.to_string())].into()
     }
 
+    /// The seed's `runcmd` lines (the list items), in order.
+    fn runcmd_lines(ud: &str) -> Vec<String> {
+        let rest = ud.split("runcmd:\n").nth(1).expect("a runcmd section");
+        rest.lines()
+            .take_while(|l| l.starts_with("  - "))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Readiness guard: `runcmd` runs in cloud-final, seconds after
+    /// cua-spacesd first answers, so it must never restart the driver
+    /// unconditionally (every RPC in flight then aborts), nor restart the
+    /// token sync.
+    #[test]
+    fn runcmd_never_restarts_the_driver_unconditionally() {
+        let mut env = token_env("tok123");
+        env.insert("FOO".into(), "bar".into());
+        let argv = vec!["sleep".to_string(), "1".to_string()];
+        for (env, cmd) in [
+            (token_env("tok123"), None),
+            (env.clone(), None),
+            (env.clone(), Some(argv.as_slice())),
+            (
+                [("FOO".to_string(), "bar".to_string())].into(),
+                Some(argv.as_slice()),
+            ),
+        ] {
+            let ud = guest_cloud_config(&env, cmd).unwrap().unwrap();
+            for line in runcmd_lines(&ud) {
+                assert!(
+                    !line.contains("systemctl restart cua-spacesd")
+                        && !line.contains("systemctl restart cua-env-token-sync"),
+                    "unconditional restart: {line}"
+                );
+                if line.contains("try-restart cua-spacesd.service") {
+                    assert!(
+                        line.contains("ActiveEnterTimestampMonotonic")
+                            && line.contains("cloud-init.service")
+                            && line.contains("exit 0"),
+                        "the driver restart must be guarded: {line}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Runs the guarded restart against a fake `systemctl` and reports
+    /// whether it restarted the unit.
+    #[cfg(unix)]
+    fn guarded_restart_fires(ci: &str, up: &str) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        let fake = dir.path().join("systemctl");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n show) case \"$4\" in cloud-init.service) echo ActiveEnterTimestampMonotonic={ci};; *) echo ActiveEnterTimestampMonotonic={up};; esac;;\n *) echo \"$@\" >>{};;\nesac\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", &restart_if_raced("cua-spacesd.service")])
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        std::fs::read_to_string(&log)
+            .map(|l| l.contains("try-restart cua-spacesd.service"))
+            .unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_driver_restarts_only_when_it_started_before_cloud_init_finished() {
+        // Ordered after cloud-init.service (the published images): no restart.
+        assert!(!guarded_restart_fires("5000000", "7890000"));
+        // Started before the seed's files landed: restart so it reads them.
+        assert!(guarded_restart_fires("5000000", "3000000"));
+        // Unknown timestamps (no systemd data): the old behaviour.
+        assert!(guarded_restart_fires("0", "7890000"));
+        assert!(guarded_restart_fires("", ""));
+        // Not started yet: try-restart is the no-op it always was.
+        assert!(guarded_restart_fires("5000000", "0"));
+    }
+
     #[test]
     fn env_seed_writes_token_files_and_restarts_driver() {
         let ud = guest_env_cloud_config(&token_env("tok123"))
@@ -749,7 +952,7 @@ mod tests {
         // bootcmd runs before write_files (cloud-init module order), so the
         // runtime file lands on the tmpfs.
         assert!(ud.find("bootcmd:").unwrap() < ud.find("write_files:").unwrap());
-        assert!(ud.contains("systemctl restart cua-env-token-sync.service"));
+        assert!(ud.contains("systemctl start cua-env-token-sync.service"));
         assert!(ud.contains("systemctl try-restart cua-spacesd.service"));
         assert_eq!(guest_env_cloud_config(&BTreeMap::new()).unwrap(), None);
         // Other variables go to the env file, the token does not.
@@ -758,6 +961,27 @@ mod tests {
         let ud = guest_env_cloud_config(&env).unwrap().unwrap();
         assert!(ud.contains("      FOO=\"bar\"\n"));
         assert!(!ud.contains("CUA_ENV_TOKEN"));
+    }
+
+    #[test]
+    fn renew_identity_script_is_valid_sh_and_reads_only_its_env() {
+        let script = renew_identity_script();
+        for var in RENEW_ENV {
+            assert!(script.contains(var), "{var}");
+        }
+        assert!(script.contains(GUEST_TOKEN_SYNCED));
+        let Some(sh) = crate::host::which("sh") else {
+            return;
+        };
+        let out = std::process::Command::new(sh)
+            .args(["-n", "-c", &script])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]

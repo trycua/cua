@@ -214,7 +214,8 @@ def test_sdk_registries_publish_only_from_trycua_cua() -> None:
     wf = workflow("cd-cua-sdk.yml")
     assert wf["env"]["CANONICAL"] == "${{ github.repository == 'trycua/cua' }}"
     pypi = step("cd-cua-sdk.yml", "publish", "Publish wheels to PyPI")["run"]
-    upload = pypi.index("twine upload --skip-existing dist/wheel-*/*.whl")
+    # The first upload is PyPI (cua-cli wheels before cua, see the wheel list).
+    upload = pypi.index("twine upload --skip-existing")
     assert pypi.rindex('if [ "$CANONICAL" = true ]; then', 0, upload) >= 0
     assert "test.pypi.org" in pypi
     npm = step("cd-cua-sdk.yml", "publish", "Publish npm packages")["run"]

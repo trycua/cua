@@ -21,16 +21,20 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn start(state: &Path, port: u16, health: u16) -> Child {
+/// Starts a relay whose stdout and stderr go to `<state>/<name>.log`
+/// (printed by [`Logs`] when the test fails).
+fn start(state: &Path, name: &str, port: u16, health: u16) -> Child {
+    let log = std::fs::File::create(state.join(format!("{name}.log"))).expect("relay log");
     Command::new(env!("CARGO_BIN_EXE_cua-relay"))
         .env("CUA_RELAY_LISTEN", format!("127.0.0.1:{port}"))
         .env("CUA_RELAY_HEALTH_LISTEN", format!("127.0.0.1:{health}"))
         .env("CUA_RELAY_TOKENS", "handover-test-token")
         .env("CUA_RELAY_STATE_FILE", state.join("machines.json"))
         .env("CUA_RELAY_SHUTDOWN_GRACE_SECS", "2")
+        .env("NO_COLOR", "1")
         .env_remove("CUA_RELAY_OIDC_ISSUER")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().expect("relay log")))
+        .stderr(Stdio::from(log))
         .spawn()
         .expect("spawn cua-relay")
 }
@@ -67,15 +71,32 @@ fn sigterm(child: &Child) {
         .success());
 }
 
+/// On a failing test, prints both relays' logs (a flake on a CI runner is
+/// otherwise silent: the processes' output went nowhere).
+struct Logs<'a>(&'a Path);
+
+impl Drop for Logs<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            for name in ["a", "b"] {
+                let log = std::fs::read_to_string(self.0.join(format!("{name}.log")))
+                    .unwrap_or_else(|e| format!("<no log: {e}>"));
+                eprintln!("--- relay {name} ---\n{log}");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_next_relay_waits_then_serves_what_queued() {
     let state = tempfile::tempdir().unwrap();
+    let _logs = Logs(state.path());
     let (a_port, a_health) = (free_port(), free_port());
-    let mut a = start(state.path(), a_port, a_health);
+    let mut a = start(state.path(), "a", a_port, a_health);
     wait_for(a_port);
 
     let (b_port, b_health) = (free_port(), free_port());
-    let mut b = start(state.path(), b_port, b_health);
+    let mut b = start(state.path(), "b", b_port, b_health);
     wait_for(b_health);
     // Standby: the probe port answers, the main port holds requests.
     assert!(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// This machine's setup and buttons (`host.setUp`, `host.action`,
+// This machine's setup and buttons (`host.setUp`, `host.action`, `host.limits`,
 // `host.openSettings`), over `model/host.ts` (the SwiftUI host's
 // WebUIBridge+Pages "This machine"). A failure is worded for people (the
 // title, the plain message, the raw error as details, and Retry or Sign In):
@@ -61,7 +61,7 @@ export function settingsPaneUrl(url: string, platform: NodeJS.Platform): string 
 }
 
 export function hostSetupMethods({ model, platform, system }: BridgeContext): Handlers {
-  const unavailable = () => Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This computer"} can't be set up for access in this build`);
+  const unavailable = () => Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This machine"} can't be set up for access in this build`);
   return {
     "host.setUp": async (args) => {
       if (!model.host.host) throw unavailable();
@@ -79,6 +79,18 @@ export function hostSetupMethods({ model, platform, system }: BridgeContext): Ha
       const key = HOST_ACTIONS[word as keyof typeof HOST_ACTIONS];
       if (!key) throw Failure.badArgs(`${word} is not a host action`);
       await model.host.run(model.native.AppHostActionId[key] as AppHostActionId);
+      if (model.host.actionFailure) throw hostFailure(model.host.actionFailure);
+      return hostStatus(model);
+    },
+    "host.limits": async (args) => {
+      if (!model.host.host) throw unavailable();
+      const count = (k: string) => {
+        const v = args[k];
+        if (v === undefined || v === null) return undefined;
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 1_000_000) throw Failure.badArgs(`${k}: a whole number, 0 or more`);
+        return v;
+      };
+      await model.host.setLimits({ maxSpaces: count("maxSpaces"), maxMemoryGb: count("maxMemoryGb"), maxDiskGb: count("maxDiskGb"), maxRunMinutes: count("maxRunMinutes") });
       if (model.host.actionFailure) throw hostFailure(model.host.actionFailure);
       return hostStatus(model);
     },

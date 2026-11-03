@@ -1,0 +1,150 @@
+// Shares (cua.daemon.v1): a link to something you run, that opens on your
+// other signed-in devices (phone included), never a localhost link. The
+// daemon owns the share records and the gateway that serves them, so a share
+// keeps working after the shell that made it exits, until its TTL, a stop,
+// or the deletion of the Space it points into.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Shares of the daemon's machine.
+service ShareService {
+  // Shares a port on this machine, a port in a Space, or a file or folder
+  // (read-only), and returns the link. The machine must be on the cua.ai
+  // relay (`cua host setup`); there is no localhost fallback.
+  rpc CreateShare(CreateShareRequest) returns (CreateShareResponse);
+  // The active shares.
+  rpc ListShares(ListSharesRequest) returns (ListSharesResponse);
+  // Stops one share, or all of them. The link stops working at once.
+  rpc StopShare(StopShareRequest) returns (StopShareResponse);
+  // Opens the share's link once, as its owner would, and reports what came
+  // back, so an agent can confirm the link works before handing it over.
+  rpc CheckShare(CheckShareRequest) returns (CheckShareResponse);
+}
+
+// Who may open a share.
+enum ShareAccess {
+  // Treated as private.
+  SHARE_ACCESS_UNSPECIFIED = 0;
+  // Only the owner's cua.ai account, on any of the owner's devices.
+  SHARE_ACCESS_PRIVATE = 1;
+  // Members of the owner's team.
+  SHARE_ACCESS_TEAM = 2;
+  // Anyone with the link, until it expires or is stopped.
+  SHARE_ACCESS_PUBLIC = 3;
+}
+
+// What a share points at.
+enum ShareTargetKind {
+  // Invalid.
+  SHARE_TARGET_KIND_UNSPECIFIED = 0;
+  // A TCP port on the daemon's machine (`port`).
+  SHARE_TARGET_KIND_PORT = 1;
+  // A TCP port in a Space (`space`, `port`).
+  SHARE_TARGET_KIND_SPACE_PORT = 2;
+  // One file on the daemon's machine (`path`), read-only.
+  SHARE_TARGET_KIND_FILE = 3;
+  // A folder on the daemon's machine (`path`), read-only, with a listing.
+  SHARE_TARGET_KIND_DIR = 4;
+}
+
+// The target of a share.
+message ShareTarget {
+  // Which of the fields below apply.
+  ShareTargetKind kind = 1;
+  // The Space, as sandbox commands name it (`dev`, `local:dev`).
+  string space = 2;
+  // The port (on the machine, or in the Space).
+  uint32 port = 3;
+  // Absolute path of the file or folder.
+  string path = 4;
+}
+
+// One share.
+message Share {
+  // Handle for `StopShare` (`share-` plus hex).
+  string id = 1;
+  // The link.
+  string url = 2;
+  // Name for lists.
+  string name = 3;
+  // What it serves.
+  ShareTarget target = 4;
+  // Who may open it.
+  ShareAccess access = 5;
+  // The account that made it (email when known).
+  string owner = 6;
+  // When it was made.
+  google.protobuf.Timestamp created_at = 7;
+  // When it ends. Unset: until stopped (private and team shares only).
+  google.protobuf.Timestamp expires_at = 8;
+  // Plain-words limits of this link worth showing next to it (for example
+  // that browsers cannot open it yet). Empty when there are none.
+  repeated string notices = 9;
+}
+
+// Request for `ShareService.CreateShare`.
+message CreateShareRequest {
+  // What to share. Paths are absolute: the client resolves them.
+  ShareTarget target = 1;
+  // Who may open it. Unspecified: private.
+  ShareAccess access = 2;
+  // Lifetime, 60 s to 24 h. Public shares default to 1 h; others to none.
+  google.protobuf.Duration ttl = 3;
+  // Name for lists.
+  string name = 4;
+}
+
+// Response for `ShareService.CreateShare`.
+message CreateShareResponse {
+  // The share, with its link.
+  Share share = 1;
+}
+
+// Request for `ShareService.ListShares`.
+message ListSharesRequest {}
+
+// Response for `ShareService.ListShares`.
+message ListSharesResponse {
+  // Active shares, newest first.
+  repeated Share shares = 1;
+}
+
+// Request for `ShareService.StopShare`.
+message StopShareRequest {
+  // A share's id, or its name when that is unique.
+  string id = 1;
+  // Stop every share (`id` is ignored).
+  bool all = 2;
+}
+
+// Response for `ShareService.StopShare`.
+message StopShareResponse {
+  // Ids of the shares stopped.
+  repeated string stopped = 1;
+}
+
+// Request for `ShareService.CheckShare`.
+message CheckShareRequest {
+  // A share's id or name.
+  string id = 1;
+  // Path below the link to open. Empty: the link itself.
+  string path = 2;
+}
+
+// Response for `ShareService.CheckShare`.
+message CheckShareResponse {
+  // HTTP status the link answered.
+  uint32 status = 1;
+  // True when it answered 2xx (or 3xx to a page of the same link).
+  bool ok = 2;
+  // What was fetched, or why it could not be: `link` (the real link, through
+  // the relay, as the owner), or `local` (the daemon's own gateway, when this
+  // machine cannot reach the relay).
+  string via = 3;
+  // A short human line: the status, content type and size, or the error.
+  string detail = 4;
+}

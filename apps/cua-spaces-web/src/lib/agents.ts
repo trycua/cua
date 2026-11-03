@@ -36,6 +36,9 @@ export function spaceLabel(name: string): string {
   return tail || name;
 }
 
+/** A run that is blocked on the person (the host says so with `needsYou`). */
+export const isWaiting = (r: AgentRunSummary): boolean => Boolean(r.needsYou) && r.status !== "failed" && r.status !== "crashed";
+
 export const monogram = (harnessName: string) => harnessName.trim().charAt(0).toUpperCase() || "?";
 
 /** What the URL selects: a persistent agent by name, or a run by Space and id. */

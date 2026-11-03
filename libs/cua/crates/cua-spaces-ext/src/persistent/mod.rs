@@ -492,7 +492,13 @@ pub(crate) struct Live {
     wake: wake::LiveWake,
     /// When a standby run may be started again after one that failed, by member.
     standby_retry: HashMap<String, std::time::Instant>,
+    /// The credential hash an agent's run would start with now, by agent
+    /// name, and when it was worked out.
+    cred_hashes: HashMap<String, (std::time::Instant, Option<String>)>,
 }
+
+/// How long a worked-out credential hash is reused.
+const CRED_HASH_TTL: Duration = Duration::from_secs(5);
 
 /// The persistent agents of one cua home. Cheap to clone.
 #[derive(Clone)]
@@ -552,6 +558,7 @@ impl Persistent {
         admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     ) -> Persistent {
         let dir = spaces.home_dir().join(DIR);
+        phases::set_sink(&dir);
         Persistent {
             spaces,
             drive,
@@ -1135,11 +1142,20 @@ impl Persistent {
     async fn send_from(&self, name: &str, text: &str, entry: &str) -> Result<Delivery> {
         let rec = self.get(name)?;
         self.not_external(&rec)?;
-        self.send_session(&rec, text, entry).await
+        self.send_session(&rec, text, entry, None).await
     }
 
-    /// [`Self::send_from`] to the session `view` shows.
-    async fn send_session(&self, view: &AgentRecord, text: &str, entry: &str) -> Result<Delivery> {
+    /// [`Self::send_from`] to the session `view` shows. `known` is the run's
+    /// status as the caller read it a moment ago (the dispatcher just did):
+    /// with it a warm delivery reads nothing more from the guest and is one
+    /// write.
+    async fn send_session(
+        &self,
+        view: &AgentRecord,
+        text: &str,
+        entry: &str,
+        known: Option<ag::RunInfo>,
+    ) -> Result<Delivery> {
         let rec = self.get(&view.name)?.session(view.k());
         let name = rec.name.as_str();
         if rec.paused {
@@ -1147,7 +1163,11 @@ impl Persistent {
         }
         if let Some(run) = &rec.run_id {
             let agents = self.agents_for(&rec.space).await?;
-            match agents.status(run).await {
+            let status = match known {
+                Some(st) => Ok(st),
+                None => agents.status(run).await,
+            };
+            match status {
                 Ok(st) if st.status == RunStatus::Running => {
                     return Err(Error::Agent(format!(
                         "{name} is in the middle of a turn; try again when it ends"
@@ -1203,7 +1223,7 @@ impl Persistent {
                         self.take_lease(&rec).await?;
                     }
                     agents
-                        .send_with_model(run, text, vec![], rec.model.as_deref())
+                        .send_after(run, text, vec![], &st, rec.model.as_deref())
                         .await?;
                     return Ok(Delivery {
                         run_id: run.clone(),
@@ -1251,16 +1271,39 @@ impl Persistent {
         run: &str,
         st: &ag::RunInfo,
     ) -> bool {
-        if let Some(started) = st.meta.as_ref().and_then(|m| m.cred_hash.as_deref())
-            && let Ok((env, _)) = cua_spaces::agents::run_env(
-                &rec.harness,
-                &rec.env,
-                &rec.env_from_host,
-                rec.base_url.is_some(),
-            )
-            && ag::runs::credential_hash(&rec.harness, &env) != started
-        {
-            return true;
+        if let Some(started) = st.meta.as_ref().and_then(|m| m.cred_hash.as_deref()) {
+            // Reading the keys costs a keychain round trip, and a message
+            // does not need them fresher than a few seconds.
+            let cached = self
+                .live
+                .lock()
+                .await
+                .cred_hashes
+                .get(&rec.name)
+                .filter(|(at, _)| at.elapsed() < CRED_HASH_TTL)
+                .map(|(_, h)| h.clone());
+            let now = match cached {
+                Some(h) => h,
+                None => {
+                    let h = cua_spaces::agents::run_env(
+                        &rec.harness,
+                        &rec.env,
+                        &rec.env_from_host,
+                        rec.base_url.is_some(),
+                    )
+                    .ok()
+                    .map(|(env, _)| ag::runs::credential_hash(&rec.harness, &env));
+                    self.live
+                        .lock()
+                        .await
+                        .cred_hashes
+                        .insert(rec.name.clone(), (Instant::now(), h.clone()));
+                    h
+                }
+            };
+            if now.is_some_and(|h| h != started) {
+                return true;
+            }
         }
         if st.stop_reason.as_deref() == Some("error")
             && let Ok(r) = agents.result(run).await

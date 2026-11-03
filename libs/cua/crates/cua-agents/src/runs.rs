@@ -1227,11 +1227,19 @@ impl Agents {
             .and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
-    /// One run's status. Never disturbs the run.
+    /// One run's status. Never disturbs the run. The three guest reads it
+    /// takes (meta, state, whether the process lives) go out together, so it
+    /// costs one round trip.
     pub async fn status(&self, run_id: &str) -> Result<RunInfo> {
         valid_run_id(run_id)?;
         let rdir = self.run_dir(run_id);
-        let meta: Option<RunMeta> = match self.json_file(&format!("{rdir}/meta.json")).await {
+        let (meta_path, state_path) = (format!("{rdir}/meta.json"), format!("{rdir}/state.json"));
+        let (meta, state, alive) = tokio::join!(
+            self.json_file(&meta_path),
+            self.json_file(&state_path),
+            self.alive(run_id)
+        );
+        let meta: Option<RunMeta> = match meta {
             Ok(m) => m.and_then(|v| serde_json::from_value(v).ok()),
             Err(e) => {
                 return Ok(RunInfo {
@@ -1253,13 +1261,7 @@ impl Agents {
         let Some(meta) = meta else {
             return Err(Error::NotFound(format!("no run {run_id} in this sandbox")));
         };
-        let state = self
-            .json_file(&format!("{rdir}/state.json"))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(Value::Null);
-        let alive = self.alive(run_id).await;
+        let state = state.ok().flatten().unwrap_or(Value::Null);
         Ok(info(run_id, meta, &state, alive))
     }
 
@@ -1350,8 +1352,23 @@ impl Agents {
         model: Option<&str>,
     ) -> Result<RunInfo> {
         let before = self.status(run_id).await?;
+        self.send_after(run_id, text, files, &before, model).await?;
+        self.status(run_id).await
+    }
+
+    /// [`Self::send_with_model`] for a caller that read the run's status
+    /// just now (`before`): with a live runner it is one guest write, no
+    /// status reads around it. The events say what the turn it starts did.
+    pub async fn send_after(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        before: &RunInfo,
+        model: Option<&str>,
+    ) -> Result<()> {
         if matches!(before.status, RunStatus::Unknown) {
-            return Err(Error::Guest(before.reason));
+            return Err(Error::Guest(before.reason.clone()));
         }
         let rdir = self.run_dir(run_id);
         let mut paths = vec![];
@@ -1390,7 +1407,7 @@ impl Agents {
             }
             self.spawn_run(run_id).await?;
         }
-        self.status(run_id).await
+        Ok(())
     }
 
     /// Interrupts the turn in flight (ACP `session/cancel`); the session

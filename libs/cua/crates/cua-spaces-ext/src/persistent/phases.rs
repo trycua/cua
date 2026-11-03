@@ -141,8 +141,62 @@ pub(crate) struct Join {
     pub posted_ms: u64,
 }
 
+// --- the local record ----------------------------------------------------------
+
+fn sink() -> &'static Mutex<Option<std::path::PathBuf>> {
+    static S: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// Keeps every step this process reports in `<dir>/phases.jsonl`, one JSON
+/// line each (`ts_ms`, `run`, `phase`, `ms` since the message, `cold`,
+/// `harness`), so a bench or a person can read how long a join took without
+/// telemetry (which is anonymous and goes elsewhere). The newest lines
+/// matter: the file is cut to its last 2000 lines when it passes 1 MiB. Only
+/// while the `warm-pools` experiment is on.
+pub(crate) fn set_sink(dir: &Path) {
+    if let Ok(mut s) = sink().lock() {
+        *s = Some(dir.join("phases.jsonl"));
+    }
+}
+
+fn record(run: &str, phase: &str, ms: u64, cold: bool, harness: &str) {
+    if !cua_spaces::experiments::enabled(cua_spaces::experiments::Gate::WarmPools) {
+        return;
+    }
+    let Some(path) = sink().lock().ok().and_then(|s| s.clone()) else {
+        return;
+    };
+    let line = serde_json::json!({
+        "ts_ms": now_ms(), "run": run, "phase": phase, "ms": ms, "cold": cold, "harness": harness,
+    });
+    use std::io::Write as _;
+    if let Ok(meta) = std::fs::metadata(&path)
+        && meta.len() > 1 << 20
+        && let Ok(text) = std::fs::read_to_string(&path)
+    {
+        let keep: Vec<&str> = text.lines().rev().take(2000).collect();
+        let kept = keep.into_iter().rev().collect::<Vec<_>>().join("\n");
+        let _ = std::fs::write(&path, format!("{kept}\n"));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// A step that only the local record keeps (not part of the telemetry's
+/// fixed words): `ms` since the message.
+pub(crate) fn local(run: &str, phase: &str, ms: u64, cold: bool, harness: &str) {
+    record(run, phase, ms, cold, harness);
+}
+
 impl Join {
     fn send(&self, phase: &str, ms: u64, tool: &str, failure: &str) {
+        record(&self.run_id, phase, ms, self.cold, &self.harness);
         cua_telemetry::global().agent_join_phase(
             &self.run_id,
             phase,
@@ -222,7 +276,11 @@ pub(crate) fn follow(
         let mut seen_first_token = false;
         let mut installed: HashSet<String> = HashSet::new();
         let mut reported: HashSet<&'static str> = HashSet::new();
-        let mut every = Duration::from_millis(200);
+        // While the first words are awaited the events are read every 25 ms
+        // (a local read): the step is stamped when this host sees it, so a
+        // slow poll would be a slow step. Only with `warm-pools` on.
+        let quick = cua_spaces::experiments::enabled(cua_spaces::experiments::Gate::WarmPools);
+        let mut every = Duration::from_millis(if quick { 25 } else { 200 });
         while started.elapsed() < FOLLOW_FOR {
             let page = match agents.events(&join.run_id, cursor, 200).await {
                 Ok(p) => p,
@@ -289,6 +347,15 @@ pub(crate) fn follow(
                     "update" if turn_open && !seen_first_token && ev.kind == "message" => {
                         seen_first_token = true;
                         join.send("first_token", ms, "none", "none");
+                        // When this host read it: the host's own clock only.
+                        record(
+                            &join.run_id,
+                            "first_token_seen",
+                            now_ms().saturating_sub(join.posted_ms),
+                            join.cold,
+                            &join.harness,
+                        );
+                        every = Duration::from_millis(200);
                     }
                     "turn_ended" if turn_open => {
                         join.send("turn_ended", ms, "none", "none");
@@ -307,6 +374,9 @@ pub(crate) fn follow(
                 tokio::time::sleep(every).await;
                 if started.elapsed() > Duration::from_secs(30) {
                     every = Duration::from_secs(1);
+                } else if quick && !seen_first_token && started.elapsed() > Duration::from_secs(8) {
+                    // A slow start (a cold install): no need to read this often.
+                    every = Duration::from_millis(200);
                 }
             }
         }
@@ -337,5 +407,36 @@ mod tests {
         assert_eq!(failure_word("initialize timed out"), "timeout");
         assert_eq!(failure_word("npm install failed"), "install");
         assert_eq!(failure_word("boom"), "other");
+    }
+
+    /// The local record of a join exists only with the `warm-pools`
+    /// experiment on: off, nothing is written.
+    #[test]
+    fn the_local_record_is_kept_only_with_warm_pools_on() {
+        let dir = tempfile::tempdir().unwrap();
+        set_sink(dir.path());
+        let file = dir.path().join("phases.jsonl");
+        {
+            let _off =
+                cua_spaces::experiments::hold(cua_spaces::experiments::Gate::WarmPools, false);
+            local("run-a", "delivered", 12, false, "claude-code");
+            assert!(!file.exists(), "off: no file");
+        }
+        {
+            let _on = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::WarmPools, true);
+            local("run-a", "delivered", 12, false, "claude-code");
+            local("run-a", "first_token_seen", 840, false, "claude-code");
+        }
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(&file)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["phase"], "delivered");
+        assert_eq!(lines[0]["ms"], 12);
+        assert_eq!(lines[1]["phase"], "first_token_seen");
+        assert_eq!(lines[1]["harness"], "claude-code");
+        assert!(lines[1]["ts_ms"].as_u64().unwrap() > 0);
     }
 }

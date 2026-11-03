@@ -161,7 +161,7 @@ Once Secure Spaces is on, a Space created before network settings moves to them 
 ## Requirements
 
 - Containers: `nft` (nftables) where the container engine runs. A deny of another member of the same tree also needs the kernel module `nf_conntrack_bridge` (Linux 5.3 or later) on the engine's host. Without it the Space doesn't start, and the error says to load the module with `sudo modprobe nf_conntrack_bridge`.
-- VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces, and `cua-netgw` for VMs that talk to their tree. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`.
+- VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces, and `cua-netgw` for VMs that talk to their tree. Any passt works: cua asks `pasta --help` and passes `--host-lo-to-ns-lo` (which passt releases since late 2024 need to deliver a VM's forwarded ports to its loopback) only when the installed one lists it. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`.
 
 To check it from inside a Space as root: `nft flush ruleset; iptables -F` changes nothing, a raw socket can't be opened in a container, and a connection to this computer's address times out.
 

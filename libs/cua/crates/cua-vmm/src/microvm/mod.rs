@@ -1286,6 +1286,10 @@ impl MicroVmRuntime {
             "--gateway".into(),
             NS_GATEWAY.into(),
         ];
+        // The forwards land on the namespace's loopback, where `net.sh`
+        // DNATs them to the guest; a newer pasta would otherwise deliver
+        // them to the namespace's public address ([`crate::pasta`]).
+        args.extend(crate::pasta::host_lo_args(&pasta));
         if st.host_ports.is_empty() {
             args.extend(["-t".into(), "none".into()]);
         }

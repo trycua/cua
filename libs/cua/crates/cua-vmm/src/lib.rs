@@ -55,6 +55,7 @@ pub mod managed;
 pub mod microvm;
 pub mod netgw;
 pub mod network;
+pub mod pasta;
 pub mod preflight;
 pub mod probe;
 pub mod progress;

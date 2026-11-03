@@ -1411,7 +1411,11 @@ impl QemuRuntime {
                     } else {
                         Vec::new()
                     };
-                    let mut a = netns_pasta_args(&ports, &localhost);
+                    let mut a = netns_pasta_args(
+                        &ports,
+                        &localhost,
+                        crate::pasta::supports_host_lo(&pasta),
+                    );
                     a.push(NETNS_SCRIPT.into());
                     a.push(bin.display().to_string());
                     a.extend(argv.iter().cloned());
@@ -2260,9 +2264,12 @@ const SLIRP_DNS: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 0, 2, 3);
 /// pasta's arguments for a VM's namespace: its host ports (`ports`, on
 /// loopback) forwarded to the same ports in the namespace, DNS to the
 /// host's resolver through [`DNS_FWD`], no way to the host's own loopback,
-/// then the script.
+/// then the script. `host_lo_to_ns_lo`: this pasta takes the option that
+/// keeps those forwards on the namespace's loopback, where QEMU listens
+/// ([`crate::pasta`]); without it a newer pasta delivers them to the
+/// namespace's public address and the connection is reset.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
+fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) -> Vec<String> {
     // The `localhost` preset's ports only: the guest reaches them as
     // `10.0.2.2:<port>` (the namespace's loopback, forwarded to the host's).
     let out = crate::network::pasta_out_spec(localhost);
@@ -2289,6 +2296,9 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
+    if host_lo_to_ns_lo {
+        a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
+    }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
     }
@@ -4539,9 +4549,9 @@ mod tests {
         assert!(
             netns_script(&allowed, true).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT")
         );
-        let a = netns_pasta_args(&[4000, 5901], &[]);
+        let a = netns_pasta_args(&[4000, 5901], &[], false);
         assert!(a.windows(2).any(|w| w[0] == "-T" && w[1] == "none"));
-        let open = netns_pasta_args(&[4000], &[5432, 3000]);
+        let open = netns_pasta_args(&[4000], &[5432, 3000], false);
         assert!(
             open.windows(2).any(|w| w[0] == "-T" && w[1] == "5432,3000"),
             "{open:?}"
@@ -4554,6 +4564,16 @@ mod tests {
             "no way to the host's loopback"
         );
         assert_eq!(a[a.len() - 2..], ["--".to_string(), "/bin/sh".to_string()]);
+        // An older pasta rejects the option: not passed unless supported.
+        assert!(!a.contains(&"--host-lo-to-ns-lo".to_string()));
+        // A newer one needs it, before the first forward.
+        let new = netns_pasta_args(&[4000, 5901], &[], true);
+        let at = |s: &str| new.iter().position(|x| x == s).unwrap();
+        assert!(
+            at("--host-lo-to-ns-lo") < at("127.0.0.1/4000:4000"),
+            "{new:?}"
+        );
+        assert_eq!(new.len(), a.len() + 1);
     }
 
     #[test]

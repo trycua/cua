@@ -148,9 +148,10 @@ def center_local(e, win):
 def px(x, y):
     """Window-local points to screenshot pixels, the unit pixel clicks take."""
     args = {"x": int(round(x * WIN["scale"])), "y": int(round(y * WIN["scale"]))}
-    # Background pixel clicks land offset by the window origin on the macOS 27.2
-    # VM (a separate bug, also with fast_path off), so pixel clicks are delivered
-    # in the foreground unless FP_PIXEL_DELIVERY says otherwise.
+    # Pixel clicks are delivered in the foreground by default so the bench is
+    # deterministic. Background pixel clicks were re-checked on the macOS 27.2
+    # VM (windows at two origins, target behind another app, fast_path off) and
+    # land on the right element; set FP_PIXEL_DELIVERY=background to use them.
     mode = os.environ.get("FP_PIXEL_DELIVERY", "foreground")
     if mode != "background":
         args["delivery_mode"] = mode

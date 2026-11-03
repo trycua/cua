@@ -146,13 +146,13 @@ jobs:
 
   rust-unit-partition:
     needs: rust-unit-archive
-    name: Nix / Rust unit tests ${{ matrix.partition }}/3
+    name: Nix / Rust unit tests ${{ matrix.partition }}/2
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3]
+        partition: [1, 2]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Nix
@@ -164,9 +164,9 @@ jobs:
         with:
           name: rust-unit-archive
           path: archive
-      - name: Run partition ${{ matrix.partition }} of 3
+      - name: Run partition ${{ matrix.partition }} of 2
         run: |
-          nix run .#cua-rust-unit-run -- "$PWD/archive/rust-unit.tar.zst" "count:${{ matrix.partition }}/3"
+          nix run .#cua-rust-unit-run -- "$PWD/archive/rust-unit.tar.zst" "count:${{ matrix.partition }}/2"
 
   # One stable check name for the whole Rust unit lane, however it is split.
   rust-unit:

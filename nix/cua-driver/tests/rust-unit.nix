@@ -52,11 +52,15 @@ let
     # and link time. Dependencies and workspace share the setting so the
     # dependency artifacts stay reusable.
     CARGO_PROFILE_DEV_DEBUG = "0";
+    # Dozens of test binaries link against the same crates; mold links them
+    # several times faster than GNU ld.
+    RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
     cargoVendorDir = craneLib.vendorCargoDeps { cargoLock = "${rustSrc}/Cargo.lock"; };
     nativeBuildInputs = with pkgs; [
       pkg-config
       rustPlatform.bindgenHook
       clang
+      mold
       python3
     ];
     buildInputs = with pkgs; [
@@ -121,8 +125,6 @@ let
     runtimeInputs =
       with pkgs;
       [
-        cargo
-        rustc
         cargo-nextest
         dbus
         xorg.xorgserver

@@ -6,7 +6,7 @@ builds and desktop-session dependencies for the canonical Rust harnesses.
 | Attribute | Purpose | CI |
 | --- | --- | --- |
 | `cua-driver-build` | Build the shipped Linux package from the locked Rust source | `ci-nix-linux.yml` |
-| `cua-driver-linux-rust-unit` | Compile and run the source-owned headless Rust tests with cargo-nextest; CI builds `cua-driver-linux-rust-unit-archive` once and runs it in 3 partitions via `nix run .#cua-rust-unit-run` | `ci-nix-linux.yml` |
+| `cua-driver-linux-rust-unit` | Compile and run the source-owned headless Rust tests with cargo-nextest; CI builds `cua-driver-linux-rust-unit-archive` once and runs it in 2 partitions via `nix run .#cua-rust-unit-run` | `ci-nix-linux.yml` |
 | `cua-driver-policy-yaml` | Run YAML permission-policy MCP checks in a NixOS VM | Flake check |
 | `cua-driver-policy-rego` | Run embedded Rego permission-policy MCP checks in a NixOS VM | Flake check |
 | `cua-driver-wayland-e2e` | Provide the Sway, GTK, WebKit, Chromium, Electron, capture, and Rust toolchain used by native Wayland E2E | `e2e-rust-linux-wayland.yml` |

@@ -12,6 +12,9 @@
 # Usage: provision.sh <payload dir>   (the dir holding this script and the driver folder)
 set -euo pipefail
 
+# A non-login ssh shell has only /usr/bin:/bin: add where the base keeps uv, Homebrew and Node.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+
 PAYLOAD=${1:?payload dir}
 CUA_DRIVER_VERSION=0.38.0
 TARBALL=cua-driver-rs-${CUA_DRIVER_VERSION}-darwin-arm64.tar.gz
@@ -54,7 +57,7 @@ uv venv --allow-existing -p "$PYTHON_VERSION" "$DRIVER_DIR/venv"
 VIRTUAL_ENV="$DRIVER_DIR/venv" uv pip install "agentenv-framework-protocol[computer]==${PROTOCOL_VERSION}"
 
 say "TCC rows for ${BUNDLE_ID}"
-req=$(codesign -d -r- /Applications/CuaDriver.app 2>&1 | sed -n 's/^# *designated => //p')
+req=$(codesign -d -r- /Applications/CuaDriver.app 2>&1 | sed -n 's/^\(# *\)\{0,1\}designated => //p')
 [ -n "$req" ] || { echo "CuaDriver.app has no designated requirement" >&2; exit 1; }
 echo "$req" | csreq -r- -b "$TMPDIR/cuadriver.csreq"
 hex=$(xxd -p "$TMPDIR/cuadriver.csreq" | tr -d '\n')
@@ -63,7 +66,7 @@ for service in kTCCServiceAccessibility kTCCServiceScreenCapture kTCCServicePost
   as_root sqlite3 "$system_db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason,
     auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier,
     indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
-    VALUES ('$service', '$BUNDLE_ID', 0, 2, 4, 1, X'$hex', NULL, 0, 'UNUSED', NULL, 0,
+    VALUES ('$service', '$BUNDLE_ID', 0, 2, 2, 1, X'$hex', NULL, 0, 'UNUSED', NULL, 0,
     CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER));"
 done
 for pid in $(pgrep -x tccd); do as_root kill "$pid" 2>/dev/null || true; done
@@ -91,13 +94,22 @@ write_agent() {  # label, program args...
     printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
     printf '<plist version="1.0"><dict>\n<key>Label</key><string>%s</string>\n<key>ProgramArguments</key><array>\n' "$label"
     for arg in "$@"; do printf '<string>%s</string>\n' "$arg"; done
-    printf '</array>\n<key>WorkingDirectory</key><string>%s</string>\n' "$DRIVER_DIR"
+    printf '</array>\n<key>WorkingDirectory</key><string>%s</string>\n' "${WORKDIR:-$DRIVER_DIR}"
+    [ -z "${AGENT_ENV:-}" ] || printf '<key>EnvironmentVariables</key><dict>\n%s</dict>\n' "$AGENT_ENV"
     printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>LimitLoadToSessionType</key><string>Aqua</string>\n'
     printf '<key>StandardOutPath</key><string>%s/Library/Logs/agentenv/%s.log</string>\n' "$HOME" "$label"
     printf '<key>StandardErrorPath</key><string>%s/Library/Logs/agentenv/%s.log</string>\n</dict></plist>\n' "$HOME" "$label"
   } > "$LA/$label.plist"
 }
-write_agent com.trycua.agentenv.cua-driver-daemon "$DRIVER_DIR/venv/bin/python" "$DRIVER_DIR/driver.py"
+# launchd must spawn CuaDriver.app's own executable: macOS attributes a process to whatever launchd spawned, and
+# a wrapper (python, a shell) that execs it afterwards would be the "responsible" process, which holds no grants.
+mkdir -p "$HOME/Library/Caches/agentenv"
+chmod 700 "$HOME/Library/Caches/agentenv"
+WORKDIR=$HOME AGENT_ENV='<key>DO_NOT_TRACK</key><string>1</string>
+<key>CUA_DRIVER_RS_TELEMETRY_ENABLED</key><string>false</string>
+<key>CUA_DRIVER_RS_UPDATE_CHECK</key><string>false</string>
+' write_agent com.trycua.agentenv.cua-driver-daemon /Applications/CuaDriver.app/Contents/MacOS/cua-driver serve \
+  --socket "$HOME/Library/Caches/agentenv/cua-driver.sock" --dangerously-bypass-approvals --no-overlay
 write_agent com.trycua.agentenv.driver "$DRIVER_DIR/start-driver.sh"
 
 say "identity"

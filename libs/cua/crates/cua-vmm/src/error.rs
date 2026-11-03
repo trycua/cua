@@ -189,4 +189,48 @@ mod tests {
         let lan = VmmError::missing("Local Network access", "click Allow");
         assert_eq!(failure_kind(&lan.to_string()), None);
     }
+
+    /// The create-failure subclass each error the macOS and Linux VM start
+    /// path raises gets (`cua_create_failure::retry::subclass`), built from
+    /// the typed errors so a reworded message fails here.
+    #[test]
+    fn typed_errors_get_a_fixed_subclass_word() {
+        use cua_create_failure::retry::{Subclass, subclass};
+        let word = |e: VmmError| subclass("runtime", &format!("local runtime: {e}"));
+        assert_eq!(
+            word(VmmError::Lume {
+                status: 500,
+                message: "boom".into()
+            }),
+            Subclass::RuntimeApiError
+        );
+        assert_eq!(
+            word(VmmError::Command {
+                cmd: "lume".into(),
+                code: Some(1),
+                stderr: "x".into()
+            }),
+            Subclass::HostCommandFailed
+        );
+        assert_eq!(
+            word(VmmError::invalid("bad name")),
+            Subclass::VmConfigInvalid
+        );
+        assert_eq!(
+            word(VmmError::other(
+                "lume VM 'a' stopped while booting (it exited)"
+            )),
+            Subclass::VmNeverStarted
+        );
+        assert_eq!(
+            word(VmmError::other(
+                "the built-in Lume is not validly signed: boom"
+            )),
+            Subclass::RuntimeNotSigned
+        );
+        assert_eq!(
+            word(VmmError::other("download the built-in Lume: boom")),
+            Subclass::RuntimeInstallFailed
+        );
+    }
 }

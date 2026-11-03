@@ -1076,6 +1076,62 @@ pub struct SpaceCreate<'a> {
     pub error_subclass: &'a str,
 }
 
+/// The step a failed create stopped at (`schema::FAILED_STEPS`), read from
+/// the failure's fixed words only: the specific cause (`error_subclass`,
+/// `error_kind`) first, since it names the step, then the phase. `unknown`
+/// when nothing narrows the phase down (a failure in `preparing` that no
+/// word explains), so reports can rank what still needs a name.
+pub fn failed_step(
+    phase: &str,
+    kind: &str,
+    subclass: &str,
+    guest_os: &str,
+    create_kind: &str,
+) -> &'static str {
+    // A download that failed stays a download, whatever the runtime said.
+    if kind.starts_with("image_pull") {
+        return "pull_image";
+    }
+    // The cause's own step, where one word names it.
+    let by_cause = match subclass {
+        "runtime_start"
+        | "runtime_install_failed"
+        | "runtime_not_signed"
+        | "runtime_unresponsive"
+        | "runtime_too_old"
+        | "runtime_api_error" => Some("start_runtime"),
+        "daemon_unresponsive" => Some("reach_daemon"),
+        "pull_interrupted" => Some("pull_image"),
+        "vm_never_started" => Some("start_vm"),
+        "vm_config_invalid" => Some("configure_vm"),
+        _ => match kind {
+            "runtime_missing" | "runtime_not_running" | "runtime_permission" => {
+                Some("start_runtime")
+            }
+            "virtualization_unavailable" | "host_capacity" => Some("check_host"),
+            // The checks before anything starts refuse these in `preparing`.
+            "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),
+            "vm_boot_timeout" => Some("start_vm"),
+            "services_unreachable" | "env" => Some("connect_services"),
+            "invalid_argument" | "invalid_placement" | "unsupported" => Some("configure_vm"),
+            "not_found" => Some("resolve_image"),
+            _ => None,
+        },
+    };
+    if let Some(step) = by_cause {
+        return step;
+    }
+    let vm = create_kind == "vm" || matches!(guest_os, "macos" | "windows");
+    match phase {
+        "pulling" => "pull_image",
+        "creating" if vm => "clone_disk",
+        "creating" => "create_container",
+        "booting" => "start_vm",
+        "waiting_for_services" | "connecting" => "connect_services",
+        _ => "unknown",
+    }
+}
+
 /// `cua_space_create`.
 pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) -> Event {
     let failed_phase = match outcome {
@@ -1099,24 +1155,29 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         },
         _ => "none",
     };
+    let error_subclass = match outcome {
+        Outcome::Cancelled => "none",
+        _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+    };
+    let guest = guest_os(s.guest_os);
+    let create_kind = sandbox_kind(s.kind);
+    let step = match outcome {
+        Outcome::Error => failed_step(failed_phase, error_kind, error_subclass, guest, create_kind),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
-        .s("guest_os", guest_os(s.guest_os))
-        .s("kind", sandbox_kind(s.kind))
+        .s("guest_os", guest)
+        .s("kind", create_kind)
         .s("outcome", outcome.as_str())
         .s("error_kind", error_kind)
         .s("failed_phase", failed_phase)
+        .s("failed_step", step)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
         .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
-        .s(
-            "error_subclass",
-            match outcome {
-                Outcome::Cancelled => "none",
-                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
-            },
-        )
+        .s("error_subclass", error_subclass)
 }
 
 /// `cua_space_create_started`.

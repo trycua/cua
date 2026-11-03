@@ -47,6 +47,26 @@ pub enum Subclass {
     /// This machine had no room while no Cua VM runs: other programs use
     /// its memory or CPUs, or its limits are set too tight.
     CapacityOther,
+    /// The built-in runtime (Lume) could not be set up: its download, its
+    /// checksum or unpacking failed. A new, never-retried cause: until its
+    /// rate is known a retry only repeats the download.
+    RuntimeInstallFailed,
+    /// The built-in runtime's signature did not verify.
+    RuntimeNotSigned,
+    /// `lume serve` started and never answered.
+    RuntimeUnresponsive,
+    /// This Mac's own Lume is older than macOS Spaces need.
+    RuntimeTooOld,
+    /// The runtime's API answered with an error (or not at all) outside a
+    /// download.
+    RuntimeApiError,
+    /// A VM was created and never started, stopped while booting, or
+    /// vanished while booting.
+    VmNeverStarted,
+    /// The VM's configuration was refused (`invalid request: ...`).
+    VmConfigInvalid,
+    /// A host command (`lume`, `codesign`, ...) exited with an error.
+    HostCommandFailed,
 }
 
 /// Every [`Subclass`] word, in order (`cua_telemetry::schema::ERROR_SUBCLASSES`).
@@ -59,6 +79,14 @@ pub const SUBCLASSES: &[&str] = &[
     "local_network_vpn",
     "capacity_vms",
     "capacity_other",
+    "runtime_install_failed",
+    "runtime_not_signed",
+    "runtime_unresponsive",
+    "runtime_too_old",
+    "runtime_api_error",
+    "vm_never_started",
+    "vm_config_invalid",
+    "host_command_failed",
 ];
 
 impl Subclass {
@@ -73,6 +101,14 @@ impl Subclass {
             Self::LocalNetworkVpn => "local_network_vpn",
             Self::CapacityVms => "capacity_vms",
             Self::CapacityOther => "capacity_other",
+            Self::RuntimeInstallFailed => "runtime_install_failed",
+            Self::RuntimeNotSigned => "runtime_not_signed",
+            Self::RuntimeUnresponsive => "runtime_unresponsive",
+            Self::RuntimeTooOld => "runtime_too_old",
+            Self::RuntimeApiError => "runtime_api_error",
+            Self::VmNeverStarted => "vm_never_started",
+            Self::VmConfigInvalid => "vm_config_invalid",
+            Self::HostCommandFailed => "host_command_failed",
         }
     }
 
@@ -86,6 +122,14 @@ impl Subclass {
             "local_network_vpn" => Self::LocalNetworkVpn,
             "capacity_vms" => Self::CapacityVms,
             "capacity_other" => Self::CapacityOther,
+            "runtime_install_failed" => Self::RuntimeInstallFailed,
+            "runtime_not_signed" => Self::RuntimeNotSigned,
+            "runtime_unresponsive" => Self::RuntimeUnresponsive,
+            "runtime_too_old" => Self::RuntimeTooOld,
+            "runtime_api_error" => Self::RuntimeApiError,
+            "vm_never_started" => Self::VmNeverStarted,
+            "vm_config_invalid" => Self::VmConfigInvalid,
+            "host_command_failed" => Self::HostCommandFailed,
             _ => Self::None,
         }
     }
@@ -183,6 +227,38 @@ pub fn subclass(kind: &str, message: &str) -> Subclass {
         "runtime did not start",
     ]) {
         return Subclass::RuntimeStart;
+    }
+    // Causes that used to land in a bare `runtime`: the fixed sentences of
+    // `cua_vmm::VmmError` and the built-in runtime's setup (the typed error
+    // crosses the daemon and the SDK as its text, so this reads those
+    // sentences, never free text, and only a word comes out).
+    if has(&["is not validly signed", "is not signed by cua ai"]) {
+        return Subclass::RuntimeNotSigned;
+    }
+    if has(&[
+        "download the built-in lume",
+        "built-in lume download",
+        "the built-in lume did not install",
+    ]) {
+        return Subclass::RuntimeInstallFailed;
+    }
+    if has(&["started `lume serve` but"]) {
+        return Subclass::RuntimeUnresponsive;
+    }
+    if has(&["macos spaces need lume", "older than the"]) && has(&["lume"]) {
+        return Subclass::RuntimeTooOld;
+    }
+    if has(&["while booting", "never started ("]) && has(&["lume vm '"]) {
+        return Subclass::VmNeverStarted;
+    }
+    if has(&["invalid request: "]) {
+        return Subclass::VmConfigInvalid;
+    }
+    if has(&["lume api ", "lume request failed", "lume get "]) {
+        return Subclass::RuntimeApiError;
+    }
+    if has(&["` failed (exit "]) {
+        return Subclass::HostCommandFailed;
     }
     Subclass::None
 }
@@ -401,6 +477,65 @@ mod tests {
             assert_eq!(decide(kind, sub), Retry::Never);
         }
         assert_eq!(subclass("local_network", "whatever"), Subclass::None);
+    }
+
+    #[test]
+    fn unexplained_runtime_failures_get_a_subclass() {
+        let cases = [
+            (
+                "the built-in Lume is not validly signed: `codesign` failed",
+                Subclass::RuntimeNotSigned,
+            ),
+            (
+                "the built-in Lume is not signed by Cua AI, Inc.",
+                Subclass::RuntimeNotSigned,
+            ),
+            (
+                "download the built-in Lume: error sending request",
+                Subclass::RuntimeInstallFailed,
+            ),
+            (
+                "the built-in Lume download did not match its checksum (got ab); try again",
+                Subclass::RuntimeInstallFailed,
+            ),
+            (
+                "started `lume serve` but http://127.0.0.1:7777 did not answer within 30s (see x)",
+                Subclass::RuntimeUnresponsive,
+            ),
+            (
+                "lume serve at http://x is Lume 0.1, and macOS Spaces need Lume 0.3 or newer",
+                Subclass::RuntimeTooOld,
+            ),
+            (
+                "lume VM 'a' never started (90s after `lume run`)",
+                Subclass::VmNeverStarted,
+            ),
+            (
+                "lume VM 'a' stopped while booting",
+                Subclass::VmNeverStarted,
+            ),
+            ("invalid request: bad name", Subclass::VmConfigInvalid),
+            ("lume API 500: boom", Subclass::RuntimeApiError),
+            (
+                "lume request failed: connection closed",
+                Subclass::RuntimeApiError,
+            ),
+            (
+                "`lume` failed (exit Some(1)): stderr",
+                Subclass::HostCommandFailed,
+            ),
+        ];
+        for (msg, want) in cases {
+            let (kind, sub, retry) = classify(msg, "preparing", "Runtime");
+            assert_eq!(sub, want, "{msg} ({kind})");
+            // Not known to pass: no automatic retry.
+            assert_eq!(retry, Retry::Never, "{msg}");
+        }
+        // A lasting cause keeps its kind and gets no subclass.
+        assert_eq!(
+            classify("permission denied: lume API 500", "preparing", "Runtime").1,
+            Subclass::None
+        );
     }
 
     #[test]

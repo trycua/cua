@@ -1044,6 +1044,155 @@ fn a_switch_flipped_elsewhere_applies_after_refresh_and_clears_the_spool() {
 
 /// The "Telemetry and privacy" pages list every event and every property
 /// the schema declares, so nothing is sent that the docs do not name.
+/// `failed_step` is derived from the failure's fixed words, never text; it
+/// is always a word of the schema, and `none` unless the create failed.
+#[test]
+fn space_create_failed_step_keeps_its_vocabulary() {
+    let create = |outcome, phase, variant, error_subclass, guest_os, kind| {
+        events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os,
+                kind,
+                last_phase: phase,
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+                retry_attempt: 0,
+                error_subclass,
+            },
+            outcome,
+            Duration::from_secs(30),
+        )
+    };
+    let step = |e: &events::Event| e.props["failed_step"].clone();
+    let err = Outcome::Error;
+    // A cause names its step, whatever the phase.
+    assert_eq!(
+        step(&create(
+            err,
+            "preparing",
+            "runtime",
+            "runtime_not_signed",
+            "macos",
+            "vm"
+        )),
+        "start_runtime"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "preparing",
+            "virtualization_unavailable",
+            "",
+            "macos",
+            "vm"
+        )),
+        "check_host"
+    );
+    assert_eq!(
+        step(&create(err, "preparing", "Env", "", "linux", "vm")),
+        "connect_services"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "booting",
+            "runtime",
+            "vm_never_started",
+            "macos",
+            "vm"
+        )),
+        "start_vm"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "pulling",
+            "runtime",
+            "runtime_api_error",
+            "macos",
+            "vm"
+        )),
+        "start_runtime"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "pulling",
+            "ImagePullNetwork",
+            "runtime_api_error",
+            "macos",
+            "vm"
+        )),
+        "pull_image"
+    );
+    // Else the phase; `unknown` when it was `preparing` and no word helps.
+    assert_eq!(
+        step(&create(err, "creating", "runtime", "", "macos", "vm")),
+        "clone_disk"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "creating",
+            "runtime",
+            "",
+            "linux",
+            "container"
+        )),
+        "create_container"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "waiting_for_services",
+            "runtime",
+            "",
+            "linux",
+            "vm"
+        )),
+        "connect_services"
+    );
+    assert_eq!(
+        step(&create(err, "preparing", "runtime", "", "macos", "vm")),
+        "unknown"
+    );
+    // Not a failure: none. Never free text.
+    assert_eq!(
+        step(&create(Outcome::Ok, "preparing", "", "", "macos", "vm")),
+        "none"
+    );
+    assert_eq!(
+        step(&create(
+            Outcome::Cancelled,
+            "booting",
+            "",
+            "",
+            "macos",
+            "vm"
+        )),
+        "none"
+    );
+    // Every step and subclass word the schema allows is sent as itself.
+    for w in cua_telemetry::schema::ERROR_SUBCLASSES {
+        let e = create(err, "preparing", "runtime", w, "macos", "vm");
+        assert_eq!(e.props["error_subclass"], *w);
+        assert!(cua_telemetry::schema::FAILED_STEPS.contains(&step(&e).as_str().unwrap()));
+    }
+    let e = create(
+        err,
+        "preparing",
+        "runtime",
+        "/Users/maya/.lume",
+        "macos",
+        "vm",
+    );
+    assert_eq!(step(&e), "unknown");
+    let home = tempfile::tempdir().unwrap();
+    preview_all(home.path(), &e);
+}
+
 #[test]
 fn space_create_retry_fields_keep_their_vocabulary() {
     let create = |outcome, retry_attempt, error_subclass| {

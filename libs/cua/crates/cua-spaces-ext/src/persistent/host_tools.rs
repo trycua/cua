@@ -2298,6 +2298,7 @@ mod tests {
     /// driver, `.gitattributes` that use them, and a `.gitmodules` with a
     /// command URL. None of it runs on the host.
     #[tokio::test]
+    #[cfg(unix)]
     async fn config_hooks_filters_and_submodules_in_a_bundle_are_ignored() {
         let root = tempfile::tempdir().unwrap();
         let remote = root.path().join("remotes/acme/demo.git");

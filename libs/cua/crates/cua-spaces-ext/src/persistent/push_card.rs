@@ -507,6 +507,7 @@ mod tests {
     /// `CUA_CARD_OUT=/path/card.json cargo test -p cua-spaces-ext --lib write_the_real_card -- --ignored`
     #[test]
     #[ignore = "writes a file for the screenshots; run by hand"]
+    #[cfg(unix)]
     fn write_the_real_card() {
         let Ok(out) = std::env::var("CUA_CARD_OUT") else {
             return;

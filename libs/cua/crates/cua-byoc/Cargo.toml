@@ -59,8 +59,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 # contrib providers.
 cua-contrib = { workspace = true, optional = true }
 
-# The experiment switches (`windows-kvm`).
-cua-vmm.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

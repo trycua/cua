@@ -5518,6 +5518,8 @@ fn run_ci_runners(f: &Value, h: &dyn Host) -> Result<Value, String> {
         frames.push(json!({ "step": step["step"], "page": frame::ci_runners(&v) }));
     }
     Ok(json!({ "flow": "ci-runners", "frames": frames }))
+}
+
 /// Preparing the ask-first Space: each step sends actions (`prepare.reduce`),
 /// then draws the page (`prepare.view`), what the host is told to do next
 /// and the numbers (`prepare.metrics`).

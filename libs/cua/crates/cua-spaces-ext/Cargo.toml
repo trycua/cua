@@ -21,6 +21,9 @@ mount = ["cua-volume/nfs", "cua-volume/fuse"]
 [dependencies]
 cua-spaces = { path = "../cua-spaces" }
 cua-spaces-contract = { path = "../cua-spaces-contract" }
+# The account's machines and the way to reach them (the replicated Volume).
+cua-mesh.workspace = true
+cua-cluster.workspace = true
 cua-spacesd-client.workspace = true
 cua-volume = { workspace = true, features = ["nfs"] }
 cua-keyvault.workspace = true
@@ -28,6 +31,8 @@ cua-keyvault.workspace = true
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
 cua-auth.workspace = true
+# The owner's teams (team admins count as admins for agent rights).
+cua-host.workspace = true
 cua-teleport.workspace = true
 cua-chromium-storage.workspace = true
 # The reserved `cookies.json` bundle entry format (`daemon::keyvault`'s
@@ -69,3 +74,4 @@ cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tonic-web.workspace = true

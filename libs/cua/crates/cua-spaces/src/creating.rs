@@ -281,14 +281,6 @@ pub(crate) fn record(made: Made) {
     let _ = CURRENT.try_with(|j| j.record(made));
 }
 
-/// Whether the create this task runs generated its name (`false` outside
-/// one).
-pub(crate) fn generated_name() -> bool {
-    CURRENT
-        .try_with(|j| j.state.lock().unwrap_or_else(|e| e.into_inner()).generated)
-        .unwrap_or(false)
-}
-
 /// Records the token of the create this task runs.
 pub(crate) fn set_token(token: &str) {
     let _ = CURRENT.try_with(|j| j.set_token(token));
@@ -563,6 +555,21 @@ impl Spaces {
                         Ok(true) => done.push("removed its VM or container".into()),
                         Ok(false) => {}
                         Err(e) => failed.push(format!("{name}: {e}")),
+                    }
+                    // Say exactly what is left: the engine is asked again,
+                    // so a container it finished making after the delete
+                    // is reported instead of "Cancelled" hiding it.
+                    // A removal the engine is still finishing gets a moment.
+                    let mut left = self.inner.sandboxes.local_name_in_use(name).await;
+                    for _ in 0..10 {
+                        if !left {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        left = self.inner.sandboxes.local_name_in_use(name).await;
+                    }
+                    if left && !failed.iter().any(|f| f.starts_with(name.as_str())) {
+                        failed.push(format!("{name}: its VM or container is still there"));
                     }
                     let _ = self
                         .inner

@@ -101,7 +101,7 @@ cua sb create python:3.12-slim --name app -- python -m http.server 8000
 Each builder method returns a new, immutable `Image`. Steps build into your
 container engine before boot (VM images apply them after boot through
 cua-spacesd). To build once and reuse an image, use
-[`cua image build` and `cua image push`](/cua-cli/reference/cli/sandboxes#cua-image).
+[`cua image build` and `cua image push`](/cua-cli/reference/cli/images-and-clouds#cua-image).
 
 ```python test="docs" id="install-packages" session="build"
 from cua_sandbox import Image

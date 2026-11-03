@@ -96,7 +96,7 @@ jobs:
           # Remove existing venv if it exists (from cache restore) to avoid interactive prompt
           rm -rf .venv
           uv venv --python 3.12
-          uv pip install -e libs/python/agent -e libs/python/computer
+          uv pip install -e libs/python/agent -e libs/python/cua-sandbox
           uv pip install -e libs/python/core
           uv pip install "cua-agent[uitars-hf,internvl-hf,opencua-hf,moondream3]"
           # The omniparser+ models need cua-som (deprecated, AGPL-3.0), which

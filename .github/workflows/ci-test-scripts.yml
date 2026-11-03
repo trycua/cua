@@ -56,7 +56,9 @@ on:
       - "libs/cua-driver/tests/manual-e2e-allowlist.txt"
       - "libs/cua-driver/rust/crates/cua-driver/tests/**"
       - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
+      - "scripts/install/install.ps1"
       - "scripts/ci/**"
+      - "bin/ci"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
       - "libs/cua-s1/ci/**"
@@ -160,6 +162,13 @@ jobs:
         run: |
           cd .github/scripts
           pytest tests/ -v
+
+      # bin/ci mirrors workflow commands; this fails when a workflow stops
+      # running one of them, so local and hosted checks cannot drift apart.
+      - name: Test bin/ci and its sync with the workflows
+        run: |
+          python3 -m unittest discover -s scripts/ci/tests -v
+          python3 bin/ci --verify-sync
 
       - name: Test Cua Driver install and uninstall scripts
         run: python -m pytest libs/cua-driver/scripts/tests/ -v

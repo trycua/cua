@@ -463,6 +463,23 @@ impl Vfs {
         ino
     }
 
+    /// Numbers inodes from here on above `floor` (never lower than they
+    /// already are). The macOS mount's server keeps its file handle
+    /// generation across daemon restarts, so a restarted daemon can serve
+    /// the mount it left behind: its inodes must then never reuse a number
+    /// the previous daemon handed out for another file, or the kernel's
+    /// cached handles would reach the wrong file. See
+    /// [`crate::nfs::ino_floor`].
+    pub fn start_inos_above(&self, floor: u64) {
+        let mut ix = self.inodes.lock().unwrap();
+        ix.next = ix.next.max(floor);
+    }
+
+    /// Whether `ino` is an inode this view handed out.
+    pub fn knows(&self, ino: u64) -> bool {
+        self.inodes.lock().unwrap().by_ino.contains_key(&ino)
+    }
+
     fn node(&self, ino: u64) -> Result<Node> {
         self.inodes
             .lock()
@@ -1368,6 +1385,64 @@ mod tests {
         );
         assert_eq!(names(v.clone()).await, ["public", "spaces"]);
         assert!(find(&v, "agents/ada").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn mounted_volumes_appear_in_the_view_and_read_only_ones_refuse_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = Drive::new(
+            Arc::new(FsBackend::new(dir.path().join("data"))),
+            dir.path().join("state"),
+        );
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/rw/a.txt",
+            "volumes/ro/b.txt",
+            "volumes/hidden/c.txt",
+        ] {
+            user.write(k, b"x".to_vec(), crate::Condition::None)
+                .await
+                .unwrap();
+        }
+        let ctx = Context::space("local:lab").with_mounts(vec![
+            crate::acl::MountAccess {
+                prefix: "volumes/rw/".into(),
+                mode: Mode::ReadWrite,
+            },
+            crate::acl::MountAccess {
+                prefix: "volumes/ro/".into(),
+                mode: Mode::Read,
+            },
+        ]);
+        let v = Vfs::new(&d, ctx, None, None, &dir.path().join("m")).unwrap();
+        let list = |ino| {
+            let v = v.clone();
+            async move {
+                v.readdir(ino)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|(n, _)| n)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(list(ROOT).await, ["public", "spaces", "volumes"]);
+        let vols = find(&v, "volumes").await.unwrap();
+        assert_eq!(list(vols.ino).await, ["ro", "rw"]);
+        assert!(find(&v, "volumes/hidden").await.is_err());
+        let rw = find(&v, "volumes/rw").await.unwrap();
+        let n = v.create(rw.ino, "new.txt").await.unwrap();
+        v.write(n.ino, 0, b"hi").await.unwrap();
+        v.flush("volumes/rw/new.txt").await.unwrap();
+        assert_eq!(
+            user.read("volumes/rw/new.txt", None).await.unwrap().0,
+            b"hi"
+        );
+        let ro = find(&v, "volumes/ro").await.unwrap();
+        assert!(v.create(ro.ino, "no.txt").await.is_err());
+        let b = find(&v, "volumes/ro/b.txt").await.unwrap();
+        assert_eq!(v.read(b.ino, 0, 10).await.unwrap().0, b"x");
+        assert!(v.write(b.ino, 0, b"y").await.is_err());
     }
 
     #[tokio::test]

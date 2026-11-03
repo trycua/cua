@@ -435,6 +435,7 @@ async fn presence_agents(env: &SpacesdClient) -> Result<Vec<String>, CuaError> {
             request.to_string(),
             1,
             10_000,
+            None,
         )
         .await?;
     let joined: Value = serde_json::from_str(

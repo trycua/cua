@@ -22,11 +22,14 @@
 //! systemd user-bus socket at `/run/user/<uid>/bus`, and otherwise reads
 //! `DBUS_SESSION_BUS_ADDRESS` out of a running desktop-session process's
 //! `/proc/<pid>/environ`, exporting it before the first session-bus connect.
-//! It is a no-op when the variable is already set and runs at most once.
+//! It is a no-op when the variable is already set. Until a bus is found it
+//! looks again on each call, so a daemon that asked before the desktop
+//! session was up still adopts the bus once it is.
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static DONE: OnceLock<()> = OnceLock::new();
+/// Held while the address is discovered and exported.
+static ADOPT: Mutex<()> = Mutex::new(());
 
 /// `comm` names (15-char-truncated by the kernel) of long-lived desktop-session
 /// leaders that carry `DBUS_SESSION_BUS_ADDRESS` in their environment. Matched
@@ -51,31 +54,35 @@ const SESSION_PROCESS_COMMS: &[&str] = &[
 
 /// Discover and export `DBUS_SESSION_BUS_ADDRESS` when it is unset, so AT-SPI
 /// works even when the daemon was started outside the desktop session
-/// (container, headless, `runuser`, systemd system unit). Idempotent (runs once
-/// per process) and safe to call eagerly at daemon startup.
-pub fn ensure_session_bus_discovered() {
-    DONE.get_or_init(|| {
-        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
-            return;
-        }
-        if let Some(address) = discover_session_bus_address() {
-            // SAFETY: set early at startup, before any session-bus connect /
-            // worker thread reads the environment.
-            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
-            tracing::info!(
-                target: "cua-driver",
-                "DBUS_SESSION_BUS_ADDRESS was unset; adopted the desktop session bus at {address} \
-                 so AT-SPI works without a session-attached launch"
-            );
-        } else {
-            tracing::debug!(
-                target: "cua-driver",
-                "DBUS_SESSION_BUS_ADDRESS unset and no session bus found \
-                 (no /run/user/<uid>/bus socket, no desktop-session process exposing it); \
-                 AT-SPI trees may stay empty — start the daemon inside the desktop session"
-            );
-        }
-    });
+/// (container, headless, `runuser`, systemd system unit). Returns whether a
+/// session bus address is set. Cheap once it is; until then each call looks
+/// again (the desktop session may start after the daemon).
+pub fn ensure_session_bus_discovered() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    let _adopting = ADOPT.lock().unwrap_or_else(|e| e.into_inner());
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    if let Some(address) = discover_session_bus_address() {
+        // Set once, before this process's first session-bus connect.
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        tracing::info!(
+            target: "cua-driver",
+            "DBUS_SESSION_BUS_ADDRESS was unset; adopted the desktop session bus at {address} \
+             so AT-SPI works without a session-attached launch"
+        );
+        true
+    } else {
+        tracing::debug!(
+            target: "cua-driver",
+            "DBUS_SESSION_BUS_ADDRESS unset and no session bus found \
+             (no /run/user/<uid>/bus socket, no desktop-session process exposing it); \
+             AT-SPI trees may stay empty — start the daemon inside the desktop session"
+        );
+        false
+    }
 }
 
 /// Prefer the standard systemd user-bus socket; fall back to reading the

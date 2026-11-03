@@ -15,7 +15,11 @@
 //!   alone), or with `all`. Shared resources (a security group, a
 //!   firewall rule) go only with `all` and only once no Cua instance is
 //!   left.
-//! - A record whose resource the cloud no longer has is forgotten.
+//! - A record whose resource the cloud no longer has is forgotten, but only
+//!   when the cloud was asked in the record's own region ([`in_scope`]):
+//!   a listing covers one connection's region, so a record from another
+//!   region (an elastic host placed elsewhere) is "not seen", never "gone".
+//!   The automatic sweep never forgets a record at all.
 //! - Dry run by default: nothing is deleted.
 
 use std::collections::BTreeMap;
@@ -23,6 +27,7 @@ use std::collections::BTreeMap;
 use cua_sandbox_core::byoc::{CloudSweepItem, CloudSweepReport};
 
 use crate::api::{CloudApi, Result};
+use crate::audit;
 use crate::model::{self, Connection, Resource, now};
 use crate::state::Store;
 
@@ -85,6 +90,13 @@ pub fn verdict(
     }
     match recorded {
         Some(x) if x.state == "failed" => del("a failed create left it"),
+        // A pool host (`host:<name>`) has no sandbox of its own: its record
+        // stays as the cloud returned it (Hetzner: pending) however long it
+        // serves. Its TTL ends it (above), and the pool removes it when idle
+        // or when it never joined.
+        Some(x) if x.sandbox.starts_with("host:") && !x.id.is_empty() => {
+            keep("a pool host (its TTL and the pool end it)")
+        }
         Some(x) if x.state != "pending" && !x.sandbox.is_empty() && !x.id.is_empty() => {
             keep("its sandbox exists")
         }
@@ -101,14 +113,46 @@ pub fn verdict(
     }
 }
 
+/// The audit actor, and the pass, of the daemon's automatic sweep.
+pub const AUTO_ACTOR: &str = "auto-sweep";
+
+/// How one sweep runs.
+#[derive(Clone, Copy, Debug)]
+pub struct SweepOpts<'a> {
+    /// Delete nothing.
+    pub dry_run: bool,
+    /// Every Cua resource, not only expired and orphaned ones.
+    pub all: bool,
+    /// What the audit log names as the one who deleted (`sweep`,
+    /// `auto-sweep`, `disconnect`).
+    pub actor: &'a str,
+    /// May forget the record of a resource the cloud confirms is gone.
+    /// The automatic sweep never does.
+    pub forget_missing: bool,
+}
+
+/// Whether the cloud, asked through `conn`, can answer for `rec`: the
+/// record is from the connection's region (and zone). A record from
+/// anywhere else is only unverified when it is not listed.
+pub fn in_scope(rec: &Resource, conn: &Connection) -> bool {
+    !rec.region.is_empty()
+        && rec.region == conn.region
+        && (rec.zone.is_empty() || conn.zone.is_empty() || rec.zone == conn.zone)
+}
+
 /// Sweeps one connected provider.
 pub async fn sweep_provider(
     provider: &dyn CloudApi,
     conn: &Connection,
     store: &Store,
-    dry_run: bool,
-    all: bool,
+    opts: SweepOpts<'_>,
 ) -> Result<Vec<CloudSweepItem>> {
+    let SweepOpts {
+        dry_run,
+        all,
+        actor,
+        forget_missing,
+    } = opts;
     let owner = store.owner_id().map_err(cua_sandbox_core::Error::Io)?;
     let records: Vec<Resource> = store
         .resources()
@@ -116,7 +160,54 @@ pub async fn sweep_provider(
         .into_iter()
         .filter(|r| r.provider == provider.name())
         .collect();
-    let listed = provider.list_owned(conn, &owner).await?;
+    // Every region this home recorded something in, and the connection's:
+    // a host or group made in another region is listed (and deleted) there,
+    // never taken for gone because the connection's region does not have it.
+    let mut regions: Vec<String> = vec![conn.region.clone()];
+    for r in &records {
+        if !r.region.is_empty() && !regions.contains(&r.region) {
+            regions.push(r.region.clone());
+        }
+    }
+    let conns: Vec<Connection> = regions
+        .iter()
+        .map(|region| {
+            let mut c = conn.clone();
+            if *region != conn.region {
+                c.region = region.clone();
+                c.zone = String::new();
+            }
+            c
+        })
+        .collect();
+    let mut listed: Vec<Resource> = Vec::new();
+    let mut swept: Vec<&Connection> = Vec::new();
+    for c in &conns {
+        match provider.list_owned(c, &owner).await {
+            Ok(rows) => {
+                swept.push(c);
+                for mut r in rows {
+                    if r.region.is_empty() {
+                        r.region = c.region.clone();
+                    }
+                    if !listed.iter().any(|x| same(x, &r)) {
+                        listed.push(r);
+                    }
+                }
+            }
+            // The connection's own region must answer; another recorded
+            // region that does not is only left unchecked.
+            Err(e) if c.region == conn.region => return Err(e),
+            Err(e) => tracing::warn!(region = c.region, "not swept: {e}"),
+        }
+    }
+    let conn_for = |region: &str| -> &Connection {
+        swept
+            .iter()
+            .copied()
+            .find(|c| c.region == region)
+            .unwrap_or(conn)
+    };
     let t = now();
     let instances_left = listed.iter().any(|r| {
         matches!(r.resource_type.as_str(), "instance" | "sandbox")
@@ -142,9 +233,16 @@ pub async fn sweep_provider(
             reason: v.reason.clone(),
         };
         if v.delete && !dry_run {
-            match provider.delete(conn, r, &owner).await {
+            match provider.delete(conn_for(&r.region), r, &owner).await {
                 Ok(()) => {
                     item.action = "deleted".into();
+                    store.audit(audit::of_resource(
+                        "resource_deleted",
+                        r,
+                        actor,
+                        "ok",
+                        &v.reason,
+                    ));
                     // Its relay machine goes too (removed right after this,
                     // with the other relay machines left behind).
                     let machine = records
@@ -173,6 +271,13 @@ pub async fn sweep_provider(
                 Err(e) => {
                     item.action = "failed".into();
                     item.reason = format!("{}: {e}", v.reason);
+                    store.audit(audit::of_resource(
+                        "resource_deleted",
+                        r,
+                        actor,
+                        "failed",
+                        &item.reason,
+                    ));
                 }
             }
         }
@@ -186,34 +291,61 @@ pub async fn sweep_provider(
         if rec.id.is_empty() && t.saturating_sub(rec.created) < GRACE_SECS {
             continue;
         }
-        if !listed.iter().any(|r| same(rec, r)) {
-            let gone = match provider.describe(conn, rec).await {
-                Ok(None) => true,
-                Ok(Some((state, _))) => state == "terminated",
-                Err(_) => false,
-            } || rec.id.is_empty();
-            if gone {
-                if !dry_run {
-                    let _ = store.forget(rec);
-                }
-                let mut w = rec.wire(t);
-                w.state = "gone".into();
-                out.push(CloudSweepItem {
-                    resource: w,
-                    action: if dry_run {
-                        "forget".into()
-                    } else {
-                        "forgotten".into()
-                    },
-                    reason: "no longer in the cloud".into(),
+        if listed.iter().any(|r| same(rec, r)) {
+            continue;
+        }
+        // Not in the listing. Gone only if the cloud, asked where the
+        // record says it lives, says so; otherwise it is simply not seen
+        // and stays recorded.
+        let scoped = swept.iter().any(|c| in_scope(rec, c));
+        let gone = rec.id.is_empty()
+            || (scoped
+                && match provider.describe(conn_for(&rec.region), rec).await {
+                    Ok(None) => true,
+                    Ok(Some((state, _))) => state == "terminated",
+                    Err(_) => false,
                 });
+        let mut w = rec.wire(t);
+        if gone && forget_missing {
+            if !dry_run {
+                let _ = store.forget(rec);
             }
+            w.state = "gone".into();
+            out.push(CloudSweepItem {
+                resource: w,
+                action: if dry_run {
+                    "forget".into()
+                } else {
+                    "forgotten".into()
+                },
+                reason: "no longer in the cloud".into(),
+            });
+        } else if !rec.id.is_empty() {
+            let reason = if !scoped {
+                format!(
+                    "recorded in {}, which did not answer (this connection is in {}): not checked, left alone",
+                    if rec.region.is_empty() {
+                        "an unknown region"
+                    } else {
+                        &rec.region
+                    },
+                    conn.region
+                )
+            } else {
+                "not seen in the cloud: its record is left alone".to_string()
+            };
+            tracing::debug!(resource = %rec.id, "{reason}");
+            out.push(CloudSweepItem {
+                resource: w,
+                action: "keep".into(),
+                reason,
+            });
         }
     }
     Ok(out)
 }
 
-fn same(a: &Resource, b: &Resource) -> bool {
+pub(crate) fn same(a: &Resource, b: &Resource) -> bool {
     a.provider == b.provider
         && a.resource_type == b.resource_type
         && ((!a.id.is_empty() && a.id == b.id) || (!a.name.is_empty() && a.name == b.name))
@@ -307,6 +439,40 @@ mod tests {
                 "me",
                 std::slice::from_ref(&rec_live),
                 true,
+                true,
+                NOW
+            )
+            .delete
+        );
+    }
+
+    /// A joined pool host is never an orphan to the automatic sweep, however
+    /// long it serves (its record keeps the state the cloud returned at
+    /// create, Hetzner's "pending"); its TTL still ends it.
+    #[test]
+    fn a_pool_host_is_kept_until_its_ttl() {
+        let live = tags("me", "host:hetzner-1", "h", NOW + 3600);
+        let host = Resource {
+            provider: "hetzner".into(),
+            sandbox: "host:hetzner-1".into(),
+            state: "pending".into(),
+            ..inst("171928710", live.clone(), NOW - GRACE_SECS - 60)
+        };
+        let recs = std::slice::from_ref(&host);
+        let v = verdict(&host, &live, "me", recs, false, true, NOW);
+        assert!(!v.delete, "{v:?}");
+        let expired = tags("me", "host:hetzner-1", "h", NOW - 1);
+        let gone = Resource {
+            expires: NOW - 1,
+            ..host.clone()
+        };
+        assert!(
+            verdict(
+                &gone,
+                &expired,
+                "me",
+                std::slice::from_ref(&gone),
+                false,
                 true,
                 NOW
             )

@@ -33,10 +33,9 @@ fn hotspot_changed(app: &AppHandle, status: &HotspotStatus) {
 
 // ------------------------------------------------------------- account
 
-/// Who is signed in. Named `fleet_status` for the web UI bridge that still
-/// calls it; it reads the local session and makes no network call.
+/// Who is signed in; reads the local session and makes no network call.
 #[tauri::command]
-pub async fn fleet_status(state: State<'_, AppState>) -> CmdResult<AccountStatus> {
+pub async fn account_status(state: State<'_, AppState>) -> CmdResult<AccountStatus> {
     Ok(state.0.account_status().await)
 }
 
@@ -127,22 +126,6 @@ pub async fn daemon_status(state: State<'_, AppState>) -> CmdResult<DaemonStatus
 #[tauri::command]
 pub async fn ensure_daemon(state: State<'_, AppState>) -> CmdResult<DaemonStatus> {
     Ok(state.0.daemon_status(true).await)
-}
-
-/// Always `None`: Cua Cloud has ended, so there are no rates to estimate with.
-#[tauri::command]
-pub async fn cloud_pricing(
-    state: State<'_, AppState>,
-) -> CmdResult<Option<cua_spaces_app_core::wizard::CloudPricing>> {
-    Ok(state.0.cloud_pricing().await)
-}
-
-/// Always `None`: Cua Cloud has ended, so Settings has no Billing row.
-#[tauri::command]
-pub async fn billing_status(
-    state: State<'_, AppState>,
-) -> CmdResult<Option<cua_spaces_app_core::billing::BillingStatus>> {
-    state.0.billing_status().await
 }
 
 #[tauri::command]

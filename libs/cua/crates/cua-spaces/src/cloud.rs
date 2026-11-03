@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"modal"`).
+//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`).
 //!
 //! A cloud Space is a sandbox from that provider (the sandbox layer owns
 //! the cloud: provisioning, tags, records, stop and start, cleanup; see
@@ -19,8 +19,8 @@ use cua_sandbox_core::placement::Kind;
 use cua_sandbox_core::{CreateOptions, ProviderKind};
 
 pub use cua_sandbox_core::byoc::{
-    CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind, CloudProvider,
-    CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
+    CloudAuditEntry, CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind,
+    CloudProvider, CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
     CloudTestReport,
 };
 
@@ -96,6 +96,11 @@ impl Spaces {
     /// Creates a Space in your cloud `word`: a sandbox there, then its
     /// relay machine as the Space.
     pub(crate) async fn create_in_cloud(&self, word: &str, opts: SpaceCreate) -> Result<SpaceInfo> {
+        // Every way here (an explicit `on`, `auto`, overflow onto a Spaces
+        // supplier) must keep the Space's network rules or refuse it: the
+        // sandbox below has no host-side point that could enforce them, so a
+        // Space that asked for rules would otherwise run open.
+        refuse_network_rules(word, &opts)?;
         self.relay()?;
         let image = opts
             .image
@@ -169,5 +174,65 @@ impl Spaces {
             }
             _ => Ok(None),
         }
+    }
+}
+
+/// A Space in your cloud account runs on a machine with no host-side point
+/// cua controls, so it cannot keep egress rules or `network=none`: refused,
+/// never started without them.
+fn refuse_network_rules(word: &str, opts: &SpaceCreate) -> Result<()> {
+    if !opts.egress.is_empty() {
+        return Err(crate::egress::refused(
+            word,
+            "a Space in your own cloud account runs on a machine with no host-side point cua \
+             controls; create it on this machine or one of yours",
+        ));
+    }
+    if opts.network == cua_sandbox_core::NetworkMode::None {
+        return Err(Error::invalid(format!(
+            "network=none applies to VMs on your machines, not Spaces in your cloud ({word})"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> SpaceCreate {
+        SpaceCreate {
+            image: Some("linux".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Overflow and `auto` reach a Spaces supplier through `create_in_cloud`
+    /// with the caller's options: rules or `network=none` must be refused
+    /// there, before anything is made, not dropped.
+    #[tokio::test]
+    async fn a_supplier_refuses_network_rules_instead_of_dropping_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Spaces::builder().home(dir.path()).build();
+
+        let mut o = opts();
+        o.egress = crate::egress::EgressPolicy {
+            allow: vec![],
+            deny: vec!["all".into()],
+        };
+        let e = s.create_in_cloud("modal", o).await.unwrap_err();
+        assert_eq!(e.tag(), "wrong_provider", "{e}");
+        assert!(e.to_string().contains("egress policy"), "{e}");
+
+        let mut o = opts();
+        o.network = cua_sandbox_core::NetworkMode::None;
+        let e = s.create_in_cloud("modal", o).await.unwrap_err();
+        assert_eq!(e.tag(), "invalid_argument", "{e}");
+        assert!(e.to_string().contains("network=none"), "{e}");
+    }
+
+    #[test]
+    fn a_space_without_rules_may_go_to_a_supplier() {
+        assert!(refuse_network_rules("modal", &opts()).is_ok());
     }
 }

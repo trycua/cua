@@ -82,6 +82,15 @@ same_machine_checks() {
     '"$cua" sandbox exec "relay:$(cat "$state/machine-id")" -- echo ok 2>/dev/null | grep -qx ok'
 }
 
+# Whether LaunchServices lists a cua-spacesd under the app's bundle id: it
+# then owns the app's launch (opening Cua Spaces activates it, no window).
+spacesd_is_the_app() {
+  lsappinfo list | awk '
+    /bundleID=/ { id = $0 }
+    /executable path=/ { if (id ~ /"com\.trycua\.spaces\.macos"/ && $0 ~ /\/cua-spacesd"/) found = 1 }
+    END { exit !found }'
+}
+
 helper_checks() {
   local s
   s="$(status_json)"
@@ -89,7 +98,8 @@ helper_checks() {
   check "the app's login item is running" 'launchctl print "$gui/$label_new" 2>/dev/null | grep -q "state = running"'
   check "the app's own executable runs it" 'pgrep -f "CuaSpacesMac --service-helper run" >/dev/null'
   check "cua-spacesd runs inside the app" \
-    'pgrep -fl "Cua Spaces.app/Contents/MacOS/cua-spacesd" >/dev/null'
+    'pgrep -fl "Cua Spaces.app/Contents/Helpers/cua-spacesd" >/dev/null'
+  check "cua-spacesd is not registered as the app (opening it shows a window)" '! spacesd_is_the_app'
   check "the old agent is gone from launchd" '! launchctl print "$gui/$label_old" >/dev/null 2>&1'
   check "the old plist is gone" '[ ! -e "$HOME/Library/LaunchAgents/$label_old.plist" ]'
   check "the old binary is gone" '[ ! -e "$HOME/.cua/host/bin/cua-spacesd" ]'

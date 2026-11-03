@@ -238,7 +238,7 @@ fn log_proof_failure(headers: &HeaderMap, e: &DeviceError, ts: u64) {
 }
 
 /// The account behind the request (machine tokens are refused).
-async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Response> {
+pub(crate) async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Response> {
     let Some(oidc) = &relay.config.oidc else {
         return Err(error(
             StatusCode::NOT_FOUND,
@@ -281,7 +281,11 @@ async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Respons
 }
 
 /// The caller's enrolled device (required for changes).
-fn enrolled(relay: &Relay, headers: &HeaderMap, who: &Identity) -> Result<String, Response> {
+pub(crate) fn enrolled(
+    relay: &Relay,
+    headers: &HeaderMap,
+    who: &Identity,
+) -> Result<String, Response> {
     session_header(headers)
         .and_then(|t| relay.devices.session_device(&who.account, t))
         .ok_or_else(|| {
@@ -338,7 +342,7 @@ async fn register(
     }) {
         Ok(r) => {
             let state = r.device.state(now_secs());
-            tracing::info!(account = %who.account, device = %r.device.id, ?state, superseded = ?r.superseded, "device registered");
+            tracing::info!(account = %crate::ident::tag(&who.account), device = %r.device.id, ?state, superseded = ?r.superseded, "device registered");
             Json(serde_json::json!({
                 "device": view(&r.device, Some(&r.device.id)),
                 "code": r.code,
@@ -371,10 +375,25 @@ async fn session(
         Ok(w) => w,
         Err(r) => return r,
     };
-    match relay
-        .devices
-        .open_session(&who.account, &body.device_id, body.ts, &body.sig)
-    {
+    // Off the async workers: opening a session appends to the fsynced
+    // session journal (CUA-2323).
+    let opened = {
+        let relay = relay.clone();
+        let account = who.account.clone();
+        let (device, sig) = (body.device_id.clone(), body.sig.clone());
+        tokio::task::spawn_blocking(move || {
+            relay.devices.open_session(&account, &device, body.ts, &sig)
+        })
+        .await
+    };
+    let Ok(opened) = opened else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "the session could not be opened",
+        );
+    };
+    match opened {
         Ok((token, expires)) => Json(serde_json::json!({
             "session": token,
             "expires_at": expires,
@@ -416,7 +435,7 @@ async fn approve(
         body.device_id.as_deref(),
     ) {
         Ok(d) => {
-            tracing::info!(account = %who.account, device = %d.id, approver = %approver, "device approved");
+            tracing::info!(account = %crate::ident::tag(&who.account), device = %d.id, approver = %approver, "device approved");
             Json(serde_json::json!({ "device": view(&d, Some(&approver)) })).into_response()
         }
         Err(e) => device_error(e),
@@ -485,14 +504,11 @@ async fn revoke(
     };
     match relay.devices.revoke(&who.account, &actor, &id) {
         Ok(d) => {
-            // Open streams of the revoked device's user end too (others
-            // reconnect with their own sessions).
-            for machine in relay.machines.lock().expect("machines").values() {
-                if machine.presence().iter().any(|(user, _)| user == &d.user) {
-                    machine.cut_clients();
-                }
-            }
-            tracing::info!(account = %who.account, device = %d.id, "device revoked");
+            // Open streams and outstanding tickets of the revoked device's
+            // user end too (tickets don't say which device they were minted
+            // on; the user's other devices reconnect). No one else is cut.
+            relay.cut_account(&d.user, None);
+            tracing::info!(account = %crate::ident::tag(&who.account), device = %d.id, "device revoked");
             Json(view(&d, Some(&actor))).into_response()
         }
         Err(e) => device_error(e),

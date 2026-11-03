@@ -248,6 +248,26 @@ unless you pass `local=False`. The `cua_sandbox.localhost` module, `Localhost`,
 and the `computer_server`, `http`, `local` and `websocket` transports are
 removed; control the local machine with cua-driver instead.
 
+## Pools: sandboxes kept ready on this machine
+
+A local create restores a snapshot when it can and boots otherwise; when creates
+of one shape repeat, `cua daemon` keeps a few ready on its own (`cua daemon
+status` says why). A pool asks for them explicitly: `min` ready at all times,
+up to `max` while creates come fast, none after `idle` without a create. A
+create from a pool takes one in about 0.1 s.
+
+```python
+from cua_sandbox import Image, Sandbox, create_pool, list_pools
+
+pool = await create_pool(Image.linux(), name="agents", min=2, max=8, idle=600)
+sb = await pool.create()                 # or Sandbox.create(pool="agents")
+print([p.name for p in await list_pools()])
+await pool.delete()                      # its ready sandboxes go; sb stays
+```
+
+Pools are kept by `cua daemon` (start it with `cua daemon start`) and survive
+its restarts; `cua sb pool create|ls|rm` is the CLI.
+
 ## Guest services and cua-spacesd
 
 Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your

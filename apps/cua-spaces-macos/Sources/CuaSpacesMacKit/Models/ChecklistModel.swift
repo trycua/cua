@@ -19,7 +19,7 @@ public final class ChecklistModel {
     /// `path`: the file it is kept in; nil keeps it in memory (tests).
     public init(path: String?) {
         self.path = path
-        state = path.flatMap(Self.read) ?? AppChecklistState(done: [], dismissed: false, shown: false)
+        state = path.flatMap(Self.read) ?? AppChecklistState(done: [], dismissed: false, shown: false, skipped: [])
     }
 
     public var view: AppChecklistView { appChecklistView(state: state) }
@@ -44,6 +44,8 @@ public final class ChecklistModel {
         var done: [String]
         var dismissed: Bool
         var shown: Bool
+        /// Steps skipped ("Skip"); a file from an older app has none.
+        var skipped: [String]?
     }
 
     static let words: [(AppChecklistStep, String)] = [
@@ -52,26 +54,38 @@ public final class ChecklistModel {
     ]
 
     private static func read(_ path: String) -> AppChecklistState? {
-        guard let data = FileManager.default.contents(atPath: path),
-              let s = try? JSONDecoder().decode(Stored.self, from: data) else { return nil }
-        return state(done: s.done, dismissed: s.dismissed, shown: s.shown)
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        guard let s = try? JSONDecoder().decode(Stored.self, from: data) else {
+            // Truncated or garbage: the defaults, and the file kept as `.damaged`.
+            DamagedFile.keep(path)
+            return nil
+        }
+        return state(done: s.done, dismissed: s.dismissed, shown: s.shown, skipped: s.skipped ?? [])
     }
 
     /// The core's state from steps as words (unknown words are dropped).
-    static func state(done: [String], dismissed: Bool, shown: Bool) -> AppChecklistState {
-        AppChecklistState(done: words.filter { done.contains($0.1) }.map(\.0), dismissed: dismissed, shown: shown)
+    static func state(done: [String], dismissed: Bool, shown: Bool, skipped: [String] = []) -> AppChecklistState {
+        AppChecklistState(done: steps(done), dismissed: dismissed, shown: shown, skipped: steps(skipped))
+    }
+
+    private static func steps(_ list: [String]) -> [AppChecklistStep] {
+        words.filter { list.contains($0.1) }.map(\.0)
+    }
+
+    private static func names(_ steps: [AppChecklistStep]) -> [String] {
+        steps.compactMap { step in words.first { $0.0 == step }?.1 }
     }
 
     /// The state as the file and the web UI keep it (steps as words).
     var stored: [String: Any] {
-        ["done": state.done.compactMap { step in Self.words.first { $0.0 == step }?.1 },
-         "dismissed": state.dismissed, "shown": state.shown]
+        ["done": Self.names(state.done), "dismissed": state.dismissed, "shown": state.shown,
+         "skipped": Self.names(state.skipped)]
     }
 
     private func save() {
         guard let path else { return }
-        let done = state.done.compactMap { step in Self.words.first { $0.0 == step }?.1 }
-        guard let data = try? JSONEncoder().encode(Stored(done: done, dismissed: state.dismissed, shown: state.shown))
+        guard let data = try? JSONEncoder().encode(Stored(done: Self.names(state.done), dismissed: state.dismissed,
+                                                          shown: state.shown, skipped: Self.names(state.skipped)))
         else { return }
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

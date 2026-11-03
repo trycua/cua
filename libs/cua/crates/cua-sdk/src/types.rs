@@ -120,6 +120,24 @@ pub struct SpacesdCommand {
     /// Run in a PTY of this size.
     #[uniffi(default = None)]
     pub pty: Option<PtySize>,
+    /// Idempotency key: a later start with the same key reattaches to the
+    /// running process or replays its recorded outcome instead of running
+    /// the command again (the guest's exec ledger; see `GetExecRecord`).
+    #[uniffi(default = None)]
+    pub request_id: Option<String>,
+    /// Fencing epoch: a start with an epoch lower than the Space's current
+    /// one is refused; a higher one advances it. `None` is unfenced.
+    #[uniffi(default = None)]
+    pub epoch: Option<u64>,
+    /// Size of the guest's output scrollback ring for this process, in
+    /// bytes. The ring never blocks the process: a reader that falls more
+    /// than this far behind loses the evicted bytes (visible as an offset
+    /// gap). `None` uses the server default (8 MiB); the server clamps
+    /// larger requests to its maximum (512 MiB) rather than failing. The
+    /// ring is allocated up to this size as output arrives, so the cost is
+    /// bounded by the output actually produced.
+    #[uniffi(default = None)]
+    pub scrollback_bytes: Option<u64>,
     /// Kill the process (`term`, then `kill`) when this client's connection
     /// to cua-spacesd ends before the process does, including when the
     /// client process dies. Off by default: processes are detached and can be
@@ -135,6 +153,15 @@ pub struct ExitInfo {
     pub code: Option<i32>,
     /// Terminating signal (`kill`, `term`, ...).
     pub signal: Option<String>,
+    /// Raw number of the terminating signal on the guest's OS, set for every
+    /// signal death, also for those `signal` has no name for (SIGSEGV,
+    /// SIGABRT, SIGPIPE, ...).
+    #[uniffi(default = None)]
+    pub signal_number: Option<i32>,
+    /// Conventional name of the terminating signal without `SIG`, in upper
+    /// case ("SEGV", "ABRT"); independent of the guest's OS.
+    #[uniffi(default = None)]
+    pub signal_name: Option<String>,
     /// Stopped by its timeout.
     pub timed_out: bool,
     /// Supervisor error (for example "executable not found").
@@ -290,6 +317,15 @@ pub struct FileEntry {
     pub modified_ms: Option<i64>,
     /// Symlink target.
     pub symlink_target: Option<String>,
+    /// Owning user name (a numeric id when the guest has no such user);
+    /// `None` where the guest has no owners (Windows).
+    pub owner: Option<String>,
+    /// Owning group name; `None` where the guest has none (Windows).
+    pub group: Option<String>,
+    /// Extended attributes under the call's `xattr_namespace` (default
+    /// `user.cua.meta.`), without the prefix. Empty when there are none or
+    /// the guest file system has no extended attributes.
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 impl From<pb::EntryInfo> for FileEntry {
@@ -310,6 +346,9 @@ impl From<pb::EntryInfo> for FileEntry {
                 .modified_at
                 .map(|t| t.seconds * 1000 + i64::from(t.nanos) / 1_000_000),
             symlink_target: (!e.symlink_target.is_empty()).then_some(e.symlink_target),
+            owner: (!e.owner.is_empty()).then_some(e.owner),
+            group: (!e.group.is_empty()).then_some(e.group),
+            metadata: e.metadata,
         }
     }
 }
@@ -329,6 +368,22 @@ pub struct UploadOptions {
     /// Create missing parent directories.
     #[uniffi(default = true)]
     pub create_parents: bool,
+    /// Guest user to write as: the file (and parents it creates) is owned
+    /// by that user and the user's permissions apply. Needs a guest agent
+    /// that runs as root or has passwordless `sudo` (the Linux images do);
+    /// otherwise the call fails with a permission error that says why.
+    #[uniffi(default = None)]
+    pub user: Option<String>,
+    /// Extended attributes to store with the file, published atomically
+    /// with its content. At most 32 keys; a key is 1-128 bytes of
+    /// `A-Za-z0-9._:/@+-`, a value at most 1024 bytes, 3072 bytes in all.
+    #[uniffi(default = None)]
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+    /// Extended-attribute key prefix for `metadata` (and for the metadata
+    /// reported back): must start with `user.` and end with `.`. Default
+    /// `user.cua.meta.`.
+    #[uniffi(default = None)]
+    pub xattr_namespace: Option<String>,
 }
 
 impl Default for UploadOptions {
@@ -338,6 +393,9 @@ impl Default for UploadOptions {
             append: false,
             permissions: 0,
             create_parents: true,
+            user: None,
+            metadata: None,
+            xattr_namespace: None,
         }
     }
 }

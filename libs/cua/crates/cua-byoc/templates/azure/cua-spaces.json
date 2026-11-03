@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Lets Cua Spaces create machines in this resource group without any stored key: Cua's issuer signs a 15-minute token for your Cua account, and the cua-spaces managed identity trusts only that account's tokens. Its roles reach this resource group only, and Cua labels everything it creates cua-managed=true. Deploy it at resource group scope into the group Cua should use (create the group first, or pick Create new in the portal). Remove the trust by deleting the cua-spaces identity; disconnecting in Cua stops new tokens at once.",
+    "license": "MIT, Copyright (c) 2026 Cua AI, Inc."
+  },
+  "parameters": {
+    "cuaAccount": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 64,
+      "metadata": {
+        "description": "Your Cua account's issuer id (cua cloud connect azure shows it)."
+      }
+    },
+    "issuerHost": {
+      "type": "string",
+      "defaultValue": "oidc.cua.ai",
+      "metadata": {
+        "description": "Cua's token issuer (change only for a self-hosted issuer)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Where the identity lives (the resource group's region)."
+      }
+    }
+  },
+  "variables": {
+    "identityName": "cua-spaces",
+    "virtualMachineContributor": "9980e02c-c2be-4d73-94e8-173b1dc7cf3c",
+    "networkContributor": "4d97b98b-1d4f-4787-a291-c67834d212e7"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[variables('identityName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "cua-trust": "true"
+      }
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}/cua', variables('identityName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+      ],
+      "properties": {
+        "issuer": "[format('https://{0}/a/{1}', parameters('issuerHost'), parameters('cuaAccount'))]",
+        "subject": "[format('account:{0}', parameters('cuaAccount'))]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, variables('identityName'), variables('virtualMachineContributor'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('virtualMachineContributor'))]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "description": "Cua Spaces: virtual machines in this resource group"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, variables('identityName'), variables('networkContributor'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('networkContributor'))]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "description": "Cua Spaces: the network, security group, addresses and interfaces of its machines in this resource group"
+      }
+    }
+  ],
+  "outputs": {
+    "clientId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), '2023-01-31').clientId]"
+    },
+    "tenantId": {
+      "type": "string",
+      "value": "[subscription().tenantId]"
+    },
+    "subscriptionId": {
+      "type": "string",
+      "value": "[subscription().subscriptionId]"
+    },
+    "resourceGroup": {
+      "type": "string",
+      "value": "[resourceGroup().name]"
+    }
+  }
+}

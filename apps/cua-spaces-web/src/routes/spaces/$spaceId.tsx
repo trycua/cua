@@ -23,6 +23,8 @@ import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
+import { PreparePanel } from "@/components/prepare/prepare-panel";
+import { usePrepare } from "@/lib/prepare/store";
 import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -110,6 +112,8 @@ function SpaceDetailPage() {
   const askFirstOn = useFlag("spaces_ask_first_home");
   // Ask first's tasks: a Space being made for one draws as the Space page in its creating state.
   const tasks = useAskTasks();
+  // The first Space being prepared while the person was in onboarding: its page shows what is happening.
+  const prep = usePrepare();
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -320,6 +324,8 @@ function SpaceDetailPage() {
       <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
     </div>
   );
+  const preparing = askFirstOn && space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
+  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={() => prep.driver?.retry()} /> : null;
   const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
       interactive={interactive}
@@ -335,7 +341,7 @@ function SpaceDetailPage() {
       onAccessAction={enroll}
       className={className}
     >
-      {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
+      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
     </StreamSurface>
   );
   // The classic page's sections under the desktop. With the thread they open from Details, More.
@@ -439,7 +445,7 @@ function SpaceDetailPage() {
   // A create still in progress has no thread yet: its progress shows on the classic page.
   // A Space being made for an Ask-first job: the same page in its creating state (progress on
   // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
-  const creating = space.id.startsWith("pending:") && askFirstOn && state !== "failed" && tasks.some((t) => t.pendingId === space.id);
+  const creating = space.id.startsWith("pending:") && askFirstOn && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((t) => t.pendingId === space.id) || preparing != null);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = "Available once the Space is ready";
   // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.

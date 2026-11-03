@@ -17,6 +17,7 @@ import { useAgentDm, useAgents, useBridge, type AgentChat, type AgentChatSpace, 
 import { AddAgentSheet, type AddAgentStage } from "@/components/add-agent/add-agent-sheet";
 import { HarnessMark as AppMark } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
+import { useStarNudge } from "@/components/star-nudge";
 import { AgentTile } from "@/components/space-thread/avatar";
 import { Composer } from "@/components/space-thread/composer";
 import { AiTag, holdersName, ProvenanceCard } from "@/components/space-thread/identity";
@@ -259,6 +260,7 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
   const { data } = useBridge();
   const navigate = useNavigate();
   const dm = useAgentDm(chat, space);
+  const promptSent = useStarNudge();
   const rosters = useRosters(chat, dm.entries, dm.me ?? me, identity);
   const shown = space ? chat.spaces.filter((s) => s.spaceId === space) : chat.spaces;
   // Where a message goes: the Space shown, or where it waits for you, or where it works, or its first.
@@ -367,7 +369,7 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
             </Button>
           </div>
         ) : null}
-        <DmComposer chat={chat} to={to} onTarget={setTarget} onSend={(text) => dm.send(to.spaceId, text)} onOpenSpace={() => openSpace(to.spaceId)} rosters={rosters} spaces={space ? shown : chat.spaces} />
+        <DmComposer chat={chat} to={to} onTarget={setTarget} onSend={(text) => dm.send(to.spaceId, text).then(promptSent)} onOpenSpace={() => openSpace(to.spaceId)} rosters={rosters} spaces={space ? shown : chat.spaces} />
       </div>
     </section>
   );

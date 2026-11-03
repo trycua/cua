@@ -336,6 +336,11 @@ pub const FEATURES: &[&str] = &[
     "upsell_card_machines_shown",
     "upsell_card_machines_click",
     "upsell_card_machines_dismiss",
+    // The "star us on GitHub" nudge after the 5th prompt: shown, its
+    // button clicked, or closed. Nothing about who starred.
+    "star_nudge_shown",
+    "star_nudge_click",
+    "star_nudge_dismiss",
     // Sign-in recovery (CUA-2285): how a sign-in ran and where it got stuck.
     // The reason a sign-in failed stays in `error_kind`; these add the way
     // (the browser, or a code to enter on any device).

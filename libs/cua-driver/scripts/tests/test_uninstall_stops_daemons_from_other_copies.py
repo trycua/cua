@@ -344,6 +344,19 @@ def test_installer_swap_step_never_touches_other_apps_and_skips_pkill_on_macos(m
     )
 
 
+def test_installer_swap_step_skips_blanket_pkill_on_linux(machine: Machine) -> None:
+    machine._write(machine.bin / "uname", "echo Linux")
+    machine._write(machine.bin / "systemctl", "exit 0")
+    machine._write(machine.bin / "pkill", 'echo pkill "$@" >> "' + str(machine.root / "pkill.log") + '"')
+
+    result = machine.common_shell("stop_cua_driver_daemons")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (machine.root / "pkill.log").exists(), (
+        "Linux must not run blanket pkill -x cua-driver"
+    )
+
+
 def test_installer_survivor_note_names_the_pid(machine: Machine) -> None:
     old = machine.bundle("tmp/CuaDriver.app")
     stray = machine.spawn(old)

@@ -1843,13 +1843,15 @@ jobs:
           MAC: ${{ needs.electron-mac.result }}
           WINDOWS: ${{ needs.electron-plan.outputs.windows }}
           LINUX: ${{ needs.electron-plan.outputs.linux }}
+          PRERELEASE: ${{ needs.electron-plan.outputs.prerelease }}
         run: |
           set -euo pipefail
           tag="cua-spaces-v${VERSION}"
           # build-macos normally made the draft; a hand-pushed tag may race it.
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --prerelease --verify-tag \
+            pre=(); [ "$PRERELEASE" = true ] && pre=(--prerelease)
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft ${pre[@]+"${pre[@]}"} --verify-tag \
               --title "Cua Spaces v${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md" \
               || gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
@@ -2237,7 +2239,13 @@ jobs:
           set -euo pipefail
           flags=(--draft=false)
           # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          # A stable release must not stay a prerelease: the Electron job can create the
+          # draft first (as a prerelease), and the site and installers skip prereleases.
+          if [ "$PRERELEASE" = true ]; then
+            flags+=(--prerelease --latest=false)
+          else
+            flags+=(--prerelease=false)
+          fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".

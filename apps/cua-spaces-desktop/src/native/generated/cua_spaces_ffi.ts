@@ -14571,11 +14571,13 @@ export type AppExperiments = {
     webUi: boolean,
     /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on.
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
      */
     secureSpaces: boolean,
     /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned on.
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
      */
     childSpaces: boolean
 }
@@ -14585,8 +14587,6 @@ export type AppExperiments = {
  */
 export const AppExperiments = (() => {
     const defaults = () => ({
-        secureSpaces: false,
-        childSpaces: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppExperiments, ReturnType<typeof defaults>>(defaults);

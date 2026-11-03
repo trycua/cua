@@ -6969,11 +6969,11 @@ pub struct AppExperiments {
     /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
     /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. Off unless turned on.
-    #[uniffi(default = false)]
+    /// network unless it is opened. Off unless turned on; the daemon enforces
+    /// it (the switch is kept in the cua home).
     pub secure_spaces: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned on.
-    #[uniffi(default = false)]
+    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
+    /// on; the daemon enforces it (the switch is kept in the cua home).
     pub child_spaces: bool,
 }
 

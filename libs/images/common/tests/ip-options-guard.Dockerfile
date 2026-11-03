@@ -8,6 +8,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus kmod iproute2 nftables iptables iputils-ping \
       python3 python3-scapy procps ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY common/vm/files/cua-ipopts/cua-ipopts-guard /opt/cua/bin/cua-ipopts-guard
 COPY common/vm/files/cua-ipopts/cua-ipopts.nft /etc/cua-image/cua-ipopts.nft

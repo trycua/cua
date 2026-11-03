@@ -17072,11 +17072,13 @@ public struct AppExperiments: Equatable, Hashable {
     public var webUi: Bool
     /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on.
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
      */
     public var secureSpaces: Bool
     /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned on.
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
      */
     public var childSpaces: Bool
 
@@ -17099,11 +17101,13 @@ public struct AppExperiments: Equatable, Hashable {
          */webUi: Bool,
         /**
          * Secure Spaces: a Space reaches the internet and nothing else on the
-         * network unless it is opened. Off unless turned on.
-         */secureSpaces: Bool = false,
+         * network unless it is opened. Off unless turned on; the daemon enforces
+         * it (the switch is kept in the cua home).
+         */secureSpaces: Bool,
         /**
-         * Child Spaces: a Space may make Spaces of its own. Off unless turned on.
-         */childSpaces: Bool = false) {
+         * Child Spaces: a Space may make Spaces of its own. Off unless turned
+         * on; the daemon enforces it (the switch is kept in the cua home).
+         */childSpaces: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing

@@ -24,7 +24,7 @@ ALLOWED = {
     ".github/workflows/cd-image-linux.yml": (3, "package name computed in shell ($fw)"),
     ".github/workflows/cd-image-runtime-gvisor.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/cd-image-windows.yml": (2, "step also runs other commands; split the step and use the action (follow-up)"),
-    ".github/workflows/cd-rust-cua-driver.yml": (3, "own bounded retry (apt_retry)"),
+    ".github/workflows/cd-rust-cua-driver.yml": (4, "pre-checkout debian:11 bootstrap; own bounded retry (apt_retry), including backports headers"),
     ".github/workflows/cd-swift-lume.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/ci-cua-driver-installer-compat.yml": (1, "step also runs other commands; split the step and use the action (follow-up)"),
     ".github/workflows/ci-cua-driver-preflight.yml": (1, "runs inside a container"),

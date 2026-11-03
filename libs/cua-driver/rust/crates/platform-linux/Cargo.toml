@@ -123,18 +123,18 @@ crossbeam-channel = "0.5"
 # libei keymap fallback when the EIS server does NOT advertise `ei_text`
 # (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
 xkbcommon = "0.9"
-# Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
-# ScreenCast and RemoteDesktop `restore_token`s so users see the consent
-# dialog only once per install, not once per process.
+# Resolve `$XDG_CONFIG_HOME` (with platform fallback) for persisting the
+# ScreenCast and RemoteDesktop `restore_token`s, which let a desktop that
+# accepts them skip the consent dialog in later processes.
 dirs = "5"
 
 [features]
 default = []
 linux-example = []
-# GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
-# Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
-# stream metadata, so its lightweight screencast module is required here too.
-# The PipeWire frame reader remains isolated in portal-capture below.
+# GNOME/KDE input is pure Rust plus libxkbcommon. Ashpd's RemoteDesktop API
+# exposes ScreenCast stream metadata, so its lightweight screencast module is
+# required here too. The PipeWire frame reader stays isolated in
+# portal-capture below so input-only builds need no PipeWire headers.
 portal-input = [
     "ashpd/remote_desktop",
     "ashpd/screencast",
@@ -143,8 +143,11 @@ portal-input = [
     "dep:enumflags2",
 ]
 # PipeWire-backed ScreenCast capture (the full-desktop video route for
-# KDE/KWin and other compositors without wlr-screencopy) keeps its newer
-# system-header requirement and remains enabled by Nix/modern desktop builds.
+# KDE/KWin and other compositors without wlr-screencopy). Linux release
+# artifacts and the Nix package enable it together with portal-input.
+# libspa-sys's C shims need SPA headers newer than Debian 11's stock 0.3.19
+# (the release container takes the 0.3.65 backport). libpipewire-0.3.so.0
+# itself is loaded at runtime (`wayland::libpipewire`), not linked.
 portal-capture = [
     "ashpd/screencast",
     "dep:pipewire-sys",

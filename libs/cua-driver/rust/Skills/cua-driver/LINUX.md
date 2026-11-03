@@ -301,20 +301,27 @@ Enter such text with `set_value`, or `clipboard_write` and then `hotkey ctrl+v`.
   `ei_text` takes about 100 ms per line. If EIS stops acknowledging for 5 s, the
   error says how far the text got, so read the field before retrying.
 
-Sway recording works through the wlroots recorder path and is exercised by the
-canonical harness runner. Compositors that expose no wlr-screencopy protocol,
-including KDE/KWin, record through the xdg-desktop-portal ScreenCast: the
-first `start_recording` with `record_video:true` opens the desktop's screen
-share dialog, the granted monitor is remembered through a restore token, and
-frames are encoded with ffmpeg. That route exists only in builds with the
-`portal-capture` feature (the Nix package); other builds report the missing
-feature in `last_error` instead of failing silently. It also needs the
-PipeWire client library (`libpipewire-0.3-0` on Debian and Ubuntu), which the
-driver loads only when that recording starts; without it, that recording
-reports the missing library and every other tool works. Portal-backed GNOME
-recording is still an evidence gap. Capture and recording availability
-therefore depend on the compositor, installed helpers, build features, and
-portal grant.
+Native Wayland video uses trusted GNOME WinRects Shell helper frames with
+ffmpeg and no consent dialog when those frames are available. Otherwise,
+compositors advertising wlr-screencopy use `wf-recorder`; Sway exercises this
+route in the canonical harness. If the registry cannot be probed, the driver
+also tries `wf-recorder`, which reports its own startup diagnostics.
+
+Without trusted helper frames or wlr-screencopy, KDE/KWin, GNOME without the
+helper, and other portal-only compositors attempt xdg-desktop-portal ScreenCast
+recording. The released Linux binaries and the Nix package carry this route
+(`portal-capture`); builds without that feature report it missing in `last_error`
+instead of opening a dialog. The route needs ffmpeg and the PipeWire client
+library (`libpipewire-0.3-0` on Debian and Ubuntu). It checks both before asking
+for consent and loads `libpipewire-0.3` only when a portal recording starts.
+
+`start_recording` with `record_video:true` asks the user to choose a monitor in
+the desktop's consent dialog unless the portal accepts a saved restore token.
+Startup budgets about 93 seconds for setup, consent (up to 60 seconds), and
+the first encoded frame. Let the user answer; do not start another recording
+while the dialog is pending. Inspect `video_active` and `last_error` for denial,
+missing prerequisites, or timeout. Portal-backed GNOME recording remains an
+evidence gap; selecting that route does not establish successful video capture.
 
 Standard Wayland has no general client protocol for raw input to an arbitrary
 occluded surface. Background AX actions can still deliver through AT-SPI, and
@@ -507,8 +514,8 @@ ask the user.
 | X11/Openbox             | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video                         | Raw background delivery remains toolkit-specific; unsupported shapes refuse                                                                                                                                    |
 | Sway/wlroots            | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound                                                                                                                                                  |
 | Hyprland/Omarchy        | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence                             | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
-| GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Requires the helper and portal grant; portal video parity remains open                                                                                                                                         |
-| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; video needs a `portal-capture` build and a portal monitor grant                     |
+| GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Geometry and activation require the helper; portal input requires a grant. Video uses trusted helper frames and ffmpeg without a dialog, or attempts the unverified GNOME portal recording route without those frames. |
+| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; portal video needs ffmpeg, a monitor consent grant, and `libpipewire-0.3`, loaded at run time only when a portal recording starts. |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage                         | The complete shared matrix remains experimental; do not infer standard-Wayland support                                                                                                                         |
 
 See [WORKFLOW.md](WORKFLOW.md) for exact targeting and verification and `RECORDING.md` for session

@@ -52,12 +52,18 @@ assuming the convenience command supports every raw-tool argument.
   responsible runtime's grant. Permission status is not proof of live capture.
 - Windows video uses ffmpeg `gdigrab`; the runtime must be in the interactive
   desktop session.
-- Linux X11 video uses ffmpeg `x11grab`. Native Wayland routes by compositor:
-  GNOME uses the trusted Shell helper frames, wlroots compositors use
-  `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) use the
-  xdg-desktop-portal ScreenCast, which needs a `portal-capture` build, the
-  PipeWire client library (`libpipewire-0.3-0`), and a one-time monitor grant
-  in the portal dialog; see [LINUX.md](LINUX.md).
+- Linux X11 video uses ffmpeg `x11grab`. Native Wayland first uses trusted
+  GNOME WinRects Shell helper frames with ffmpeg and no consent dialog.
+  Without those frames, compositors advertising wlr-screencopy use
+  `wf-recorder`; a failed registry probe also takes that route.
+  KDE/KWin, GNOME without the helper, and other compositors without
+  wlr-screencopy attempt xdg-desktop-portal ScreenCast recording, which the
+  released binaries carry. That route checks for ffmpeg and loads the
+  PipeWire client library (`libpipewire-0.3-0`) before opening a monitor-consent
+  dialog. The portal can reuse a saved grant. Startup budgets about 93 seconds,
+  including up to 60 seconds for consent; denial, missing prerequisites, or
+  timeout appears in `last_error`. GNOME portal video remains unverified;
+  see [LINUX.md](LINUX.md).
   A successful desktop PNG does not establish video availability.
 
 ## What each turn folder contains

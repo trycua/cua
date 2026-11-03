@@ -55,6 +55,27 @@ fi
 for tool in ffprobe jq; do
   if command -v "${tool}" >/dev/null 2>&1; then pass "${tool} available"; else fail "${tool} required for E2E"; fi
 done
+
+# The GNOME/KDE desktop runners build the release's portal-input,portal-capture
+# features, which need these at build time. A direct generic run with the default
+# input backends builds neither feature, so report them without failing.
+if [[ "${XDG_SESSION_TYPE:-}" == wayland &&
+      ( "${XDG_CURRENT_DESKTOP:-}" == *GNOME* || "${XDG_CURRENT_DESKTOP:-}" == *KDE* ) ]]; then
+  for package in libpipewire-0.3 libspa-0.2; do
+    if pkg-config --exists "${package}"; then
+      pass "${package} headers available"
+    else
+      warn "${package} development headers missing; the GNOME/KDE desktop runners need them to build portal-capture"
+    fi
+  done
+  if ldconfig -p 2>/dev/null | grep -E 'libclang(-[0-9]+)?\.so' >/dev/null ||
+      compgen -G "${LIBCLANG_PATH:-/nonexistent}/libclang*.so*" >/dev/null; then
+    pass 'libclang available'
+  else
+    warn 'libclang missing; the GNOME/KDE desktop runners need it to build portal-capture bindings (install libclang-dev)'
+  fi
+fi
+
 if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
   fail 'no session D-Bus address; enter the desktop user session or use dbus-run-session'
 elif command -v gdbus >/dev/null 2>&1; then

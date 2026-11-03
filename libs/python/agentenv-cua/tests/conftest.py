@@ -14,7 +14,16 @@ DRIVERS = PACKAGE / "macos-drivers" / "envs"
 APPS = PACKAGE / "macos-apps" / "envs"
 ARTIFACTS = PACKAGE / "macos-apps" / "artifacts"
 #: The module names every folder has its own copy of.
-SIBLINGS = ("driver", "macos_computer", "app", "bench_macos", "lab", "sentinel", "pin_manifest")
+SIBLINGS = (
+    "driver",
+    "macos_computer",
+    "desktop_catalog",
+    "app",
+    "bench_macos",
+    "lab",
+    "sentinel",
+    "pin_manifest",
+)
 
 
 def load(folder: Path, filename: str = "driver.py"):

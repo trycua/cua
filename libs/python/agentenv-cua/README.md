@@ -50,18 +50,33 @@ manifest, and the neutral `computer_*` tools. Every arm runs the same agent (Cla
 
 | Driver | Wraps | Pin | Tools the agent sees | Instructions |
 |---|---|---|---|---|
-| `agent-desktop` | [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop), Apache-2.0, a CLI with no MCP server | 1.0.2, `aarch64-apple-darwin` (archive and executable sha256 in `driver.py`) | 32 tools, one for each snapshot, action, app and wait command (`tools.json`) | its own skill, as the binary embeds it |
+| `agent-desktop` | [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop), Apache-2.0, a CLI with no MCP server | 1.0.2, `aarch64-apple-darwin` (archive and executable sha256 in `driver.py`) | 67 tools, one for each leaf command of the CLI, derived from its command tree and named `desktop_<command>` (`tools.json` pins them) | its own skill, as the binary embeds it |
 | `macos-harness` | [browser-use/macos-harness](https://github.com/browser-use/macos-harness), MIT, eleven shell commands | 0.2.1 from PyPI (wheel sha256 in `driver.py`; the skill's sha256 too) | its eleven tools (`tools.json`, written by `pin_manifest.py` from the harness's own table); a read's screenshot comes back as an image | its own skill |
 | `codex-cu` | OpenAI's `unified-computer-use` plugin, the `cua_repl` MCP server | ChatGPT app 26.930.51102 (zip and executable sha256 in `driver.py`), `mcp.json` | `js` and `js_reset`, as the plugin enables them, with the computer surface only | none, as OpenAI ships it |
 
+- **agent-desktop's tools are derived, not listed.** agent-desktop has no schema export, so the driver walks the CLI's `--help`
+  tree (`desktop_catalog.py`) and makes one tool of every leaf command: `desktop_snapshot`, `desktop_click`,
+  `desktop_double_click`, `desktop_skills_get`, `desktop_cursor_overlay_enable` and so on (subcommands are joined with `_`). Each
+  argument and flag is an input property, with its type, whether it's required, its enum, its default and its help text. A call
+  runs the binary as a child process with the mapped argv (flags as `--flag=value`, then `--` and the positionals) and returns its
+  JSON envelope as printed; a failure adds the exit code and stderr, and a call that outlives its limit (its own timeout argument
+  plus 30 s, else 60 s) is killed and answers with an error envelope. The derived catalog is cached under the binary's sha256, and
+  the ready check fails when it differs from `tools.json`, so a row can't run on tools that changed under it.
+  The options every command shares are the driver's: logging, trace files and session selection aren't tools' arguments, and
+  `headed` and the wait flags appear only on commands that act on a ref or name them. Flags for every call (`--headed` to
+  let the commands that need physical input run) go in `AGENT_DESKTOP_GLOBAL_FLAGS`. To pin another release, set
+  `AGENT_DESKTOP_BIN` to its binary and run `python driver.py --write-manifest`, then update the pins it prints and read the
+  diff of `tools.json`. The tests derive the tools from recorded `--help` output of 1.0.2 (`tests/fixtures`) and need no Mac.
+  Needs a macOS VM to check: that the derived list matches the binary on the image (the ready check does it), the TCC grants, and real
+  actions.
 - **The neutral `computer_*` helper.** AgentEnv wants the seven `computer_*` operations from every driver, for recordings, the
   conformance probe and readiness. `macos_computer.py` serves them from `/usr/sbin/screencapture` and Quartz events, which no
   arm owns. An env hides them from its agent with its `[tools]` list, so each arm is scored on its own tools only. The file is
   the same in each driver's folder, since a driver installs from its own folder; a test checks that.
-- **Ready checks** cover the pinned executable or version, the pinned tools (a wrapped command missing from the binary's own help,
-  or a tool list that drifted from the pin, is named), and the TCC grants, which are checked after every reset.
+- **Ready checks** cover the pinned executable or version, the pinned tools (for agent-desktop, the tools derived from the binary's own help,
+  and a derived list that differs from the pin is named), and the TCC grants, which are checked after every reset.
 - **To move one to another version,** bump its pin in `driver.py` and `requirements.txt`, regenerate its manifest
-  (`python driver.py --write-manifest` for agent-desktop, `python pin_manifest.py` for the harness, and for Codex the
+  (`AGENT_DESKTOP_BIN=<new binary> python driver.py --write-manifest` for agent-desktop, `python pin_manifest.py` for the harness, and for Codex the
   `mcp.json` from the plugin's server on a VM with the app), and read the diff.
 
 #### Codex Computer Use needs a ChatGPT login

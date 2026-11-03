@@ -154,7 +154,20 @@ jobs:
       matrix:
         partition: [1, 2]
     steps:
+      # The partition only needs the flake and the sources it copies into the
+      # store, not the whole monorepo.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: |
+            flake.nix
+            flake.lock
+            nix
+            libs/cua-driver
+            libs/cua/Cargo.toml
+            libs/cua/crates/cua-telemetry
+            libs/cua/crates/cua-teleport/src/ux/targets.json
+            libs/images/sandbox-images.json
+          sparse-checkout-cone-mode: false
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:

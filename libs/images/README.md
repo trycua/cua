@@ -5,7 +5,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 | Image | Contents | Used for |
 |---|---|---|
 | `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
-| `agent-home` | The slim `linux` image plus the **cua** CLI (`cua spaces create`, `ls`, `delete` reach the Space's spawn channel on their own) | A home for an agent that makes child Spaces; the children case of the runtime conformance suite runs in it. `ghcr.io/trycua/agent-home:24.04[-disk]` (not published yet; the catalog lists it as unpublished) |
+| `agent-home` | The slim `linux` image plus the **cua** CLI (`cua spaces create`, `ls`, `delete` reach the Space's spawn channel on their own) | A home for an agent that makes child Spaces; the children case of the runtime conformance suite runs in it. `ghcr.io/trycua/agent-home:24.04[-disk]` (not published yet; the catalog lists it as unpublished) <!-- cua-image-unverified --> |
 | `plain/ubuntu-xfce-vnc` | Ubuntu 24.04, XFCE on Xvnc `:1` (RFB `:5901`) and nothing else | Proving that sandboxes don't need cua daemons (VNC only) |
 | `plain/ubuntu-server` | Ubuntu 24.04 and OpenSSH | Proving that sandboxes don't need cua daemons (SSH only) |
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
@@ -79,7 +79,7 @@ libs/images/build.sh agent-home --outputs rootfs,disk           # cua-e2e-local/
 libs/images/build.sh agent-home --build-arg CUA_CLI_SOURCE=release --build-arg CUA_CLI_VERSION=0.10.1
 ```
 
-`libs/cua/scripts/conformance/run.py` makes its home Spaces from this image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/agent-home:24.04`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build.
+`libs/cua/scripts/conformance/run.py` makes its home Spaces from this image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/agent-home:24.04`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build. <!-- cua-image-unverified -->
 
 ## Built-in Linux runtime (`runtime-gvisor`)
 

@@ -536,7 +536,7 @@ pub struct SetupArgs {
     /// locked).
     #[arg(long, default_value = "keychain", value_parser = ["keychain", "file"])]
     secret_store: String,
-    /// The GitHub REST API (GitHub Enterprise Server: https://HOST/api/v3).
+    /// The GitHub REST API (GitHub Enterprise Server: `https://HOST/api/v3`).
     #[arg(long, default_value = "https://api.github.com")]
     api_url: String,
     /// Write the configuration without installing the service (run

@@ -14582,21 +14582,26 @@ export type AppExperiments = {
     childSpaces: boolean,
     /**
      * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on.
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
      */
     askFirst: boolean,
     /**
-     * CI runners: GitHub Actions jobs in a fresh Space each. Off unless turned on.
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
      */
     ciRunners: boolean,
     /**
-     * Public TCP shares: a raw TCP service in a Space at a public address.
-     * Off unless turned on.
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
      */
     tcpShares: boolean,
     /**
-     * Mobile: the computer answers the Cua Spaces phone app. Off unless
-     * turned on.
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
      */
     mobile: boolean
 }
@@ -14606,10 +14611,6 @@ export type AppExperiments = {
  */
 export const AppExperiments = (() => {
     const defaults = () => ({
-        askFirst: false,
-        ciRunners: false,
-        tcpShares: false,
-        mobile: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppExperiments, ReturnType<typeof defaults>>(defaults);

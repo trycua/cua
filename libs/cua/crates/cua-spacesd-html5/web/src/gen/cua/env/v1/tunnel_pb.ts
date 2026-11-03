@@ -1256,9 +1256,9 @@ export const TunnelService: GenService<{
     output: typeof GetSpawnStatusResponseSchema;
   },
   /**
-   * Serves one public TCP share on a share slot: a port the cloud machine
+   * Serves one public TCP share on a share slot: a port the cloud computer
    * publishes from this Space (`CUA_SHARE_SLOTS`), forwarded to a port of
-   * this Space's own loopback only. The machine's firewall opens the slot
+   * this Space's own loopback only. The computer's firewall opens the slot
    * separately. Only the Space's owner (or its host) may call it.
    *
    * @generated from rpc cua.env.v1.TunnelService.PublishShareSlot

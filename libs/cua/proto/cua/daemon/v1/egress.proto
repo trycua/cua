@@ -68,7 +68,7 @@ message NetworkSettings {
   string widened_by = 7;
   // Where its internet traffic leaves ("Exit through"): empty or
   // "internet" for its own network, "this-machine" (the hotspot),
-  // "space:<id>" (a Space of its tree) or "socks5://host:port". With an
+  // "space:<id>" (a Space of its tree) or `socks5://host:port`. With an
   // exit the Space's own internet is closed, and the exit applies its
   // rules first. A child keeps its parent's exit.
   string via = 8;

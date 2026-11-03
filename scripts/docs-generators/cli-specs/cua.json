@@ -19531,7 +19531,7 @@
        "aliases": [],
        "default_value": "https://api.github.com",
        "env": null,
-       "help": "The GitHub REST API (GitHub Enterprise Server: https://HOST/api/v3)",
+       "help": "The GitHub REST API (GitHub Enterprise Server: `https://HOST/api/v3`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

@@ -2,6 +2,8 @@ module github.com/trycua/cua/libs/cua/netgw
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/containers/gvisor-tap-vsock v0.9.0
 	github.com/inetaf/tcpproxy v0.0.0-20260515195445-c159a6051109

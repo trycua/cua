@@ -88,7 +88,7 @@ cua ci connect [OPTIONS]
 | <span id="cua-ci-connect--private-key-file"></span>`--private-key-file` |  | path |  | The App's private key (.pem). Delete the file afterwards: the key is kept in the keychain. |
 | <span id="cua-ci-connect--key-file"></span>`--key-file` |  | path |  | Keep the App's private key in this file instead of the keychain (it must be yours, mode 0600). For a headless host or one set up over SSH, whose login keychain cannot be used. The pool reads it on every start; nothing is copied. |
 | <span id="cua-ci-connect--secret-store"></span>`--secret-store` |  | `keychain` \| `file` | `keychain` | Where the credential is kept: `keychain` (the login keychain on macOS) or `file` (a file only you can read under ~/.cua/ci/secrets/; for a Mac set up over SSH, whose keychain is locked). |
-| <span id="cua-ci-connect--api-url"></span>`--api-url` |  | string | `https://api.github.com` | The GitHub REST API (GitHub Enterprise Server: https://HOST/api/v3). |
+| <span id="cua-ci-connect--api-url"></span>`--api-url` |  | string | `https://api.github.com` | The GitHub REST API (GitHub Enterprise Server: `https://HOST/api/v3`). |
 | <span id="cua-ci-connect--own-app"></span>`--own-app` |  | boolean | `false` | Use your own GitHub App (its key kept in the keychain or a file only you can read) and no Cua service, for self-hosting. `--org` or `--repo` and the App options below go with it. |
 | <span id="cua-ci-connect--open-pr"></span>`--open-pr` |  | boolean | `false` | Open a pull request in each served repository that points its workflows at Cua CI (it uses your own GitHub sign-in: `gh auth login`, or GH_TOKEN). Nothing is pushed to the default branch. |
 | <span id="cua-ci-connect--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask. |

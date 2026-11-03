@@ -383,12 +383,7 @@ lume_vnc = "disabled"
 TOML
 ```
 
-To check your workflows for jobs that a fork's pull request,
-`pull_request_target`, `issue_comment` or `workflow_run` could send to
-self-hosted labels, run the check the Cua repository runs on its own
-workflows,
-[`self_hosted_runner_guard.py`](https://github.com/trycua/cua/blob/main/.github/scripts/self_hosted_runner_guard.py),
-against your `.github/workflows` folder.
+Check your own workflows before you connect a repository: no job that a fork's pull request, `pull_request_target`, `issue_comment` or `workflow_run` can trigger should name a self-hosted label. Search your `.github/workflows` folder for those triggers next to `runs-on: cua` or any self-hosted label.
 
 ## Your own GitHub App
 

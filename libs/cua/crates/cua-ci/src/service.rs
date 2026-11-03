@@ -152,7 +152,7 @@ fn run(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn gui_domain() -> String {
     // SAFETY: getuid has no preconditions.
     format!("gui/{}", unsafe { libc::getuid() })

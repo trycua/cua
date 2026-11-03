@@ -20,6 +20,7 @@ pub fn windows_zone_identifier() -> &'static str {
     "[ZoneTransfer]\r\nZoneId=3\r\n"
 }
 
+#[cfg(target_os = "macos")]
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

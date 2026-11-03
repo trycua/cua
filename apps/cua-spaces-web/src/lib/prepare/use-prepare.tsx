@@ -10,10 +10,13 @@ import { setPrepareSink } from "@/components/space-thread/queued";
 import { updateAskTask } from "@/lib/ask-first";
 import { spaceState } from "@/lib/spaces";
 
+import { useInstalledAgents } from "@/components/ask-first/use-installed-agents";
+
 import { localPrepareStorage, PrepareDriver, type PrepareEnv } from "./driver";
+import { homeCreateRequest } from "./home-request";
 import { getDriver, markResumed, resumedThisLoad, setDriver, usePrepare } from "./store";
 
-/** The coding app the first Space is for until the person picks another. */
+/** The coding app the first Space is for when it is on this computer: the first installed one otherwise. */
 export const DEFAULT_HARNESS = "claude-code";
 
 /** How long the agent's session may take to open before preparing says so. */
@@ -37,8 +40,13 @@ export function PrepareRoot(): null {
   const { core, data: host } = useBridge();
   const spacesHook = useSpaces();
   const { data: spaces, createSpace, startSpace } = spacesHook;
-  const { offers } = useFirstSpaceOffers();
+  const { offers, known } = useFirstSpaceOffers();
+  const latestOffers = useRef(offers);
+  latestOffers.current = offers;
   const on = useNewOnboarding();
+  // Only an agent found on this computer is prepared: one Cua only wrote files for has no sign-in to bring.
+  const installed = useInstalledAgents();
+  const harness = installed === null ? null : installed.has(DEFAULT_HARNESS) ? DEFAULT_HARNESS : (installed.values().next().value ?? null);
   const { summonInput, summonIn, canSummon } = useSummonIn();
   const latestSpaces = useRef(spaces);
   latestSpaces.current = spaces;
@@ -71,10 +79,9 @@ export function PrepareRoot(): null {
     startHome: async (id) => {
       await startSpace(id);
     },
-    createHome: async ({ pendingId }) => {
-      // The same Linux Space Home makes for a job, under the fixed name.
-      const offer = offers.find((o) => o.os === "linux");
-      const space = await createSpace({ ...(offer ? offer.args : {}), os: "linux", name: homeNameOf(DEFAULT_HARNESS) }, pendingId);
+    createHome: async ({ harness: forApp, pendingId }) => {
+      // The same Linux Space Home makes for a job (the wizard's own offer for this machine), under the fixed name.
+      const space = await createSpace(homeCreateRequest(latestOffers.current, homeNameOf(forApp)), pendingId);
       return space.id;
     },
     attachAgent: async ({ spaceId, harness, model }) => {
@@ -121,7 +128,8 @@ export function PrepareRoot(): null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [core]);
 
-  const ready = Boolean(core && host && spaces && on);
+  // The offers must be read first: before that there is no image to make the home from.
+  const ready = Boolean(core && host && spaces && on && known);
 
   // Start at launch; a saved record resumes once.
   const driverNow = usePrepare().driver;
@@ -134,11 +142,11 @@ export function PrepareRoot(): null {
         markResumed();
         d.resume();
       }
-    } else {
+    } else if (harness) {
       markResumed();
-      d.start(DEFAULT_HARNESS);
+      d.start(harness);
     }
-  }, [ready, driverNow]);
+  }, [ready, driverNow, harness]);
 
   // The home's composer sends here while it is being made: kept, then delivered once.
   useEffect(() => {

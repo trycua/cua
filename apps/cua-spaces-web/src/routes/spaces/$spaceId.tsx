@@ -25,6 +25,7 @@ import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
 import { PreparePanel } from "@/components/prepare/prepare-panel";
 import { usePrepare } from "@/lib/prepare/store";
+import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,7 @@ function SpaceDetailPage() {
   const tasks = useAskTasks();
   // The first Space being prepared while the person was in onboarding: its page shows what is happening.
   const prep = usePrepare();
+  const onPrepareAction = usePrepareAction();
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -325,7 +327,7 @@ function SpaceDetailPage() {
     </div>
   );
   const preparing = askFirstOn && space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
-  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={() => prep.driver?.retry()} /> : null;
+  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={onPrepareAction} /> : null;
   const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
       interactive={interactive}

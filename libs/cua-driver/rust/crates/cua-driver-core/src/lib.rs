@@ -130,4 +130,3 @@ pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;
-// warm-cache probe (CUA-3134)

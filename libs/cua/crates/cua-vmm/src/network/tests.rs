@@ -457,7 +457,7 @@ fn golden_support_table() {
         S::NoNetworkOnly { .. } => "N",
         S::Refuse { .. } => "R",
     };
-    // (kind, linux, macos, windows) on this machine or a pool host.
+    // (kind, linux, macos, windows) on this computer or a pool host.
     let local = [
         (BackendKind::Lume, "R", "R", "R"),
         (BackendKind::Qemu, "E", "N", "N"),
@@ -491,12 +491,12 @@ fn golden_support_table() {
     let md = support_table_markdown();
     assert!(
         md.contains(
-            "| container | this machine or one of yours | Enforced | Enforced | Enforced |"
+            "| container | this computer or one of yours | Enforced | Enforced | Enforced |"
         ),
         "{md}"
     );
     assert!(
-        md.contains("| vz | this machine or one of yours | Refused | No network only | Refused |"),
+        md.contains("| vz | this computer or one of yours | Refused | No network only | Refused |"),
         "{md}"
     );
 }

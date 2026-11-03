@@ -244,9 +244,12 @@
   },
   "spaces-macos": {
    "paths": [
-    "apps/cua-spaces-macos/**"
+    "apps/cua-spaces-macos/**",
+    "libs/spaces-app-swift/**",
+    "libs/spaces-notch-swift/**"
    ],
    "workflows": [
+    "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
     "ci-cua-spaces-macos.yml",
     "ci-cua-spaces-web.yml",
@@ -351,7 +354,8 @@
   "docs": {
    "paths": [
     "docs/**",
-    "skills/**"
+    "skills/**",
+    "scripts/docs-generators/**"
    ],
    "workflows": [
     "ci-check-docs-image-refs.yml",

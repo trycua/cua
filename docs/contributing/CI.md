@@ -69,12 +69,12 @@ Any file outside every area below also counts as shared.
 | `images` | `libs/images/**`, `scripts/images/**` | 19 | `cd-image-linux`, `ci-check-docs`, `ci-cua-spaces-macos`, `ci-cua-spacesd`, `e2e-cua-sdk` |
 | `spaces-web` | `apps/cua-spaces-web/**`, `apps/cua-spaces-desktop/**` | 7 | `ci-cua-spaces-macos`, `ci-cua-spaces-web` |
 | `spaces-app` | `apps/cua-spaces/**` | 7 | `ci-cua-spaces-web`, `ci-cua-spaces` |
-| `spaces-macos` | `apps/cua-spaces-macos/**` | 7 | `ci-cua-spaces-macos`, `ci-cua-spaces-web` |
+| `spaces-macos` | `apps/cua-spaces-macos/**`, `libs/spaces-app-swift/**`, `libs/spaces-notch-swift/**` | 8 | `ci-cua-spaces-macos`, `ci-cua-spaces-web` |
 | `python` | `libs/python/**`, `libs/cua-bench/**`, `libs/cua-bench-rl/**`, `libs/cua-s1/**` | 24 | `ci-check-docs`, `ci-cua-sdk`, `ci-test-python`, `e2e-cua-sdk` |
 | `typescript` | `libs/typescript/**`, `libs/cuabot/**` | 9 | none of the slow jobs |
 | `lume` | `libs/lume/**`, `libs/lumier/**`, `libs/spaces-sdk-swift/**` | 11 | `ci-check-docs`, `ci-cua-sdk`, `ci-cua-spaces-macos`, `ci-swift-lume` |
 | `containers` | `libs/kasm/**`, `libs/qemu-docker/**`, `libs/xfce/**`, `libs/xfce-cua/**` | 11 | none of the slow jobs |
-| `docs` | `docs/**`, `skills/**` | 17 | `ci-check-docs`, `e2e-cua-sdk` |
+| `docs` | `docs/**`, `skills/**`, `scripts/docs-generators/**` | 17 | `ci-check-docs`, `e2e-cua-sdk` |
 | `compat` | `tests/compat/**` | 11 | none of the slow jobs |
 | `installers` | `scripts/install/**` | 6 | none of the slow jobs |
 | `examples` | `examples/**` | 5 | `ci-openkoalabot-example-tauri` |

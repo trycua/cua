@@ -439,4 +439,20 @@ mod tests {
         assert_eq!(lines[1]["harness"], "claude-code");
         assert!(lines[1]["ts_ms"].as_u64().unwrap() > 0);
     }
+
+    /// Every harness id cua-agents knows, and its short names, count as
+    /// themselves in telemetry: an id outside the schema's list reports
+    /// `other`, which hid which agents people run (5217 events in 14 days).
+    #[test]
+    fn every_harness_and_its_short_names_are_reported_as_themselves() {
+        for id in cua_agents::harness::ids() {
+            assert_eq!(cua_telemetry::events::harness(id), id, "{id}");
+        }
+        for (short, id) in [("codex", "openai-codex"), ("claude", "claude-code"), ("Codex", "openai-codex"), (" claude-code ", "claude-code")] {
+            assert_eq!(cua_telemetry::events::harness(short), id, "{short}");
+            assert_eq!(cua_agents::harness::harness(short.trim().to_ascii_lowercase().as_str()).map(|h| h.id), Some(id));
+        }
+        assert_eq!(cua_telemetry::events::harness("not-a-harness"), "other");
+    }
+
 }

@@ -3,6 +3,62 @@
 Every pull request must pass one required check, **CI: gate** (`ci-gate`). The gate waits for the other
 pull request workflows and passes when they pass. This page explains which of those workflows it waits for.
 
+## Run the checks locally first: `bin/ci`
+
+`bin/ci` runs, on your machine, the CI checks that your change can break, and prints the command that fixes
+each failure. Run it before you push. It catches in minutes what otherwise costs a full CI round:
+
+- rustfmt, and clippy `-D warnings` on the crates you changed and the crates that depend on them;
+- each workspace's Windows CI lane, cross-compiled with `cargo xwin` on the same packages (read from the
+  workflow), which catches code that only Unix uses. A C dependency that cannot be cross-built on your
+  machine is reported as a warning, and every crate that does not need it is still checked;
+- lockfiles that no longer match their manifests, including the nested workspaces under `examples/` and `tests/`;
+- stale generated files: the cua SDK and Cua Driver UniFFI bindings, the Electron and SwiftUI app bindings,
+  the Spaces contract manifest and control fixtures, and the Cua Driver contract;
+- stale generated reference docs, docs code blocks with no disposition, and image refs outside the catalog;
+- Python isort, black and ruff; TypeScript typecheck, tests and the design lint for the web packages you touched;
+- actionlint for workflows, SPDX headers, and the unit tests of the crates you changed.
+
+```bash
+bin/ci                 # the checks your change affects (compares with the merge base with origin/main)
+bin/ci --quick         # only checks that build nothing: seconds
+bin/ci --fix           # apply the safe fixers (formatters, lockfiles, generators), then check again
+bin/ci --full          # every check, whatever you changed
+bin/ci --list          # show the plan and the exact commands
+bin/ci --only rust-fmt,lockfiles
+```
+
+The commands are the ones the workflows run. Each check names the workflow text it mirrors, and
+`bin/ci --verify-sync` (run by **CI: Test Scripts**) fails when a workflow stops running it. When you change
+how a workflow runs a check, change `bin/ci` in the same pull request.
+
+A check whose tool is missing is reported as skipped, never as passed, with the install command. `bin/ci`
+uses the pinned Rust toolchain (`rust-toolchain.toml`) through rustup even when another `cargo` comes first on
+your `PATH`, and installs a web package's `node_modules` with its frozen lockfile when a check needs them
+(`--no-install` skips those checks instead). Logs are kept under `.git/bin-ci/logs/`.
+
+What it cannot catch: failures that only happen on a real Windows or Linux host (sockets, permissions,
+installers), the end-to-end and image lanes, and flakes. CI still runs those.
+
+### Pre-push hook (opt-in)
+
+```bash
+bin/ci --install-hook    # runs bin/ci before every git push from this clone and its worktrees
+bin/ci --uninstall-hook
+CUA_SKIP_LOCAL_CI=1 git push   # skip it once
+```
+
+The hook goes in the clone's `hooks/pre-push`. An existing pre-push hook is kept and still runs first.
+If you set a global `core.hooksPath`, your global pre-push hook must chain to the repository hook; the
+installer tells you whether it does. Prefer `CUA_SKIP_LOCAL_CI=1` to `git push --no-verify`, which also
+skips every other pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
+
+### Local sign-off (optional)
+
+After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit status on `HEAD` through
+`gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
+sign off a run that failed or skipped a check. The status is informational; `ci-gate` does not require it.
+
 ## Path-scoped gate
 
 A workflow still starts on its own `paths:` filter. The gate then waits only for the workflows that belong

@@ -1213,6 +1213,57 @@ impl VmmLocal {
 /// settings, memory and strays are checked every 15th tick).
 pub const POOL_TICK: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Opens a session of `h` in a member and closes it again (see
+/// [`PoolHost::prepare`]), then removes the run it made.
+async fn warm_session(
+    agents: &cua_agents::Agents,
+    id: &str,
+    h: &cua_agents::harness::Harness,
+) -> std::result::Result<(), String> {
+    use cua_agents::{RunStatus, runs::RunOptions};
+    let mut env = std::collections::BTreeMap::new();
+    if let Some(k) = h.keys.first() {
+        env.insert((*k).to_string(), "warm-up-not-a-key".to_string());
+    }
+    let started = agents
+        .start(
+            id,
+            "",
+            RunOptions {
+                env,
+                skills: Some(false),
+                idle_exit_secs: Some(120),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut result = Err("the session did not open in 120 s".to_string());
+    while std::time::Instant::now() < deadline {
+        match agents.status(&started.run_id).await {
+            Ok(st) if st.status == RunStatus::Idle && st.accepts_message => {
+                result = Ok(());
+                break;
+            }
+            Ok(st) if st.status == RunStatus::Failed => {
+                result = Err(format!("{} {:?}", st.reason, st.error));
+                break;
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+        }
+    }
+    let _ = agents.stop(&started.run_id).await;
+    let _ = agents
+        .guest()
+        .run(cua_spacesd_client::Command::shell(format!(
+            "rm -rf '{}'",
+            started.run_dir.replace('\'', "")
+        )))
+        .await;
+    result
+}
+
 /// The image of the agent home the `warm-pools` experiment keeps ready: the
 /// one the Spaces app's Home creates for a new agent, the first published
 /// Linux image of the catalog (the app reads the same file).
@@ -1409,6 +1460,18 @@ impl crate::pool::PoolHost for PoolHost {
                     .ensure(&installs, |_| {})
                     .await
                     .map_err(|e| e.to_string())?;
+            }
+            // One session of each app is opened and closed here, with a key
+            // that no model ever sees: the app's files are read once, so the
+            // session of the Space that claims this one does not pay a cold
+            // start for them. Nothing it wrote stays.
+            for id in harnesses {
+                let Some(h) = cua_agents::harness::harness(id).filter(|h| h.ready) else {
+                    continue;
+                };
+                if let Err(e) = warm_session(&agents, id, h).await {
+                    tracing::debug!(harness = %id, error = %e, "warm pool: the warm-up session did not open");
+                }
             }
             Ok::<(), String>(())
         };

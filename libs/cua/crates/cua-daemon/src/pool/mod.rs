@@ -354,6 +354,10 @@ struct Shape {
     prepare: Vec<String>,
     /// Measured (EWMA, seconds): a member's preparation.
     prepare_s: Option<f64>,
+    /// The saved filesystem of the first prepared member
+    /// ([`cua_vmm::Runtime::save_prepared`]): its tag and the image the next
+    /// members start from, already prepared.
+    prepared_image: Option<(String, cua_vmm::ImageSource)>,
 }
 
 impl Shape {
@@ -376,6 +380,7 @@ impl Shape {
             last_used: None,
             prepare: Vec::new(),
             prepare_s: None,
+            prepared_image: None,
         }
     }
 
@@ -650,6 +655,23 @@ fn token_of(spec: &StartSpec) -> Option<String> {
         .find_map(|k| spec.env.get(*k))
         .filter(|t| !t.is_empty())
         .cloned()
+}
+
+/// The tag of the saved filesystem of a shape's prepared members: the shape,
+/// the apps and this build (a new build installs the apps it pins).
+fn prepared_tag(key: &str, harnesses: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(harnesses.join(",").as_bytes());
+    h.update(env!("CARGO_PKG_VERSION").as_bytes());
+    let d = h.finalize();
+    format!(
+        "warm-{key}-{}",
+        d.iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
 }
 
 /// A fresh name for a member.
@@ -1349,6 +1371,22 @@ impl WarmPool {
         let mut spec = template.clone();
         spec.name = name.clone();
         spec.pool_member = true;
+        // A member of a shape whose first member was prepared boots from that
+        // member's saved filesystem: its apps are in it already, so it is
+        // ready in the time of a boot, not of an install.
+        let saved = if prepare.is_empty() {
+            None
+        } else {
+            self.inner
+                .shapes
+                .lock()
+                .unwrap()
+                .get(key)
+                .and_then(|s| s.prepared_image.clone())
+        };
+        if let Some((_, image)) = &saved {
+            spec.image = image.clone();
+        }
         spec.env.insert("CUA_ENV_TOKEN".into(), secret.clone());
         spec.labels.insert(
             cua_vmm::container::LABEL_POOL.into(),
@@ -1364,7 +1402,15 @@ impl WarmPool {
         self.inner.starting.lock().unwrap().insert(name.clone());
         let mut prepared = false;
         let ready = async {
-            let inst = rt.start(&spec).await.map_err(|e| e.to_string())?;
+            let inst = rt.start(&spec).await.map_err(|e| e.to_string());
+            if inst.is_err() && saved.is_some() {
+                // The saved filesystem does not start any more (the engine
+                // lost it): the next member is prepared from scratch.
+                if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                    s.prepared_image = None;
+                }
+            }
+            let inst = inst?;
             // A container member runs with its pool secret: it is ready
             // once it serves a command and a screenshot. Other backends
             // return from `start` with a member ready to claim (a microVM
@@ -1387,7 +1433,11 @@ impl WarmPool {
         // that claims it has its coding apps. A member that cannot be
         // prepared is still a member: it is claimed bare, and the stack goes
         // in after the claim as it does without a pool.
-        if let Ok(inst) = &ready
+        if ready.is_ok() && saved.is_some() {
+            prepared = true;
+            record.prepared = true;
+            let _ = self.write_record(&record);
+        } else if let Ok(inst) = &ready
             && !prepare.is_empty()
         {
             let began = Instant::now();
@@ -1406,6 +1456,22 @@ impl WarmPool {
                         s.prepare_s = ewma(s.prepare_s, took);
                     }
                     tracing::info!(member = %name, harnesses = %prepare.join(","), prepare_ms = (took * 1000.0) as u64, "warm-pool member prepared");
+                    // Its filesystem is kept (before anyone can claim it),
+                    // so the next member boots from it.
+                    let tag = prepared_tag(key, &prepare);
+                    let saving = Instant::now();
+                    match rt.save_prepared(&name, &tag).await {
+                        Ok(Some(image)) => {
+                            tracing::info!(member = %name, save_ms = saving.elapsed().as_millis() as u64, "warm-pool: the prepared filesystem is kept for the next member");
+                            if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                                s.prepared_image = Some((tag, image));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(member = %name, error = %e, "warm-pool: could not keep the prepared filesystem; the next member is prepared again");
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(member = %name, error = %e, "warm-pool member could not be prepared; it is claimed bare");
@@ -1462,6 +1528,7 @@ impl WarmPool {
             self.evaluate(k);
         }
         let mut drained = Vec::new();
+        let mut saved_gone: Vec<(Arc<dyn VmmRuntime>, String)> = Vec::new();
         {
             let mut shapes = self.inner.shapes.lock().unwrap();
             for k in &keys {
@@ -1476,7 +1543,11 @@ impl WarmPool {
                         .last()
                         .is_none_or(|t| now - t > policy::HORIZON_S);
                 if stale {
-                    shapes.remove(k);
+                    if let Some(gone) = shapes.remove(k)
+                        && let Some((tag, _)) = gone.prepared_image
+                    {
+                        saved_gone.push((gone.rt.clone(), tag));
+                    }
                     continue;
                 }
                 let excess = shape
@@ -1489,6 +1560,9 @@ impl WarmPool {
                     }
                 }
             }
+        }
+        for (rt, tag) in saved_gone {
+            self.drop_saved(rt, tag);
         }
         for (rt, m, why) in drained {
             tracing::info!(member = %m.name, reason = %why, "warm pool: a member is no longer wanted");
@@ -1778,16 +1852,23 @@ impl WarmPool {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        let mut saved: Vec<(Arc<dyn VmmRuntime>, String)> = Vec::new();
         let all: Vec<(Arc<dyn VmmRuntime>, Member)> = {
             let mut shapes = self.inner.shapes.lock().unwrap();
             shapes
                 .drain()
                 .flat_map(|(_, s)| {
                     let rt = s.rt.clone();
+                    if let Some((tag, _)) = &s.prepared_image {
+                        saved.push((rt.clone(), tag.clone()));
+                    }
                     s.members.into_iter().map(move |m| (rt.clone(), m))
                 })
                 .collect()
         };
+        for (rt, tag) in saved {
+            let _ = rt.drop_prepared(&tag).await;
+        }
         for (rt, m) in all {
             match rt.delete(&m.name).await {
                 Ok(()) | Err(VmmError::NotFound(_)) => self.forget_member(&m.name),
@@ -1818,9 +1899,23 @@ impl WarmPool {
     fn forget_shape(&self, key: &str) {
         let gone = self.inner.shapes.lock().unwrap().remove(key);
         if let Some(s) = gone {
+            if let Some((tag, _)) = &s.prepared_image {
+                self.drop_saved(s.rt.clone(), tag.clone());
+            }
             for m in s.members {
                 self.discard(s.rt.clone(), m.name);
             }
+        }
+    }
+
+    /// Deletes the saved filesystem `tag` in the background.
+    fn drop_saved(&self, rt: Arc<dyn VmmRuntime>, tag: String) {
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            h.spawn(async move {
+                if let Err(e) = rt.drop_prepared(&tag).await {
+                    tracing::debug!(%tag, error = %e, "warm pool: could not delete a saved filesystem");
+                }
+            });
         }
     }
 
@@ -1897,6 +1992,13 @@ mod tests {
         fail_starts: AtomicBool,
         /// How long a start takes, in ms (a booting member).
         start_ms: std::sync::atomic::AtomicU64,
+        /// Whether `save_prepared` keeps a filesystem, and the tags kept
+        /// and dropped.
+        can_save: AtomicBool,
+        saved: Mutex<Vec<String>>,
+        dropped: Mutex<Vec<String>>,
+        /// The image of every start, in order.
+        images: Mutex<Vec<String>>,
     }
 
     fn instance(name: &str) -> Instance {
@@ -1924,6 +2026,9 @@ mod tests {
         }
         async fn start(&self, spec: &StartSpec) -> VResult<Instance> {
             self.starts.fetch_add(1, SeqCst);
+            if let ImageSource::Oci { reference } = &spec.image {
+                self.images.lock().unwrap().push(reference.clone());
+            }
             let ms = self.start_ms.load(SeqCst);
             if ms > 0 {
                 tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -1969,6 +2074,17 @@ mod tests {
             Ok(instance(new_name))
         }
         async fn fork(&self, _: &str, _: &str) -> VResult<()> {
+            Ok(())
+        }
+        async fn save_prepared(&self, _: &str, tag: &str) -> VResult<Option<ImageSource>> {
+            if !self.can_save.load(SeqCst) {
+                return Ok(None);
+            }
+            self.saved.lock().unwrap().push(tag.to_string());
+            Ok(Some(ImageSource::oci(format!("local/prepared:{tag}"))))
+        }
+        async fn drop_prepared(&self, tag: &str) -> VResult<()> {
+            self.dropped.lock().unwrap().push(tag.to_string());
             Ok(())
         }
         async fn checkpoint(&self, _: &str, _: &str) -> VResult<CheckpointInfo> {
@@ -2993,5 +3109,75 @@ mod tests {
         };
         f.pool.refill(&key).await;
         assert_eq!(f.rt.members().len(), 0, "the free floor still holds");
+    }
+
+    #[tokio::test]
+    async fn later_members_boot_from_the_filesystem_of_the_first_prepared_one() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.rt.saved.lock().unwrap().len(),
+            1,
+            "kept once, before it was ready"
+        );
+        for i in 0..3 {
+            assert!(
+                f.pool
+                    .claim(
+                        &spec(&format!("s{i}"), &format!("t{i}")),
+                        BackendKind::Container,
+                        true
+                    )
+                    .await
+                    .is_some()
+            );
+            until_ready(&f, &key, 1).await;
+        }
+        let images = f.rt.images.lock().unwrap().clone();
+        assert_eq!(images.len(), 4);
+        assert!(
+            !images[0].starts_with("local/prepared:"),
+            "the first boots the image"
+        );
+        assert!(
+            images[1..]
+                .iter()
+                .all(|i| i.starts_with("local/prepared:warm-")),
+            "{images:?}"
+        );
+        // Prepared once; the others only booted.
+        assert_eq!(f.host.prepared.lock().unwrap().len(), 1);
+        assert_eq!(f.rt.saved.lock().unwrap().len(), 1);
+        assert!(f.pool.records().iter().all(|r| r.prepared));
+        // Withdrawn and gone: the saved filesystem goes too.
+        f.pool.retain_explicit(|src| src != WARM_SOURCE);
+        f.pool.drain().await;
+        assert_eq!(f.rt.dropped.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_runtime_that_cannot_save_prepares_every_member() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        f.pool
+            .claim(&spec("s", "t1"), BackendKind::Container, true)
+            .await
+            .unwrap();
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.host.prepared.lock().unwrap().len(),
+            2,
+            "each member prepared"
+        );
+        assert!(
+            f.rt.images
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|i| !i.starts_with("local/prepared:"))
+        );
     }
 }

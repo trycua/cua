@@ -87,6 +87,12 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
     );
     let real = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cua"));
     assert!(Some(&home) != real.as_ref(), "never the user's ~/.cua");
+    if std::env::var_os("RUST_LOG").is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_target(false)
+            .try_init();
+    }
     let warm = std::env::var("CUA_WARM_LIVE_MODE").as_deref() != Ok("cold");
     let image = std::env::var("CUA_WARM_LIVE_IMAGE")
         .unwrap_or_else(|_| cua_daemon::local::warm_pools_image());
@@ -208,6 +214,24 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
             });
             eprintln!("{line}");
             lines.push(line);
+            if std::env::var_os("CUA_WARM_LIVE_PROFILE").is_some() {
+                // The runner's own steps, in the guest's clock: where the start went.
+                if let Ok(page) = agents.events(&started.run_id, 0, 500).await {
+                    let first = page.events.first().map(|e| e.ts_ms).unwrap_or(0);
+                    let steps: Vec<String> = page
+                        .events
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "{}+{}",
+                                e.raw.get("type").and_then(|v| v.as_str()).unwrap_or(e.kind),
+                                e.ts_ms.saturating_sub(first)
+                            )
+                        })
+                        .collect();
+                    eprintln!("profile {i}: {}", steps.join(" "));
+                }
+            }
             let _ = agents.stop(&started.run_id).await;
         }
         for name in &names {

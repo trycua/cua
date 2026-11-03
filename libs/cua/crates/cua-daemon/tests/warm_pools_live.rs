@@ -152,9 +152,13 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
         } else {
             // Without the experiment the image is pulled once, outside the
             // timing, so the numbers are starts and not downloads.
-            let warmup = format!("wp-{tag}-pull");
-            rt.create(request(&warmup)).await.unwrap();
-            rt.delete(&warmup).await.unwrap();
+            // (`CUA_WARM_LIVE_NO_PULL=1` keeps it in: the first create of a
+            // fresh install, with the runtime and the image still to fetch.)
+            if std::env::var_os("CUA_WARM_LIVE_NO_PULL").is_none() {
+                let warmup = format!("wp-{tag}-pull");
+                rt.create(request(&warmup)).await.unwrap();
+                rt.delete(&warmup).await.unwrap();
+            }
         }
         for (i, name) in names.iter().enumerate() {
             if i > 0 {

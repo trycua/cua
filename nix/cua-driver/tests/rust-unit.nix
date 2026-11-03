@@ -67,6 +67,8 @@ let
     commonArgs
     // {
       buildPhaseCargoCommand = "cargo test --no-run ${cargoArgs}";
+      # Compile only; crane's default check phase would rerun a release build.
+      doCheck = false;
     }
   );
 in
@@ -76,6 +78,7 @@ craneLib.mkCargoDerivation (
     inherit cargoArtifacts;
     pnameSuffix = "";
     doInstallCargoArtifacts = false;
+    doCheck = false;
 
     # Transport tests launch an isolated D-Bus session instead of using the host bus.
     nativeBuildInputs = commonArgs.nativeBuildInputs ++ [

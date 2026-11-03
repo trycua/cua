@@ -96,6 +96,13 @@ pub trait Runtime: Send + Sync {
         Ok(None)
     }
 
+    /// The image [`Runtime::save_prepared`] saved as `tag`, when the backend
+    /// still has it (a daemon that restarted finds what the last one saved).
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = tag;
+        Ok(None)
+    }
+
     /// Deletes an image saved by [`Runtime::save_prepared`] (not an error
     /// when it is gone).
     async fn drop_prepared(&self, tag: &str) -> Result<()> {

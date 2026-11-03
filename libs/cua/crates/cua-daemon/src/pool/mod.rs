@@ -270,6 +270,15 @@ pub trait PoolHost: Send + Sync {
         Err("this runtime cannot prepare a member".into())
     }
 
+    /// Reads the files of the apps `harnesses` once in the member at
+    /// `endpoints`, so the first session of the Space that claims it does
+    /// not read them from the engine's disk (a member booted from a saved
+    /// filesystem has an empty file cache). Best effort, in the
+    /// background, never needed for correctness.
+    async fn warm_files(&self, endpoints: &Endpoints, secret: &str, harnesses: &[String]) {
+        let _ = (endpoints, secret, harnesses);
+    }
+
     /// Whether this machine runs on battery now (no member then).
     fn on_battery(&self) -> bool;
 
@@ -1423,7 +1432,7 @@ impl WarmPool {
         // A member of a shape whose first member was prepared boots from that
         // member's saved filesystem: its apps are in it already, so it is
         // ready in the time of a boot, not of an install.
-        let saved = if prepare.is_empty() {
+        let mut saved = if prepare.is_empty() {
             None
         } else {
             self.inner
@@ -1433,6 +1442,20 @@ impl WarmPool {
                 .get(key)
                 .and_then(|s| s.prepared_image.clone())
         };
+        // A daemon that restarted: what the last one saved is still there.
+        if saved.is_none() && !prepare.is_empty() {
+            let tag = prepared_tag(key, &prepare);
+            if let Ok(Some(image)) = rt.find_prepared(&tag).await {
+                tracing::info!(
+                    shape = key,
+                    "warm-pool: found the prepared filesystem a previous daemon saved"
+                );
+                if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                    s.prepared_image = Some((tag.clone(), image.clone()));
+                }
+                saved = Some((tag, image));
+            }
+        }
         if let Some((_, image)) = &saved {
             spec.image = image.clone();
         }
@@ -1549,6 +1572,19 @@ impl WarmPool {
             footprint_mb,
             "warm-pool member ready"
         );
+        // A member that booted from the saved filesystem has nothing in its
+        // file cache: its apps are read now, while it waits to be claimed.
+        if saved.is_some()
+            && prepared
+            && let Ok(inst) = &ready
+        {
+            let pool = self.clone();
+            let (endpoints, secret, apps) =
+                (inst.endpoints.clone(), secret.clone(), prepare.clone());
+            tokio::spawn(async move {
+                pool.inner.host.warm_files(&endpoints, &secret, &apps).await;
+            });
+        }
         Ok(Member {
             name,
             secret,
@@ -1917,9 +1953,9 @@ impl WarmPool {
                 })
                 .collect()
         };
-        for (rt, tag) in saved {
-            let _ = rt.drop_prepared(&tag).await;
-        }
+        // The saved filesystems stay: a daemon that starts again finds them
+        // ([`prepared_tag`]) instead of preparing a member for minutes.
+        drop(saved);
         for (rt, m) in all {
             match rt.delete(&m.name).await {
                 Ok(()) | Err(VmmError::NotFound(_)) => self.forget_member(&m.name),
@@ -2133,6 +2169,15 @@ mod tests {
             }
             self.saved.lock().unwrap().push(tag.to_string());
             Ok(Some(ImageSource::oci(format!("local/prepared:{tag}"))))
+        }
+        async fn find_prepared(&self, tag: &str) -> VResult<Option<ImageSource>> {
+            Ok(self
+                .saved
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|t| t == tag)
+                .then(|| ImageSource::oci(format!("local/prepared:{tag}"))))
         }
         async fn drop_prepared(&self, tag: &str) -> VResult<()> {
             self.dropped.lock().unwrap().push(tag.to_string());
@@ -3216,10 +3261,11 @@ mod tests {
         assert_eq!(f.host.prepared.lock().unwrap().len(), 1);
         assert_eq!(f.rt.saved.lock().unwrap().len(), 1);
         assert!(f.pool.records().iter().all(|r| r.prepared));
-        // Withdrawn and gone: the saved filesystem goes too.
+        // A daemon that stops keeps it for the next one; it goes with its
+        // shape (forgotten after the policy's horizon without a create).
         f.pool.retain_explicit(|src| src != WARM_SOURCE);
         f.pool.drain().await;
-        assert_eq!(f.rt.dropped.lock().unwrap().len(), 1);
+        assert!(f.rt.dropped.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3243,6 +3289,33 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|i| !i.starts_with("local/prepared:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restarted_daemon_finds_the_filesystem_the_last_one_saved() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        // What a previous daemon saved for this shape and these apps.
+        let s0 = spec("one", "t");
+        let key = shape_key(&s0, BackendKind::Container, true).unwrap();
+        let tag = prepared_tag(
+            &key,
+            &["claude-code".to_string(), "openai-codex".to_string()],
+        );
+        f.rt.saved.lock().unwrap().push(tag.clone());
+        let key2 = keep_warm_space(&f, &s0).await;
+        assert_eq!(key, key2);
+        until_ready(&f, &key, 1).await;
+        let images = f.rt.images.lock().unwrap().clone();
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].starts_with("local/prepared:warm-"),
+            "the first member booted from it: {images:?}"
+        );
+        assert!(
+            f.host.prepared.lock().unwrap().is_empty(),
+            "and was not prepared again"
         );
     }
 }

@@ -448,11 +448,19 @@ mod tests {
         for id in cua_agents::harness::ids() {
             assert_eq!(cua_telemetry::events::harness(id), id, "{id}");
         }
-        for (short, id) in [("codex", "openai-codex"), ("claude", "claude-code"), ("Codex", "openai-codex"), (" claude-code ", "claude-code")] {
+        for (short, id) in [
+            ("codex", "openai-codex"),
+            ("claude", "claude-code"),
+            ("Codex", "openai-codex"),
+            (" claude-code ", "claude-code"),
+        ] {
             assert_eq!(cua_telemetry::events::harness(short), id, "{short}");
-            assert_eq!(cua_agents::harness::harness(short.trim().to_ascii_lowercase().as_str()).map(|h| h.id), Some(id));
+            assert_eq!(
+                cua_agents::harness::harness(short.trim().to_ascii_lowercase().as_str())
+                    .map(|h| h.id),
+                Some(id)
+            );
         }
         assert_eq!(cua_telemetry::events::harness("not-a-harness"), "other");
     }
-
 }

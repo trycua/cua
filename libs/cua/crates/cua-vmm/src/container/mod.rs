@@ -1720,6 +1720,16 @@ impl Runtime for ContainerRuntime {
         Ok(Some(ImageSource::oci(format!("{PREPARED_REPO}:{tag}"))))
     }
 
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        Ok(self
+            .docker
+            .inspect_image(&image)
+            .await
+            .ok()
+            .map(|_| ImageSource::oci(image)))
+    }
+
     async fn drop_prepared(&self, tag: &str) -> Result<()> {
         let image = format!("{PREPARED_REPO}:{tag}");
         match self

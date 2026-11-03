@@ -1484,6 +1484,54 @@ impl crate::pool::PoolHost for PoolHost {
         }
     }
 
+    async fn warm_files(&self, endpoints: &Endpoints, secret: &str, harnesses: &[String]) {
+        // The directories the apps installed into, read once. The pool secret
+        // stops opening the member when it is claimed: a failure is fine.
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        for id in harnesses {
+            if let Some(h) = cua_agents::harness::harness(id) {
+                ids.extend(h.installs.iter().copied());
+            }
+        }
+        let Ok(order) = cua_agents::installables::resolve(&ids) else {
+            return;
+        };
+        let dirs: Vec<String> = order
+            .iter()
+            .filter_map(|id| {
+                let it = cua_agents::installables::get(id)?;
+                Some(format!("\"$HOME/.cua/tools/{id}/{}\"", it.version))
+            })
+            .collect();
+        if dirs.is_empty() {
+            return;
+        }
+        let script = format!(
+            "find {} -type f -size -64M -exec cat {{}} + >/dev/null 2>&1; true",
+            dirs.join(" ")
+        );
+        let run = async {
+            let c = member_client(endpoints, secret).await?;
+            c.run(
+                cua_spacesd_client::Command::shell(script)
+                    .timeout(std::time::Duration::from_secs(120)),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        let began = std::time::Instant::now();
+        match run.await {
+            Ok(()) => tracing::debug!(
+                ms = began.elapsed().as_millis() as u64,
+                "warm pool: a member's apps were read once"
+            ),
+            Err(e) => {
+                tracing::debug!(error = %e, "warm pool: could not read a member's apps ahead")
+            }
+        }
+    }
+
     async fn memory(&self, backend: BackendKind) -> Option<crate::pool::Memory> {
         let host = host_memory();
         if backend != BackendKind::Container {

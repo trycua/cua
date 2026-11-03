@@ -811,10 +811,15 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
+      # Its own family, shared with e2b-bindings.yml (same release cua-sdk and
+      # fixtures; this job also builds the --target slice for the
+      # XCFramework, hence the cap). Main's runs save it; PRs restore it. In
+      # the macOS `libs-cua` family it shared with jobs of other shapes it hit 22%.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: cua-sdk-swift
+          shared-key: cua-sdk-swift
+          size: 8G
       - name: Dev dylib
         run: |
           cargo build --locked --release -p cua-sdk

@@ -319,3 +319,5 @@ mod tests {
         );
     }
 }
+
+// CI timing probe (CUA-3134).

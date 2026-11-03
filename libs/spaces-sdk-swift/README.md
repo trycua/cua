@@ -143,9 +143,9 @@ so the day a backend gains the feature nothing at the call site breaks.
 ## Tool coverage
 
 Anything you can do in the Spaces MCP you can do here **by name**. The contract
-(`libs/cua/spaces-contract/manifest.json`, 45 tools, the same list
+(`libs/cua/spaces-contract/manifest.json`, every tool, the same list
 `spacesToolMethods()` exports from the linked SDK) has a typed call for every
-tool, and `Tests/CuaSpacesTests/ToolCoverageTests` drives every one of them and
+tool except those listed in `pendingSwiftBinding` (each with a tracking issue), and `Tests/CuaSpacesTests/ToolCoverageTests` drives every one of them and
 fails if a tool loses its path.
 
 | Tool | SDK |

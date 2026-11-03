@@ -13,8 +13,9 @@
 //! The Wayland video backend composes them for a paced full-desktop recording.
 
 use std::cell::RefCell;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::rc::Rc;
+use std::ffi::{c_char, c_int, c_void, CStr};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::ptr;
 use std::time::{Duration, Instant};
 
 use ashpd::desktop::screencast::{
@@ -23,8 +24,18 @@ use ashpd::desktop::screencast::{
 };
 use ashpd::desktop::{CreateSessionOptions, PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
-use libspa::param::video::VideoFormat;
+use libspa::buffer::{ChunkFlags, Data};
+use libspa::param::format::{FormatProperties, MediaSubtype, MediaType};
+use libspa::param::video::{VideoFormat, VideoInfoRaw};
+use libspa::param::{format_utils, ParamType};
+use libspa::pod::serialize::PodSerializer;
+use libspa::pod::Pod;
+use libspa::spa_interface_call_method;
+use libspa::sys as spa_sys;
+use libspa::utils::{Fraction, Rectangle, SpaTypes};
+use pipewire_sys as pw_sys;
 
+use super::libpipewire::{libpipewire, PipeWire};
 use super::portal::RestoreToken;
 
 /// How long to wait for the user to answer the portal's consent dialog when no
@@ -157,7 +168,7 @@ impl ScreencastSession {
     }
 
     /// An independently owned duplicate of the PipeWire remote fd, suitable for
-    /// `pipewire::context::Context::connect_fd`, which consumes its fd.
+    /// `pw_context_connect_fd`, which consumes its fd.
     pub fn pipewire_fd(&self) -> anyhow::Result<OwnedFd> {
         let dup_fd = unsafe { libc::dup(self.fd.as_raw_fd()) };
         if dup_fd < 0 {
@@ -312,9 +323,51 @@ impl Default for StreamOptions {
     }
 }
 
+/// A `pw_stream` state, as its `state_changed` event reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StreamState {
+    Error(String),
+    Unconnected,
+    Connecting,
+    Paused,
+    Streaming,
+}
+
+impl StreamState {
+    /// # Safety
+    /// `error` is null or points to a NUL-terminated string.
+    unsafe fn from_raw(state: pw_sys::pw_stream_state, error: *const c_char) -> Self {
+        match state {
+            pw_sys::pw_stream_state_PW_STREAM_STATE_UNCONNECTED => Self::Unconnected,
+            pw_sys::pw_stream_state_PW_STREAM_STATE_CONNECTING => Self::Connecting,
+            pw_sys::pw_stream_state_PW_STREAM_STATE_PAUSED => Self::Paused,
+            pw_sys::pw_stream_state_PW_STREAM_STATE_STREAMING => Self::Streaming,
+            _ => Self::Error(lossy(error)),
+        }
+    }
+}
+
+/// # Safety
+/// `text` is null or points to a NUL-terminated string.
+unsafe fn lossy(text: *const c_char) -> String {
+    if text.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(text).to_string_lossy().into_owned()
+    }
+}
+
+/// Capture state shared by every libpipewire callback of one
+/// [`run_frame_stream`]. All of them run on the thread inside
+/// `pw_main_loop_run`.
 struct Pump<S> {
+    pw: &'static PipeWire,
+    mainloop: *mut pw_sys::pw_main_loop,
+    stream: *mut pw_sys::pw_stream,
+    node_id: u32,
+    options: StreamOptions,
     sink: S,
-    negotiated: libspa::param::video::VideoInfoRaw,
+    negotiated: VideoInfoRaw,
     started_at: Instant,
     saw_frame: bool,
     /// Most recent error the remote core reported against the connection
@@ -331,8 +384,7 @@ struct Pump<S> {
 /// (`on_core_error` with `-EPIPE`), and a server-sent node error arrives as
 /// an `Error` transition. `Paused` is not terminal: the compositor pauses a
 /// source it may resume, and a damage-free desktop stays `Streaming`.
-fn stream_loss(new: &pipewire::stream::StreamState, core_error: Option<&str>) -> Option<String> {
-    use pipewire::stream::StreamState;
+fn stream_loss(new: &StreamState, core_error: Option<&str>) -> Option<String> {
     match new {
         StreamState::Error(error) => Some(format!("portal ScreenCast stream failed: {error}")),
         StreamState::Unconnected => Some(match core_error {
@@ -355,24 +407,263 @@ fn source_removed(removed: u32, node_id: u32) -> Option<&'static str> {
 }
 
 impl<S: FrameSink> Pump<S> {
-    fn finish(&mut self, mainloop: &pipewire::main_loop::MainLoopRc, outcome: anyhow::Result<()>) {
+    /// Records the outcome; the callback quits the loop once its borrow ends
+    /// (see [`settle`]).
+    fn finish(&mut self, outcome: anyhow::Result<()>) {
         if self.outcome.is_none() {
             self.outcome = Some(outcome);
         }
-        mainloop.quit();
     }
 
-    fn apply(
-        &mut self,
-        mainloop: &pipewire::main_loop::MainLoopRc,
-        result: anyhow::Result<FrameFlow>,
-    ) {
+    fn apply(&mut self, result: anyhow::Result<FrameFlow>) {
         match result {
             Ok(FrameFlow::Continue) => {}
-            Ok(FrameFlow::Stop) => self.finish(mainloop, Ok(())),
-            Err(error) => self.finish(mainloop, Err(error)),
+            Ok(FrameFlow::Stop) => self.finish(Ok(())),
+            Err(error) => self.finish(Err(error)),
         }
     }
+
+    fn negotiate(&mut self, param: &Pod) {
+        let Ok((media_type, media_subtype)) = format_utils::parse_format(param) else {
+            return;
+        };
+        if media_type != MediaType::Video || media_subtype != MediaSubtype::Raw {
+            return;
+        }
+        let mut info = VideoInfoRaw::default();
+        if info.parse(param).is_ok() {
+            self.negotiated = info;
+        }
+    }
+
+    /// # Safety
+    /// `buffer` belongs to a `pw_buffer` just dequeued from this pump's stream.
+    unsafe fn deliver(&mut self, buffer: *mut spa_sys::spa_buffer) {
+        if self.outcome.is_some() {
+            return;
+        }
+        let info = self.negotiated;
+        let size = info.size();
+        let (width, height) = (size.width, size.height);
+        if width == 0 || height == 0 {
+            return;
+        }
+        if buffer.is_null() || (*buffer).n_datas == 0 || (*buffer).datas.is_null() {
+            return;
+        }
+        // `Data` is a transparent wrapper around `spa_data`.
+        let data = &mut *(*buffer).datas.cast::<Data>();
+        let chunk = data.chunk();
+        let (offset, chunk_size, chunk_stride, chunk_flags) = (
+            chunk.offset() as usize,
+            chunk.size(),
+            chunk.stride(),
+            chunk.flags(),
+        );
+        // A producer marks buffers it could not fill; they carry no
+        // frame and go straight back to it.
+        if chunk_flags.contains(ChunkFlags::CORRUPTED) {
+            return;
+        }
+        // Producers may leave stride unset; derive it for the packed
+        // 32-bit formats negotiated below.
+        let stride = if chunk_stride > 0 {
+            chunk_stride as u32
+        } else if chunk_size > 0 {
+            chunk_size / height
+        } else {
+            width * 4
+        };
+        let data_type = data.type_();
+        let frame = data
+            .data()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "portal ScreenCast delivered a {data_type:?} buffer that is not \
+                     memory-mapped; only shared-memory frames are supported"
+                )
+            })
+            .and_then(|bytes| {
+                let payload = bytes.get(offset..).unwrap_or(&[]);
+                Frame::new(width, height, stride, info.format(), payload)
+            });
+        let result = match frame {
+            Ok(frame) => {
+                self.saw_frame = true;
+                self.sink.frame(frame)
+            }
+            Err(error) => Err(error),
+        };
+        self.apply(result);
+    }
+
+    fn tick(&mut self) {
+        if self.outcome.is_some() {
+            return;
+        }
+        if !self.saw_frame && self.started_at.elapsed() >= self.options.first_frame_timeout {
+            let timeout = self.options.first_frame_timeout.as_secs();
+            self.finish(Err(anyhow::anyhow!(
+                "portal ScreenCast delivered no frame within {timeout}s"
+            )));
+            return;
+        }
+        let result = self.sink.tick();
+        self.apply(result);
+    }
+}
+
+/// # Safety
+/// `data` is the pump pointer a listener was registered with.
+unsafe fn pump<'a, S>(data: *mut c_void) -> &'a RefCell<Pump<S>> {
+    &*data.cast::<RefCell<Pump<S>>>()
+}
+
+/// Quits the loop once the capture has an outcome. Callers hold no borrow:
+/// quitting from the loop thread can dispatch queued events, which re-enter
+/// the callbacks.
+///
+/// # Safety
+/// The pump's main loop is still alive.
+unsafe fn settle<S>(pump: &RefCell<Pump<S>>) {
+    let (pw, mainloop, done) = {
+        let pump = pump.borrow();
+        (pump.pw, pump.mainloop, pump.outcome.is_some())
+    };
+    if done {
+        (pw.pw_main_loop_quit)(mainloop);
+    }
+}
+
+unsafe extern "C" fn on_core_error<S>(
+    data: *mut c_void,
+    id: u32,
+    _seq: c_int,
+    res: c_int,
+    message: *const c_char,
+) {
+    if id == pw_sys::PW_ID_CORE {
+        pump::<S>(data).borrow_mut().core_error = Some(format!("{} ({res})", lossy(message)));
+    }
+}
+
+unsafe extern "C" fn on_global_remove<S: FrameSink>(data: *mut c_void, id: u32) {
+    let pump = pump::<S>(data);
+    {
+        let mut pump = pump.borrow_mut();
+        if let Some(reason) = source_removed(id, pump.node_id) {
+            pump.finish(Err(anyhow::anyhow!(reason)));
+        }
+    }
+    settle(pump);
+}
+
+unsafe extern "C" fn on_state_changed<S: FrameSink>(
+    data: *mut c_void,
+    _old: pw_sys::pw_stream_state,
+    new: pw_sys::pw_stream_state,
+    error: *const c_char,
+) {
+    let new = StreamState::from_raw(new, error);
+    let pump = pump::<S>(data);
+    {
+        let mut pump = pump.borrow_mut();
+        if let Some(reason) = stream_loss(&new, pump.core_error.as_deref()) {
+            pump.finish(Err(anyhow::anyhow!(reason)));
+        }
+    }
+    settle(pump);
+}
+
+unsafe extern "C" fn on_param_changed<S: FrameSink>(
+    data: *mut c_void,
+    id: u32,
+    param: *const spa_sys::spa_pod,
+) {
+    if !param.is_null() && id == ParamType::Format.as_raw() {
+        pump::<S>(data).borrow_mut().negotiate(Pod::from_raw(param));
+    }
+}
+
+unsafe extern "C" fn on_process<S: FrameSink>(data: *mut c_void) {
+    let pump = pump::<S>(data);
+    let (pw, stream) = {
+        let pump = pump.borrow();
+        (pump.pw, pump.stream)
+    };
+    // Keep only the newest queued buffer and hand the older ones back.
+    let mut buffer = (pw.pw_stream_dequeue_buffer)(stream);
+    if buffer.is_null() {
+        return;
+    }
+    loop {
+        let newer = (pw.pw_stream_dequeue_buffer)(stream);
+        if newer.is_null() {
+            break;
+        }
+        (pw.pw_stream_queue_buffer)(stream, buffer);
+        buffer = newer;
+    }
+    pump.borrow_mut().deliver((*buffer).buffer);
+    (pw.pw_stream_queue_buffer)(stream, buffer);
+    settle(pump);
+}
+
+unsafe extern "C" fn on_tick<S: FrameSink>(data: *mut c_void, _expirations: u64) {
+    let pump = pump::<S>(data);
+    pump.borrow_mut().tick();
+    settle(pump);
+}
+
+/// Runs one teardown step on drop, so an early return releases everything
+/// created before it in reverse order.
+struct Release<F: FnMut()>(F);
+
+impl<F: FnMut()> Drop for Release<F> {
+    fn drop(&mut self) {
+        (self.0)()
+    }
+}
+
+/// A listener registered with libpipewire. The hook and the events table it
+/// points at stay at a fixed address until the hook is unlinked on drop.
+struct Listener<E> {
+    hook: Box<spa_sys::spa_hook>,
+    events: Box<E>,
+}
+
+impl<E> Listener<E> {
+    /// # Safety
+    /// `add` registers the hook and events table it is given.
+    unsafe fn add(events: E, add: impl FnOnce(*mut spa_sys::spa_hook, *const E)) -> Self {
+        let mut listener = Self {
+            hook: Box::new(std::mem::zeroed()),
+            events: Box::new(events),
+        };
+        add(&mut *listener.hook, &*listener.events);
+        listener
+    }
+}
+
+impl<E> Drop for Listener<E> {
+    fn drop(&mut self) {
+        libspa::utils::hook::remove(*self.hook);
+    }
+}
+
+fn timespec(duration: Duration) -> spa_sys::timespec {
+    // SAFETY: timespec is plain data; zeroing also clears any padding fields.
+    let mut timespec: spa_sys::timespec = unsafe { std::mem::zeroed() };
+    timespec.tv_sec = duration.as_secs() as _;
+    timespec.tv_nsec = duration.subsec_nanos() as _;
+    timespec
+}
+
+fn creation_failed(what: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "pipewire {what} failed: {}",
+        std::io::Error::last_os_error()
+    )
 }
 
 /// Connect to the PipeWire remote behind a portal ScreenCast and feed frames
@@ -383,201 +674,23 @@ impl<S: FrameSink> Pump<S> {
 /// Only raw shared-memory formats are offered (no DMA-BUF modifier
 /// negotiation) so the compositor falls back to memfd buffers that
 /// `MAP_BUFFERS` can expose as plain byte slices.
-pub fn run_frame_stream<S: FrameSink + 'static>(
+pub fn run_frame_stream<S: FrameSink>(
     fd: OwnedFd,
     node_id: u32,
     options: StreamOptions,
     sink: S,
 ) -> anyhow::Result<S> {
-    use pipewire as pw;
-    use pw::{properties::properties, spa};
-    use spa::pod::Pod;
-
-    let mainloop = pw::main_loop::MainLoopRc::new(None)
-        .map_err(|e| anyhow::anyhow!("pipewire MainLoop::new failed: {e}"))?;
-    let context = pw::context::ContextRc::new(&mainloop, None)
-        .map_err(|e| anyhow::anyhow!("pipewire Context::new failed: {e}"))?;
-    let core = context
-        .connect_fd_rc(fd, None)
-        .map_err(|e| anyhow::anyhow!("pipewire connect_fd failed: {e}"))?;
-
-    let pump = Rc::new(RefCell::new(Pump {
-        sink,
-        negotiated: Default::default(),
-        started_at: Instant::now(),
-        saw_frame: false,
-        core_error: None,
-        outcome: None,
-    }));
-
-    let core_listener = core
-        .add_listener_local()
-        .error({
-            let pump = pump.clone();
-            move |id, _seq, res, message| {
-                if id == pw::core::PW_ID_CORE {
-                    pump.borrow_mut().core_error = Some(format!("{message} ({res})"));
-                }
-            }
-        })
-        .register();
-
-    // A producer that stops casting removes its node, but libpipewire parks a
-    // stream linked to it in `Paused` until the session manager gets round to
-    // destroying it, which can take long enough to record a frozen tail.
-    // Watching the registry ends the capture as soon as the source is gone.
-    let registry = core
-        .get_registry_rc()
-        .map_err(|e| anyhow::anyhow!("pipewire get_registry failed: {e}"))?;
-    let registry_listener = registry
-        .add_listener_local()
-        .global_remove({
-            let pump = pump.clone();
-            let mainloop = mainloop.clone();
-            move |id| {
-                if let Some(reason) = source_removed(id, node_id) {
-                    pump.borrow_mut()
-                        .finish(&mainloop, Err(anyhow::anyhow!(reason)));
-                }
-            }
-        })
-        .register();
-
-    let stream = pw::stream::StreamBox::new(
-        &core,
-        "cua-driver-capture",
-        properties! {
-            *pw::keys::MEDIA_TYPE => "Video",
-            *pw::keys::MEDIA_CATEGORY => "Capture",
-            *pw::keys::MEDIA_ROLE => "Screen",
-        },
-    )
-    .map_err(|e| anyhow::anyhow!("pipewire Stream::new failed: {e}"))?;
-
-    let listener = stream
-        .add_local_listener::<()>()
-        .state_changed({
-            let pump = pump.clone();
-            let mainloop = mainloop.clone();
-            move |_stream, _user, _old, new| {
-                let mut pump = pump.borrow_mut();
-                if let Some(reason) = stream_loss(&new, pump.core_error.as_deref()) {
-                    pump.finish(&mainloop, Err(anyhow::anyhow!(reason)));
-                }
-            }
-        })
-        .param_changed({
-            let pump = pump.clone();
-            move |_stream, _user, id, param| {
-                let Some(param) = param else { return };
-                if id != spa::param::ParamType::Format.as_raw() {
-                    return;
-                }
-                let Ok((media_type, media_subtype)) = spa::param::format_utils::parse_format(param)
-                else {
-                    return;
-                };
-                if media_type != spa::param::format::MediaType::Video
-                    || media_subtype != spa::param::format::MediaSubtype::Raw
-                {
-                    return;
-                }
-                let mut info = spa::param::video::VideoInfoRaw::default();
-                if info.parse(param).is_ok() {
-                    pump.borrow_mut().negotiated = info;
-                }
-            }
-        })
-        .process({
-            let pump = pump.clone();
-            let mainloop = mainloop.clone();
-            move |stream, _user| {
-                // Keep only the newest queued buffer; dropping a buffer
-                // requeues it to the producer.
-                let Some(mut buffer) = stream.dequeue_buffer() else {
-                    return;
-                };
-                while let Some(newer) = stream.dequeue_buffer() {
-                    buffer = newer;
-                }
-                let mut pump = pump.borrow_mut();
-                if pump.outcome.is_some() {
-                    return;
-                }
-                let info = pump.negotiated;
-                let size = info.size();
-                let (width, height) = (size.width, size.height);
-                if width == 0 || height == 0 {
-                    return;
-                }
-                let datas = buffer.datas_mut();
-                let Some(data) = datas.first_mut() else {
-                    return;
-                };
-                let chunk = data.chunk();
-                let (offset, chunk_size, chunk_stride, chunk_flags) = (
-                    chunk.offset() as usize,
-                    chunk.size(),
-                    chunk.stride(),
-                    chunk.flags(),
-                );
-                // A producer marks buffers it could not fill; they carry no
-                // frame and go straight back to it.
-                if chunk_flags.contains(spa::buffer::ChunkFlags::CORRUPTED) {
-                    return;
-                }
-                // Producers may leave stride unset; derive it for the packed
-                // 32-bit formats negotiated below.
-                let stride = if chunk_stride > 0 {
-                    chunk_stride as u32
-                } else if chunk_size > 0 {
-                    chunk_size / height
-                } else {
-                    width * 4
-                };
-                let data_type = data.type_();
-                let frame = data
-                    .data()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "portal ScreenCast delivered a {data_type:?} buffer that is not \
-                             memory-mapped; only shared-memory frames are supported"
-                        )
-                    })
-                    .and_then(|bytes| {
-                        let payload = bytes.get(offset..).unwrap_or(&[]);
-                        Frame::new(width, height, stride, info.format(), payload)
-                    });
-                let result = match frame {
-                    Ok(frame) => {
-                        pump.saw_frame = true;
-                        pump.sink.frame(frame)
-                    }
-                    Err(error) => Err(error),
-                };
-                pump.apply(&mainloop, result);
-            }
-        })
-        .register()
-        .map_err(|e| anyhow::anyhow!("pipewire stream listener register failed: {e}"))?;
+    let pw = libpipewire()?;
 
     // Compositors typically pick BGRx/BGRA on Linux desktops; the alternates
     // let negotiation succeed on more sources.
-    let obj = pw::spa::pod::object!(
-        pw::spa::utils::SpaTypes::ObjectParamFormat,
-        pw::spa::param::ParamType::EnumFormat,
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::MediaType,
-            Id,
-            pw::spa::param::format::MediaType::Video
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::MediaSubtype,
-            Id,
-            pw::spa::param::format::MediaSubtype::Raw
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoFormat,
+    let obj = libspa::pod::object!(
+        SpaTypes::ObjectParamFormat,
+        ParamType::EnumFormat,
+        libspa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
+        libspa::pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+        libspa::pod::property!(
+            FormatProperties::VideoFormat,
             Choice,
             Enum,
             Id,
@@ -587,104 +700,229 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
             VideoFormat::RGBx,
             VideoFormat::RGBA,
         ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoSize,
+        libspa::pod::property!(
+            FormatProperties::VideoSize,
             Choice,
             Range,
             Rectangle,
-            pw::spa::utils::Rectangle {
+            Rectangle {
                 width: 1920,
                 height: 1080
             },
-            pw::spa::utils::Rectangle {
+            Rectangle {
                 width: 1,
                 height: 1
             },
-            pw::spa::utils::Rectangle {
+            Rectangle {
                 width: 7680,
                 height: 4320
             }
         ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoFramerate,
+        libspa::pod::property!(
+            FormatProperties::VideoFramerate,
             Choice,
             Range,
             Fraction,
-            pw::spa::utils::Fraction { num: 30, denom: 1 },
-            pw::spa::utils::Fraction { num: 0, denom: 1 },
-            pw::spa::utils::Fraction {
+            Fraction { num: 30, denom: 1 },
+            Fraction { num: 0, denom: 1 },
+            Fraction {
                 num: 1000,
                 denom: 1
             }
         ),
     );
-    let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
+    let values: Vec<u8> = PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
-        &pw::spa::pod::Value::Object(obj),
+        &libspa::pod::Value::Object(obj),
     )
     .map_err(|e| anyhow::anyhow!("EnumFormat pod serialization failed: {e}"))?
     .0
     .into_inner();
-    let mut params = [Pod::from_bytes(&values)
-        .ok_or_else(|| anyhow::anyhow!("EnumFormat pod parse-back failed"))?];
+    let enum_format = Pod::from_bytes(&values)
+        .ok_or_else(|| anyhow::anyhow!("EnumFormat pod parse-back failed"))?;
 
-    // `DONT_RECONNECT` binds the stream to the portal's node so the session
-    // manager never relinks it to an unrelated video source once that node
-    // is gone; the registry watch above reports the removal itself.
-    stream
-        .connect(
-            spa::utils::Direction::Input,
-            Some(node_id),
-            pw::stream::StreamFlags::AUTOCONNECT
-                | pw::stream::StreamFlags::MAP_BUFFERS
-                | pw::stream::StreamFlags::DONT_RECONNECT,
-            &mut params,
-        )
-        .map_err(|e| anyhow::anyhow!("pipewire stream.connect failed: {e}"))?;
+    let pump = Box::new(RefCell::new(Pump {
+        pw,
+        mainloop: ptr::null_mut(),
+        stream: ptr::null_mut(),
+        node_id,
+        options,
+        sink,
+        negotiated: Default::default(),
+        started_at: Instant::now(),
+        saw_frame: false,
+        core_error: None,
+        outcome: None,
+    }));
+    let data: *mut c_void = ptr::from_ref(&*pump).cast_mut().cast();
 
-    let ticker = mainloop.loop_().add_timer({
-        let pump = pump.clone();
-        let mainloop = mainloop.clone();
-        move |_expirations| {
-            let mut pump = pump.borrow_mut();
-            if pump.outcome.is_some() {
-                return;
-            }
-            if !pump.saw_frame && pump.started_at.elapsed() >= options.first_frame_timeout {
-                pump.finish(
-                    &mainloop,
-                    Err(anyhow::anyhow!(
-                        "portal ScreenCast delivered no frame within {}s",
-                        options.first_frame_timeout.as_secs()
-                    )),
-                );
-                return;
-            }
-            let result = pump.sink.tick();
-            pump.apply(&mainloop, result);
+    // SAFETY: every object below is created, used and destroyed on this
+    // thread; each `Release` and `Listener` drops before what it refers to,
+    // and all of them drop before `pump`, which every callback points at.
+    unsafe {
+        let mainloop = (pw.pw_main_loop_new)(ptr::null());
+        if mainloop.is_null() {
+            return Err(creation_failed("MainLoop::new"));
         }
-    });
-    ticker
-        .update_timer(Some(options.tick_interval), Some(options.tick_interval))
-        .into_result()
-        .map_err(|e| anyhow::anyhow!("pipewire timer source failed: {e:?}"))?;
+        let _mainloop = Release(move || (pw.pw_main_loop_destroy)(mainloop));
+        pump.borrow_mut().mainloop = mainloop;
+        let loop_ = (pw.pw_main_loop_get_loop)(mainloop);
 
-    mainloop.run();
+        let context = (pw.pw_context_new)(loop_, ptr::null_mut(), 0);
+        if context.is_null() {
+            return Err(creation_failed("Context::new"));
+        }
+        let _context = Release(move || (pw.pw_context_destroy)(context));
 
-    // Tear the stream down before handing the sink back so the producer
-    // cannot touch buffers the sink may still reference.
-    drop(ticker);
-    drop(listener);
-    drop(stream);
-    drop(registry_listener);
-    drop(registry);
-    drop(core_listener);
-    drop(core);
-    drop(context);
+        let core = (pw.pw_context_connect_fd)(context, fd.into_raw_fd(), ptr::null_mut(), 0);
+        if core.is_null() {
+            return Err(creation_failed("connect_fd"));
+        }
+        let _core = Release(move || {
+            (pw.pw_core_disconnect)(core);
+        });
 
-    let pump = Rc::try_unwrap(pump)
-        .map_err(|_| anyhow::anyhow!("pipewire callbacks outlived the capture loop"))?
-        .into_inner();
+        let mut core_events: pw_sys::pw_core_events = std::mem::zeroed();
+        core_events.version = pw_sys::PW_VERSION_CORE_EVENTS;
+        core_events.error = Some(on_core_error::<S>);
+        let _core_listener = Listener::add(core_events, |hook, events| {
+            spa_interface_call_method!(
+                core,
+                pw_sys::pw_core_methods,
+                add_listener,
+                hook,
+                events,
+                data
+            );
+        });
+
+        // A producer that stops casting removes its node, but libpipewire parks a
+        // stream linked to it in `Paused` until the session manager gets round to
+        // destroying it, which can take long enough to record a frozen tail.
+        // Watching the registry ends the capture as soon as the source is gone.
+        let registry: *mut pw_sys::pw_registry = spa_interface_call_method!(
+            core,
+            pw_sys::pw_core_methods,
+            get_registry,
+            pw_sys::PW_VERSION_REGISTRY,
+            0
+        );
+        if registry.is_null() {
+            return Err(creation_failed("get_registry"));
+        }
+        let _registry = Release(move || (pw.pw_proxy_destroy)(registry.cast()));
+        let mut registry_events: pw_sys::pw_registry_events = std::mem::zeroed();
+        registry_events.version = pw_sys::PW_VERSION_REGISTRY_EVENTS;
+        registry_events.global_remove = Some(on_global_remove::<S>);
+        let _registry_listener = Listener::add(registry_events, |hook, events| {
+            spa_interface_call_method!(
+                registry,
+                pw_sys::pw_registry_methods,
+                add_listener,
+                hook,
+                events,
+                data
+            );
+        });
+
+        let item = |key: &'static [u8], value: &'static CStr| spa_sys::spa_dict_item {
+            key: key.as_ptr().cast(),
+            value: value.as_ptr(),
+        };
+        let items = [
+            item(pw_sys::PW_KEY_MEDIA_TYPE, c"Video"),
+            item(pw_sys::PW_KEY_MEDIA_CATEGORY, c"Capture"),
+            item(pw_sys::PW_KEY_MEDIA_ROLE, c"Screen"),
+        ];
+        let props = spa_sys::spa_dict {
+            flags: 0,
+            n_items: items.len() as u32,
+            items: items.as_ptr(),
+        };
+        // The stream takes ownership of the properties.
+        let props = (pw.pw_properties_new_dict)(&props);
+        let stream = (pw.pw_stream_new)(core, c"cua-driver-capture".as_ptr(), props);
+        if stream.is_null() {
+            return Err(creation_failed("Stream::new"));
+        }
+        let _stream = Release(move || (pw.pw_stream_destroy)(stream));
+        pump.borrow_mut().stream = stream;
+
+        let mut stream_events: pw_sys::pw_stream_events = std::mem::zeroed();
+        stream_events.version = pw_sys::PW_VERSION_STREAM_EVENTS;
+        stream_events.state_changed = Some(on_state_changed::<S>);
+        stream_events.param_changed = Some(on_param_changed::<S>);
+        stream_events.process = Some(on_process::<S>);
+        let _stream_listener = Listener::add(stream_events, |hook, events| {
+            (pw.pw_stream_add_listener)(stream, hook, events, data);
+        });
+
+        // `DONT_RECONNECT` binds the stream to the portal's node so the session
+        // manager never relinks it to an unrelated video source once that node
+        // is gone; the registry watch above reports the removal itself.
+        let mut params = [enum_format.as_raw_ptr().cast_const()];
+        let res = (pw.pw_stream_connect)(
+            stream,
+            spa_sys::SPA_DIRECTION_INPUT,
+            node_id,
+            pw_sys::pw_stream_flags_PW_STREAM_FLAG_AUTOCONNECT
+                | pw_sys::pw_stream_flags_PW_STREAM_FLAG_MAP_BUFFERS
+                | pw_sys::pw_stream_flags_PW_STREAM_FLAG_DONT_RECONNECT,
+            params.as_mut_ptr(),
+            params.len() as u32,
+        );
+        if res < 0 {
+            anyhow::bail!(
+                "pipewire stream.connect failed: {}",
+                std::io::Error::from_raw_os_error(-res)
+            );
+        }
+
+        let utils: *mut spa_sys::spa_interface = ptr::addr_of_mut!((*(*loop_).utils).iface);
+        let ticker: *mut spa_sys::spa_source = spa_interface_call_method!(
+            utils,
+            spa_sys::spa_loop_utils_methods,
+            add_timer,
+            Some(on_tick::<S>),
+            data
+        );
+        if ticker.is_null() {
+            return Err(creation_failed("timer source"));
+        }
+        let _ticker = Release(move || {
+            spa_interface_call_method!(
+                utils,
+                spa_sys::spa_loop_utils_methods,
+                destroy_source,
+                ticker
+            )
+        });
+        let (mut value, mut interval) = (
+            timespec(options.tick_interval),
+            timespec(options.tick_interval),
+        );
+        let res = spa_interface_call_method!(
+            utils,
+            spa_sys::spa_loop_utils_methods,
+            update_timer,
+            ticker,
+            &mut value,
+            &mut interval,
+            false
+        );
+        if res < 0 {
+            anyhow::bail!(
+                "pipewire timer source failed: {}",
+                std::io::Error::from_raw_os_error(-res)
+            );
+        }
+
+        (pw.pw_main_loop_run)(mainloop);
+        // Leaving this block tears the stream down before the sink is handed
+        // back, so the producer cannot touch buffers the sink may reference.
+    }
+
+    let pump = (*pump).into_inner();
     match pump.outcome {
         Some(Ok(())) | None => Ok(pump.sink),
         Some(Err(error)) => Err(error),
@@ -694,7 +932,6 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pipewire::stream::StreamState;
 
     #[test]
     fn frame_rejects_rows_narrower_than_its_width() {

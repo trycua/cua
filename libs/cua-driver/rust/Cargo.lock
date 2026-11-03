@@ -3413,20 +3413,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pipewire"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde71084c4e25959d68f1ea54daa75e5ecdb338e5caf0b5510143b79baa32d5c"
-dependencies = [
- "bitflags 2.11.1",
- "libc",
- "libspa",
- "libspa-sys",
- "pipewire-sys",
- "rustix",
-]
-
-[[package]]
 name = "pipewire-sys"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3472,11 +3458,12 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
+ "libloading",
  "libspa",
  "memmap2",
  "meval",
  "pip-preview",
- "pipewire",
+ "pipewire-sys",
  "reis",
  "serde",
  "serde_json",

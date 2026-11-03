@@ -87,15 +87,15 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.
 url = "2"
-# PipeWire client for the ScreenCast video route — dequeues frames from the
-# node id returned by `open_pipe_wire_remote`. The frame pump is written
-# against the 0.10 ownership types (`MainLoopRc`, `ContextRc`, `StreamBox`).
-# Needs libpipewire-0.3 headers at build time — gated behind the
-# `portal-capture` feature.
-pipewire = { version = "0.10", optional = true }
-# Companion to pipewire — needed to construct the SPA_PARAM_EnumFormat pod
-# (raw BGRx/BGRA/RGBx/RGBA at announced width/height) we hand to
-# `Stream::connect`. Same `portal-capture` gating as `pipewire`.
+# PipeWire types and constants for the ScreenCast video route, which dequeues
+# frames from the node id returned by `open_pipe_wire_remote`. libpipewire
+# itself is loaded at runtime (`wayland::libpipewire`), so builds need its
+# headers but the binary does not link it. Gated behind `portal-capture`.
+pipewire-sys = { version = "0.10", optional = true }
+libloading = { version = "0.8", optional = true }
+# SPA pods, format parsing and buffer types (header-only, compiled in): builds
+# the SPA_PARAM_EnumFormat pod (raw BGRx/BGRA/RGBx/RGBA at announced
+# width/height) handed to `pw_stream_connect`. Same `portal-capture` gating.
 libspa = { version = "0.10", optional = true }
 # Pure-Rust libei/libeis bindings for the GNOME/KDE input path (handshake
 # → seat → device → pointer_absolute/button/scroll/keyboard/text). API is
@@ -146,7 +146,8 @@ portal-input = [
 # system-header requirement and remains enabled by Nix/modern desktop builds.
 portal-capture = [
     "ashpd/screencast",
-    "dep:pipewire",
+    "dep:pipewire-sys",
+    "dep:libloading",
     "dep:libspa",
 ]
 # Backward-compatible full desktop feature used by the Nix package.

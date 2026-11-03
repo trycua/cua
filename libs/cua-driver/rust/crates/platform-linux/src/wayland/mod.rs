@@ -36,6 +36,8 @@ pub mod libei;
 // PipeWire ScreenCast capture backs the portal video route for compositors
 // without wlr-screencopy (KDE/KWin).
 #[cfg(feature = "portal-capture")]
+pub(crate) mod libpipewire;
+#[cfg(feature = "portal-capture")]
 pub(crate) mod portal_screencast;
 
 /// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.

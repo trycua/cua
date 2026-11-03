@@ -379,6 +379,7 @@ impl FramePacer {
 #[cfg(feature = "portal-capture")]
 mod portal_video {
     use super::*;
+    use crate::wayland::libpipewire::libpipewire;
     use crate::wayland::portal::RestoreToken;
     use crate::wayland::portal_screencast::{
         run_frame_stream, Frame, FrameFlow, FrameSink, RawFormat, ScreencastSession, StreamOptions,
@@ -415,6 +416,8 @@ mod portal_video {
     impl PortalVideoBackend {
         pub(super) fn start(output_path: &Path) -> anyhow::Result<Self> {
             let ffmpeg = require_ffmpeg("portal ScreenCast")?;
+            // Before the consent dialog, so a host without PipeWire never asks.
+            libpipewire()?;
             prepare_output_dir(output_path)?;
 
             let output_path = output_path.to_path_buf();

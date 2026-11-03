@@ -2704,6 +2704,7 @@ impl Runtime for QemuRuntime {
             }
         }
 
+        let mut launched = false;
         if !Self::is_running(&st) {
             // Linux guests always get SSH access: the caller's, the one this
             // instance already has, or a managed per-instance key.
@@ -2781,6 +2782,7 @@ impl Runtime for QemuRuntime {
                 st.last_start = Some("cold".into());
                 self.save(&st)?;
             }
+            launched = true;
         }
         drop(owner);
         let inst = self.instance(&st);
@@ -2793,7 +2795,16 @@ impl Runtime for QemuRuntime {
         // Booted (or restored) and answering, or not going to: from here on
         // the VM counts what it really uses, not what it was expected to.
         self.release(&st.name);
-        ready?;
+        if let Err(e) = ready {
+            // A start that did not come up must not keep the VM it launched:
+            // nothing lists it, and its memory and vCPUs would count against
+            // every later create on this host until someone found it.
+            if launched {
+                let _ = self.force_stop(&mut st, Duration::from_secs(2)).await;
+                let _ = self.save(&st);
+            }
+            return Err(e);
+        }
         Ok(inst)
     }
 

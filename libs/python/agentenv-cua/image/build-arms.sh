@@ -36,7 +36,7 @@ cp -R "$PKG/src/agentenv_cua/macos-drivers" "$PKG/src/agentenv_cua/macos-apps" "
 cleanup() { if [ "$built" = 0 ]; then lume stop "$name" >/dev/null 2>&1 || true; lume delete "$name" --force >/dev/null 2>&1 || true; fi; rm -rf "$payload"; }
 trap cleanup EXIT
 
-lume run "$name" --display none --detach --shared-dir "$payload:ro"
+lume run "$name" --display none --detach --shared-dir "$payload/payload:ro"
 for _ in $(seq 1 120); do lume ssh "$name" true --timeout 10 >/dev/null 2>&1 && break; sleep 5; done
 lume ssh "$name" "bash '/Volumes/My Shared Files/payload/provision-arms.sh' '/Volumes/My Shared Files/payload' --arms $arms" --timeout 7200
 # A stop drops unsynced writes: sync first.

@@ -21,6 +21,9 @@
 #   <payload dir> holds macos-drivers/, macos-apps/ and install_app.py.
 set -euo pipefail
 
+# A non-login ssh shell has only /usr/bin:/bin: add where the base keeps uv and Homebrew.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+
 PAYLOAD=${1:?payload dir}
 shift
 ARMS=agent-desktop,macos-harness
@@ -46,6 +49,7 @@ GPT_EXECUTABLE_SHA256=1f2989ac3d702e48c740fe4c54b1b6279f9e48e0e4c0ead7d4501464e2
 DRIVERS=/opt/agentenv/drivers
 APPS=/opt/agentenv/apps
 TOOLS=/opt/agentenv/tools
+ARTIFACTS=/opt/agentenv/artifacts
 #: name:Class pairs of the bench's apps.
 APP_CLASSES="benchlab:BenchLab bench-sentinel:BenchSentinel cdb-s02:CdbS02 cdb-s03:CdbS03 cdb-s04:CdbS04"
 
@@ -55,7 +59,7 @@ as_root() { if sudo -n true 2>/dev/null; then sudo "$@"; else printf '%s\n' "${L
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || { echo "run this inside the arm64 macOS VM" >&2; exit 2; }
 [ -d "$DRIVERS/cua-driver" ] || { echo "run provision.sh first" >&2; exit 2; }
 command -v uv >/dev/null || { echo "uv missing" >&2; exit 2; }
-as_root mkdir -p "$DRIVERS" "$APPS" "$TOOLS"
+as_root mkdir -p "$DRIVERS" "$APPS" "$TOOLS" "$ARTIFACTS"
 as_root chown -R "$(id -un):staff" /opt/agentenv
 
 driver_venv() {  # folder name, requirements.txt in it
@@ -71,8 +75,15 @@ install_driver() {  # name, files...
   driver_venv "$dir"
 }
 
+# install_app.py runs the apps' system-scope install steps through `sudo -n`, which needs no password: allow that for
+# the length of this build only, whatever the base's sudo asks for (-E needs SETENV).
+sudoers=/etc/sudoers.d/90-agentenv-build
+rule=$(mktemp)
+printf '%s ALL=(ALL) NOPASSWD:SETENV: ALL\n' "$(id -un)" > "$rule"
+as_root install -m 440 -o root -g wheel "$rule" "$sudoers"
+rm -f "$rule"
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; as_root rm -f "$sudoers"' EXIT
 tcc_paths=(/usr/sbin/screencapture)
 
 if has_arm agent-desktop; then
@@ -117,6 +128,22 @@ for path in "${tcc_paths[@]}"; do
 done
 for pid in $(pgrep -x tccd); do as_root kill "$pid" 2>/dev/null || true; done
 
+say "direct screen-capture approval by path"
+# macOS 15+ asks once per app, even with Screen Recording granted, before the first direct capture, with a modal alert
+# over the screen. replayd keeps the answer in the user's ScreenCaptureApprovals.plist, keyed by the bundle identifier
+# or, for a bare executable, by its path. The responsible process of a capture a driver starts (the driver's python,
+# or screencapture and the arms' binaries it runs) is a bare executable: record each one that holds the TCC rows above.
+approvals="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+mkdir -p "$(dirname "$approvals")"
+for path in "${tcc_paths[@]}"; do
+  defaults write "$approvals" "$path" -dict \
+    kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+    kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000" \
+    kScreenCapturePrivacyHintDate -date "3024-01-01 00:00:00 +0000" \
+    kScreenCapturePrivacyHintPolicy -int 3153600000
+done
+killall -HUP replayd >/dev/null 2>&1 || true
+
 say "the bench's apps"
 for entry in $APP_CLASSES; do
   name=${entry%%:*} cls=${entry##*:} dir=$APPS/$name
@@ -124,11 +151,12 @@ for entry in $APP_CLASSES; do
   mkdir -p "$dir"
   cp -R "$PAYLOAD/macos-apps/envs/$name"/. "$dir/"
   uv venv --allow-existing -p "$PYTHON_VERSION" "$dir/venv"
-  VIRTUAL_ENV="$dir/venv" uv pip install "agentenv-framework-protocol[app]==${PROTOCOL_VERSION}" pydantic
+  VIRTUAL_ENV="$dir/venv" uv pip install "agentenv-framework-protocol[app,computer]==${PROTOCOL_VERSION}" pydantic
   (cd "$dir" && "$dir/venv/bin/python" "$PAYLOAD/install_app.py" "$dir" "$cls" --sudo)
 done
-mkdir -p "$APPS/_artifacts"
-cp -R "$PAYLOAD/macos-apps/artifacts"/. "$APPS/_artifacts/"
+# Not under $APPS: the framework takes every folder there for an app, and waits for its server.
+mkdir -p "$ARTIFACTS"
+cp -R "$PAYLOAD/macos-apps/artifacts"/. "$ARTIFACTS/"
 
 say "start-driver.sh"
 cat > "$DRIVERS/start-driver.sh" <<'SH'
@@ -140,6 +168,10 @@ set -euo pipefail
 boot="/Volumes/My Shared Files/agentenv/boot.json"
 for _ in $(seq 1 60); do [ -f "$boot" ] && break; sleep 1; done
 PY=/opt/agentenv/drivers/cua-driver/venv/bin/python
+# The guest boots in the display mode its disk last had; take the size lume gave the virtual display. The commands a
+# driver runs get the GNU stat shim and a python3 with a current Tk first on their PATH (see provision.sh).
+/opt/agentenv/bin/set-display || true
+export PATH="/opt/agentenv/bin:$PATH"
 if [ -f "$boot" ]; then
   eval "$($PY -c 'import json,shlex,sys; e=json.load(open(sys.argv[1]))["env"]; print("\n".join(f"export {k}={shlex.quote(v)}" for k,v in e.items() if k.replace("_","").isalnum()))' "$boot")"
 fi

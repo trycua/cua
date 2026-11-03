@@ -1000,6 +1000,7 @@ impl VmmLocal {
     /// boots or starts a runtime to answer: one that is down runs nothing.
     /// Any runtime that is up but does not answer fails the whole listing,
     /// so a partial view never looks like "nothing there".
+    #[cfg(feature = "spaces")]
     pub async fn cua_instances(
         &self,
     ) -> std::result::Result<Vec<crate::space_orphans::Found>, String> {

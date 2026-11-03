@@ -62,7 +62,7 @@ jobs:
   probe:
     if: inputs.mode != 'lume'
     name: hosted environment probe
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 20
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -132,7 +132,7 @@ jobs:
     if: inputs.mode != 'lume'
     needs: probe
     name: hosted ${{ matrix.lane }} lane
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 180
     strategy:
       fail-fast: false

@@ -1265,14 +1265,20 @@ async fn warm_session(
 }
 
 /// The image of the Linux Space the `warm-pools` experiment keeps ready: the
-/// one the Spaces app's Home creates for a new agent, the first published
-/// Linux image of the catalog (the app reads the same file).
+/// Linux slim tier, which the Spaces app's Home creates for a new agent while
+/// the experiment is on (the wizard reads the same catalog file).
 pub fn warm_pools_image() -> String {
     cua_image::catalog::entries()
         .iter()
-        .find(|e| e.published && e.os == "linux")
+        .find(|e| {
+            e.published
+                && e.os == "linux"
+                && e.group == "canonical"
+                && e.tier.as_deref() == Some("slim")
+                && e.local.as_deref() == Some("container")
+        })
         .map(|e| e.reference.clone())
-        .unwrap_or_else(|| "ghcr.io/trycua/linux:24.04".to_string())
+        .unwrap_or_else(|| "ghcr.io/trycua/linux:24.04-slim".to_string())
 }
 
 /// The coding apps a warm Space is prepared for: `CUA_WARM_POOLS_HARNESSES`
@@ -3504,10 +3510,10 @@ mod tests {
 
     #[test]
     fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
-        // The Spaces app's Home creates the catalog's first Linux image for a
-        // new agent (the wizard's `first_space_offers`); a different image
-        // here would never be claimed.
-        assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04");
+        // The Spaces app's Home creates the Linux slim tier for a new agent
+        // while the experiment is on (the wizard's `first_space_offers`); a
+        // different image here would never be claimed.
+        assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04-slim");
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: serialised by ENV_LOCK; no other test reads this variable.

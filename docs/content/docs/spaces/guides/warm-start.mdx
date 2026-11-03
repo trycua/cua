@@ -5,7 +5,7 @@ description: Keep one Linux Space ready on this computer, with its coding apps i
 
 When you ask for something on Home, Cua makes a Linux Space for the agent, puts the coding app in it and starts the app. The Space takes a few seconds to start and the app takes much longer to install the first time. Warm start does that work before you ask.
 
-With the experiment on, this computer keeps one Linux Space ready in the background: the same Linux Space that Home creates for a new agent, with Claude Code and Codex already installed in it. Create takes it, which takes a fraction of a second, and the agent starts in a Space that already has its app. Cua starts the next warm Space as soon as the last one is taken, so the one after is ready when you have typed the next request.
+With the experiment on, this computer keeps one Linux Space ready in the background: the same Linux Space that Home creates for a new agent, with Claude Code and Codex already installed in it. While the experiment is on, Home makes that Space from the Linux slim tier (`ghcr.io/trycua/linux:24.04-slim`, about 0.5 GB to download) instead of the full Linux image, so the Space it keeps ready is the one Create takes. Create takes it, which takes a fraction of a second, and the agent starts in a Space that already has its app. Cua starts the next warm Space as soon as the last one is taken, so the one after is ready when you have typed the next request.
 
 ## Turn it on
 

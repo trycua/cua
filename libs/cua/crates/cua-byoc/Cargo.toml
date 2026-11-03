@@ -59,6 +59,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 # contrib providers.
 cua-contrib = { workspace = true, optional = true }
 
+
 [dev-dependencies]
 axum.workspace = true
 url.workspace = true

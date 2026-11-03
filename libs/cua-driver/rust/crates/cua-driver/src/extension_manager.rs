@@ -676,7 +676,7 @@ impl Tool for InstallExtensionTool {
 }
 
 fn install_extension_from_mcp(confirmed: bool) -> Result<(String, serde_json::Value)> {
-    let catalog = std::env::var_os("CUA_DRIVER_PERCEPTION_CATALOG")
+    let catalog = crate::env_vars::var_os("CUA_DRIVER_PERCEPTION_CATALOG")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("CUA_DRIVER_PERCEPTION_CATALOG must name the reviewed signed catalog at daemon launch"))?;
@@ -1049,7 +1049,9 @@ fn registry_entry(id: &str) -> Result<&'static RegistryEntry> {
 }
 
 fn extension_root() -> Result<PathBuf> {
-    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
+    if let Some(home) =
+        crate::env_vars::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty())
+    {
         return Ok(PathBuf::from(home).join("extensions"));
     }
     #[cfg(windows)]
@@ -7283,13 +7285,12 @@ mod tests {
     #[cfg(feature = "review-trust-root")]
     #[test]
     fn mcp_install_requires_confirm_after_returning_the_exact_verified_plan() {
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap();
         let temp = TempDir::new().unwrap();
         let (_archive, catalog) = review_fixture(temp.path());
         let home = temp.path().join("driver-home");
-        std::env::set_var("CUA_DRIVER_RS_HOME", &home);
-        std::env::set_var("CUA_DRIVER_PERCEPTION_CATALOG", &catalog);
+        let mut env = crate::env_vars::Overrides::new();
+        env.set("CUA_DRIVER_RS_HOME", &home)
+            .set("CUA_DRIVER_PERCEPTION_CATALOG", &catalog);
 
         let (_, plan) = install_extension_from_mcp(false).unwrap();
         assert_eq!(plan["extension"], "perception");
@@ -7341,9 +7342,6 @@ mod tests {
         assert_eq!(installed["authorization"]["mutation_performed"], true);
         assert_eq!(installed["mutation_performed"], true);
         assert!(home.join("extensions/cua-perception/active.json").is_file());
-
-        std::env::remove_var("CUA_DRIVER_PERCEPTION_CATALOG");
-        std::env::remove_var("CUA_DRIVER_RS_HOME");
     }
 
     fn test_catalog_payload(key_id: &str, version: u64) -> CatalogPayload {

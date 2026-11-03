@@ -55,7 +55,7 @@ export function useStartTask(): {
     return true;
   };
 
-  const run = (id: string, target: TaskTarget, place?: { pendingId?: string; queued?: boolean; onSpace?: (spaceId: string) => void; onCreated?: (spaceId: string) => void; onNoSpace?: () => void }) =>
+  const run = (id: string, target: TaskTarget, place?: { pendingId?: string; queued?: boolean; onCreated?: (spaceId: string) => void }) =>
     void (async () => {
       try {
         let spaceId = target.kind === "space" ? target.spaceId : null;
@@ -64,7 +64,6 @@ export function useStartTask(): {
           spaceId = hostSpaceId(status);
           if (!spaceId) throw new Error(HOST_NOT_SHARED);
           updateAskTask(id, { spaceId, onHost: true });
-          place?.onSpace?.(spaceId);
         }
         if (!spaceId) {
           const os = target.kind === "create" ? target.os : "linux";
@@ -98,8 +97,6 @@ export function useStartTask(): {
         updateAskTask(id, { runId: started.run_id });
       } catch (e) {
         updateAskTask(id, { error: e instanceof Error ? e.message : String(e), pendingId: null });
-        // No Space to show it in (this Mac isn't shared): its conversation page says why.
-        if (!askTask(id)?.spaceId) place?.onNoSpace?.();
       }
     })();
 
@@ -108,7 +105,7 @@ export function useStartTask(): {
       const target = taskTarget(where);
       const task = addAskTask({ prompt: prompt.trim(), agent, os: whereOs(where), spaceId: target.kind === "space" ? target.spaceId : null, onHost: target.kind === "host" });
       record("ask_first_task_started");
-      // Straight to the Space: the one picked, the one being made (its page follows the create), or this Mac's.
+      // Straight to the Space: the one picked or the one being made (its page follows the create); this Mac opens the task's page.
       const go = (spaceId: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } });
       if (target.kind === "space") {
         run(task.id, target, {});
@@ -125,7 +122,13 @@ export function useStartTask(): {
         run(task.id, target, { pendingId, onCreated, queued: Boolean(first?.handle) });
         go(pendingId);
       } else {
-        run(task.id, target, { onSpace: go, onNoSpace: () => void navigate({ to: "/home/$taskId", params: { taskId: task.id } }) });
+        // This Mac's own Space id (`relay:<machine>`) is not in the Spaces list: the roster
+        // swaps it for the `this-mac` row, so `/spaces/relay:<machine>` says "This Space isn't
+        // here" (trycua/cua#6363). The task's page is where this Mac's conversation lives, and
+        // it also says why when the start fails. No `place`: nothing summons in a Space page
+        // the person can't open; the run starts straight from the task.
+        run(task.id, target);
+        void navigate({ to: "/home/$taskId", params: { taskId: task.id } });
       }
     },
     retry: (task, where) => {

@@ -150,7 +150,7 @@ def px(x, y):
     args = {"x": int(round(x * WIN["scale"])), "y": int(round(y * WIN["scale"]))}
     # Pixel clicks are delivered in the foreground by default so the bench is
     # deterministic. Background pixel clicks were re-checked on the macOS 27.2
-    # VM (windows at two origins, target behind another app, fast_path off) and
+    # VM (two window origins, target behind another app, fast_path off, guard and on) and
     # land on the right element; set FP_PIXEL_DELIVERY=background to use them.
     mode = os.environ.get("FP_PIXEL_DELIVERY", "foreground")
     if mode != "background":

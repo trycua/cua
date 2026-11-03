@@ -978,23 +978,33 @@ async fn bind_pair(ip: std::net::IpAddr) -> Result<(TcpListener, Option<UdpSocke
     let io = |e: std::io::Error| Error::Io(e.to_string());
     let mut refused_tcp = Vec::new();
     let mut refused_udp = Vec::new();
+    let mut last_err = None;
     for pick in 0..16 {
         if pick % 2 == 0 {
             let tcp = TcpListener::bind((ip, 0)).await.map_err(io)?;
             let port = tcp.local_addr().map_err(io)?.port();
             match UdpSocket::bind((ip, port)).await {
                 Ok(udp) => return Ok((tcp, Some(udp))),
-                Err(_) => refused_tcp.push(tcp),
+                Err(e) => {
+                    last_err = Some(e);
+                    refused_tcp.push(tcp);
+                }
             }
         } else if let Ok(udp) = UdpSocket::bind((ip, 0)).await {
             let port = udp.local_addr().map_err(io)?.port();
             match TcpListener::bind((ip, port)).await {
                 Ok(tcp) => return Ok((tcp, Some(udp))),
-                Err(_) => refused_udp.push(udp),
+                Err(e) => {
+                    last_err = Some(e);
+                    refused_udp.push(udp);
+                }
             }
         }
     }
-    tracing::warn!(%ip, "mesh forward without UDP: no port free for both TCP and UDP");
+    tracing::warn!(
+        %ip, error = ?last_err,
+        "mesh forward without UDP: no port free for both TCP and UDP"
+    );
     let tcp = TcpListener::bind((ip, 0)).await.map_err(io)?;
     Ok((tcp, None))
 }

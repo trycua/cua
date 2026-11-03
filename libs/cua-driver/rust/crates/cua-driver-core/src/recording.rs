@@ -478,8 +478,19 @@ pub struct RecordingSession {
     pixel_point_fn: OnceLock<PixelPointFnBox>,
 }
 
+/// `Starting` covers the video backend start, which can wait on a screen-capture
+/// consent dialog, so it runs outside the lock. A stop in that window moves it
+/// to `Cancelling`, and the start resets it to `Idle` once its backend returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Idle,
+    Starting,
+    Cancelling,
+    Recording,
+}
+
 struct RecordingInner {
-    enabled: bool,
+    phase: Phase,
     generation: u64,
     /// Session that owns the live recording, stamped on every successful
     /// `start()` from the daemon-injected `_session_id`. The daemon-global
@@ -525,6 +536,9 @@ struct RecordingInner {
 #[derive(Debug, Clone)]
 pub struct RecordingState {
     pub enabled: bool,
+    /// A start is waiting on its video backend (for example a portal consent
+    /// dialog). Turns are not recorded yet and another start is refused.
+    pub starting: bool,
     pub output_dir: Option<String>,
     pub next_turn: u32,
     pub last_error: Option<String>,
@@ -547,7 +561,7 @@ impl RecordingSession {
         Self {
             pixel_point_fn: OnceLock::new(),
             inner: Mutex::new(RecordingInner {
-                enabled: false,
+                phase: Phase::Idle,
                 generation: 0,
                 owner: None,
                 output_dir: None,
@@ -617,7 +631,7 @@ impl RecordingSession {
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         // Write-boundary resurrection guard — checked INSIDE the lock so the
-        // is_session_ended test is atomic with the enabled/owner write below.
+        // is_session_ended test is atomic with the phase/owner write below.
         // An in-flight start_recording that lands after its owning session ended
         // (passed the dispatch gate, then the proxy died) must not create a
         // recording owned by a dead session — a leaked ffmpeg/SCStream. The
@@ -632,6 +646,17 @@ impl RecordingSession {
                 );
             }
         }
+        match inner.phase {
+            Phase::Starting => anyhow::bail!(
+                "a recording is already starting (waiting for screen-capture consent); \
+                 call stop_recording to cancel it"
+            ),
+            Phase::Cancelling => anyhow::bail!(
+                "a cancelled recording start is still waiting for its video capture to \
+                 return; try again shortly"
+            ),
+            Phase::Idle | Phase::Recording => {}
+        }
         // If a previous session is still open, gracefully tear it down
         // first so the caller doesn't accidentally leak an ffmpeg process.
         if let Some(rec) = inner.video.take() {
@@ -644,20 +669,27 @@ impl RecordingSession {
         let dir = expand_tilde(output_dir);
         std::fs::create_dir_all(&dir)?;
 
+        // Claim the recorder, then release the lock for the backend start.
+        inner.phase = Phase::Starting;
+        inner.generation = inner.generation.wrapping_add(1);
+        inner.owner = owner.map(str::to_owned);
+        inner.output_dir = Some(dir.clone());
+        inner.next_turn = 1;
+        inner.last_error = None;
+        inner.last_video = None;
+        drop(inner);
+
         // Single monotonic anchor shared by video, cursor sampler, and
         // per-turn `t_ms_from_session_start` math in `finish_turn()` — so all
         // three timelines line up at the millisecond.
         let monotonic_start = Instant::now();
 
-        let mut video_present = false;
+        let mut video = None;
         let mut video_error: Option<String> = None;
         if record_video {
             let path = dir.join("recording.mp4");
             match video::start_video(&path) {
-                Ok(rec) => {
-                    inner.video = Some(rec);
-                    video_present = true;
-                }
+                Ok(rec) => video = Some(rec),
                 Err(e) => {
                     video_error = Some(e.to_string());
                     tracing::warn!(target: "recording",
@@ -673,16 +705,25 @@ impl RecordingSession {
         // off (record_video=false), the sampler is still useful for
         // post-hoc analysis, so we run it anyway — the cost is one
         // background thread + a small jsonl file.
-        let cursor_path = dir.join("cursor.jsonl");
-        match CursorSampler::start(cursor_path, monotonic_start) {
-            Ok(s) => {
-                inner.cursor = Some(s);
+        let cursor = CursorSampler::start(dir.join("cursor.jsonl"), monotonic_start)
+            .map_err(|e| tracing::warn!(target: "recording", "Cursor sampler failed to start: {e}"))
+            .ok();
+
+        let mut inner = self.inner.lock().unwrap();
+        if inner.phase == Phase::Cancelling {
+            if let Some(rec) = video {
+                let _ = rec.stop();
             }
-            Err(e) => {
-                tracing::warn!(target: "recording",
-                    "Cursor sampler failed to start: {e}");
+            if let Some(cur) = cursor {
+                let _ = cur.stop();
             }
+            inner.phase = Phase::Idle;
+            inner.output_dir = None;
+            anyhow::bail!("recording start was cancelled while video capture was starting");
         }
+        let video_present = video.is_some();
+        inner.video = video;
+        inner.cursor = cursor;
 
         // Write initial session.json — final video metadata is rewritten on
         // stop. We mark `present` based on whether ffmpeg actually started,
@@ -696,17 +737,12 @@ impl RecordingSession {
         });
         let _ = write_json_atomic(&dir.join("session.json"), &session_payload);
 
-        // Stamp the owning session on every successful start (reached only on
-        // the success path — start() returns early via `?` on `create_dir_all`
-        // failure above). `owner` clobbers any previous owner, which is correct:
-        // the daemon-global recorder is a singleton, so the latest start() owns
-        // it. The previous owner's disconnect then no-ops in stop_owner().
-        inner.owner = owner.map(str::to_owned);
-        inner.generation = inner.generation.wrapping_add(1);
-        inner.enabled = true;
-        inner.output_dir = Some(dir);
+        // The owner was stamped when this start claimed the recorder. It
+        // clobbers any previous owner, which is correct: the daemon-global
+        // recorder is a singleton, so the latest start() owns it. The previous
+        // owner's disconnect then no-ops in stop_owner().
+        inner.phase = Phase::Recording;
         inner.state_budget = state_budget;
-        inner.next_turn = 1;
         inner.session_start_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
@@ -734,7 +770,7 @@ impl RecordingSession {
     /// `start()`. Supersedes the #1775 generation-token `stop()`.
     pub fn stop_owner(&self, requester: Option<&str>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        if !inner.enabled {
+        if matches!(inner.phase, Phase::Idle | Phase::Cancelling) {
             return Ok(());
         }
         if let Some(req) = requester {
@@ -747,6 +783,11 @@ impl RecordingSession {
             }
         }
         inner.owner = None;
+        if inner.phase == Phase::Starting {
+            // The pending start owns no backend yet; it stops whatever it gets.
+            inner.phase = Phase::Cancelling;
+            return Ok(());
+        }
         let dir = inner.output_dir.clone();
         let started_at_ms = inner.session_start_ms;
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
@@ -759,7 +800,7 @@ impl RecordingSession {
         };
         let cursor_samples = inner.cursor.take().map(|c| c.stop()).unwrap_or(0);
 
-        inner.enabled = false;
+        inner.phase = Phase::Idle;
         inner.output_dir = None;
         inner.next_turn = 1;
         inner.session_start_ms = 0;
@@ -800,7 +841,8 @@ impl RecordingSession {
     pub fn current_state(&self) -> RecordingState {
         let inner = self.inner.lock().unwrap();
         RecordingState {
-            enabled: inner.enabled,
+            enabled: inner.phase == Phase::Recording,
+            starting: inner.phase == Phase::Starting,
             output_dir: inner
                 .output_dir
                 .as_ref()
@@ -877,7 +919,7 @@ impl RecordingSession {
     ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation, state_budget) = {
             let mut inner = self.inner.lock().unwrap();
-            if !inner.enabled {
+            if inner.phase != Phase::Recording {
                 return None;
             }
             if let Some(owner) = inner.owner.as_deref() {
@@ -937,7 +979,7 @@ impl RecordingSession {
         };
 
         let mut inner = self.inner.lock().unwrap();
-        if !inner.enabled || inner.generation != generation {
+        if inner.phase != Phase::Recording || inner.generation != generation {
             return None;
         }
         if let Err(error) = write_phase_artifacts(&turn_dir, "before", &before) {
@@ -1005,7 +1047,7 @@ impl RecordingSession {
         result_is_error: bool,
     ) {
         let is_live = |inner: &RecordingInner| {
-            let live = inner.enabled && inner.generation == pending.generation;
+            let live = inner.phase == Phase::Recording && inner.generation == pending.generation;
             if !live {
                 tracing::warn!(
                     target: "recording",
@@ -1575,7 +1617,7 @@ mod tests {
             let output = tempfile::tempdir().unwrap();
             {
                 let mut inner = registry.recording.inner.lock().unwrap();
-                inner.enabled = true;
+                inner.phase = Phase::Recording;
                 inner.output_dir = Some(output.path().to_owned());
             }
             let ratio = Arc::downgrade(ratio);
@@ -1695,7 +1737,7 @@ mod tests {
             .is_none());
         {
             let mut inner = session.inner.lock().unwrap();
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.output_dir = Some(root.path().to_path_buf());
         }
         let private = session
@@ -1774,7 +1816,7 @@ mod tests {
         let session = RecordingSession::new();
         {
             let mut inner = session.inner.lock().unwrap();
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.output_dir = Some(root.path().to_path_buf());
         }
         let pending = session
@@ -2204,7 +2246,7 @@ mod tests {
         let session = RecordingSession::new();
         {
             let mut inner = session.inner.lock().expect("recording lock");
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.output_dir = Some(output_dir.clone());
             inner.session_start_ms = now_ms();
         }
@@ -2415,7 +2457,7 @@ mod tests {
         let session = RecordingSession::new();
         {
             let mut inner = session.inner.lock().expect("recording lock");
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.generation = 1;
             inner.output_dir = Some(output_dir.clone());
             inner.session_start_ms = now_ms();
@@ -2620,7 +2662,7 @@ mod tests {
         let session = RecordingSession::new();
         {
             let mut inner = session.inner.lock().expect("recording lock");
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.output_dir = Some(output_dir.clone());
             inner.session_start_ms = now_ms();
         }
@@ -2678,7 +2720,7 @@ mod tests {
         let session = RecordingSession::new();
         {
             let mut inner = session.inner.lock().expect("recording lock");
-            inner.enabled = true;
+            inner.phase = Phase::Recording;
             inner.output_dir = Some(output_dir.clone());
             inner.video = Some(Box::new(FailingVideo));
         }

@@ -329,6 +329,11 @@ impl Tool for GetRecordingStateTool {
                 state.output_dir.as_deref().unwrap_or("?"),
                 state.next_turn
             )
+        } else if state.starting {
+            format!(
+                "recording: starting output_dir={} (waiting for video capture consent)",
+                state.output_dir.as_deref().unwrap_or("?")
+            )
         } else {
             "recording: disabled".to_owned()
         };
@@ -559,6 +564,7 @@ fn recording_state_json(state: &RecordingState) -> Value {
         // "recording" mirrors the Swift field name for parity.
         "recording": state.enabled,
         "enabled": state.enabled,
+        "starting": state.starting,
         "output_dir": state.output_dir,
         "next_turn": state.next_turn,
         "last_error": state.last_error,

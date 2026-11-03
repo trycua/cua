@@ -65,7 +65,15 @@ fn names(listing: &Value) -> Vec<String> {
         .collect()
 }
 
+// The gate is process-wide and cargo test runs tests on parallel threads, so
+// both states are checked in one test, off first and then on.
 #[tokio::test]
+async fn repo_push_is_offered_only_while_ask_first_is_on() {
+    while_ask_first_is_off_the_agent_is_not_offered_repo_push_and_a_call_is_an_unknown_tool().await;
+    while_ask_first_is_on_the_agent_is_offered_repo_push().await;
+    set_enabled(Gate::AskFirst, None);
+}
+
 async fn while_ask_first_is_off_the_agent_is_not_offered_repo_push_and_a_call_is_an_unknown_tool() {
     set_enabled(Gate::AskFirst, Some(false));
     let (_srv, _home, server) = bridge_for_ada().await;
@@ -87,7 +95,6 @@ async fn while_ask_first_is_off_the_agent_is_not_offered_repo_push_and_a_call_is
     );
 }
 
-#[tokio::test]
 async fn while_ask_first_is_on_the_agent_is_offered_repo_push() {
     set_enabled(Gate::AskFirst, Some(true));
     let (_srv, _home, server) = bridge_for_ada().await;

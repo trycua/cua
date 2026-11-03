@@ -62,6 +62,7 @@ cua-contrib = { workspace = true, optional = true }
 [dev-dependencies]
 axum.workspace = true
 url.workspace = true
+# The NoCloud seed writer of the opt-in QEMU boot test (tests/boot_qemu.rs).
 ring = "0.17"
 cua-spaces.workspace = true
 cua-proto.workspace = true

@@ -220,6 +220,21 @@ pub fn supports_nested_virtualization(instance_type: &str) -> bool {
     )
 }
 
+/// Whether a host of `machine_type` on `provider` gets nested KVM: an AWS
+/// type that supports it, with the `windows-kvm` experiment on. Off (the
+/// default): none do, and hosts and the pool planner behave as before.
+pub fn nested_kvm(provider: &str, machine_type: &str) -> bool {
+    nested_kvm_when(
+        cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm),
+        provider,
+        machine_type,
+    )
+}
+
+fn nested_kvm_when(on: bool, provider: &str, machine_type: &str) -> bool {
+    on && provider == "aws" && supports_nested_virtualization(machine_type)
+}
+
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -984,8 +999,7 @@ impl Hosts {
                 name: &name,
                 relay: &relay.url,
                 provider: &req.provider,
-                nested_virtualization: api.name() == "aws"
-                    && supports_nested_virtualization(&t.name),
+                nested_virtualization: nested_kvm(api.name(), &t.name),
                 env: &opts.env,
                 usd_per_hour: t.usd_per_hour,
                 ttl_secs: ttl,
@@ -1005,7 +1019,7 @@ impl Hosts {
             ttl_secs: ttl,
             image_parameter: opts.image_parameter.clone(),
             peer_ports: opts.peer_ports,
-            nested_virtualization: api.name() == "aws" && supports_nested_virtualization(&t.name),
+            nested_virtualization: nested_kvm(api.name(), &t.name),
             role: ROLE_HOST.into(),
             region: region.clone(),
             ..Default::default()
@@ -1527,5 +1541,29 @@ mod tests {
         let mut sandbox = r;
         sandbox.extra.remove(EXTRA_ROLE);
         assert!(!is_host_record(&sandbox));
+    }
+
+    #[test]
+    fn nested_kvm_needs_aws_a_supported_type_and_the_experiment() {
+        assert!(supports_nested_virtualization("c7i.2xlarge"));
+        assert!(!supports_nested_virtualization("t3.large"));
+        assert!(nested_kvm_when(true, "aws", "c7i.2xlarge"));
+        // Experiment off (the default): never.
+        assert!(!nested_kvm_when(false, "aws", "c7i.2xlarge"));
+        assert!(!nested_kvm_when(true, "hetzner", "c7i.2xlarge"));
+        assert!(!nested_kvm_when(true, "aws", "t3.large"));
+    }
+
+    #[test]
+    fn qemu_installs_only_for_nested_hosts() {
+        let env: Vec<String> = vec![];
+        let src = Source::Release;
+        let mk = |nested| {
+            let mut b = boot(&src, &env);
+            b.nested_virtualization = nested;
+            user_data(&b)
+        };
+        assert!(mk(true).contains("qemu-system-x86 qemu-utils ovmf"));
+        assert!(!mk(false).contains("qemu-system-x86"));
     }
 }

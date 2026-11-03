@@ -76,6 +76,7 @@ pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
+pub mod fast_path;
 pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;

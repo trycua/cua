@@ -101,7 +101,7 @@ pub const HOST_DISK_GB: u32 = 60;
 
 /// Machine types offered to the elastic pool: name, arch, vCPUs, GiB,
 /// on-demand Linux USD per hour in us-west-2 (AWS Price List, 2026-10-21),
-/// whether it has `/dev/kvm` (bare metal), and its GPU (empty: none).
+/// whether it has `/dev/kvm` directly (bare metal), and its GPU (empty: none).
 pub const HOST_TYPES: &[(&str, &str, u32, u64, f64, bool, &str)] = &[
     ("t3.medium", "amd64", 2, 4, 0.0416, false, ""),
     ("t3.large", "amd64", 2, 8, 0.0832, false, ""),
@@ -853,6 +853,13 @@ impl Aws {
             req = req.network_interfaces(nic.build());
         } else if let Some(g) = group {
             req = req.security_group_ids(g);
+        }
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
         }
         req
     }
@@ -1810,24 +1817,32 @@ impl CloudApi for Aws {
         let regions = self.capabilities(conn).regions;
         let mut v: Vec<HostType> = HOST_TYPES
             .iter()
-            .map(|(name, arch, cpus, gb, usd, kvm, gpu)| HostType {
-                name: (*name).into(),
-                arch: (*arch).into(),
-                vcpus: *cpus,
-                memory_mb: gb * 1024,
-                disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
-                kvm: *kvm,
-                gpu: (*gpu).into(),
-                usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round() / 10_000.0,
-                regions: regions.clone(),
-                boot_secs: if *kvm { 300 } else { 90 },
-                // EC2's on-demand vCPU quotas: standard families, G, P.
-                quota_pool: match name.chars().next() {
-                    Some('g') if !gpu.is_empty() => "g",
-                    Some('p') if !gpu.is_empty() => "p",
-                    _ => "standard",
+            .map(|(name, arch, cpus, gb, usd, bare_metal_kvm, gpu)| {
+                // Nested-KVM instances receive /dev/kvm only when Hosts::add
+                // enables it in the EC2 launch request. Advertise that
+                // capability here as well, or the elastic planner will never
+                // choose these cheaper x86 hosts for VM/microVM Spaces.
+                let kvm = *bare_metal_kvm || crate::hosts::nested_kvm("aws", name);
+                HostType {
+                    name: (*name).into(),
+                    arch: (*arch).into(),
+                    vcpus: *cpus,
+                    memory_mb: gb * 1024,
+                    disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
+                    kvm,
+                    gpu: (*gpu).into(),
+                    usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round()
+                        / 10_000.0,
+                    regions: regions.clone(),
+                    boot_secs: if kvm { 300 } else { 90 },
+                    // EC2's on-demand vCPU quotas: standard families, G, P.
+                    quota_pool: match name.chars().next() {
+                        Some('g') if !gpu.is_empty() => "g",
+                        Some('p') if !gpu.is_empty() => "p",
+                        _ => "standard",
+                    }
+                    .into(),
                 }
-                .into(),
             })
             .collect();
         v.sort_by(|a, b| {

@@ -36,6 +36,9 @@ pub enum Gate {
     /// (starting a task, tool rows, changes and diffs, approval scopes) and
     /// reports events for its push alerts.
     Mobile,
+    /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
+    /// AWS x86 pool host with nested KVM.
+    WindowsKvm,
 }
 
 impl Gate {
@@ -47,6 +50,7 @@ impl Gate {
         Gate::CiRunners,
         Gate::TcpShares,
         Gate::Mobile,
+        Gate::WindowsKvm,
     ];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
@@ -58,6 +62,7 @@ impl Gate {
             Gate::CiRunners => "ci-runners",
             Gate::TcpShares => "tcp-shares",
             Gate::Mobile => "mobile",
+            Gate::WindowsKvm => "windows-kvm",
         }
     }
 
@@ -70,6 +75,7 @@ impl Gate {
             Gate::CiRunners => "ci_runners",
             Gate::TcpShares => "tcp_shares",
             Gate::Mobile => "mobile",
+            Gate::WindowsKvm => "windows_kvm",
         }
     }
 
@@ -88,6 +94,7 @@ impl Gate {
             Gate::CiRunners => "CI runners",
             Gate::TcpShares => "Public TCP shares",
             Gate::Mobile => "Phone app",
+            Gate::WindowsKvm => "Windows on KVM",
         }
     }
 
@@ -111,6 +118,9 @@ impl Gate {
             }
             Gate::Mobile => {
                 "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
+            }
+            Gate::WindowsKvm => {
+                "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
             }
         }
     }
@@ -234,6 +244,21 @@ mod tests {
         assert_eq!(super::switch(home.path(), g), Some(true));
         super::set_switch(home.path(), g, false).unwrap();
         assert_eq!(super::switch(home.path(), g), Some(false));
+    }
+
+    #[test]
+    fn windows_kvm_is_a_named_experiment_and_off_by_default() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(Gate::parse("windows_kvm"), Some(Gate::WindowsKvm));
+        assert_eq!(Gate::WindowsKvm.name(), "windows-kvm");
+        assert!(Gate::ALL.contains(&Gate::WindowsKvm));
+        assert!(
+            !super::enabled_in(home.path(), Gate::WindowsKvm)
+                || super::env_says(
+                    std::env::var(EXPERIMENTS_ENV).ok().as_deref(),
+                    Gate::WindowsKvm
+                ) == Some(true)
+        );
     }
 
     #[test]

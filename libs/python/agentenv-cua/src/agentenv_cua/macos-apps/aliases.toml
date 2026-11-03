@@ -1,0 +1,11 @@
+# Ids a task can name the bench's macOS app envs by. The names end in -macos so they never collide with the same apps
+# of another bundle (the Linux ports).
+[envs]
+benchlab = ["benchlab-macos"]
+bench-sentinel = ["bench-sentinel-macos"]
+cdb-s02 = ["cdb-s02-macos"]
+cdb-s03 = ["cdb-s03-macos"]
+cdb-s04 = ["cdb-s04-macos"]
+
+[artifacts]
+sentinel-macos = ["sentinel-macos"]

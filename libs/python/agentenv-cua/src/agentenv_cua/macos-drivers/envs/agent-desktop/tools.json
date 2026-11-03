@@ -1,0 +1,3727 @@
+{
+ "version": "1.0.2",
+ "executable_sha256": "bf0a3c9256512f2f57288d37ccd17d7f03665fccc53c2f74011a49b98e61ba59",
+ "tools": [
+  {
+   "name": "desktop_snapshot",
+   "command": [
+    "snapshot"
+   ],
+   "description": "Capture accessibility tree as structured JSON with @ref IDs",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    },
+    {
+     "name": "max_depth",
+     "flag": "--max-depth",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum tree depth (default 10)",
+      "default": 10
+     }
+    },
+    {
+     "name": "include_bounds",
+     "flag": "--include-bounds",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Include element bounds (x, y, width, height)"
+     }
+    },
+    {
+     "name": "interactive_only",
+     "flag": "--interactive-only",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Include interactive elements only"
+     }
+    },
+    {
+     "name": "compact",
+     "flag": "--compact",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Collapse single-child unnamed nodes to reduce tree depth"
+     }
+    },
+    {
+     "name": "skeleton",
+     "flag": "--skeleton",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Shallow overview with children_count on truncated containers"
+     }
+    },
+    {
+     "name": "surface",
+     "flag": "--surface",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "window",
+       "focused",
+       "menu",
+       "menubar",
+       "sheet",
+       "popover",
+       "alert",
+       "desktop",
+       "taskbar",
+       "system-tray",
+       "quick-settings",
+       "notification-center",
+       "toolbar",
+       "dock",
+       "spotlight",
+       "menu-bar-extras",
+       "system-tray-overflow",
+       "start-menu",
+       "action-center"
+      ],
+      "description": "Surface to snapshot",
+      "default": "window"
+     }
+    },
+    {
+     "name": "root",
+     "flag": "--root",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Start traversal from this ref instead of window root"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Observation deadline in milliseconds (default 3000; raise for slow Chromium settles)"
+     }
+    },
+    {
+     "name": "force_electron_a11y",
+     "flag": "--force-electron-a11y",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Assume Chromium renderer accessibility is forced (skips activation guidance)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_find",
+   "command": [
+    "find"
+   ],
+   "description": "Search elements by role, name, value, or text content",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    },
+    {
+     "name": "role",
+     "flag": "--role",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by accessibility role (button, textfield, checkbox ...)"
+     }
+    },
+    {
+     "name": "name",
+     "flag": "--name",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by accessible name or label"
+     }
+    },
+    {
+     "name": "value",
+     "flag": "--value",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by current value"
+     }
+    },
+    {
+     "name": "text",
+     "flag": "--text",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by text in name, value, title, or description"
+     }
+    },
+    {
+     "name": "description",
+     "flag": "--description",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by accessible description"
+     }
+    },
+    {
+     "name": "native_id",
+     "flag": "--native-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Match by native automation id (AXIdentifier)"
+     }
+    },
+    {
+     "name": "exact",
+     "flag": "--exact",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Require exact (case-insensitive) name/description/value matches"
+     }
+    },
+    {
+     "name": "root",
+     "flag": "--root",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Search only inside this ref's subtree, not the whole window"
+     }
+    },
+    {
+     "name": "surface",
+     "flag": "--surface",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "window",
+       "focused",
+       "menu",
+       "menubar",
+       "sheet",
+       "popover",
+       "alert",
+       "desktop",
+       "taskbar",
+       "system-tray",
+       "quick-settings",
+       "notification-center",
+       "toolbar",
+       "dock",
+       "spotlight",
+       "menu-bar-extras",
+       "system-tray-overflow",
+       "start-menu",
+       "action-center"
+      ],
+      "description": "Surface to search (menubar, menu, sheet ...) instead of the window",
+      "default": "window"
+     }
+    },
+    {
+     "name": "state",
+     "flag": "--state",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Filter by state token (repeatable); append =true or =false"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Traversal deadline in milliseconds (default 5000; raise for a large tree such as a shell file dialog)"
+     }
+    },
+    {
+     "name": "count",
+     "flag": "--count",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Return match count only"
+     }
+    },
+    {
+     "name": "first",
+     "flag": "--first",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Return first match only"
+     }
+    },
+    {
+     "name": "last",
+     "flag": "--last",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Return last match only"
+     }
+    },
+    {
+     "name": "nth",
+     "flag": "--nth",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Return Nth match (0-indexed)"
+     }
+    },
+    {
+     "name": "limit",
+     "flag": "--limit",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Return at most N matches; defaults to 50 when omitted, use 0 for all"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_screenshot",
+   "command": [
+    "screenshot"
+   ],
+   "description": "Take a PNG screenshot of an application window",
+   "params": [
+    {
+     "name": "path",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Save to file instead of returning base64"
+     }
+    },
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    },
+    {
+     "name": "screen",
+     "flag": "--screen",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Capture display by index (from list-displays; 0 = primary)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_get",
+   "command": [
+    "get"
+   ],
+   "description": "Read an element property (text, value, title, bounds, role, states)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "property",
+     "flag": "--property",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Property: text (what a person reads: content for text-bearing roles, otherwise the name), value, title, bounds, role, states",
+      "default": "text"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_is",
+   "command": [
+    "is"
+   ],
+   "description": "Check element state (visible, enabled, checked, focused, expanded, selected)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "property",
+     "flag": "--property",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "State: visible, enabled, checked, focused, expanded, selected",
+      "default": "visible"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_click",
+   "command": [
+    "click"
+   ],
+   "description": "Click element via accessibility press action",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_double_click",
+   "command": [
+    "double-click"
+   ],
+   "description": "Physically double-click element; requires --headed",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_triple_click",
+   "command": [
+    "triple-click"
+   ],
+   "description": "Triple-click element; returns POLICY_DENIED when physical input is disabled",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_right_click",
+   "command": [
+    "right-click"
+   ],
+   "description": "Open a context menu semantically, or physically with --headed",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_type",
+   "command": [
+    "type"
+   ],
+   "description": "Insert text into a text target",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "text",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Text to type"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait in milliseconds, covering ref resolution, actionability and delivery of the text; default 5000 plus 30 per character of TEXT; 0 disables the wait"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_set_value",
+   "command": [
+    "set-value"
+   ],
+   "description": "Set element value directly via accessibility attribute",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "value",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Value to set"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_clear",
+   "command": [
+    "clear"
+   ],
+   "description": "Clear element value to empty string",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_focus",
+   "command": [
+    "focus"
+   ],
+   "description": "Set keyboard focus on element",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_select",
+   "command": [
+    "select"
+   ],
+   "description": "Select an option in a list or dropdown",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "value",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Option to select"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_toggle",
+   "command": [
+    "toggle"
+   ],
+   "description": "Toggle a checkbox or switch",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_check",
+   "command": [
+    "check"
+   ],
+   "description": "Set checkbox or switch to checked state (idempotent)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_uncheck",
+   "command": [
+    "uncheck"
+   ],
+   "description": "Set checkbox or switch to unchecked state (idempotent)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_expand",
+   "command": [
+    "expand"
+   ],
+   "description": "Expand a disclosure triangle or tree item",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_collapse",
+   "command": [
+    "collapse"
+   ],
+   "description": "Collapse a disclosure triangle or tree item",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_scroll",
+   "command": [
+    "scroll"
+   ],
+   "description": "Scroll element (--direction up/down/left/right, --amount N)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "direction",
+     "flag": "--direction",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Direction: up, down, left, right",
+      "default": "down"
+     }
+    },
+    {
+     "name": "amount",
+     "flag": "--amount",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Number of scroll units",
+      "default": 3
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_scroll_to",
+   "command": [
+    "scroll-to"
+   ],
+   "description": "Scroll element into visible area",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Qualified ref from snapshot (@<snapshot_id>:eN)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_press",
+   "command": [
+    "press"
+   ],
+   "description": "Send a key combo: return, escape, cmd+c, shift+tab ...",
+   "params": [
+    {
+     "name": "combo",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Key combo: return, escape, cmd+c, shift+tab ..."
+     }
+    },
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Target application name; keys go to its process without focusing it (--headed focuses its window first)"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Target the application instance that owns this window (from list-windows); use it when several instances share one name"
+     }
+    },
+    {
+     "name": "force",
+     "flag": "--force",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Send the combo even if the adapter flags it as a dangerous shortcut"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_key_down",
+   "command": [
+    "key-down"
+   ],
+   "description": "Hold a key or modifier down",
+   "params": [
+    {
+     "name": "combo",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Key or modifier to hold/release: shift, meta, ctrl ... (cmd is accepted); the command is rejected in stateless mode, use press instead"
+     }
+    },
+    {
+     "name": "force",
+     "flag": "--force",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Send the combo even if the adapter flags it as a dangerous shortcut"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_key_up",
+   "command": [
+    "key-up"
+   ],
+   "description": "Release a held key or modifier",
+   "params": [
+    {
+     "name": "combo",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Key or modifier to hold/release: shift, meta, ctrl ... (cmd is accepted); the command is rejected in stateless mode, use press instead"
+     }
+    },
+    {
+     "name": "force",
+     "flag": "--force",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Send the combo even if the adapter flags it as a dangerous shortcut"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_hover",
+   "command": [
+    "hover"
+   ],
+   "description": "Move cursor to element center or coordinates (requires --headed)",
+   "params": [
+    {
+     "name": "ref",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Element ref to hover over; requires --headed"
+     }
+    },
+    {
+     "name": "xy",
+     "flag": "--xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Absolute coordinates as x,y; requires --headed; write a negative value with = (--xy=-100,50)"
+     }
+    },
+    {
+     "name": "duration",
+     "flag": "--duration",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Reserved for compatibility; positive values are rejected in stateless mode (run hover, then `wait <ms>` instead)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum ref-resolution and transient-actionability wait in milliseconds; terminal failures return immediately",
+      "default": 5000
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_timeout",
+     "flag": "--wait-timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum wait time in milliseconds for --wait-for / --wait-for-gone (default: 30000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_drag",
+   "command": [
+    "drag"
+   ],
+   "description": "Drag from one element or point to another (requires --headed)",
+   "params": [
+    {
+     "name": "from",
+     "flag": "--from",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Source element ref; requires --headed"
+     }
+    },
+    {
+     "name": "from_xy",
+     "flag": "--from-xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Source coordinates as x,y; requires --headed; write a negative value with = (--from-xy=-100,50)"
+     }
+    },
+    {
+     "name": "to",
+     "flag": "--to",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Destination element ref; requires --headed"
+     }
+    },
+    {
+     "name": "to_xy",
+     "flag": "--to-xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Destination coordinates as x,y; requires --headed; write a negative value with = (--to-xy=-100,50)"
+     }
+    },
+    {
+     "name": "duration",
+     "flag": "--duration",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Drag duration in milliseconds"
+     }
+    },
+    {
+     "name": "drop_delay",
+     "flag": "--drop-delay",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Hold over the destination this many ms before releasing, so the drop target activates; default 500 (150 on Linux)"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Drag action budget in milliseconds, including resolution, actionability, pickup, duration and drop delay; allow headroom for completion",
+      "default": 5000
+     }
+    },
+    {
+     "name": "wait_for_scope",
+     "flag": "--wait-for-scope",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "from",
+       "to"
+      ],
+      "description": "Window a drag's --wait-for/--wait-for-gone verification polls: 'to' (drop target, default) or 'from' (pickup). Needed when the confirmation appears only in the destination window of a cross-window drag"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    },
+    {
+     "name": "wait_for",
+     "flag": "--wait-for",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until an element matching the role:text selector appears, then return the snapshot (snapshot and ref actions only)"
+     }
+    },
+    {
+     "name": "wait_for_gone",
+     "flag": "--wait-for-gone",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Poll until no element matches the role:text selector, then return the snapshot (snapshot and ref actions only)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_mouse_move",
+   "command": [
+    "mouse-move"
+   ],
+   "description": "Move cursor to absolute screen coordinates (requires --headed)",
+   "params": [
+    {
+     "name": "xy",
+     "flag": "--xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Absolute coordinates as x,y; requires --headed; write a negative value with = (--xy=-100,50)"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_mouse_click",
+   "command": [
+    "mouse-click"
+   ],
+   "description": "Click at absolute screen coordinates (requires --headed)",
+   "params": [
+    {
+     "name": "xy",
+     "flag": "--xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Absolute coordinates as x,y; requires --headed; write a negative value with = (--xy=-100,50)"
+     }
+    },
+    {
+     "name": "button",
+     "flag": "--button",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Mouse button: left, right, middle",
+      "default": "left"
+     }
+    },
+    {
+     "name": "count",
+     "flag": "--count",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Number of clicks",
+      "default": 1
+     }
+    },
+    {
+     "name": "modifiers",
+     "flag": "--modifiers",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Held modifiers: shift, meta, ctrl, alt (repeatable; cmd is accepted)"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_mouse_down",
+   "command": [
+    "mouse-down"
+   ],
+   "description": "Press mouse button at coordinates (fails closed in stateless mode; use mouse-click or drag)",
+   "params": [
+    {
+     "name": "xy",
+     "flag": "--xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Absolute coordinates as x,y; requires --headed; write a negative value with = (--xy=-100,50)"
+     }
+    },
+    {
+     "name": "button",
+     "flag": "--button",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Mouse button: left, right, middle",
+      "default": "left"
+     }
+    },
+    {
+     "name": "modifiers",
+     "flag": "--modifiers",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Held modifiers: shift, meta, ctrl, alt (repeatable; cmd is accepted)"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_mouse_up",
+   "command": [
+    "mouse-up"
+   ],
+   "description": "Release mouse button at coordinates (fails closed in stateless mode; use mouse-click or drag)",
+   "params": [
+    {
+     "name": "xy",
+     "flag": "--xy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Absolute coordinates as x,y; requires --headed; write a negative value with = (--xy=-100,50)"
+     }
+    },
+    {
+     "name": "button",
+     "flag": "--button",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Mouse button: left, right, middle",
+      "default": "left"
+     }
+    },
+    {
+     "name": "modifiers",
+     "flag": "--modifiers",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Held modifiers: shift, meta, ctrl, alt (repeatable; cmd is accepted)"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_mouse_wheel",
+   "command": [
+    "mouse-wheel"
+   ],
+   "description": "Scroll the mouse wheel at absolute coordinates (requires --headed)",
+   "params": [
+    {
+     "name": "x",
+     "flag": "--x",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Absolute X coordinate for wheel event; write a negative value with = (--x=-100)"
+     }
+    },
+    {
+     "name": "y",
+     "flag": "--y",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Absolute Y coordinate for wheel event; write a negative value with = (--y=-100)"
+     }
+    },
+    {
+     "name": "dy",
+     "flag": "--dy",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Vertical wheel lines; positive scrolls up, negative scrolls down (default -3 when --dx is absent, else 0)"
+     }
+    },
+    {
+     "name": "dx",
+     "flag": "--dx",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Horizontal wheel lines; positive scrolls right, negative scrolls left",
+      "default": 0
+     }
+    },
+    {
+     "name": "modifiers",
+     "flag": "--modifiers",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Held modifiers: shift, meta, ctrl, alt (repeatable; cmd is accepted)"
+     }
+    },
+    {
+     "name": "headed",
+     "flag": "--headed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Prefer physical delivery for natural input commands and permit focus/cursor side effects. Default is strict headless semantic delivery."
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_launch",
+   "command": [
+    "launch"
+   ],
+   "description": "Launch application and return once its process is running; --activate waits for a window, --cdp verifies a DevTools endpoint",
+   "params": [
+    {
+     "name": "app",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Application name or bundle ID"
+     }
+    },
+    {
+     "name": "timeout",
+     "flag": "--timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Upper bound in ms for the whole launch",
+      "default": 30000
+     }
+    },
+    {
+     "name": "arg",
+     "flag": "--arg",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Command-line argument passed to the launched app; repeatable, order preserved. For values starting with '-', use --arg=<value>"
+     }
+    },
+    {
+     "name": "env",
+     "flag": "--env",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Environment variable for the launched process"
+     }
+    },
+    {
+     "name": "cwd",
+     "flag": "--cwd",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Working directory for the launched process"
+     }
+    },
+    {
+     "name": "no_attach",
+     "flag": "--no-attach",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Start a fresh instance instead of attaching to a running one (Windows fails if the app is already running)"
+     }
+    },
+    {
+     "name": "activate",
+     "flag": "--activate",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Bring the app forward so it presents a window, and wait for one"
+     }
+    },
+    {
+     "name": "cdp",
+     "flag": "--cdp",
+     "kind": "optional_value",
+     "required": false,
+     "schema": {
+      "type": [
+       "integer",
+       "boolean"
+      ],
+      "description": "Expose the app's DevTools protocol endpoint on this port (0 or omitted picks a free port)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_close_app",
+   "command": [
+    "close-app"
+   ],
+   "description": "Quit an application gracefully (--force to terminate)",
+   "params": [
+    {
+     "name": "app",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Application name"
+     }
+    },
+    {
+     "name": "force",
+     "flag": "--force",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Terminate matching app processes instead of quitting gracefully"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_list_windows",
+   "command": [
+    "list-windows"
+   ],
+   "description": "List all visible windows (--app to filter by application)",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by exact case-insensitive name"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Inventory deadline in milliseconds (default 5000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_list_displays",
+   "command": [
+    "list-displays"
+   ],
+   "description": "List connected displays with bounds and scale factor",
+   "params": []
+  },
+  {
+   "name": "desktop_list_apps",
+   "command": [
+    "list-apps"
+   ],
+   "description": "List all running GUI applications (--app to filter)",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Inventory deadline in milliseconds (default 5000)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_focus_window",
+   "command": [
+    "focus-window"
+   ],
+   "description": "Bring a window to front and confirm OS focus",
+   "params": [
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Window ID from list-windows"
+     }
+    },
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Application name"
+     }
+    },
+    {
+     "name": "title",
+     "flag": "--title",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Window title (partial match accepted)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_resize_window",
+   "command": [
+    "resize-window"
+   ],
+   "description": "Resize application window",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    },
+    {
+     "name": "width",
+     "flag": "--width",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "New window width in pixels"
+     }
+    },
+    {
+     "name": "height",
+     "flag": "--height",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "New window height in pixels"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_move_window",
+   "command": [
+    "move-window"
+   ],
+   "description": "Move application window to new position",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    },
+    {
+     "name": "x",
+     "flag": "--x",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "New window X position; write a negative value with = (--x=-100)"
+     }
+    },
+    {
+     "name": "y",
+     "flag": "--y",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "New window Y position; write a negative value with = (--y=-100)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_minimize",
+   "command": [
+    "minimize"
+   ],
+   "description": "Minimize application window",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_maximize",
+   "command": [
+    "maximize"
+   ],
+   "description": "Maximize or zoom application window",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_restore",
+   "command": [
+    "restore"
+   ],
+   "description": "Restore minimized or maximized window",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope to a single window ID (from list-windows)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_list_surfaces",
+   "command": [
+    "list-surfaces"
+   ],
+   "description": "List accessibility surfaces for an app (window, menu, sheet ...)",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to application by name"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_open_system_surface",
+   "command": [
+    "open-system-surface"
+   ],
+   "description": "Open a shell surface (start-menu, taskbar, action-center ...) and return the window it presents",
+   "params": [
+    {
+     "name": "surface",
+     "flag": "--surface",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "window",
+       "focused",
+       "menu",
+       "menubar",
+       "sheet",
+       "popover",
+       "alert",
+       "desktop",
+       "taskbar",
+       "system-tray",
+       "quick-settings",
+       "notification-center",
+       "toolbar",
+       "dock",
+       "spotlight",
+       "menu-bar-extras",
+       "system-tray-overflow",
+       "start-menu",
+       "action-center"
+      ],
+      "description": "Shell surface to open: start-menu, taskbar, system-tray, system-tray-overflow, action-center"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_list_notifications",
+   "command": [
+    "list-notifications"
+   ],
+   "description": "List notifications from Notification Center",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to notifications from this app"
+     }
+    },
+    {
+     "name": "text",
+     "flag": "--text",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter to notifications containing this text"
+     }
+    },
+    {
+     "name": "limit",
+     "flag": "--limit",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Maximum number of notifications to return"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_dismiss_notification",
+   "command": [
+    "dismiss-notification"
+   ],
+   "description": "Dismiss a notification by index",
+   "params": [
+    {
+     "name": "index",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "integer",
+      "description": "1-based notification index from list-notifications"
+     }
+    },
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Require the notification at INDEX to be from this app; INDEX is its position in the unfiltered list"
+     }
+    },
+    {
+     "name": "expected_app",
+     "flag": "--expected-app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Expected app name at INDEX; one expected identity field is required"
+     }
+    },
+    {
+     "name": "expected_title",
+     "flag": "--expected-title",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Expected title at INDEX; one expected identity field is required"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_dismiss_all_notifications",
+   "command": [
+    "dismiss-all-notifications"
+   ],
+   "description": "Dismiss all notifications (--app to filter)",
+   "params": [
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Only dismiss notifications from this app"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_notification_action",
+   "command": [
+    "notification-action"
+   ],
+   "description": "Click an action button on a notification",
+   "params": [
+    {
+     "name": "index",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "integer",
+      "description": "1-based notification index from list-notifications"
+     }
+    },
+    {
+     "name": "action",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Name of the action button to click (e.g., Reply, Open)"
+     }
+    },
+    {
+     "name": "expected_app",
+     "flag": "--expected-app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Expected app name at INDEX; one expected identity field is required"
+     }
+    },
+    {
+     "name": "expected_title",
+     "flag": "--expected-title",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Expected title at INDEX; one expected identity field is required"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_clipboard_get",
+   "command": [
+    "clipboard-get"
+   ],
+   "description": "Read plain-text or typed clipboard contents",
+   "params": [
+    {
+     "name": "format",
+     "flag": "--format",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Clipboard format to read: text (default), auto, image, file-urls"
+     }
+    },
+    {
+     "name": "out",
+     "flag": "--out",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Where to write image content; defaults to a private temp file under the session dir"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_clipboard_set",
+   "command": [
+    "clipboard-set"
+   ],
+   "description": "Write text to the clipboard",
+   "params": [
+    {
+     "name": "text",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Text to write to the clipboard (ignored if --image or --file-url is given)"
+     }
+    },
+    {
+     "name": "image",
+     "flag": "--image",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Path to a PNG file to write to the clipboard"
+     }
+    },
+    {
+     "name": "file_url",
+     "flag": "--file-url",
+     "kind": "multi",
+     "required": false,
+     "schema": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "File path to write to the clipboard as a file reference; repeatable"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_clipboard_clear",
+   "command": [
+    "clipboard-clear"
+   ],
+   "description": "Clear the clipboard",
+   "params": []
+  },
+  {
+   "name": "desktop_wait",
+   "command": [
+    "wait"
+   ],
+   "description": "Wait for time (ms), element presence, text, or window appearance",
+   "params": [
+    {
+     "name": "ms",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Milliseconds to pause"
+     }
+    },
+    {
+     "name": "element",
+     "flag": "--element",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Block until this element ref appears in the tree"
+     }
+    },
+    {
+     "name": "window",
+     "flag": "--window",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Block until a window with this title appears; with --event, narrows the event wait to that window title instead of selecting a mode"
+     }
+    },
+    {
+     "name": "text",
+     "flag": "--text",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Block until text appears in the app's accessibility tree; with --notification, filter notification text"
+     }
+    },
+    {
+     "name": "menu",
+     "flag": "--menu",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Block until a menu surface is open"
+     }
+    },
+    {
+     "name": "menu_closed",
+     "flag": "--menu-closed",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Block until the menu surface is dismissed"
+     }
+    },
+    {
+     "name": "notification",
+     "flag": "--notification",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Block until a new notification arrives"
+     }
+    },
+    {
+     "name": "event",
+     "flag": "--event",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Block until a desktop lifecycle signal, detected by baseline diff without needing to know the id/title up front: window-opened, window-closed, app-launched, app-terminated, focus-changed, surface-appeared, surface-dismissed"
+     }
+    },
+    {
+     "name": "window_id",
+     "flag": "--window-id",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Optional: narrow --event window-opened/window-closed/focus-changed to one window ID"
+     }
+    },
+    {
+     "name": "predicate",
+     "flag": "--predicate",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Element wait predicate: exists, enabled, visible, actionable, or value"
+     }
+    },
+    {
+     "name": "value",
+     "flag": "--value",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Expected value for --predicate value"
+     }
+    },
+    {
+     "name": "action",
+     "flag": "--action",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Action for --predicate actionable: click (default), type, set-value, or clear"
+     }
+    },
+    {
+     "name": "count",
+     "flag": "--count",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Expected match count for --text waits"
+     }
+    },
+    {
+     "name": "timeout",
+     "flag": "--timeout",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Timeout in milliseconds for element/window/text waits",
+      "default": 30000
+     }
+    },
+    {
+     "name": "app",
+     "flag": "--app",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Scope element, window, or text wait to this application"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_status",
+   "command": [
+    "status"
+   ],
+   "description": "Show adapter health, platform info, and permission state",
+   "params": []
+  },
+  {
+   "name": "desktop_permissions",
+   "command": [
+    "permissions"
+   ],
+   "description": "Check nested permission states: accessibility/screen_recording/automation each return {state,...}",
+   "params": [
+    {
+     "name": "request",
+     "flag": "--request",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Request missing permissions in the bounded isolated helper"
+     }
+    },
+    {
+     "name": "guide",
+     "flag": "--guide",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Open System Settings with an on-screen guide for granting the missing permissions (macOS)"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_version",
+   "command": [
+    "version"
+   ],
+   "description": "Show version, target architecture, and OS",
+   "params": []
+  },
+  {
+   "name": "desktop_batch",
+   "command": [
+    "batch"
+   ],
+   "description": "Execute a bounded, sequential, non-atomic JSON command batch",
+   "params": [
+    {
+     "name": "json",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "JSON array of {command, args} objects"
+     }
+    },
+    {
+     "name": "stop_on_error",
+     "flag": "--stop-on-error",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Halt the batch on the first failed command"
+     }
+    },
+    {
+     "name": "timeout_ms",
+     "flag": "--timeout-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Absolute wall-clock budget for the whole non-atomic batch",
+      "default": 60000
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_skills_list",
+   "command": [
+    "skills",
+    "list"
+   ],
+   "description": "List bundled skills with summaries (default)",
+   "params": []
+  },
+  {
+   "name": "desktop_skills_get",
+   "command": [
+    "skills",
+    "get"
+   ],
+   "description": "Print a skill (markdown in data.content)",
+   "params": [
+    {
+     "name": "name",
+     "flag": null,
+     "kind": "value",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "description": "Skill name or alias: desktop, platform, macos, windows, linux, ffi, jev"
+     }
+    },
+    {
+     "name": "reference",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Reference filename (e.g. workflows or references/workflows.md). Omit for the main guide."
+     }
+    },
+    {
+     "name": "full",
+     "flag": "--full",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Append every reference file to the output"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_skills_path",
+   "command": [
+    "skills",
+    "path"
+   ],
+   "description": "Print where bundled skills live",
+   "params": []
+  },
+  {
+   "name": "desktop_session_start",
+   "command": [
+    "session",
+    "start"
+   ],
+   "description": "Create a session directory and manifest",
+   "params": [
+    {
+     "name": "name",
+     "flag": "--name",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Optional human-readable session label"
+     }
+    },
+    {
+     "name": "no_trace",
+     "flag": "--no-trace",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Create the session without automatic tracing"
+     }
+    },
+    {
+     "name": "screenshots",
+     "flag": "--screenshots",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Capture pre/post-action screenshots and refmap copies (requires tracing; sensitive)"
+     }
+    },
+    {
+     "name": "cursor",
+     "flag": "--cursor",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Show the visual cursor overlay with its default style"
+     }
+    },
+    {
+     "name": "multi_agent",
+     "flag": "--multi-agent",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Give each harness subagent its own cursor; requires --agent-id on desktop actions"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_session_end",
+   "command": [
+    "session",
+    "end"
+   ],
+   "description": "Seal a session manifest",
+   "params": [
+    {
+     "name": "id",
+     "flag": null,
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Session id to end; defaults to global --session or AGENT_DESKTOP_SESSION"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_session_list",
+   "command": [
+    "session",
+    "list"
+   ],
+   "description": "List session manifests",
+   "params": []
+  },
+  {
+   "name": "desktop_session_gc",
+   "command": [
+    "session",
+    "gc"
+   ],
+   "description": "Remove ended or provably-stale sessions",
+   "params": [
+    {
+     "name": "older_than",
+     "flag": "--older-than",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Only remove sessions whose ended_at/created_at age exceeds this many seconds"
+     }
+    },
+    {
+     "name": "ended",
+     "flag": "--ended",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Only consider sessions that already have ended_at set, and remove them even when their trace was written in the last few minutes"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_cursor_overlay_enable",
+   "command": [
+    "cursor-overlay",
+    "enable"
+   ],
+   "description": "Enable and configure the cursor overlay for the selected session",
+   "params": [
+    {
+     "name": "multi_agent",
+     "flag": "--multi-agent",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Require agent IDs for desktop UI actions; use without --agent-id to configure the session"
+     }
+    },
+    {
+     "name": "label",
+     "flag": "--label",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Show caller-authored intent text beside the cursor overlay"
+     }
+    },
+    {
+     "name": "max_words",
+     "flag": "--max-words",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Limit the cursor overlay label to 1-12 words (default 6)"
+     }
+    },
+    {
+     "name": "fill",
+     "flag": "--fill",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Cursor body colour as a hex value (default #FFFFFF)"
+     }
+    },
+    {
+     "name": "rim",
+     "flag": "--rim",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Cursor outline colour as a hex value (default #111318)"
+     }
+    },
+    {
+     "name": "accent",
+     "flag": "--accent",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Ripple and element highlight colour as a hex value (default #4299FF)"
+     }
+    },
+    {
+     "name": "size",
+     "flag": "--size",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Cursor size multiplier from 0.5 to 4.0 (default 1.0)"
+     }
+    },
+    {
+     "name": "no_ripple",
+     "flag": "--no-ripple",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Do not play the ripple when the agent clicks"
+     }
+    },
+    {
+     "name": "no_highlight",
+     "flag": "--no-highlight",
+     "kind": "bool",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "description": "Do not outline the element when the agent clicks"
+     }
+    },
+    {
+     "name": "image",
+     "flag": "--image",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Draw the cursor from a PNG file instead of the built-in arrow; scaled by --size"
+     }
+    },
+    {
+     "name": "hotspot",
+     "flag": "--hotspot",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Point in the image, in image points from its top-left, that marks the click position (default 0,0)"
+     }
+    },
+    {
+     "name": "pointer_image",
+     "flag": "--pointer-image",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "PNG shown instead while the cursor rests on a button, link or other pressable control"
+     }
+    },
+    {
+     "name": "pointer_hotspot",
+     "flag": "--pointer-hotspot",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Click point in the pointer image, in image points from its top-left (default 0,0)"
+     }
+    },
+    {
+     "name": "travel_ms",
+     "flag": "--travel-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Cursor travel time range in ms, short to long moves (default 90,320)"
+     }
+    },
+    {
+     "name": "bow",
+     "flag": "--bow",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Path curvature multiplier from 0 (straight) to 3 (default 1)"
+     }
+    },
+    {
+     "name": "overshoot",
+     "flag": "--overshoot",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Overshoot past the target as a fraction, 0 to 0.15 (default 0.035)"
+     }
+    },
+    {
+     "name": "tremor",
+     "flag": "--tremor",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Hand tremor amplitude in points, 0 to 4 (default 1.1)"
+     }
+    },
+    {
+     "name": "dwell_ms",
+     "flag": "--dwell-ms",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Pause on the target before the action runs, 0 to 300 (default 0)"
+     }
+    },
+    {
+     "name": "motion_seed",
+     "flag": "--motion-seed",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "description": "Vary each move deterministically from this seed"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_cursor_overlay_disable",
+   "command": [
+    "cursor-overlay",
+    "disable"
+   ],
+   "description": "Disable the cursor overlay for the selected session",
+   "params": []
+  },
+  {
+   "name": "desktop_trace_show",
+   "command": [
+    "trace",
+    "show"
+   ],
+   "description": "Merge session trace segments into a bounded JSON timeline",
+   "params": [
+    {
+     "name": "limit",
+     "flag": "--limit",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Return the last N merged events (0 for all; default 500)",
+      "default": 500
+     }
+    },
+    {
+     "name": "event",
+     "flag": "--event",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Filter events by name prefix before applying --limit"
+     }
+    }
+   ]
+  },
+  {
+   "name": "desktop_trace_export",
+   "command": [
+    "trace",
+    "export"
+   ],
+   "description": "Export a self-contained HTML trace viewer",
+   "params": [
+    {
+     "name": "out",
+     "flag": "--out",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "description": "Output HTML path (default trace-<session>.html)"
+     }
+    },
+    {
+     "name": "limit",
+     "flag": "--limit",
+     "kind": "value",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "description": "Embed the last N merged events (0 for all; default 5000)",
+      "default": 5000
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,110 @@
+{
+ "commit": "22a67eacd15dc71811e330ed88951dd615bb395d",
+ "files": [
+  {
+   "path": "apps/lighthouse-desk/main.js",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/main.js",
+   "sha256": "9b1ba33cafde8114cdadf20306e8542839d47beaa1f2c137980049cdc69127cb"
+  },
+  {
+   "path": "apps/lighthouse-desk/package-lock.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/package-lock.json",
+   "sha256": "bc10a1a8f1fc47585b656e4f2e890e126cb61e22b4386d92df2db8def01d76e7"
+  },
+  {
+   "path": "apps/lighthouse-desk/package.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/package.json",
+   "sha256": "0bab6d38ce52388bc1b151cff3e691a0dfc59cea29063af65bd8f0b31304e0f3"
+  },
+  {
+   "path": "apps/lighthouse-desk/preload.js",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/preload.js",
+   "sha256": "98c0a85add1ed084ad510c6941306c2199db6c4b883c90332153056b051879a4"
+  },
+  {
+   "path": "apps/lighthouse-desk/renderer/app.js",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/app.js",
+   "sha256": "d5ff9e69e6ae75ca1c68948506b7e6a8f30df46ce6215f582c9776996ac2e77c"
+  },
+  {
+   "path": "apps/lighthouse-desk/renderer/index.html",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/index.html",
+   "sha256": "a84ab1bdfd10a158a1f5a9c98a16afcc35519cb457c1c7a6719a6ed0f587e170"
+  },
+  {
+   "path": "apps/lighthouse-desk/renderer/styles.css",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/styles.css",
+   "sha256": "eaefcf9e541f1817d5d356d1a0a8ab558182b0ae57bb6286921628c71343027c"
+  },
+  {
+   "path": "apps/lighthouse-desk/store.js",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/store.js",
+   "sha256": "3169cda9658652c536ad2de789d75313f278c8132f75313f9d0aa80564d87794"
+  },
+  {
+   "path": "brief.md",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/brief.md",
+   "sha256": "0b4c4694b1ff1eaa8473ca1e0f2aaedeb1ec21b220883b5be7a948206ffe3998"
+  },
+  {
+   "path": "fixture/calendar/events.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/calendar/events.json",
+   "sha256": "9bffa18e42aa77d1c35c685c0bf321cbb5a4543b3855620740e1866bd94d0878"
+  },
+  {
+   "path": "fixture/chat/audit.ndjson",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/audit.ndjson",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "path": "fixture/chat/blockers.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/blockers.json",
+   "sha256": "0b433ce2b65a3936d1f4783cd04cbab9afe51b62f5aebbb92833eb5f7fc39e3b"
+  },
+  {
+   "path": "fixture/chat/messages.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/messages.json",
+   "sha256": "9019a563fcd4d54368a1ddbac137e057fdac2ab3046ad0020fa994da1ac3f277"
+  },
+  {
+   "path": "fixture/mail/messages.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/mail/messages.json",
+   "sha256": "371b2eb4e409a793138f86edd9dcb038cf81d6de3b560fef47f06006b7ee189e"
+  },
+  {
+   "path": "fixture/planning/lighthouse-replan.ods",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/planning/lighthouse-replan.ods",
+   "sha256": "e233cae7c58a9f32dc9e05530437e6d30a0ef363ee67d7d5dd883eefe3760c85"
+  },
+  {
+   "path": "platform/launch.macos.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/platform/launch.macos.json",
+   "sha256": "027bad2bf67f9ebde17da53f652b527d574fdbff057aab284c9e0337844677db"
+  },
+  {
+   "path": "reset/failure-fixtures/stale-blocker.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/failure-fixtures/stale-blocker.json",
+   "sha256": "c8ff858e755cff698a6cef4cb6ca607d3c8030a76d467abb8f077ebb3dad6645"
+  },
+  {
+   "path": "reset/failure-fixtures/stale-calendar.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/failure-fixtures/stale-calendar.json",
+   "sha256": "f7e320681a0b6a80d84afd836ebfeb50195f950c6adab8b173ef0cc1747c5a30"
+  },
+  {
+   "path": "reset/setup.py",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/setup.py",
+   "sha256": "fedc30ea50375862737461e1c30840657c50510e71dac2a95c34bb606c536de9"
+  },
+  {
+   "path": "reset/verify.py",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/verify.py",
+   "sha256": "7ea95408a12e13bc46f246e8752acb153fe1a28ce0ffd6e1e93762c77483d1db"
+  },
+  {
+   "path": "task.cuabench.json",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/taskpack/tasks/shared/cdb-s02/task.cuabench.json",
+   "sha256": "6b4a27183190e739fdb0008ef02f229eebbd12cd21039b4affbdaa55b34c9166"
+  }
+ ]
+}

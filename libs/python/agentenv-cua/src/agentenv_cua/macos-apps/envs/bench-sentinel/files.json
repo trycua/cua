@@ -1,0 +1,10 @@
+{
+ "commit": "22a67eacd15dc71811e330ed88951dd615bb395d",
+ "files": [
+  {
+   "path": "swift/BenchSentinel.swift",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/automated-eval/macos_bench/swift/BenchSentinel.swift",
+   "sha256": "9d5c23c8525f14e0ba129cad4e23bd8501193c801e59229eaaab9aa25abf478c"
+  }
+ ]
+}

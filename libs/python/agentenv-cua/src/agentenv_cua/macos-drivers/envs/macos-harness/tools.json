@@ -1,0 +1,335 @@
+{
+ "version": "0.2.1",
+ "skill_sha256": "e9081fc7fe10daa5c750b2f2c504cf6e335395c06b508d1dbf2ca7ffc74e1052",
+ "tools": [
+  {
+   "name": "click",
+   "description": "Click one element, given by its index or by a pixel position in the screenshot",
+   "example": "macos-harness click --app Finder --element_index 40",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "element_index": {
+      "type": "integer",
+      "description": "The number of the element in the last get_app_state text"
+     },
+     "x": {
+      "type": "number",
+      "description": "Horizontal pixel position in the screenshot"
+     },
+     "y": {
+      "type": "number",
+      "description": "Vertical pixel position in the screenshot"
+     },
+     "mouse_button": {
+      "type": "string",
+      "description": "Which mouse button: left (the default), right or middle."
+     },
+     "click_count": {
+      "type": "integer",
+      "description": "How many clicks (default 1)"
+     },
+     "key": {
+      "type": "string",
+      "description": "A key name, or a chord joined with + (X11 keysym names: a, space, Return, Tab, Control_L+a, Super_L+d). Spaces around + do not matter; Control, Ctrl, Alt and Shift work too. With click: the keys held during the click"
+     },
+     "duration": {
+      "type": "number",
+      "description": "Seconds to hold each press (0 to 30)"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "drag",
+   "description": "Drag between two pixel positions of the screenshot",
+   "example": "macos-harness drag --app Finder --from_x 200 --from_y 300 --to_x 400 --to_y 300",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "from_x": {
+      "type": "number",
+      "description": "Where the drag starts: horizontal pixel position in the screenshot"
+     },
+     "from_y": {
+      "type": "number",
+      "description": "Where the drag starts: vertical pixel position in the screenshot"
+     },
+     "to_x": {
+      "type": "number",
+      "description": "Where the drag ends: horizontal pixel position in the screenshot"
+     },
+     "to_y": {
+      "type": "number",
+      "description": "Where the drag ends: vertical pixel position in the screenshot"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "get_app_state",
+   "description": "Read an app's key window as an accessibility tree plus a screenshot, opening a session for the app first when there is none. Needed once in every assistant turn before any action on that app",
+   "example": "macos-harness get_app_state --app Finder",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "disableDiff": {
+      "type": "boolean",
+      "description": "Print the whole tree, not only what changed"
+     },
+     "keep": {
+      "type": "boolean",
+      "description": "Keep the screenshot for good, as proof (a path without spaces)"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "list_apps",
+   "description": "Show the apps on this Mac: those running now and those used in the past 14 days, with how often each was used",
+   "example": "macos-harness list_apps",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "paste",
+   "description": "Paste text into an app's window and put back what was on the clipboard before.",
+   "example": "macos-harness paste --app TextEdit --text \"hello world\"",
+   "stdin": "text",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "text": {
+      "type": "string",
+      "description": "The text, exactly. Missing or -: read from stdin"
+     },
+     "format": {
+      "type": "string",
+      "description": "text, md or html. Defaults to text"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "perform_secondary_action",
+   "description": "Run one of the secondary actions an element lists",
+   "example": "macos-harness perform_secondary_action --app Finder --element_index 0 --action Raise",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "element_index": {
+      "type": "integer",
+      "description": "The number of the element in the last get_app_state text"
+     },
+     "action": {
+      "type": "string",
+      "description": "A name from the element's Secondary Actions"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "press_key",
+   "description": "Press one key or a chord, modifiers and navigation keys included, written the way xdotool writes keys: \"a\", \"Return\", \"Tab\", \"super+c\", \"Up\", \"KP_0\" (the 0 of the number pad).",
+   "example": "macos-harness press_key --app Finder --key super+c",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "key": {
+      "type": "string",
+      "description": "A key name, or a chord joined with + (X11 keysym names: a, space, Return, Tab, Control_L+a, Super_L+d). Spaces around + do not matter; Control, Ctrl, Alt and Shift work too. With click: the keys held during the click"
+     },
+     "duration": {
+      "type": "number",
+      "description": "Seconds to hold each press (0 to 30)"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "scroll",
+   "description": "Scroll one element up, down, left or right by pages",
+   "example": "macos-harness scroll --app Finder --element_index 3 --direction down --pages 1",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "element_index": {
+      "type": "integer",
+      "description": "The number of the element in the last get_app_state text"
+     },
+     "x": {
+      "type": "number",
+      "description": "Horizontal pixel position in the screenshot"
+     },
+     "y": {
+      "type": "number",
+      "description": "Vertical pixel position in the screenshot"
+     },
+     "direction": {
+      "type": "string",
+      "description": "up, down, left or right"
+     },
+     "pages": {
+      "type": "number",
+      "description": "How many pages to scroll; fractions work (default 1)"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "select_text",
+   "description": "Select a piece of text in a text element, or put the cursor right before or after it. Give the text as the accessibility tree prints it, Markdown marks included. When it occurs more than once, add the text before or after it as prefix or suffix.",
+   "example": "macos-harness select_text --app TextEdit --element_index 3 --text \"hello\"",
+   "stdin": null,
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "element_index": {
+      "type": "integer",
+      "description": "The number of the element in the last get_app_state text"
+     },
+     "text": {
+      "type": "string",
+      "description": "The text, exactly. Missing or -: read from stdin"
+     },
+     "prefix": {
+      "type": "string",
+      "description": "The text just before the wanted text, when it occurs more than once"
+     },
+     "suffix": {
+      "type": "string",
+      "description": "The text just after the wanted text, when it occurs more than once"
+     },
+     "selection_type": {
+      "type": "string",
+      "description": "text, cursor_before or cursor_after. Defaults to text"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "set_value",
+   "description": "Write a new value into an element that is marked settable",
+   "example": "macos-harness set_value --app Finder --element_index 2 --value \"report.txt\"",
+   "stdin": "value",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "element_index": {
+      "type": "integer",
+      "description": "The number of the element in the last get_app_state text"
+     },
+     "value": {
+      "type": "string",
+      "description": "Replacement value. Missing or -: read from stdin"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "type_text",
+   "description": "Type the given text as key presses",
+   "example": "macos-harness type_text --app TextEdit --text \"hello world\"",
+   "stdin": "text",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The app: its name, its bundle id or the full path of its bundle"
+     },
+     "text": {
+      "type": "string",
+      "description": "The text, exactly. Missing or -: read from stdin"
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,4 @@
+# The driver's venv in the VM. agent-desktop itself is a release binary (1.0.2, aarch64-apple-darwin, archive sha256 in
+# driver.py), installed by the image's provisioning; pyobjc-framework-Quartz is the neutral computer_* helper's.
+agentenv-framework-protocol[computer]==0.1.440
+pyobjc-framework-Quartz>=12.0

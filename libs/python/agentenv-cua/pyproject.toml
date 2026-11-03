@@ -19,10 +19,16 @@ requires-python = ">=3.11"
 dependencies = ["agentenv-framework>=0.9.1425,<0.10"]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.23"]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "macos-harness==0.2.1; sys_platform == 'darwin'"]
 
 [project.entry-points."agent_env.sandbox_providers"]
 lume = "agentenv_cua.lume.provider:LumeSandboxProvider"
+
+# Bundles: folders of envs and artifacts that `agent-env run` and the stores find by their ids,
+# @local/agentenv-cua/<name>/<folder>. The cua-driver macOS driver (drivers/cua_driver_macos) isn't in one yet.
+[project.entry-points."agent_env.bundles"]
+macos-drivers = "agentenv_cua"
+macos-apps = "agentenv_cua"
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"
@@ -34,6 +40,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentenv_cua"]
+
+# The repository's .gitignore skips every `artifacts/` folder, which hatch follows; this bundle's is a source folder.
+[tool.hatch.build.targets.wheel.force-include]
+"src/agentenv_cua/macos-apps/artifacts" = "agentenv_cua/macos-apps/artifacts"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

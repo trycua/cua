@@ -86,6 +86,14 @@ def lume(tmp_path):
     return FakeLume(tmp_path / "lume", {"bench-base": "stopped"})
 
 
+@pytest.fixture(autouse=True)
+def no_host_lume_processes(monkeypatch):
+    async def none():
+        return set()
+
+    monkeypatch.setattr("agentenv_cua.lume.provider._lume_run_processes", none)
+
+
 @pytest.fixture
 def provider(tmp_path, lume):
     return LumeSandboxProvider(
@@ -109,10 +117,26 @@ async def test_create_vm_clones_the_base_boots_it_with_its_settings_shared_and_r
     run = next(call for call in lume.calls if call[1] == "run")
     share = Path(run[run.index("--shared-dir") + 1].removesuffix(":ro"))
     assert run[run.index("--shared-dir") + 1].endswith(":ro") and "--detach" in run
-    boot = share / "agentenv" / "boot.json"
+    boot = share / "boot.json"
     assert json.loads(boot.read_text()) == {"env": {"AGENTENV_CONTROL_TOKEN": "t0k"}}
     assert boot.stat().st_mode & 0o077 == 0
     assert GUEST_BOOT_FILE.endswith("agentenv/boot.json")
+
+
+async def test_each_clone_gets_the_display_size_before_it_first_boots_and_after_a_reset(provider, lume):
+    sandbox = await provider.create_vm(exposed_ports=[18765])
+    await provider.reset_vm(sandbox, image="bench-base", env={})
+
+    sets = [c for c in lume.calls if c[1] == "set"]
+    assert len(sets) == 2 and all(c[c.index("--display") + 1] == "1280x800" for c in sets)
+    for call_set in sets:
+        position = lume.calls.index(call_set)
+        assert lume.calls[position - 1][1] == "clone"
+
+
+def test_the_display_size_must_be_width_x_height(tmp_path):
+    with pytest.raises(ValueError, match="WIDTHxHEIGHT"):
+        LumeSandboxProvider(base="b", display="big", state_dir=str(tmp_path))
 
 
 async def test_a_third_running_vm_on_the_mac_is_refused(provider, lume):
@@ -138,7 +162,7 @@ async def test_reset_reclones_under_the_same_name_and_mac_so_the_url_stays(provi
     assert again.tunnel_urls[18765] == url
     assert [c[1] for c in lume.calls].count("clone") == 2
     share = provider._share_dir(sandbox.sandbox_id)
-    assert json.loads((share / "agentenv" / "boot.json").read_text()) == {"env": {"A": "2"}}
+    assert json.loads((share / "boot.json").read_text()) == {"env": {"A": "2"}}
 
 
 async def test_terminate_deletes_only_what_it_made(provider, lume):
@@ -211,3 +235,14 @@ def test_the_provider_registers_as_an_agentenv_plugin_class():
 
     assert _unimplemented(LumeSandboxProvider) is None
     assert LumeSandboxProvider.native_platforms() == frozenset({"darwin/arm64"})
+
+
+async def test_a_vm_another_lume_instance_runs_counts_against_the_limit(provider, lume, monkeypatch):
+    async def held():
+        return {"bench-rig"}
+
+    monkeypatch.setattr("agentenv_cua.lume.provider._lume_run_processes", held)
+    lume._add("someone-elses-vm", "running")
+
+    with pytest.raises(RuntimeError, match="2 macOS VMs already run"):
+        await provider.create_vm(exposed_ports=[18765])

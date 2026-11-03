@@ -26,8 +26,13 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$base_vm$base_image" ] || { echo "give --base-vm or --base-image" >&2; exit 2; }
 
-running=$(lume ls --format json | python3 -I -c 'import json,sys; print(sum(v.get("status")=="running" for v in json.load(sys.stdin)))')
-[ "$running" -lt 2 ] || { echo "$running macOS VMs already run on this Mac; not starting a third" >&2; exit 3; }
+# Count by process, not by `lume ls` status: a VM another lume instance runs can show as stopped there.
+running_vms() { ps -axo command= | awk '$1 ~ /(^|\/)lume$/ && $2=="run" || $1 ~ /(^|\/)lume$/ && $3=="run"' | wc -l | tr -d ' '; }
+require_slot() {
+  local running; running=$(running_vms)
+  [ "$running" -lt 2 ] || { echo "$running macOS VMs already run on this Mac; not starting a third" >&2; exit 3; }
+}
+require_slot
 
 if [ -n "$base_image" ]; then
   registry=${base_image%%/*}; rest=${base_image#*/}; org=${rest%%/*}; repo=${rest#*/}
@@ -35,15 +40,18 @@ if [ -n "$base_image" ]; then
 else
   lume clone "$base_vm" "$name"
 fi
-lume set "$name" --display 1920x1080
+lume set "$name" --display 1280x800
 
-payload=$(mktemp -d)
-mkdir -p "$payload/payload"
-cp "$HERE/provision.sh" "$payload/payload/"
-cp -R "$PKG/src/agentenv_cua/drivers/cua_driver_macos" "$payload/payload/"
-cleanup() { if [ "$built" = 0 ]; then lume stop "$name" >/dev/null 2>&1 || true; lume delete "$name" --force >/dev/null 2>&1 || true; fi; rm -rf "$payload"; }
+# lume mounts a shared folder at /Volumes/My Shared Files/<its basename>, so the folder is named `payload`.
+payload_root=$(mktemp -d)
+payload="$payload_root/payload"
+mkdir -p "$payload"
+cp "$HERE/provision.sh" "$HERE/set-display.swift" "$payload/"
+cp -R "$PKG/src/agentenv_cua/drivers/cua_driver_macos" "$payload/"
+cleanup() { if [ "$built" = 0 ]; then lume stop "$name" >/dev/null 2>&1 || true; lume delete "$name" --force >/dev/null 2>&1 || true; fi; rm -rf "$payload_root"; }
 trap cleanup EXIT
 
+require_slot
 lume run "$name" --display none --detach --shared-dir "$payload:ro"
 for _ in $(seq 1 120); do lume ssh "$name" true --timeout 10 >/dev/null 2>&1 && break; sleep 5; done
 lume ssh "$name" 'bash "/Volumes/My Shared Files/payload/provision.sh" "/Volumes/My Shared Files/payload"' --timeout 3600
@@ -51,6 +59,7 @@ lume ssh "$name" 'bash "/Volumes/My Shared Files/payload/provision.sh" "/Volumes
 # A cold boot, as a provider's clone boots: sync first, since a stop drops unsynced writes.
 lume ssh "$name" 'sync' --timeout 30 || true
 lume stop "$name"
+require_slot
 lume run "$name" --display none --detach --shared-dir "$payload:ro"
 for _ in $(seq 1 120); do lume ssh "$name" true --timeout 10 >/dev/null 2>&1 && break; sleep 5; done
 # The tool manifest is pinned per OS. With none in the payload, pin it from the running daemon now and write it

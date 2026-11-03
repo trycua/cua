@@ -15,6 +15,7 @@ Configure it under ``[sandbox.providers.lume.config]``::
     image = "ghcr.io/trycua/<repo>:<tag>"  # a registry image, pulled once into a local base
     ssh_user = "lume"                      # the image's login, for exec
     ssh_password = "env:LUME_SSH_PASSWORD"
+    display = "1280x800"                   # the virtual display's size, set on each clone before it first boots
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ MAX_RUNNING_PER_HOST = 2
 #: Where boot settings land in the guest, under lume's shared-directory mount.
 GUEST_BOOT_FILE = "/Volumes/My Shared Files/agentenv/boot.json"
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_DISPLAY = re.compile(r"^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$")
+#: The size the conformance fixtures need; the image puts the guest in whatever size its clone is given.
+DEFAULT_DISPLAY = "1280x800"
 _IP_POLL_S = 2.0
 
 
@@ -105,6 +109,35 @@ class LumeVmSandbox(VmSandbox):
         await self._provider._destroy(self.sandbox_id)
 
 
+async def _lume_run_processes() -> set[str]:
+    """The VM names in this Mac's ``lume run <name> ...`` processes."""
+    proc = await asyncio.create_subprocess_exec(
+        "ps", "-axo", "command=", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    out, _ = await proc.communicate()
+    names: set[str] = set()
+    for line in out.decode(errors="replace").splitlines():
+        try:
+            argv = shlex.split(line)
+        except ValueError:
+            continue
+        if not argv or Path(argv[0]).name != "lume" or "run" not in argv[1:3]:
+            continue
+        rest = argv[argv.index("run") + 1 :]
+        # `lume run [flags] NAME [flags]`: the first word that isn't a flag or a flag's value.
+        value_flags = {"--display", "--shared-dir", "--storage", "--vnc-port", "--cpu", "--memory"}
+        skip = False
+        for word in rest:
+            if skip:
+                skip = False
+            elif word in value_flags:
+                skip = True
+            elif not word.startswith("-"):
+                names.add(word)
+                break
+    return names
+
+
 class _Stream:
     def __init__(self, data: bytes) -> None:
         self._data = data
@@ -141,6 +174,7 @@ class LumeSandboxProvider(SandboxProvider):
         state_dir: Optional[str] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
+        display: str = DEFAULT_DISPLAY,
         boot_timeout_s: float = 600,
         exec_timeout_s: float = 600,
         max_running: int = MAX_RUNNING_PER_HOST,
@@ -152,6 +186,8 @@ class LumeSandboxProvider(SandboxProvider):
             )
         if not _NAME.match(prefix):
             raise ValueError(f"prefix {prefix!r} must be lowercase letters, digits and dashes")
+        if not _DISPLAY.match(display):
+            raise ValueError(f"display {display!r} must be WIDTHxHEIGHT, such as 1280x800")
         if max_running > MAX_RUNNING_PER_HOST:
             raise ValueError(
                 f"max_running {max_running} is above the {MAX_RUNNING_PER_HOST} macOS VMs per Mac that "
@@ -161,7 +197,7 @@ class LumeSandboxProvider(SandboxProvider):
         self.lume = lume_cli or Lume(lume, storage=storage)
         self.ssh_user, self.ssh_password = ssh_user, ssh_password
         self.state_dir = Path(state_dir or Path.home() / ".agentenv" / "lume")
-        self.cpu, self.memory_mb = cpu, memory_mb
+        self.cpu, self.memory_mb, self.display = cpu, memory_mb, display
         self.boot_timeout_s, self.exec_timeout_s = boot_timeout_s, exec_timeout_s
         self.max_running = max_running
         self._create_lock = asyncio.Lock()
@@ -179,6 +215,7 @@ class LumeSandboxProvider(SandboxProvider):
             "state_dir",
             "cpu",
             "memory_mb",
+            "display",
             "boot_timeout_s",
             "exec_timeout_s",
             "max_running",
@@ -235,7 +272,7 @@ class LumeSandboxProvider(SandboxProvider):
         name = f"{self.prefix}-{uuid.uuid4().hex[:10]}"
         ports = list(exposed_ports or [])
         async with self._create_lock:
-            running = [vm.name for vm in await self.lume.list() if vm.running]
+            running = await self._running_vms()
             if len(running) >= self.max_running:
                 raise RuntimeError(
                     f"{len(running)} macOS VMs already run on this Mac ({', '.join(running)}); the "
@@ -247,7 +284,9 @@ class LumeSandboxProvider(SandboxProvider):
             await self._write_boot(name, env or {})
             try:
                 await self.lume.clone(source, name)
-                await self.lume.set(name, cpu=self.cpu, memory_mb=self.memory_mb)
+                await self.lume.set(
+                    name, cpu=self.cpu, memory_mb=self.memory_mb, display=self.display
+                )
                 await self._remember_mac(name)
                 await self._run(name)
             except BaseException:
@@ -285,7 +324,9 @@ class LumeSandboxProvider(SandboxProvider):
         await self.lume.delete(name)
         await self._write_boot(name, env)
         await self.lume.clone(state["source"], name)
-        await self.lume.set(name, cpu=self.cpu, memory_mb=self.memory_mb)
+        await self.lume.set(
+            name, cpu=self.cpu, memory_mb=self.memory_mb, display=self.display
+        )
         await self._restore_mac(name, state.get("mac"))
         await self._run(name)
         ip = await self._wait_for_ip(name)
@@ -313,6 +354,13 @@ class LumeSandboxProvider(SandboxProvider):
 
     async def _run(self, name: str) -> None:
         await self.lume.run_detached(name, shared_dir=f"{self._share_dir(name)}:ro")
+
+    async def _running_vms(self) -> list[str]:
+        """Names of the VMs running on this Mac: what lume lists as running, plus every VM a ``lume run`` process
+        holds. `lume ls` can show a VM another lume instance runs as stopped, and the host limit counts it."""
+        names = {vm.name for vm in await self.lume.list() if vm.running}
+        names.update(await _lume_run_processes())
+        return sorted(names)
 
     async def _wait_for_ip(self, name: str) -> str:
         try:
@@ -351,11 +399,12 @@ class LumeSandboxProvider(SandboxProvider):
         shutil.rmtree(self.state_dir / name, ignore_errors=True)
 
     def _share_dir(self, name: str) -> Path:
-        return self.state_dir / name / "share"
+        # lume mounts a shared folder at /Volumes/My Shared Files/<its basename>, so this one is named `agentenv`.
+        return self.state_dir / name / "agentenv"
 
     async def _write_boot(self, name: str, env: dict[str, str]) -> None:
         """The boot settings, readable only by this user on the host and read-only in the guest."""
-        folder = self._share_dir(name) / "agentenv"
+        folder = self._share_dir(name)
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = folder / "boot.json"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

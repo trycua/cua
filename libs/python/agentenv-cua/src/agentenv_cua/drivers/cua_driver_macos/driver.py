@@ -20,6 +20,7 @@ import contextlib
 import functools
 import hashlib
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -97,8 +98,17 @@ NAMED = {
     "ArrowRight": "right",
     **{f"F{n}": f"f{n}" for n in range(1, 13)},
 }
-#: What cua-driver's ``check_permissions`` must report true: both TCC grants, and a capture that actually works.
-PERMISSIONS = ("accessibility", "screen_recording", "screen_recording_capturable")
+#: What cua-driver's ``check_permissions`` must report true: both TCC grants. Its read-only call leaves
+#: ``screen_recording_capturable`` null (the live probe could raise macOS's one-time capture consent alert), so a
+#: capture that works is the computer's own ``capture`` ready check; a ``false`` here still fails.
+PERMISSIONS = ("accessibility", "screen_recording")
+#: A computer's pointer is its own: a pointer action on the desktop may front the app under the point, which
+#: cua-driver refuses by default so it doesn't move a person's pointer over a background app.
+POINTER_DELIVERY = "foreground"
+#: How long the pointer rests on a drag's start before the press.
+DRAG_SETTLE_S = 0.2
+#: A drag's intermediate pointer events: about one per pixel, within cua-driver's 1 to 200.
+DRAG_MIN_STEPS, DRAG_MAX_STEPS = 20, 200
 SKILL_TIMEOUT_S = 60
 REPLY_LIMIT = 64 << 20
 #: How much of a command's output computer-exec keeps.
@@ -119,6 +129,8 @@ class CuaDriverMacOS(ComputerDriverEnvironment):
         self._pinned: list[ReadyCheck] | None = None
         self._skill: tuple[str, str, dict[str, str]] | None = None
         self._texts: dict[str, str] | None = None
+        #: The computer has one pointer: concurrent pointer actions would fight over it, and one would be lost.
+        self._pointer = asyncio.Lock()
 
     def forwarded_tools(self) -> list[ForwardedTool]:
         return [
@@ -177,29 +189,48 @@ class CuaDriverMacOS(ComputerDriverEnvironment):
 
     @click
     async def click_at(self, x, y, button, count, modifiers) -> None:
-        await self._send(
-            "click", x=x, y=y, button=button, count=count, modifier=_modifiers(modifiers)
-        )
+        async with self._pointer:
+            await self._send(
+                "click",
+                x=x,
+                y=y,
+                button=button,
+                count=count,
+                modifier=_modifiers(modifiers),
+                delivery_mode=POINTER_DELIVERY,
+            )
 
     @drag
     async def drag_along(self, path, button, duration_ms, modifiers) -> None:
         (x0, y0), (x1, y1) = path[0], path[-1]
-        await self._send(
-            "drag",
-            from_x=x0,
-            from_y=y0,
-            to_x=x1,
-            to_y=y1,
-            button=button,
-            duration_ms=duration_ms,
-            modifier=_modifiers(modifiers),
-        )
+        # An app reads the pointer's place when it handles the press, not where the press happened, so a press can
+        # register one drag step along (a toolkit such as Tk on macOS does): park the pointer on the start first, and
+        # take steps of about a pixel, so that offset stays within a pixel or two.
+        steps = min(DRAG_MAX_STEPS, max(DRAG_MIN_STEPS, math.ceil(max(abs(x1 - x0), abs(y1 - y0)))))
+        async with self._pointer:
+            await self._send("move_cursor", x=x0, y=y0, delivery_mode=POINTER_DELIVERY)
+            await asyncio.sleep(DRAG_SETTLE_S)
+            await self._send(
+                "drag",
+                from_x=x0,
+                from_y=y0,
+                to_x=x1,
+                to_y=y1,
+                button=button,
+                duration_ms=duration_ms,
+                steps=steps,
+                modifier=_modifiers(modifiers),
+                delivery_mode=POINTER_DELIVERY,
+            )
 
     @scroll
     async def scroll_at(self, x, y, direction, amount, modifiers) -> None:
         if modifiers:
             raise Unsupported("cua-driver scrolls with no keys held")
-        await self._send("scroll", x=x, y=y, direction=direction, amount=amount)
+        async with self._pointer:
+            await self._send(
+                "scroll", x=x, y=y, direction=direction, amount=amount, delivery_mode=POINTER_DELIVERY
+            )
 
     @type_text
     async def type_in(self, text) -> None:
@@ -313,11 +344,13 @@ def tool_list_check(listed: list[dict], pinned: list[dict]) -> ReadyCheck:
 def permissions_check(state: dict) -> ReadyCheck:
     """Ready when ``check_permissions`` reports every TCC grant cua-driver needs as granted."""
     missing = [name for name in PERMISSIONS if not _granted(state.get(name))]
+    if state.get("screen_recording_capturable") is False:
+        missing.append("screen_recording_capturable")
     return ReadyCheck(
         "macOS permissions",
         not missing,
         (
-            "Accessibility and Screen Recording granted, capture works"
+            "Accessibility and Screen Recording granted"
             if not missing
             else f"not granted: {', '.join(missing)} (the image's TCC rows don't match this CuaDriver.app)"
         ),

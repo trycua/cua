@@ -96,6 +96,7 @@ def test_the_tool_list_check_names_every_tool_that_differs_from_the_pin(driver):
             {"accessibility": False, "screen_recording": True, "screen_recording_capturable": True},
             False,
         ),
+        ({"accessibility": True, "screen_recording": True, "screen_recording_capturable": None}, True),
         ({}, False),
     ],
 )
@@ -116,3 +117,27 @@ def test_the_pinned_app_is_the_0_38_0_release(driver):
 def test_forwarded_tools_are_the_pinned_ones(driver):
     tools = driver.CuaDriverMacOS().forwarded_tools()
     assert [t.tool.name for t in tools] == ["click", "check_permissions"]
+
+
+@pytest.mark.parametrize("action", ["click", "drag", "scroll"])
+async def test_pointer_actions_are_delivered_in_the_foreground(driver, monkeypatch, action):
+    sent: list[tuple] = []
+
+    async def record(name, **args):
+        sent.append((name, args))
+
+    monkeypatch.setattr(driver, "DRAG_SETTLE_S", 0)
+    env = driver.CuaDriverMacOS()
+    env._send = record
+    if action == "click":
+        await env.click_at(5, 6, "left", 1, [])
+    elif action == "drag":
+        await env.drag_along([(1, 2), (3, 4)], "left", 100, [])
+    else:
+        await env.scroll_at(5, 6, "down", 2, [])
+
+    assert [name for name, _ in sent][-1] == action
+    assert all(args["delivery_mode"] == "foreground" for _, args in sent)
+    if action == "drag":
+        assert sent[0] == ("move_cursor", {"x": 1, "y": 2, "delivery_mode": "foreground"})
+        assert 20 <= sent[1][1]["steps"] <= 200

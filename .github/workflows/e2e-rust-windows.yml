@@ -223,7 +223,7 @@ jobs:
     if: inputs.lane == 'all' || inputs.lane == 'installer'
     name: "Windows / installer and update smoke"
     needs: source
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}

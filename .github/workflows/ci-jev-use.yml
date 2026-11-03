@@ -614,7 +614,7 @@ jobs:
 
   released-driver-windows:
     name: Windows released Driver mock E2E
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       MIN_RELEASED_DRIVER_VERSION: "0.30.1"
@@ -728,7 +728,7 @@ jobs:
   # the harness's own state file as the independent oracle.
   native-wpf-windows:
     name: Windows native WPF mock E2E
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       MIN_RELEASED_DRIVER_VERSION: "0.30.1"
@@ -874,7 +874,7 @@ jobs:
   # own state file as the independent oracle.
   native-winui3-windows:
     name: Windows native WinUI3 mock E2E
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       MIN_RELEASED_DRIVER_VERSION: "0.30.1"

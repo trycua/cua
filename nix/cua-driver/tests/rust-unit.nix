@@ -64,6 +64,11 @@ pkgs.rustPlatform.buildRustPackage {
     libxkbcommon
   ];
 
+  # The check phase compiles every test target itself and installPhase only
+  # touches $out, so the build phase's separate release build of the
+  # workspace (about 15 minutes) produced nothing this check uses.
+  dontBuild = true;
+
   # Focus unit tests launch private Xvfb servers. The ignored desktop
   # matrix is run by the manual Linux e2e workflow and is not hidden in Nix.
   doCheck = true;

@@ -12,6 +12,10 @@ inputs:
     description: "Cargo features of the cua CLI (for example contrib)."
     default: ""
 
+  cache-key:
+    description: "Rust cache key. Parallel builds of one component each pass their own so their caches do not collide."
+    default: "cua-under-test"
+
 outputs:
   cua:
     description: "Path of the cua CLI."
@@ -48,7 +52,7 @@ runs:
           libs/cua -> target
           libs/cua-spacesd -> target
           libs/cua-driver/rust -> target
-        key: cua-under-test
+        key: ${{ inputs.cache-key }}
     - name: Install build dependencies
       shell: bash
       run: |

@@ -260,9 +260,16 @@ pub enum SharedSurfaceAction {
 }
 
 /// Arbitration for a backend that can draw only one agent cursor, such as the
-/// GNOME Shell helper. The surface belongs to the session that drew last; only
-/// that session's end, or its idle timeout, hides it. Another session ending
-/// leaves it alone.
+/// GNOME Shell helper. The surface belongs to the session that last placed a
+/// cursor on it (a move, snap or click); only that session's end, or its idle
+/// timeout, hides it. Another session ending leaves it alone.
+///
+/// Commands that do not place a cursor (a session label, an action cue, a
+/// theme) never take the surface: a backend with one cursor per session draws
+/// nothing for a session that was never placed, so neither may this one. Every
+/// CLI call briefly runs under its own per-call session before the named one,
+/// and letting that restyle the shared cursor flashed a different colour on
+/// each call.
 #[derive(Debug, Clone, Default)]
 pub struct SharedCursorSurface {
     owner: Option<String>,
@@ -275,12 +282,17 @@ impl SharedCursorSurface {
         Self::default()
     }
 
-    /// A render command for `key` at `now`.
-    pub fn on_command(&mut self, key: &str, now: Instant) -> SharedSurfaceAction {
+    /// A render command for `key` at `now`. `places` is true for a command
+    /// that puts the cursor somewhere (move, snap, click); only those can take
+    /// the surface from another session, or claim an empty one.
+    pub fn on_command(&mut self, key: &str, now: Instant, places: bool) -> SharedSurfaceAction {
         if self.ended.contains(key) {
             return SharedSurfaceAction::Keep;
         }
         let switched = self.owner.as_deref() != Some(key);
+        if switched && !places {
+            return SharedSurfaceAction::Keep;
+        }
         self.owner = Some(key.to_owned());
         self.last_activity = Some(now);
         SharedSurfaceAction::Draw { switched }
@@ -443,33 +455,68 @@ mod tests {
         let now = Instant::now();
         let mut surface = SharedCursorSurface::new();
         assert_eq!(
-            surface.on_command("run-a", now),
+            surface.on_command("run-a", now, true),
             SharedSurfaceAction::Draw { switched: true }
         );
         assert_eq!(
-            surface.on_command("run-a", now),
+            surface.on_command("run-a", now, false),
             SharedSurfaceAction::Draw { switched: false }
         );
         // Another session (that never drew, or drew earlier) ending keeps it.
         assert_eq!(surface.on_session_end("run-b"), SharedSurfaceAction::Keep);
         assert_eq!(surface.owner(), Some("run-a"));
         // A late command from the ended session cannot take the surface.
-        assert_eq!(surface.on_command("run-b", now), SharedSurfaceAction::Keep);
+        assert_eq!(
+            surface.on_command("run-b", now, true),
+            SharedSurfaceAction::Keep
+        );
         assert_eq!(surface.on_session_end("run-a"), SharedSurfaceAction::Hide);
         assert_eq!(surface.owner(), None);
         assert_eq!(surface.on_session_end("default"), SharedSurfaceAction::Keep);
         surface.on_session_revive("run-b");
         assert_eq!(
-            surface.on_command("run-b", now),
+            surface.on_command("run-b", now, true),
             SharedSurfaceAction::Draw { switched: true }
         );
+    }
+
+    #[test]
+    fn only_a_placing_command_takes_the_shared_surface() {
+        let now = Instant::now();
+        let mut surface = SharedCursorSurface::new();
+        // A label or action cue alone claims nothing, even an empty surface.
+        assert_eq!(
+            surface.on_command("run-a", now, false),
+            SharedSurfaceAction::Keep
+        );
+        assert_eq!(surface.owner(), None);
+        assert_eq!(
+            surface.on_command("run-a", now, true),
+            SharedSurfaceAction::Draw { switched: true }
+        );
+        // A per-call session that never places a cursor cannot restyle it.
+        assert_eq!(
+            surface.on_command("cli-call-1", now, false),
+            SharedSurfaceAction::Keep
+        );
+        assert_eq!(surface.owner(), Some("run-a"));
+        assert_eq!(
+            surface.on_command("run-a", now, false),
+            SharedSurfaceAction::Draw { switched: false }
+        );
+        // Placing a cursor is what hands the surface to another session.
+        assert_eq!(
+            surface.on_command("run-b", now, true),
+            SharedSurfaceAction::Draw { switched: true }
+        );
+        assert_eq!(surface.owner(), Some("run-b"));
     }
 
     #[test]
     fn shared_surface_hides_after_idle_timeout() {
         let start = Instant::now();
         let mut surface = SharedCursorSurface::new();
-        surface.on_command("run-a", start);
+        surface.on_command("run-a", start, true);
         assert_eq!(
             surface.idle_deadline(AGENT_CURSOR_IDLE_TIMEOUT),
             Some(start + AGENT_CURSOR_IDLE_TIMEOUT)
@@ -492,7 +539,7 @@ mod tests {
         assert_eq!(surface.idle_deadline(AGENT_CURSOR_IDLE_TIMEOUT), None);
         // The idle owner still owns it; its next action redraws in place.
         assert_eq!(
-            surface.on_command("run-a", after),
+            surface.on_command("run-a", after, false),
             SharedSurfaceAction::Draw { switched: false }
         );
     }

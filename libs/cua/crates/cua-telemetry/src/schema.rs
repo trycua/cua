@@ -509,7 +509,8 @@ pub const CREATE_PHASES: &[&str] = &[
 /// too coarse (`cua_create_failure::retry::Subclass`): a local runtime that
 /// did not start this time, Cua's service that did not take the create, an
 /// image download that stopped partway, macOS Local Network privacy off, a
-/// VPN routing the VM's network away. `none` when there is nothing finer.
+/// VPN routing the VM's network away, a machine with no room (held by Cua
+/// VMs, or by other programs). `none` when there is nothing finer.
 pub const ERROR_SUBCLASSES: &[&str] = &[
     "none",
     "runtime_start",
@@ -517,6 +518,8 @@ pub const ERROR_SUBCLASSES: &[&str] = &[
     "pull_interrupted",
     "local_network_denied",
     "local_network_vpn",
+    "capacity_vms",
+    "capacity_other",
 ];
 /// Time from create to ready (or to the failure), bucketed finely enough
 /// for median and p90 estimates.
@@ -1921,7 +1924,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "error_subclass",
                 Kind::Enum(ERROR_SUBCLASSES),
-                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, local_network_denied, local_network_vpn); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
+                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, local_network_denied, local_network_vpn, capacity_vms, capacity_other); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
             ),
         ],
         purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts, and how often one automatic retry saves a create.",

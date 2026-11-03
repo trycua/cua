@@ -63,6 +63,16 @@ pub fn macos_limit_message(others: &[String]) -> String {
     )
 }
 
+/// The host a macOS guest's published ports are dialed on once they are
+/// forwarded over vsock ([`client::VmDetails::forwards`]).
+pub const VSOCK_HOST: &str = "127.0.0.1";
+
+/// How long a start keeps waiting for a guest's vsock path after its
+/// network address turned out unreachable (Local Network privacy or a VPN)
+/// before it reports that: the agent starts with the guest's services, so
+/// a guest that has one answers well within this.
+pub const VSOCK_GRACE: Duration = Duration::from_secs(30);
+
 /// Where a macOS guest sees the shared host directory `host`.
 pub fn macos_share_path(host: &std::path::Path) -> String {
     format!(
@@ -948,6 +958,18 @@ impl LumeRuntime {
             }),
             None => None,
         };
+        // A macOS guest whose vsock agent answers: its published ports are
+        // host loopback ports Lume carries over vsock, which neither macOS
+        // Local Network privacy nor a VPN's routes touch.
+        if let Some(forwarded) = vm.vsock_ports(ports) {
+            return Endpoints {
+                host: VSOCK_HOST.into(),
+                ports: forwarded,
+                vnc,
+                ssh,
+                ..Default::default()
+            };
+        }
         Endpoints {
             host: ip,
             // Lume VMs sit on a host-reachable NAT network: guest ports are
@@ -1306,6 +1328,14 @@ impl LumeRuntime {
             no_display: true,
             shared_directories,
             vnc: (!builtin::vnc_enabled()).then(|| "disabled".to_string()),
+            // The published ports also over vsock (the IP stays the
+            // fallback for a guest without the agent). A restart publishes
+            // what the start did, so a state saved with the socket device
+            // restores into one.
+            forwards: match spec {
+                Some(s) => s.ports.clone(),
+                None => self.load_ports(name),
+            },
             ..Default::default()
         })
     }
@@ -2282,14 +2312,112 @@ impl LumeRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        crate::probe::wait_all(
+        self.wait_services(
             &spec.name,
-            &inst.endpoints,
+            inst,
+            spec.ssh.as_ref(),
+            &spec.ports,
             &spec.probes,
             spec.ready_timeout,
         )
-        .await?;
-        Ok(inst)
+        .await
+    }
+
+    /// Waits for `probes` on the VM `name` (started with `ports` forwarded
+    /// over vsock, [`Self::macos_run`]) and returns the instance to use:
+    /// the vsock path (host loopback ports) once the guest agent answers,
+    /// else the VM's address (`ip_inst`). Both are tried together; a VM
+    /// address that has no route (macOS Local Network privacy, a VPN) only
+    /// fails the wait when the vsock path also fails to come up within
+    /// [`VSOCK_GRACE`] (a guest without the agent, or a Lume without vsock).
+    async fn wait_services(
+        &self,
+        name: &str,
+        ip_inst: Instance,
+        ssh: Option<&SshAccess>,
+        ports: &[u16],
+        probes: &[Probe],
+        timeout: Duration,
+    ) -> Result<Instance> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        if ip_inst.endpoints.host == VSOCK_HOST || ports.is_empty() {
+            crate::probe::wait_all(name, &ip_inst.endpoints, probes, timeout).await?;
+            return Ok(ip_inst);
+        }
+        let via_vsock = async {
+            let inst = self.vsock_instance(name, ssh, ports, deadline).await?;
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            crate::probe::wait_all(name, &inst.endpoints, probes, left)
+                .await
+                .ok()?;
+            Some(inst)
+        };
+        let ip_endpoints = ip_inst.endpoints.clone();
+        let via_ip = crate::probe::wait_all(name, &ip_endpoints, probes, timeout);
+        tokio::pin!(via_vsock, via_ip);
+        let mut vsock_over = false;
+        loop {
+            tokio::select! {
+                biased;
+                r = &mut via_vsock, if !vsock_over => match r {
+                    Some(inst) => return Ok(inst),
+                    None => vsock_over = true,
+                },
+                ip = &mut via_ip => {
+                    // Both work: prefer the path a VPN connecting later
+                    // cannot break, when it is already up. No route: give
+                    // the vsock path its grace before saying so.
+                    let tail = match &ip {
+                        Ok(()) => Duration::from_secs(2),
+                        Err(_) => VSOCK_GRACE,
+                    };
+                    if !vsock_over
+                        && let Ok(Some(inst)) = tokio::time::timeout(tail, &mut via_vsock).await
+                    {
+                        if let Err(e) = &ip {
+                            tracing::info!(vm = name, error = %e, "reached the guest over vsock; its address did not answer");
+                        }
+                        return Ok(inst);
+                    }
+                    return ip.map(|()| ip_inst);
+                }
+            }
+        }
+    }
+
+    /// The instance on the vsock path once Lume reports `ports` forwarded
+    /// with the guest agent answering, or `None` when it never will (Lume
+    /// runs the VM without vsock) or `deadline` passes.
+    async fn vsock_instance(
+        &self,
+        name: &str,
+        ssh: Option<&SshAccess>,
+        ports: &[u16],
+        deadline: tokio::time::Instant,
+    ) -> Option<Instance> {
+        // Lume records the forwards right after the VM starts: a VM seen
+        // running without them this many times in a row has none.
+        const NO_VSOCK_POLLS: u32 = 4;
+        let mut running_without = 0;
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(vm)) = self.client.get(name).await {
+                if vm.vsock_ports(ports).is_some() {
+                    return Some(Self::instance(&vm, ssh, ports));
+                }
+                // An older Lume, or a resume of a state saved without the
+                // socket device.
+                if map_status(&vm.status) == Status::Running && !vm.vsock {
+                    running_without += 1;
+                    if running_without >= NO_VSOCK_POLLS {
+                        return None;
+                    }
+                } else {
+                    running_without = 0;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        None
     }
 
     async fn stop_vm(&self, name: &str) -> Result<()> {
@@ -2430,8 +2558,15 @@ impl LumeRuntime {
             self.client.run(&building, &run).await?;
             let vm = self.wait_for_ip(&building).await?;
             let inst = Self::instance(&vm, None, &spec.ports);
-            crate::probe::wait_all(&building, &inst.endpoints, &spec.probes, spec.ready_timeout)
-                .await?;
+            self.wait_services(
+                &building,
+                inst,
+                None,
+                &spec.ports,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+            .await?;
             tokio::time::sleep(settle).await;
             let ready = started.elapsed();
             self.client.suspend(&building).await?;
@@ -4155,5 +4290,70 @@ mod tests {
         assert_eq!(ep.ssh.as_ref().unwrap().user, "lume");
         assert_eq!(ep.vnc.as_ref().unwrap().port, 5905);
         assert_eq!(ep.vnc.as_ref().unwrap().password.as_deref(), Some("pw"));
+    }
+
+    #[test]
+    fn forwarded_ports_are_dialed_on_loopback_once_every_one_is_there() {
+        let vm: VmDetails = serde_json::from_value(serde_json::json!({
+            "name": "m", "os": "macOS", "status": "running",
+            "ipAddress": "192.168.64.9",
+            "vsock": true, "forwards": { "3211": 50123, "8080": 50124 }
+        }))
+        .unwrap();
+        let ep = LumeRuntime::endpoints_from(&vm, None, &[3211, 8080]);
+        assert_eq!(ep.host, VSOCK_HOST);
+        assert_eq!(ep.addr(3211).as_deref(), Some("127.0.0.1:50123"));
+        assert_eq!(ep.host_port(22), None);
+        // SSH stays on the VM's address.
+        assert_eq!(ep.ssh.as_ref().unwrap().host, "192.168.64.9");
+        // A port Lume does not forward: the VM's address for all of them.
+        let ep = LumeRuntime::endpoints_from(&vm, None, &[3211, 9000]);
+        assert_eq!(ep.host, "192.168.64.9");
+        assert_eq!(ep.host_port(9000), Some(9000));
+    }
+
+    #[test]
+    fn forwards_count_only_once_the_agent_answers() {
+        // Lume reports the forwards only then; before, `vsock` alone.
+        let vm: VmDetails = serde_json::from_value(serde_json::json!({
+            "name": "m", "status": "running", "ipAddress": "192.168.64.9", "vsock": true
+        }))
+        .unwrap();
+        assert!(vm.vsock && vm.vsock_ports(&[3211]).is_none());
+        // An older Lume reports neither.
+        let old: VmDetails =
+            serde_json::from_value(serde_json::json!({ "name": "m", "status": "running" }))
+                .unwrap();
+        assert!(!old.vsock && old.forwards.is_empty());
+    }
+
+    #[test]
+    fn a_macos_run_forwards_its_published_ports() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        let spec = StartSpec::new("m", ImageSource::Existing)
+            .os(GuestOs::Macos)
+            .port(3211);
+        let run = rt.macos_run("m", Some(&spec)).unwrap();
+        assert_eq!(run.forwards, vec![3211]);
+        assert_eq!(
+            serde_json::to_value(&run).unwrap()["forwards"],
+            serde_json::json!([3211])
+        );
+        // A restart forwards what the start published.
+        rt.save_ports("m", &[3211]);
+        assert_eq!(rt.macos_run("m", None).unwrap().forwards, vec![3211]);
+        // Nothing published: the field is left out (an older Lume never sees it).
+        let bare = StartSpec::new("n", ImageSource::Existing).os(GuestOs::Macos);
+        let run = rt.macos_run("n", Some(&bare)).unwrap();
+        assert!(
+            serde_json::to_value(&run)
+                .unwrap()
+                .get("forwards")
+                .is_none()
+        );
     }
 }

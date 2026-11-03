@@ -281,14 +281,6 @@ pub(crate) fn record(made: Made) {
     let _ = CURRENT.try_with(|j| j.record(made));
 }
 
-/// Whether the create this task runs generated its name (`false` outside
-/// one).
-pub(crate) fn generated_name() -> bool {
-    CURRENT
-        .try_with(|j| j.state.lock().unwrap_or_else(|e| e.into_inner()).generated)
-        .unwrap_or(false)
-}
-
 /// Records the token of the create this task runs.
 pub(crate) fn set_token(token: &str) {
     let _ = CURRENT.try_with(|j| j.set_token(token));

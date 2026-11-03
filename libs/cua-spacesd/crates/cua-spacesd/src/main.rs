@@ -945,6 +945,11 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     );
 
     let shutdown = ctx.shutdown_token();
+    // In a macOS VM, the host reaches this server over vsock as well as
+    // over the VM network (which macOS Local Network privacy and VPNs can
+    // block on the host).
+    #[cfg(target_os = "macos")]
+    cua_spacesd::vsock_agent::start();
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {

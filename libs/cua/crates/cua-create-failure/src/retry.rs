@@ -40,6 +40,13 @@ pub enum Subclass {
     LocalNetworkDenied,
     /// A VPN routes the VM's private network away.
     LocalNetworkVpn,
+    /// This machine had no room, and Cua VMs it runs hold the capacity (a
+    /// refusal that names them, so the person can stop them). A VM left
+    /// running by an earlier attempt shows up here.
+    CapacityVms,
+    /// This machine had no room while no Cua VM runs: other programs use
+    /// its memory or CPUs, or its limits are set too tight.
+    CapacityOther,
 }
 
 /// Every [`Subclass`] word, in order (`cua_telemetry::schema::ERROR_SUBCLASSES`).
@@ -50,6 +57,8 @@ pub const SUBCLASSES: &[&str] = &[
     "pull_interrupted",
     "local_network_denied",
     "local_network_vpn",
+    "capacity_vms",
+    "capacity_other",
 ];
 
 impl Subclass {
@@ -62,6 +71,8 @@ impl Subclass {
             Self::PullInterrupted => "pull_interrupted",
             Self::LocalNetworkDenied => "local_network_denied",
             Self::LocalNetworkVpn => "local_network_vpn",
+            Self::CapacityVms => "capacity_vms",
+            Self::CapacityOther => "capacity_other",
         }
     }
 
@@ -73,6 +84,8 @@ impl Subclass {
             "pull_interrupted" => Self::PullInterrupted,
             "local_network_denied" => Self::LocalNetworkDenied,
             "local_network_vpn" => Self::LocalNetworkVpn,
+            "capacity_vms" => Self::CapacityVms,
+            "capacity_other" => Self::CapacityOther,
             _ => Self::None,
         }
     }
@@ -132,6 +145,17 @@ pub fn subclass(kind: &str, message: &str) -> Subclass {
         "local_network_denied" => return Subclass::LocalNetworkDenied,
         "local_network_vpn" => return Subclass::LocalNetworkVpn,
         _ => {}
+    }
+    // No room on this machine: told apart by whether the refusal names Cua
+    // VMs holding it (`cua_vmm::density::holders_note`). Both are lasting.
+    if kind == "host_capacity" {
+        if message.contains("Running now:") {
+            return Subclass::CapacityVms;
+        }
+        if message.contains("No Cua VM is running") {
+            return Subclass::CapacityOther;
+        }
+        return Subclass::None;
     }
     // A specific lasting cause stays itself: "permission denied" in a
     // runtime's start is a permission problem, not a passing one.
@@ -206,6 +230,23 @@ mod tests {
         for w in SUBCLASSES {
             assert_eq!(Subclass::from_word(w).as_str(), *w);
         }
+    }
+
+    #[test]
+    fn no_room_says_whether_cua_vms_hold_the_capacity() {
+        let held = "this host is at its VM memory limit: its VMs use 5.0 GiB. Running now: a (4.0 GiB, 2 vCPUs), b (1.0 GiB, 2 vCPUs). Stop or delete the ones you do not need";
+        let (kind, sub, retry) = classify(held, "booting", "HostCapacity");
+        assert_eq!(kind, "host_capacity");
+        assert_eq!(sub, Subclass::CapacityVms);
+        assert_eq!(retry, Retry::Never);
+        let other = "this host has 1.0 GiB of memory available. No Cua VM is running on this machine, so other programs are using its memory or CPUs";
+        let (kind, sub, retry) = classify(other, "booting", "HostCapacity");
+        assert_eq!(kind, "host_capacity");
+        assert_eq!(sub, Subclass::CapacityOther);
+        assert_eq!(retry, Retry::Never);
+        // Other refusals (file table, disk) say nothing finer.
+        let (_, sub, _) = classify("out of open-file capacity", "booting", "HostCapacity");
+        assert_eq!(sub, Subclass::None);
     }
 
     #[test]

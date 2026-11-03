@@ -47,6 +47,8 @@ say.
 | `pull_interrupted` | The image download stopped partway. Another try resumes it. |
 | `local_network_denied` | macOS Local Network privacy is off for the app or its service. |
 | `local_network_vpn` | A VPN routes the VM's private network away. |
+| `capacity_vms` | `host_capacity`: this machine had no room and Cua VMs it runs hold the capacity (the error names them so the person can stop them). A VM left running by an earlier failed attempt shows up here. |
+| `capacity_other` | `host_capacity`: this machine had no room while no Cua VM runs there; other programs use its memory or CPUs, or its limits are too tight. |
 
 ## Automatic retry
 

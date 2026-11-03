@@ -66,6 +66,10 @@ class VM {
     /// because a VNC-disabled session's marker is not owned by `vncService`.
     private var activeVNCPolicy: VNCPolicy = .enabled
     private var activeNoVNCSession: VNCSession?
+    /// Host loopback ports carried to the guest over vsock (a run with
+    /// `forwards`), and whether this run's VM has the socket device.
+    private var vsockForwarder: VsockForwarder?
+    private var activeSocketDevice = false
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
@@ -180,6 +184,7 @@ class VM {
 
         // Check if SSH is available (only if we have an IP)
         let sshAvailable: Bool? = ipAddress != nil ? NetworkUtils.isSSHAvailable(ipAddress: ipAddress!) : nil
+        let vsockSession = isRunning ? vmDirContext.dir.loadVsockSession() : nil
 
         return VMDetails(
             name: vmDirContext.name,
@@ -196,7 +201,9 @@ class VM {
             networkMode: vmDirContext.config.networkMode.description,
             machineIdentifier: vmDirContext.config.machineIdentifier?.base64EncodedString(),
             macAddress: macAddress,
-            savedState: vmDirContext.dir.hasSavedState()
+            savedState: vmDirContext.dir.hasSavedState(),
+            vsock: vsockSession.map { _ in true },
+            forwards: vsockSession.flatMap { $0.agent ? $0.forwards : nil }
         )
     }
 
@@ -216,7 +223,7 @@ class VM {
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = []
     ) async throws {
         // Defense in depth: the CLI and the controller reject these combinations
         // first, but no caller may reach a VNC-dependent path with VNC disabled.
@@ -330,7 +337,7 @@ class VM {
 
             Logger.info(
                 "Creating virtualization service context", metadata: ["name": vmDirContext.name])
-            let config = try createVMVirtualizationServiceContext(
+            var config = try createVMVirtualizationServiceContext(
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 display: vmDirContext.config.display.string,
@@ -342,6 +349,15 @@ class VM {
                 networkMode: networkMode
             )
             activeNetworkMode = config.networkMode
+            // A saved state restores only into the devices it was saved
+            // with: one saved without the socket device resumes without
+            // forwards (the client then uses the VM's address).
+            activeSocketDevice = Self.usesSocketDevice(
+                forwards: forwards,
+                hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
+                savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
+            config.socketDevice = activeSocketDevice
+            vmDirContext.dir.clearVsockSession()
             Logger.info(
                 "Successfully created virtualization service context",
                 metadata: ["name": vmDirContext.name])
@@ -432,6 +448,9 @@ class VM {
                 try await service.start()
             }
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+            if activeSocketDevice {
+                startVsockForwards(forwards, service: service)
+            }
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
                     transport: telemetryTransport,
@@ -844,6 +863,7 @@ class VM {
             try await service.saveMachineState(to: partial)
             try? FileManager.default.removeItem(at: state.url)
             try FileManager.default.moveItem(at: partial, to: state.url)
+            vmDirContext.dir.markSavedStateVsock(activeSocketDevice)
         } catch {
             try? FileManager.default.removeItem(at: partial)
             if wasRunning, service.state == .paused {
@@ -895,6 +915,9 @@ class VM {
         scopedSharedDirectoryURLs.removeAll()
         activeSharedDirectories.removeAll()
         vncService.stop()
+        vsockForwarder?.stop()
+        vsockForwarder = nil
+        vmDirContext.dir.clearVsockSession()
         if !activeVNCPolicy.isEnabled {
             // No VNC service owns this run's marker, so drop it here. Doing it
             // unconditionally also covers a failed start that never booted.
@@ -1438,6 +1461,49 @@ class VM {
         }
 
         return false
+    }
+
+    // MARK: - Host port forwards over vsock
+
+    /// Whether a run with `forwards` gets a virtio socket device: always on
+    /// a cold boot; on a resume only when the state was saved with one.
+    nonisolated static func usesSocketDevice(
+        forwards: [UInt16], hasSavedState: Bool, savedStateHasVsock: Bool
+    ) -> Bool {
+        !forwards.isEmpty && (!hasSavedState || savedStateHasVsock)
+    }
+
+    /// Publishes `forwards` on host loopback ports through the guest agent
+    /// and records them (`vsock.json`) for `get`. A failure leaves the VM
+    /// reachable on its address only.
+    private func startVsockForwards(_ forwards: [UInt16], service: VMVirtualizationService) {
+        guard let connect = service.vsockConnector() else {
+            Logger.error("The VM has no virtio socket device", metadata: ["name": vmDirContext.name])
+            return
+        }
+        do {
+            let forwarder = try VsockForwarder(guestPorts: forwards, connect: connect)
+            let dir = vmDirContext.dir
+            dir.saveVsockSession(forwarder.session(agent: false))
+            let ready = forwarder.session(agent: true)
+            let name = vmDirContext.name
+            forwarder.start {
+                dir.saveVsockSession(ready)
+                Logger.info("The guest agent answers over vsock", metadata: ["name": name])
+            }
+            vsockForwarder = forwarder
+            Logger.info(
+                "Forwarding host loopback ports over vsock",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "forwards": forwarder.forwards.map { "\($0.value)->\($0.key)" }
+                        .sorted().joined(separator: ","),
+                ])
+        } catch {
+            Logger.error(
+                "Could not forward ports over vsock",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+        }
     }
 
     // MARK: - Platform-specific Methods

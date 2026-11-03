@@ -615,9 +615,9 @@ impl LocalRuntime for UnreadyRuntime {
 }
 
 /// A Space whose start fails after its instance exists leaves nothing
-/// running that no registry lists: the instance of a generated name is
-/// deleted, and the error says why. A name the caller chose is never
-/// deleted (it may be an instance the caller already had).
+/// running that no registry lists: the instance this create made is
+/// deleted, and the error says why, whoever chose the name. A name that
+/// already had an instance is never deleted (it may be one the caller had).
 #[tokio::test]
 async fn a_space_that_fails_to_start_leaves_no_instance() {
     let rt = Arc::new(UnreadyRuntime::default());
@@ -642,14 +642,25 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let e = spaces.create(create(None)).await.unwrap_err();
     assert!(e.to_string().contains("Local Network access"), "{e}");
     let deleted = rt.deleted.lock().unwrap().clone();
-    assert_eq!(deleted.len(), 1, "{deleted:?}");
-    assert!(deleted[0].starts_with("space-"), "{deleted:?}");
+    assert!(!deleted.is_empty(), "{deleted:?}");
+    assert!(
+        deleted.iter().all(|d| d.starts_with("space-")),
+        "{deleted:?}"
+    );
     assert!(rt.running.lock().unwrap().is_empty());
     assert!(spaces.list().unwrap().is_empty());
 
+    // A name the caller chose is this attempt's too: a failed create must
+    // not leave a VM holding the machine's capacity against the retry.
     spaces.create(create(Some("mine"))).await.unwrap_err();
-    assert_eq!(rt.deleted.lock().unwrap().len(), 1);
-    assert!(rt.running.lock().unwrap().contains_key("mine"));
+    assert!(rt.deleted.lock().unwrap().iter().any(|d| d == "mine"));
+    assert!(rt.running.lock().unwrap().is_empty());
+
+    // But a name that already had an instance is left alone.
+    rt.running.lock().unwrap().insert("theirs".into(), true);
+    spaces.create(create(Some("theirs"))).await.unwrap_err();
+    assert!(!rt.deleted.lock().unwrap().iter().any(|d| d == "theirs"));
+    assert!(rt.running.lock().unwrap().contains_key("theirs"));
 }
 
 /// `cua sb resume` on a local Space returns once its cua-spacesd answers,

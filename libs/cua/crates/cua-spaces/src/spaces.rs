@@ -3041,10 +3041,13 @@ impl Spaces {
         }
         if let Err(e) = created {
             // A start that failed after the instance existed (a readiness
-            // probe that never passed) leaves a running VM no registry
-            // lists: nothing would ever show or stop it. One under a name
-            // the caller chose stays to debug.
-            if fresh && crate::creating::generated_name() {
+            // probe that never passed, a host with no room) leaves a VM no
+            // registry lists: nothing would ever show or stop it, and it
+            // would hold this machine's memory and CPUs against every retry.
+            // `fresh` says the name had nothing before this create, so
+            // whatever is under it is this attempt's: delete it, whoever
+            // chose the name.
+            if fresh {
                 match self.inner.sandboxes.delete(&name).await {
                     Ok(()) | Err(cua_sandbox_core::Error::NotFound(_)) => {}
                     Err(d) => {

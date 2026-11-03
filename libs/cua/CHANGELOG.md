@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.1](https://github.com/trycua/cua/compare/cua-sdk-v0.10.0...cua-sdk-v0.10.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **cua-sdk:** a restarted microVM comes back, restart waits for the guest, and Apple's Containerization pulls private images ([#6308](https://github.com/trycua/cua/issues/6308)) ([f48a905](https://github.com/trycua/cua/commit/f48a905ca688303bac07a4134784a116b928a042))
+* **cua-sdk:** the QEMU monitor listens on a private socket and the display asks for a password ([#6301](https://github.com/trycua/cua/issues/6301)) ([504c0a4](https://github.com/trycua/cua/commit/504c0a4828d2687905cd7b82fbc9e55207e35e86))
+* **cua-spacesd:** a file write on the Cua Volume mount no longer fails after the file is in place ([#6322](https://github.com/trycua/cua/issues/6322)) ([8c55aa4](https://github.com/trycua/cua/commit/8c55aa4ca8b998c0198625b4df517c5987ecfb0e))
+* **e2e:** Python/TS fork-batch no longer writes to the real ~/.cua; batched forks keep their first error (CUA-3092) ([#6312](https://github.com/trycua/cua/issues/6312)) ([662432d](https://github.com/trycua/cua/commit/662432d9ecdd58941c99b3e65ee0e482cc9275f2))
+* **spaces:** plain message when a Mac cannot run Spaces, and first-run fixes (CUA-3063) ([#6323](https://github.com/trycua/cua/issues/6323)) ([7f3b4dd](https://github.com/trycua/cua/commit/7f3b4dd742d128bbd867ca20974ef08b69ccbdd9))
+
 ## [0.10.0](https://github.com/trycua/cua/compare/cua-sdk-v0.9.0...cua-sdk-v0.10.0) (2026-11-02)
 
 

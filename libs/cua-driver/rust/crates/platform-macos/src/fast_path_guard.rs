@@ -327,6 +327,7 @@ pub enum Outcome {
     Refuse(ToolResult),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish(
     tool: &str,
     verdict: Verdict,

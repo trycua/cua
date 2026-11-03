@@ -147,6 +147,11 @@ files and query its current GitHub title. Correct the title yourself when the
 scope or release impact changed during implementation, and wait for
 `CI: Release metadata` to pass. Do not leave title correction for a maintainer.
 
+When you add notes to a Release Please PR body, put them below its version
+heading (`## [x.y.z](...)`), never above it. Release Please reads the version
+from that heading; with text above it, it tags every component with the PR's
+version (#6350). `CI: Release metadata` and the release workflow both check this.
+
 ## Monorepo component release resolution
 
 Cua is a monorepo with independent component release streams. Never use

@@ -1378,6 +1378,7 @@ dependencies = [
  "cua-host",
  "cua-sandbox-core",
  "cua-spacesd-client",
+ "cua-vmm",
  "humantime",
  "rand 0.9.5",
  "reqwest 0.12.28",

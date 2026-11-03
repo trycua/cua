@@ -21,6 +21,20 @@
 //! The policy is kept per container under `~/.cua/docker/egress/<name>.json`:
 //! every start applies it again (an engine or host restart drops the
 //! rules), and forks inherit it.
+//!
+//! **Secure default** ([`crate::network`]). Unless `CUA_SECURE_DEFAULT=0`,
+//! every container is policed, policy or not: its network settings
+//! (`internet` when none were given; an old egress policy becomes `custom`)
+//! are compiled with what the engine host says (its resolvers, its own
+//! addresses, its host aliases, the tree's subnet and other trees'), and the
+//! rules always include the platform denies, `fib daddr type local` for
+//! the engine host's own addresses and the default denies. Every container
+//! runs without `CAP_NET_RAW`, with its own MAC and the anti-spoof rules,
+//! on a Docker network of its own tree (`cua-t-<12 hex>`, inter-container
+//! traffic on inside the tree): Spaces of other trees are on other bridges
+//! and blocked. DNS keeps working: Docker's embedded resolver on a
+//! user-defined network forwards to the engine host's resolvers, and those
+//! are allowed on port 53.
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -29,15 +43,30 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{ContainerRuntime, engine_err};
-use crate::egress::{self, BridgePort, EgressPolicy, EngineTarget};
+use crate::egress::{self, BridgePort, EgressPolicy, EngineTarget, Net};
 use crate::error::{Result, VmmError};
 use crate::host;
+use crate::network::{Mode, NetworkContext, NetworkSettings};
+use sha2::{Digest, Sha256};
+use std::net::IpAddr;
 
 /// On a container: the MAC address it was created with.
 pub const LABEL_MAC: &str = "ai.cua.mac";
 
 /// The Docker network a container joins when it names none.
 const DEFAULT_NETWORK: &str = "bridge";
+
+/// On a tree's Docker network: the tree it is for.
+pub const LABEL_TREE: &str = "ai.cua.tree";
+
+/// The name prefix of a tree's Docker network.
+pub const TREE_NETWORK_PREFIX: &str = "cua-t-";
+
+/// Host aliases of Docker Desktop's VM (`host.docker.internal`, the
+/// gateway), blocked when the engine host is on its network.
+const DESKTOP_ALIASES: [&str; 3] = ["192.168.65.254", "192.168.65.1", "192.168.65.2"];
+/// The host alias of a Lima VM (Colima: `host.lima.internal`).
+const LIMA_ALIASES: [&str; 1] = ["192.168.5.2"];
 
 /// How long one engine-host command may take.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -51,6 +80,13 @@ pub(crate) struct Kept {
     /// recreate) does not leave the old one behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
+    /// Its network settings ([`crate::network`]); `None`: kept from
+    /// before them (migrated from `policy` at its next start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkSettings>,
+    /// The tree it belongs to; `None`: its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
 }
 
 fn dir() -> PathBuf {
@@ -81,7 +117,9 @@ pub(crate) fn forget(name: &str) {
     let _ = std::fs::remove_file(path(name));
 }
 
-/// Gives container `to` the policy of `from` (a fork, a rename).
+/// Gives container `to` the policy, network settings and tree of `from`
+/// (a fork, a rename, a checkpoint). A fork of a child stays in its tree;
+/// a fork of a top-level sandbox is a tree of its own, as its Space is.
 pub(crate) fn copy(from: &str, to: &str) -> Result<()> {
     match kept(from) {
         Some(k) => keep(
@@ -89,15 +127,128 @@ pub(crate) fn copy(from: &str, to: &str) -> Result<()> {
             &Kept {
                 policy: k.policy,
                 table: None,
+                network: k.network,
+                tree: k.tree,
             },
         ),
         None => Ok(()),
     }
 }
 
-/// Whether the policy kept for `name` blocks anything.
+/// Whether the secure default applies ([`Mode::from_env`]).
+pub(crate) fn secure() -> bool {
+    Mode::from_env() == Mode::Secure
+}
+
+/// The network settings in force for `name` under the secure default
+/// (`None` under the old open default): its own, or its old policy
+/// migrated.
+pub(crate) fn settings(name: &str) -> Option<NetworkSettings> {
+    if !secure() {
+        return None;
+    }
+    let k = kept(name).unwrap_or_default();
+    Some(
+        k.network
+            .unwrap_or_else(|| NetworkSettings::migrate(&k.policy, false)),
+    )
+}
+
+/// The tree `name` belongs to.
+pub(crate) fn tree_of(name: &str) -> String {
+    kept(name)
+        .and_then(|k| k.tree)
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// The Docker network of tree `tree` for the cua home tagged `home_tag`:
+/// `cua-t-<12 hex>`.
+pub fn tree_network(home_tag: &str, tree: &str) -> String {
+    let d = Sha256::digest(format!("{home_tag}:{tree}").as_bytes());
+    let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{TREE_NETWORK_PREFIX}{}", &hex[..12])
+}
+
+/// Whether container `name` is policed: always under the secure default,
+/// else when its policy blocks anything.
 pub(crate) fn blocks(name: &str) -> bool {
-    kept(name).is_some_and(|k| policy_blocks(&k.policy))
+    secure() || kept(name).is_some_and(|k| policy_blocks(&k.policy))
+}
+
+/// What a stopped container must have before it may start policed: the
+/// network it must be on, its MAC labelled and configured alike, and no
+/// `CAP_NET_RAW`. `true`: it must be recreated.
+pub(crate) fn must_recreate(
+    expected_network: Option<&str>,
+    networks: &[String],
+    labelled_mac: Option<&str>,
+    configured_mac: Option<&str>,
+    raw_dropped: bool,
+) -> bool {
+    let wrong_network = expected_network.is_some_and(|n| networks != [n.to_string()]);
+    labelled_mac.is_none() || labelled_mac != configured_mac || !raw_dropped || wrong_network
+}
+
+/// The engine host's facts from [`PROBE`]'s output (`dns=`, `addr=`,
+/// `alias=` lines) and the networks' own: the tree's subnets (allowed), the
+/// gateway (a host alias), other trees' subnets (blocked) and the daemon's
+/// ports.
+pub(crate) fn context_from(
+    probe: &str,
+    gateways: &[IpAddr],
+    tree: &[Net],
+    other_trees: &[Net],
+    daemon_ports: &[u16],
+) -> NetworkContext {
+    let ips = |key: &str| -> Vec<IpAddr> {
+        let mut out: Vec<IpAddr> = Vec::new();
+        for ip in probe.lines().filter_map(|l| {
+            l.strip_prefix(&format!("{key}="))
+                .and_then(|v| v.split('/').next())
+                .and_then(|v| v.trim().parse::<IpAddr>().ok())
+        }) {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+        out
+    };
+    let addrs = ips("addr");
+    let mut aliases: Vec<IpAddr> = gateways.to_vec();
+    aliases.extend(ips("alias"));
+    let on = |net: &str| {
+        let n = Net::parse(net).expect("a valid network");
+        addrs.iter().any(|a| n.contains(*a))
+    };
+    if on("192.168.65.0/24") {
+        aliases.extend(
+            DESKTOP_ALIASES
+                .iter()
+                .filter_map(|a| a.parse::<IpAddr>().ok()),
+        );
+    }
+    if on("192.168.5.0/24") {
+        aliases.extend(LIMA_ALIASES.iter().filter_map(|a| a.parse::<IpAddr>().ok()));
+    }
+    let mut host_aliases: Vec<IpAddr> = Vec::new();
+    for a in aliases {
+        if !a.is_loopback() && !host_aliases.contains(&a) {
+            host_aliases.push(a);
+        }
+    }
+    NetworkContext {
+        // Docker's embedded resolver (127.0.0.11) answers inside the
+        // container; it forwards to these.
+        resolvers: ips("dns")
+            .into_iter()
+            .filter(|i| !i.is_loopback())
+            .collect(),
+        host_aliases,
+        host_addrs: addrs.into_iter().filter(|i| !i.is_loopback()).collect(),
+        tree: tree.to_vec(),
+        other_trees: other_trees.to_vec(),
+        daemon_ports: daemon_ports.to_vec(),
+    }
 }
 
 /// Whether `policy` blocks any destination (an allow list alone does not).
@@ -120,6 +271,13 @@ if [ "$pid" != 0 ]; then
   [ -n "$idx" ] && ip -o link | sed -n "s/^$idx: \([^:@]*\)[@:].*/veth=\1/p"
 fi
 command -v nft >/dev/null 2>&1 || echo nft=missing
+for f in /etc/resolv.conf /run/systemd/resolve/resolv.conf; do
+  [ -r "$f" ] && sed -n 's/^nameserver[[:space:]]*\([0-9a-fA-F:.]*\).*/dns=\1/p' "$f"
+done
+ip -o addr show 2>/dev/null | awk '{print "addr=" $4}'
+for h in host.docker.internal gateway.docker.internal host.lima.internal; do
+  getent hosts "$h" 2>/dev/null | awk '{print "alias=" $1}'
+done
 "#;
 
 /// The engine-host script that feeds `$1` to `nft -f -`.
@@ -168,36 +326,140 @@ impl ContainerRuntime {
         Ok(dev)
     }
 
+    /// The Docker network of `name`'s tree, created when missing (a
+    /// bridge with inter-container traffic on: the tree's members reach
+    /// each other directly).
+    pub(crate) async fn ensure_tree_network(&self, name: &str) -> Result<String> {
+        let tree = tree_of(name);
+        let net = tree_network(&super::home_tag(), &tree);
+        if self.docker.inspect_network(&net, None).await.is_ok() {
+            return Ok(net);
+        }
+        let req = bollard::models::NetworkCreateRequest {
+            name: net.clone(),
+            driver: Some("bridge".into()),
+            enable_ipv6: Some(false),
+            options: Some(
+                [(
+                    "com.docker.network.bridge.enable_icc".to_string(),
+                    "true".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            labels: Some(
+                [
+                    (LABEL_TREE.to_string(), tree),
+                    ("ai.cua.home".to_string(), super::home_tag()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        };
+        match self.docker.create_network(req).await {
+            Ok(_) => Ok(net),
+            // Another start made it first.
+            Err(e) => match self.docker.inspect_network(&net, None).await {
+                Ok(_) => Ok(net),
+                Err(_) => Err(VmmError::Engine(format!(
+                    "could not create the network of {name}'s tree ({net}): {e}"
+                ))),
+            },
+        }
+    }
+
+    /// Removes the Docker network of tree `tree` once no container is on
+    /// it (its last member was deleted).
+    pub(crate) async fn drop_tree_network_if_empty(&self, tree: &str) {
+        let net = tree_network(&super::home_tag(), tree);
+        let Ok(n) = self.docker.inspect_network(&net, None).await else {
+            return;
+        };
+        if n.containers.as_ref().is_none_or(|c| c.is_empty())
+            && let Err(e) = self.docker.remove_network(&net).await
+        {
+            tracing::debug!(network = %net, error = %e, "could not remove an empty tree network");
+        }
+    }
+
     /// The `NetworkingConfig` that gives a new container `name` its own MAC
-    /// on the engine's default bridge, with the MAC (`None` when the engine
-    /// has no such network: such an engine refuses policies).
+    /// on the network it belongs on, with the MAC: its tree's network under
+    /// the secure default (an error when it can't be made: never an open
+    /// container), else the engine's default bridge (`None` when the engine
+    /// has none: such an engine refuses policies).
     pub(crate) async fn mac_config(
         &self,
         name: &str,
-    ) -> Option<(bollard::models::NetworkingConfig, String)> {
-        let n = self
-            .docker
-            .inspect_network(DEFAULT_NETWORK, None)
-            .await
-            .ok()?;
-        if n.driver.as_deref() != Some("bridge") {
-            return None;
-        }
+    ) -> Result<Option<(bollard::models::NetworkingConfig, String)>> {
+        let net = if secure() {
+            self.ensure_tree_network(name).await?
+        } else {
+            let Ok(n) = self.docker.inspect_network(DEFAULT_NETWORK, None).await else {
+                return Ok(None);
+            };
+            if n.driver.as_deref() != Some("bridge") {
+                return Ok(None);
+            }
+            DEFAULT_NETWORK.to_string()
+        };
         let mac = mac_for(name);
         let endpoint = bollard::models::EndpointSettings {
             mac_address: Some(mac.clone()),
             ..Default::default()
         };
-        Some((
+        Ok(Some((
             bollard::models::NetworkingConfig {
-                endpoints_config: Some(
-                    [(DEFAULT_NETWORK.to_string(), endpoint)]
-                        .into_iter()
-                        .collect(),
-                ),
+                endpoints_config: Some([(net, endpoint)].into_iter().collect()),
             },
             mac,
-        ))
+        )))
+    }
+
+    /// The subnets and gateways of Docker network `net`.
+    async fn subnets(&self, net: &str) -> (Vec<Net>, Vec<IpAddr>) {
+        let Ok(n) = self.docker.inspect_network(net, None).await else {
+            return (vec![], vec![]);
+        };
+        let configs = n.ipam.and_then(|i| i.config).unwrap_or_default();
+        let nets = configs
+            .iter()
+            .filter_map(|c| c.subnet.as_deref())
+            .filter_map(|s| Net::parse(s).ok())
+            .collect();
+        let gws = configs
+            .iter()
+            .filter_map(|c| c.gateway.as_deref())
+            .filter_map(|g| g.parse().ok())
+            .collect();
+        (nets, gws)
+    }
+
+    /// The subnets of every other tree's network on this engine, and of its
+    /// default bridge: Spaces there are blocked.
+    async fn other_tree_subnets(&self, own: &str) -> Vec<Net> {
+        let filters = [("label".to_string(), vec![LABEL_TREE.to_string()])]
+            .into_iter()
+            .collect();
+        let mut names: Vec<String> = self
+            .docker
+            .list_networks(Some(bollard::query_parameters::ListNetworksOptions {
+                filters: Some(filters),
+            }))
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|n| n.name)
+            .filter(|n| n != own)
+            .collect();
+        if own != DEFAULT_NETWORK {
+            names.push(DEFAULT_NETWORK.to_string());
+        }
+        let mut out = Vec::new();
+        for n in names {
+            out.extend(self.subnets(&n).await.0);
+        }
+        out
     }
 
     /// Where container `i`'s rules go: its network, MAC and address, its
@@ -206,7 +468,7 @@ impl ContainerRuntime {
         &self,
         i: &bollard::models::ContainerInspectResponse,
         running: bool,
-    ) -> Result<EngineTarget> {
+    ) -> Result<(EngineTarget, NetworkContext)> {
         let name = i
             .name
             .as_deref()
@@ -298,13 +560,32 @@ impl ContainerRuntime {
         } else {
             None
         };
-        Ok(EngineTarget {
-            table: egress::engine_table(&mac),
-            bridge,
-            gateway_mac,
-            mac,
-            port,
-        })
+        let tree_net = net.starts_with(TREE_NETWORK_PREFIX);
+        let ctx = if secure() {
+            let (subnets, gateways) = self.subnets(&net).await;
+            context_from(
+                &out.stdout,
+                &gateways,
+                // The tree's own bridge: its members. The default bridge is
+                // shared, so it has none.
+                if tree_net { &subnets } else { &[] },
+                &self.other_tree_subnets(&net).await,
+                &crate::network::daemon_ports(),
+            )
+        } else {
+            NetworkContext::default()
+        };
+        Ok((
+            EngineTarget {
+                table: egress::engine_table(&mac),
+                bridge,
+                gateway_mac,
+                mac,
+                port,
+                isolate_l2: !tree_net,
+            },
+            ctx,
+        ))
     }
 
     /// Writes `text` with nft on the engine host.
@@ -322,13 +603,15 @@ impl ContainerRuntime {
     /// Writes `policy` for container `name` on the engine host (keyed by
     /// its MAC; bound to its bridge port as well when it runs) and keeps it.
     pub(crate) async fn police(&self, name: &str, policy: &EgressPolicy) -> Result<()> {
-        let rules = egress::check(crate::BackendKind::Container, policy)?;
+        let legacy = egress::check(crate::BackendKind::Container, policy)?;
         let i = self
             .inspect(name)
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
-        let previous = kept(name).and_then(|k| k.table);
-        if !rules.blocks_anything() {
+        let previous_kept = kept(name);
+        let previous = previous_kept.as_ref().and_then(|k| k.table.clone());
+        let network = settings(name);
+        if network.is_none() && !legacy.blocks_anything() {
             // Nothing to filter: remove what was there.
             if let Some(t) = &previous {
                 self.engine_apply(&egress::engine_remove(t)).await?;
@@ -338,6 +621,7 @@ impl ContainerRuntime {
                 &Kept {
                     policy: policy.clone(),
                     table: None,
+                    ..previous_kept.unwrap_or_default()
                 },
             );
         }
@@ -345,7 +629,11 @@ impl ContainerRuntime {
             Self::status_from(&i),
             crate::Status::Running | crate::Status::Paused
         );
-        let target = self.engine_target(&i, running).await?;
+        let (target, ctx) = self.engine_target(&i, running).await?;
+        let rules = match &network {
+            Some(s) => crate::network::compile_mode(s, &ctx, Mode::Secure)?,
+            None => legacy,
+        };
         let mut text = String::new();
         if let Some(t) = previous.as_ref().filter(|t| **t != target.table) {
             text.push_str(&egress::engine_remove(t));
@@ -357,6 +645,8 @@ impl ContainerRuntime {
             &Kept {
                 policy: policy.clone(),
                 table: Some(target.table),
+                network: network.or(previous_kept.as_ref().and_then(|k| k.network.clone())),
+                tree: previous_kept.and_then(|k| k.tree),
             },
         )
     }
@@ -369,7 +659,10 @@ impl ContainerRuntime {
         {
             tracing::warn!(container = name, error = %e, "could not remove a deleted container's egress rules");
         }
+        let tree = tree_of(name);
         forget(name);
+        // Its tree's network goes with the tree's last member.
+        self.drop_tree_network_if_empty(&tree).await;
     }
 
     /// Whether stopped container `i` must be recreated before it may start
@@ -401,7 +694,21 @@ impl ContainerRuntime {
             .as_ref()
             .and_then(|h| h.cap_drop.as_ref())
             .is_some_and(|c| c.iter().any(|x| x.trim_start_matches("CAP_") == "NET_RAW"));
-        labelled.is_none() || labelled != configured || !raw_dropped
+        let networks: Vec<String> = i
+            .network_settings
+            .as_ref()
+            .and_then(|n| n.networks.as_ref())
+            .map(|n| n.keys().cloned().collect())
+            .unwrap_or_default();
+        // Under the secure default it must be on its tree's network.
+        let expected = secure().then(|| tree_network(&super::home_tag(), &tree_of(name)));
+        must_recreate(
+            expected.as_deref(),
+            &networks,
+            labelled.as_deref(),
+            configured.as_deref(),
+            raw_dropped,
+        )
     }
 
     /// Starts container `name` under the policy kept for it: the rules are
@@ -409,7 +716,11 @@ impl ContainerRuntime {
     /// port once it runs. A container whose rules cannot be written does
     /// not start, and one whose port cannot be bound is killed.
     pub(crate) async fn start_policed(&self, name: &str) -> Result<()> {
-        let policy = kept(name).map(|k| k.policy).filter(policy_blocks);
+        // Under the secure default every container is policed.
+        let policy = kept(name)
+            .map(|k| k.policy)
+            .filter(|p| secure() || policy_blocks(p))
+            .or_else(|| secure().then(EgressPolicy::default));
         if let Some(p) = &policy {
             self.police(name, p).await?;
         }
@@ -443,6 +754,112 @@ mod tests {
         // the ruleset arrive as $1/$2.
         assert!(PROBE.contains(r#"br="$1"; pid="$2""#));
         assert!(APPLY.contains(r#""$1""#));
+    }
+
+    #[test]
+    fn one_network_per_tree() {
+        let a = tree_network("home1", "local:root");
+        assert_eq!(a, tree_network("home1", "local:root"));
+        assert!(a.starts_with(TREE_NETWORK_PREFIX));
+        assert_eq!(a.len(), TREE_NETWORK_PREFIX.len() + 12);
+        assert_ne!(a, tree_network("home1", "local:other"));
+        assert_ne!(a, tree_network("home2", "local:root"), "per cua home");
+    }
+
+    #[test]
+    fn a_container_off_its_tree_network_is_recreated() {
+        let net = "cua-t-0123456789ab".to_string();
+        let mac = Some("02:aa:bb:cc:dd:ee");
+        // Right network, MAC and capabilities: kept.
+        assert!(!must_recreate(
+            Some(&net),
+            std::slice::from_ref(&net),
+            mac,
+            mac,
+            true
+        ));
+        // On the default bridge (made before the secure default): recreated.
+        assert!(must_recreate(
+            Some(&net),
+            &["bridge".into()],
+            mac,
+            mac,
+            true
+        ));
+        // Still has NET_RAW, or its MAC differs, or has none: recreated.
+        assert!(must_recreate(
+            Some(&net),
+            std::slice::from_ref(&net),
+            mac,
+            mac,
+            false
+        ));
+        assert!(must_recreate(
+            Some(&net),
+            std::slice::from_ref(&net),
+            mac,
+            Some("02:00:00:00:00:01"),
+            true
+        ));
+        assert!(must_recreate(None, &["bridge".into()], None, None, true));
+        // The old default: any network will do.
+        assert!(!must_recreate(None, &["bridge".into()], mac, mac, true));
+    }
+
+    #[test]
+    fn the_engine_hosts_facts_become_the_context() {
+        let probe = "gw=0a:de:71:61:ef:e1\nveth=veth1\n\
+                     dns=127.0.0.53\ndns=10.0.0.2\ndns=10.0.0.2\n\
+                     addr=127.0.0.1/8\naddr=10.0.1.5/24\naddr=172.18.0.1/16\naddr=fe80::1/64\n\
+                     alias=172.17.0.1\n";
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let tree = [Net::parse("172.18.0.0/16").unwrap()];
+        let others = [Net::parse("172.17.0.0/16").unwrap()];
+        let c = context_from(probe, &[ip("172.18.0.1")], &tree, &others, &[4100]);
+        assert_eq!(
+            c.resolvers,
+            [ip("10.0.0.2")],
+            "loopback resolvers are the engine's own"
+        );
+        assert_eq!(c.host_aliases, [ip("172.18.0.1"), ip("172.17.0.1")]);
+        assert_eq!(
+            c.host_addrs,
+            [ip("10.0.1.5"), ip("172.18.0.1"), ip("fe80::1")]
+        );
+        assert_eq!(c.tree, tree);
+        assert_eq!(c.other_trees, others);
+        assert_eq!(c.daemon_ports, [4100]);
+        // Docker Desktop's and Lima's host aliases, when the engine is there.
+        let c = context_from("addr=192.168.65.3/24\n", &[], &[], &[], &[]);
+        assert!(c.host_aliases.contains(&ip("192.168.65.254")));
+        let c = context_from("addr=192.168.5.15/24\n", &[], &[], &[], &[]);
+        assert!(c.host_aliases.contains(&ip("192.168.5.2")));
+        let c = context_from("addr=10.0.1.5/24\n", &[], &[], &[], &[]);
+        assert!(c.host_aliases.is_empty());
+        // Compiled: the gateway and the engine's addresses are closed, the
+        // tree is open, other trees and the resolver as they should be.
+        let c = context_from(probe, &[ip("172.18.0.1")], &tree, &others, &[4100]);
+        let r = crate::network::compile_mode(
+            &NetworkSettings::internet(),
+            &c,
+            crate::network::Mode::Secure,
+        )
+        .unwrap();
+        assert!(!r.allows(ip("172.18.0.1")));
+        assert!(!r.allows(ip("10.0.1.5")));
+        assert!(r.allows(ip("172.18.0.7")));
+        assert!(!r.allows(ip("172.17.0.4")));
+        assert!(r.allows_port(ip("10.0.0.2"), crate::egress::Proto::Udp, 53));
+        assert!(!r.allows_port(ip("10.0.0.2"), crate::egress::Proto::Tcp, 22));
+        assert!(r.rules.iter().any(|r| r.host_local && !r.accept));
+    }
+
+    #[test]
+    fn the_probe_reads_resolvers_addresses_and_aliases() {
+        assert!(PROBE.contains("dns=\\1"), "{PROBE}");
+        assert!(PROBE.contains("/run/systemd/resolve/resolv.conf"));
+        assert!(PROBE.contains("print \"addr=\" $4"));
+        assert!(PROBE.contains("host.docker.internal"));
     }
 
     #[test]

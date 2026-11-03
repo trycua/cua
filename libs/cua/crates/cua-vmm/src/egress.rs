@@ -70,15 +70,23 @@ impl EgressPolicy {
     /// Checks the entries: addresses, CIDRs and `all` only (a hostname is
     /// refused).
     pub fn parse(&self) -> Result<Rules, PolicyError> {
+        let allow = parse_list(&self.allow)?;
+        let deny = parse_list(&self.deny)?;
         Ok(Rules {
-            allow: parse_list(&self.allow)?,
-            deny: parse_list(&self.deny)?,
+            rules: allow
+                .into_iter()
+                .map(|n| Rule::net(n, true, Reason::UserAllow))
+                .chain(
+                    deny.into_iter()
+                        .map(|n| Rule::net(n, false, Reason::UserDeny)),
+                )
+                .collect(),
         })
     }
 }
 
 /// One destination: a network of one address family.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Net {
     /// IPv4 network address and prefix length.
     V4(Ipv4Addr, u8),
@@ -102,6 +110,49 @@ impl Net {
         match self {
             Net::V4(a, p) => format!("{a}/{p}"),
             Net::V6(a, p) => format!("{a}/{p}"),
+        }
+    }
+
+    /// The network's first address.
+    pub fn addr(&self) -> IpAddr {
+        match self {
+            Net::V4(a, _) => IpAddr::V4(*a),
+            Net::V6(a, _) => IpAddr::V6(*a),
+        }
+    }
+
+    /// The prefix length.
+    pub fn prefix(&self) -> u8 {
+        match self {
+            Net::V4(_, p) | Net::V6(_, p) => *p,
+        }
+    }
+
+    /// Whether every address of `other` is in this network.
+    pub fn covers(&self, other: &Net) -> bool {
+        self.is_v6() == other.is_v6()
+            && self.prefix() <= other.prefix()
+            && self.contains(other.addr())
+    }
+
+    /// Whether this network and `other` share an address.
+    pub fn overlaps(&self, other: &Net) -> bool {
+        self.covers(other) || other.covers(self)
+    }
+
+    /// The network of one address (`/32`, `/128`).
+    pub fn host(ip: IpAddr) -> Net {
+        match ip {
+            IpAddr::V4(a) => Net::V4(a, 32),
+            IpAddr::V6(a) => Net::V6(a, 128),
+        }
+    }
+
+    /// Parses `address/prefix` (host bits cleared) or one address.
+    pub fn parse(text: &str) -> Result<Net, PolicyError> {
+        match parse_entry(text)?.as_slice() {
+            [net] => Ok(*net),
+            _ => Err(PolicyError(format!("{text:?}: one network, not \"all\""))),
         }
     }
 
@@ -129,14 +180,275 @@ impl Net {
     }
 }
 
-/// A checked policy: entries parsed, host bits cleared, duplicates dropped
-/// (first spelling wins, order kept).
+/// The transport a [`Rule`] is limited to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Proto {
+    /// TCP.
+    Tcp,
+    /// UDP.
+    Udp,
+}
+
+impl Proto {
+    /// `tcp` or `udp`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Proto::Tcp => "tcp",
+            Proto::Udp => "udp",
+        }
+    }
+}
+
+/// Why a [`Rule`] is there: the id a blocked-connection report carries
+/// (`platform:metadata`, `default:lan`, ...). The layers are
+/// [`crate::network`]'s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Reason {
+    /// A cloud metadata endpoint (always blocked).
+    #[serde(rename = "platform:metadata")]
+    PlatformMetadata,
+    /// The cua daemon's ports on the host (always blocked).
+    #[serde(rename = "platform:daemon")]
+    PlatformDaemon,
+    /// A Space of another tree (always blocked).
+    #[serde(rename = "platform:other-tree")]
+    PlatformOtherTree,
+    /// The runtime's own DNS resolver, on port 53.
+    #[serde(rename = "allow:resolver")]
+    Resolver,
+    /// A Space of the same tree.
+    #[serde(rename = "allow:tree")]
+    Tree,
+    /// The user's allow list.
+    #[serde(rename = "user:allow")]
+    UserAllow,
+    /// The user's deny list.
+    #[serde(rename = "user:deny")]
+    UserDeny,
+    /// The host's loopback on the ports the `localhost` preset lists.
+    #[serde(rename = "preset:localhost")]
+    PresetLocalhost,
+    /// The host's loopback through one of the runtime's host aliases.
+    #[serde(rename = "default:host-loopback")]
+    DefaultHostLoopback,
+    /// One of the host's own addresses.
+    #[serde(rename = "default:host")]
+    DefaultHost,
+    /// A private or link-local network (lifted by the `lan` preset).
+    #[serde(rename = "default:lan")]
+    DefaultLan,
+    /// Loopback, CGNAT, multicast and other reserved ranges.
+    #[serde(rename = "default:reserved")]
+    DefaultReserved,
+    /// Everything else, under a preset without network (`none`).
+    #[serde(rename = "default:none")]
+    DefaultNone,
+}
+
+impl Reason {
+    /// Every reason, for drift guards.
+    pub const ALL: [Reason; 13] = [
+        Reason::PlatformMetadata,
+        Reason::PlatformDaemon,
+        Reason::PlatformOtherTree,
+        Reason::Resolver,
+        Reason::Tree,
+        Reason::UserAllow,
+        Reason::UserDeny,
+        Reason::PresetLocalhost,
+        Reason::DefaultHostLoopback,
+        Reason::DefaultHost,
+        Reason::DefaultLan,
+        Reason::DefaultReserved,
+        Reason::DefaultNone,
+    ];
+
+    /// The id (`platform:metadata`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::PlatformMetadata => "platform:metadata",
+            Reason::PlatformDaemon => "platform:daemon",
+            Reason::PlatformOtherTree => "platform:other-tree",
+            Reason::Resolver => "allow:resolver",
+            Reason::Tree => "allow:tree",
+            Reason::UserAllow => "user:allow",
+            Reason::UserDeny => "user:deny",
+            Reason::PresetLocalhost => "preset:localhost",
+            Reason::DefaultHostLoopback => "default:host-loopback",
+            Reason::DefaultHost => "default:host",
+            Reason::DefaultLan => "default:lan",
+            Reason::DefaultReserved => "default:reserved",
+            Reason::DefaultNone => "default:none",
+        }
+    }
+
+    /// The id as a small number, for a log prefix or an nft log group's
+    /// payload (stable: never renumbered).
+    pub fn code(self) -> u8 {
+        match self {
+            Reason::PlatformMetadata => 1,
+            Reason::PlatformDaemon => 2,
+            Reason::PlatformOtherTree => 3,
+            Reason::Resolver => 4,
+            Reason::Tree => 5,
+            Reason::UserAllow => 6,
+            Reason::UserDeny => 7,
+            Reason::PresetLocalhost => 8,
+            Reason::DefaultHostLoopback => 9,
+            Reason::DefaultHost => 10,
+            Reason::DefaultLan => 11,
+            Reason::DefaultReserved => 12,
+            Reason::DefaultNone => 13,
+        }
+    }
+
+    /// The reason with [`Reason::code`] `code`.
+    pub fn from_code(code: u8) -> Option<Reason> {
+        Reason::ALL.into_iter().find(|r| r.code() == code)
+    }
+}
+
+/// One rule: connections to `net` (on `ports` over `proto`, when set) are
+/// accepted or dropped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rule {
+    /// The destination network.
+    pub net: Net,
+    /// Only these destination ports; `None`: every port (and protocols
+    /// without ports, such as ICMP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ports: Option<Vec<u16>>,
+    /// Only this transport; `None`: TCP and UDP when `ports` is set, every
+    /// protocol otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proto: Option<Proto>,
+    /// Accept (`true`) or drop.
+    pub accept: bool,
+    /// Why the rule is there.
+    pub reason: Reason,
+    /// The destination is every address local to the host that enforces
+    /// the rules (its own interfaces, whatever they are), not `net`: nft
+    /// `fib daddr type local`, iptables `-m addrtype --dst-type LOCAL`.
+    /// `net` is `0.0.0.0/0` then and both families are meant. The address
+    /// model ([`Rules::allows`]) cannot know them, so it never matches
+    /// such a rule; the listed host addresses stand for them there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_local: bool,
+}
+
+impl Rule {
+    /// A rule for every port and protocol of `net`.
+    pub fn net(net: Net, accept: bool, reason: Reason) -> Rule {
+        Rule {
+            net,
+            ports: None,
+            proto: None,
+            accept,
+            reason,
+            host_local: false,
+        }
+    }
+
+    /// A rule for every address local to the enforcing host
+    /// ([`Rule::host_local`]).
+    pub fn host_local(accept: bool, reason: Reason) -> Rule {
+        Rule {
+            host_local: true,
+            ..Rule::net(Net::V4(Ipv4Addr::UNSPECIFIED, 0), accept, reason)
+        }
+    }
+
+    /// Whether this rule decides a connection to `ip` over `proto` on
+    /// `port` (`None` for both: a packet the rule judges by address only,
+    /// so a rule limited to ports or a transport does not match it).
+    pub fn matches(&self, ip: IpAddr, proto: Option<Proto>, port: Option<u16>) -> bool {
+        if self.host_local || !self.net.contains(ip) {
+            return false;
+        }
+        if let Some(p) = self.proto
+            && proto != Some(p)
+        {
+            return false;
+        }
+        match (&self.ports, port) {
+            (None, _) => true,
+            (Some(list), Some(port)) => proto.is_some() && list.contains(&port),
+            (Some(_), None) => false,
+        }
+    }
+}
+
+/// An ordered rule list: the first rule that matches a connection decides
+/// it; a connection no rule matches is accepted. Built by
+/// [`EgressPolicy::parse`] (the legacy allow/deny lists) or by
+/// [`crate::network::compile`] (a Space's network settings).
+///
+/// The JSON form is stable (`{"version":1,"rules":[{"net":"10.0.0.0/8",
+/// "accept":false,"reason":"default:lan"}]}`, with `ports` and `proto` when
+/// set): other enforcement points, such as a network gateway, read it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rules {
-    /// Allowed destinations.
-    pub allow: Vec<Net>,
-    /// Blocked destinations.
-    pub deny: Vec<Net>,
+    /// The rules, in the order they are evaluated.
+    pub rules: Vec<Rule>,
+}
+
+/// The version of [`Rules`]' JSON form.
+pub const RULES_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesWire {
+    version: u32,
+    rules: Vec<Rule>,
+}
+
+impl Serialize for Rules {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        RulesWire {
+            version: RULES_VERSION,
+            rules: self.rules.clone(),
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Rules {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let w = RulesWire::deserialize(d)?;
+        if w.version != RULES_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "network rules version {}: this build reads version {RULES_VERSION}",
+                w.version
+            )));
+        }
+        Ok(Rules { rules: w.rules })
+    }
+}
+
+impl Serialize for Net {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.cidr())
+    }
+}
+
+impl<'de> Deserialize<'de> for Net {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        if !text.contains('/') {
+            return Err(serde::de::Error::custom(format!(
+                "network {text:?}: write it as address/prefix"
+            )));
+        }
+        let nets = parse_entry(&text).map_err(|e| serde::de::Error::custom(e.0))?;
+        match nets.as_slice() {
+            [net] if net.cidr() == text.trim() => Ok(*net),
+            _ => Err(serde::de::Error::custom(format!(
+                "network {text:?}: write it as address/prefix with no host bits"
+            ))),
+        }
+    }
 }
 
 /// Most entries in one list.
@@ -221,31 +533,71 @@ fn parse_list(list: &[String]) -> Result<Vec<Net>, PolicyError> {
 }
 
 impl Rules {
-    /// Whether nothing is filtered (no entries).
+    /// Whether nothing is filtered (no rules).
     pub fn is_empty(&self) -> bool {
-        self.allow.is_empty() && self.deny.is_empty()
-    }
-
-    /// The rules in the order they are evaluated, as (net, accept): every
-    /// `allow` entry first (an exception wins), then every `deny` entry.
-    pub fn ordered(&self) -> impl Iterator<Item = (&Net, bool)> {
-        self.allow
-            .iter()
-            .map(|n| (n, true))
-            .chain(self.deny.iter().map(|n| (n, false)))
+        self.rules.is_empty()
     }
 
     /// Whether any destination is blocked (an allow list alone blocks
     /// nothing).
     pub fn blocks_anything(&self) -> bool {
-        !self.deny.is_empty()
+        self.rules.iter().any(|r| !r.accept)
     }
 
-    /// Whether the guest may reach `ip` under these rules.
+    /// The rule that decides a connection to `ip` (an IPv4-mapped IPv6
+    /// address is judged as its IPv4 address), or `None` when no rule
+    /// matches (accepted).
+    pub fn decide(&self, ip: IpAddr, proto: Option<Proto>, port: Option<u16>) -> Option<&Rule> {
+        let ip = canonical_ip(ip);
+        self.rules.iter().find(|r| r.matches(ip, proto, port))
+    }
+
+    /// Whether the guest may reach `ip` on a port no rule names (the
+    /// verdict by address alone).
     pub fn allows(&self, ip: IpAddr) -> bool {
-        self.ordered()
-            .find(|(n, _)| n.contains(ip))
-            .is_none_or(|(_, accept)| accept)
+        self.decide(ip, None, None).is_none_or(|r| r.accept)
+    }
+
+    /// Whether the guest may open a `proto` connection to `ip` on `port`.
+    pub fn allows_port(&self, ip: IpAddr, proto: Proto, port: u16) -> bool {
+        self.decide(ip, Some(proto), Some(port))
+            .is_none_or(|r| r.accept)
+    }
+
+    /// Whether every address of `net` is reachable on a port no rule names:
+    /// no rule that drops part of it comes before one that accepts all of
+    /// it. Conservative: an accept that covers only part of `net` does not
+    /// count. A rule for the host's own addresses (`host_local`) is not one
+    /// that drops `net`: it matches only what is local to the host.
+    pub fn allows_net(&self, net: &Net) -> bool {
+        for r in self
+            .rules
+            .iter()
+            .filter(|r| r.ports.is_none() && r.proto.is_none() && !r.host_local)
+        {
+            if !r.net.overlaps(net) {
+                continue;
+            }
+            if r.net.covers(net) {
+                return r.accept;
+            }
+            if !r.accept {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// `ip`, with an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) as its IPv4
+/// address.
+pub fn canonical_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => ip,
+        },
+        v4 => v4,
     }
 }
 
@@ -433,6 +785,11 @@ pub struct EngineTarget {
     pub mac: String,
     /// Its bridge port, once it runs (`None` before its first start).
     pub port: Option<BridgePort>,
+    /// Frames from it may only go to the gateway (and broadcast, IPv6
+    /// multicast), so every packet enters the host's IP stack: on a bridge
+    /// shared with other sandboxes (the engine's default). A bridge of its
+    /// own tree leaves it off: the tree's members may talk directly.
+    pub isolate_l2: bool,
 }
 
 /// The nft input that removes one sandbox's tables in one transaction
@@ -475,12 +832,14 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
             ));
         }
     }
+    if t.isolate_l2 {
+        pre.push_str(&format!("    ether saddr {mac} jump l2\n"));
+    }
     out.push_str(&format!(
         "table bridge {table} {{\n\
          \x20 chain pre {{\n\
          \x20   type filter hook prerouting priority -200; policy accept;\n\
          {pre}\
-         \x20   ether saddr {mac} jump l2\n\
          \x20 }}\n\
          \x20 chain l2 {{\n\
          \x20   ether daddr {{ {gw}, ff:ff:ff:ff:ff:ff }} return\n\
@@ -501,21 +860,40 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
          \x20   icmpv6 type {{ nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert }} accept\n",
         bridge = t.bridge,
     ));
-    for (net, accept) in rules.ordered() {
-        out.push_str(&nft_rule(net, accept));
+    for rule in &rules.rules {
+        out.push_str(&nft_rule(rule));
     }
     out.push_str("  }\n}\n");
     out
 }
 
-fn nft_rule(net: &Net, accept: bool) -> String {
-    let verdict = if accept { "accept" } else { "drop" };
-    match (net.is_all(), net.is_v6()) {
-        (true, false) => format!("    meta nfproto ipv4 {verdict}\n"),
-        (true, true) => format!("    meta nfproto ipv6 {verdict}\n"),
-        (false, false) => format!("    ip daddr {} {verdict}\n", net.cidr()),
-        (false, true) => format!("    ip6 daddr {} {verdict}\n", net.cidr()),
-    }
+/// One [`Rule`] as an nft statement (in an `inet` chain).
+pub fn nft_rule(rule: &Rule) -> String {
+    let verdict = if rule.accept { "accept" } else { "drop" };
+    let net = &rule.net;
+    let dest = match (net.is_all(), net.is_v6()) {
+        _ if rule.host_local => "fib daddr type local".to_string(),
+        (true, false) => "meta nfproto ipv4".to_string(),
+        (true, true) => "meta nfproto ipv6".to_string(),
+        (false, false) => format!("ip daddr {}", net.cidr()),
+        (false, true) => format!("ip6 daddr {}", net.cidr()),
+    };
+    let ports = |list: &[u16]| {
+        list.iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let l4 = match (rule.proto, &rule.ports) {
+        (None, None) => String::new(),
+        (Some(p), None) => format!(" meta l4proto {}", p.as_str()),
+        (Some(p), Some(list)) => format!(" {} dport {{ {} }}", p.as_str(), ports(list)),
+        (None, Some(list)) => format!(
+            " meta l4proto {{ tcp, udp }} th dport {{ {} }}",
+            ports(list)
+        ),
+    };
+    format!("    {dest}{l4} {verdict}\n")
 }
 
 // ------------------------------------------------------ VMM namespaces
@@ -562,7 +940,7 @@ pub fn ns_rules(rules: &Rules, v6: bool, resolver: Option<Resolver>) -> String {
                 ));
             }
         } else if let Some(r) = resolver {
-            let verdict = if rules.allows(IpAddr::V4(r.guest)) {
+            let verdict = if rules.allows_port(IpAddr::V4(r.guest), Proto::Udp, 53) {
                 "ACCEPT"
             } else {
                 "DROP"
@@ -574,12 +952,52 @@ pub fn ns_rules(rules: &Rules, v6: bool, resolver: Option<Resolver>) -> String {
                 ));
             }
         }
-        for (net, accept) in rules.ordered().filter(|(n, _)| n.is_v6() == v6) {
-            out.push_str(&format!(
-                "-A {NS_CHAIN} -m conntrack --ctorigdst {} -j {}\n",
-                net.cidr(),
-                if accept { "ACCEPT" } else { "DROP" }
-            ));
+        for rule in rules
+            .rules
+            .iter()
+            .filter(|r| r.host_local || r.net.is_v6() == v6)
+        {
+            out.push_str(&ipt_rule(rule));
+        }
+    }
+    out
+}
+
+/// One [`Rule`] as `-A` lines of [`NS_CHAIN`]: matched on the
+/// connection's original destination (and port), one line per transport
+/// and port.
+pub fn ipt_rule(rule: &Rule) -> String {
+    let verdict = if rule.accept { "ACCEPT" } else { "DROP" };
+    // `--ctorigdstport` is the last match's (conntrack) option.
+    let dest = match (rule.host_local, rule.ports.is_some()) {
+        (true, true) => "-m addrtype --dst-type LOCAL -m conntrack".to_string(),
+        (true, false) => "-m addrtype --dst-type LOCAL".to_string(),
+        (false, _) => format!("-m conntrack --ctorigdst {}", rule.net.cidr()),
+    };
+    let protos: Vec<Proto> = match rule.proto {
+        Some(p) => vec![p],
+        None if rule.ports.is_some() => vec![Proto::Tcp, Proto::Udp],
+        None => vec![],
+    };
+    let mut out = String::new();
+    if protos.is_empty() {
+        out.push_str(&format!("-A {NS_CHAIN} {dest} -j {verdict}\n"));
+        return out;
+    }
+    for p in protos {
+        match &rule.ports {
+            None => out.push_str(&format!(
+                "-A {NS_CHAIN} -p {} {dest} -j {verdict}\n",
+                p.as_str()
+            )),
+            Some(list) => {
+                for port in list {
+                    out.push_str(&format!(
+                        "-A {NS_CHAIN} -p {} {dest} --ctorigdstport {port} -j {verdict}\n",
+                        p.as_str()
+                    ));
+                }
+            }
         }
     }
     out
@@ -689,8 +1107,14 @@ mod tests {
             &[],
             &["10.1.2.3/8", "10.0.0.0/8", "ALL", "all", "::1", "0.0.0.0/0"],
         );
+        let deny: Vec<Net> = r
+            .rules
+            .iter()
+            .filter(|r| !r.accept)
+            .map(|r| r.net)
+            .collect();
         assert_eq!(
-            r.deny,
+            deny,
             [
                 Net::V4(Ipv4Addr::new(10, 0, 0, 0), 8),
                 Net::V4(Ipv4Addr::UNSPECIFIED, 0),
@@ -699,12 +1123,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            rules(&[], &["2001:db8::1/32"]).deny,
-            [Net::V6("2001:db8::".parse().unwrap(), 32)]
+            rules(&[], &["2001:db8::1/32"]).rules[0].net,
+            Net::V6("2001:db8::".parse().unwrap(), 32)
         );
         assert_eq!(
-            rules(&[], &["1.2.3.4/0"]).deny,
-            [Net::V4(Ipv4Addr::UNSPECIFIED, 0)]
+            rules(&[], &["1.2.3.4/0"]).rules[0].net,
+            Net::V4(Ipv4Addr::UNSPECIFIED, 0)
         );
     }
 
@@ -768,6 +1192,7 @@ mod tests {
                 veth: "veth1a2b3c4".into(),
                 ipv4: Some(Ipv4Addr::new(172, 17, 0, 2)),
             }),
+            isolate_l2: true,
         }
     }
 
@@ -845,6 +1270,63 @@ mod tests {
             engine_ruleset(&t, &rules(&["1.1.1.1"], &[])),
             engine_remove(table)
         );
+        // On its own tree's bridge: members talk directly, spoofing is
+        // still dropped, and the policy still applies.
+        let tree = EngineTarget {
+            isolate_l2: false,
+            ..target(true)
+        };
+        let text = engine_ruleset(&tree, &r);
+        assert!(!text.contains("jump l2"), "{text}");
+        assert!(
+            text.contains(&format!("ether saddr != {mac} drop")),
+            "{text}"
+        );
+        assert!(text.contains("jump verdict"), "{text}");
+    }
+
+    #[test]
+    fn host_local_and_port_rules_render() {
+        let local = Rule {
+            ports: Some(vec![3200]),
+            proto: Some(Proto::Tcp),
+            ..Rule::host_local(false, Reason::PlatformDaemon)
+        };
+        assert_eq!(
+            nft_rule(&local),
+            "    fib daddr type local tcp dport { 3200 } drop\n"
+        );
+        assert_eq!(
+            ipt_rule(&local),
+            "-A CUA_EGRESS -p tcp -m addrtype --dst-type LOCAL -m conntrack --ctorigdstport 3200 -j DROP\n"
+        );
+        let all_local = Rule::host_local(false, Reason::DefaultHost);
+        assert_eq!(nft_rule(&all_local), "    fib daddr type local drop\n");
+        assert_eq!(
+            ipt_rule(&all_local),
+            "-A CUA_EGRESS -m addrtype --dst-type LOCAL -j DROP\n"
+        );
+        // Never matched by the address model.
+        assert!(!all_local.matches("10.0.0.1".parse().unwrap(), None, None));
+        let dns = Rule {
+            ports: Some(vec![53]),
+            ..Rule::net(Net::parse("10.0.2.3").unwrap(), true, Reason::Resolver)
+        };
+        assert_eq!(
+            nft_rule(&dns),
+            "    ip daddr 10.0.2.3/32 meta l4proto { tcp, udp } th dport { 53 } accept\n"
+        );
+        assert_eq!(
+            ipt_rule(&dns),
+            "-A CUA_EGRESS -p tcp -m conntrack --ctorigdst 10.0.2.3/32 --ctorigdstport 53 -j ACCEPT\n\
+             -A CUA_EGRESS -p udp -m conntrack --ctorigdst 10.0.2.3/32 --ctorigdstport 53 -j ACCEPT\n"
+        );
+        // Both families get a host-local rule.
+        let rules = Rules {
+            rules: vec![all_local.clone()],
+        };
+        assert!(ns_rules(&rules, false, None).contains("addrtype"));
+        assert!(ns_rules(&rules, true, None).contains("addrtype"));
     }
 
     #[test]

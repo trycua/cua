@@ -61,6 +61,7 @@ pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 pub mod build;
+pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
@@ -79,12 +80,14 @@ pub mod groups;
 pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
+pub mod keep;
 pub mod lifetimes;
 pub mod list_watch;
 pub mod listing;
 mod local_load;
 pub mod mesh;
 pub mod named_volumes;
+pub mod network;
 pub mod operator;
 pub mod pool_checkpoints;
 pub mod prewarm;
@@ -98,8 +101,10 @@ pub mod routines;
 pub mod services;
 pub mod snapshots;
 mod space;
+pub mod space_jobs;
 mod spaces;
 pub mod thumbnails;
+pub mod tree;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;
@@ -129,6 +134,8 @@ pub mod sharing;
 /// The Keyvault seam and the whole `request_site_login` tool: sign in to a
 /// site in a Space with a saved password, approved by the user.
 pub mod site_login;
+#[cfg(feature = "spaces-spawn")]
+pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery
@@ -143,6 +150,7 @@ pub mod walk;
 
 pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
+pub use cua_vmm::experiments;
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
 pub use listing::{LIST_WAIT, ListProgress, SpaceListing};

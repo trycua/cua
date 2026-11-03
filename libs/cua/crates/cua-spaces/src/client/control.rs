@@ -739,6 +739,12 @@ impl Space {
         })
     }
 
+    /// `space_job`: a background job in the Space (`arguments` as the tool
+    /// takes them: `action` and its fields).
+    pub fn job(&self, arguments: Value) -> Result<Map<String, Value>> {
+        self.call_object("space_job", self.arguments(arguments))
+    }
+
     /// `space_write`. Literal text, no local file, no shell quoting.
     pub fn write_text(&self, text: &str, path: &str) -> Result<RemoteFile> {
         let target = self.guest_path(path);
@@ -751,6 +757,13 @@ impl Space {
             byte_count: Some(text.len() as u64),
             path: target,
         })
+    }
+
+    /// `space_service`: keeps a command running in the Space (restarts,
+    /// health checks, start on boot, logs). `arguments` are the tool's own
+    /// (`action`, `name`, `command`, ...); the Space is filled in.
+    pub fn keep_service(&self, arguments: Value) -> Result<Value> {
+        self.call("space_service", self.arguments(arguments))
     }
 
     /// `upload`. Reports the path it actually wrote — `FRICTION.md` §13:

@@ -1,7 +1,7 @@
 """Recipe lint and drift guards for the macOS Space with developer tools (the
-xcode tier of libs/images/macos): its pins, claims and catalog entry agree,
-every script parses, and nothing can publish an image that carries Xcode
-(Apple's terms do not let us redistribute it)."""
+xcode tier of libs/images/macos): its pins and claims agree, every script
+parses, the tier is published like the others, and what carries Xcode says
+whose software it is and where it may run."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 MACOS = os.path.join(ROOT, "libs", "images", "macos")
 CATALOG = os.path.join(ROOT, "libs", "images", "sandbox-images.json")
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "cd-image-macos.yml")
 SCRIPTS = [
     "build.sh",
     "derive-local.sh",
@@ -27,6 +28,8 @@ SCRIPTS = [
     "files/tier-xcode.sh",
     "files/tier-full.sh",
     "files/fetch.sh",
+    "files/xcode-source.sh",
+    "annotate.sh",
     "dev-image-gate.sh",
     "files/dev-image-gate-guest.sh",
 ]
@@ -61,7 +64,7 @@ class Recipe(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("shellcheck"), "shellcheck not installed")
     def test_new_scripts_pass_shellcheck(self):
-        for s in ["derive-local.sh", "files/tier-xcode.sh", "files/fetch.sh"]:
+        for s in ["derive-local.sh", "files/tier-xcode.sh", "files/fetch.sh", "files/xcode-source.sh"]:
             r = run(["shellcheck", "-x", "-S", "warning", os.path.join(MACOS, s)])
             self.assertEqual(r.returncode, 0, f"{s}: {r.stdout}")
 
@@ -106,7 +109,7 @@ class Recipe(unittest.TestCase):
 
     def test_derive_stages_what_the_tier_script_reads(self):
         derive = open(os.path.join(MACOS, "derive-local.sh")).read()
-        for needle in ("tier-xcode.sh", "versions.env", "fetch_xcode_tools", "xcode/"):
+        for needle in ("tier-xcode.sh", "versions.env", "fetch_xcode_tools", "xcode-source.sh"):
             self.assertIn(needle, derive)
 
 
@@ -124,13 +127,33 @@ class Gate(unittest.TestCase):
             self.assertIn(needle, guest)
 
 
-class NeverPublished(unittest.TestCase):
-    def test_no_xcode_ref_is_published_in_the_catalog(self):
-        for e in json.load(open(CATALOG))["images"]:
-            if "xcode" in e["ref"]:
-                self.assertFalse(e["published"], e["ref"])
+class Published(unittest.TestCase):
+    def test_workflow_still_builds_gates_and_publishes_every_tier(self):
+        wf = open(WORKFLOW).read()
+        self.assertIn("upto=xcode publish=true", wf)
+        self.assertRegex(wf, r"slim\) tag=26-slim ;; full\) tag=26 ;; xcode\) tag=26-xcode")
 
-    def test_tag_safety_refuses_xcode_tags(self):
+    def test_ci_needs_no_apple_credentials(self):
+        build = open(os.path.join(MACOS, "build.sh")).read()
+        # The pinned Xcode comes from the runner (an installed Xcode.app or a
+        # cached .xip), never from a download with an Apple ID.
+        self.assertIn("xcode-source.sh", build)
+        self.assertIn("XCODE_BUILD", build)
+        for secret in ("XCODES_USERNAME", "XCODES_PASSWORD", "APPLE_ID", "xcodes download", "xcodes install"):
+            for name in ("build.sh", "files/tier-xcode.sh", "derive-local.sh", "files/xcode-source.sh"):
+                self.assertNotIn(secret, open(os.path.join(MACOS, name)).read(), (secret, name))
+        self.assertNotIn("XCODES_", open(WORKFLOW).read())
+
+    def test_the_tier_says_it_is_apple_software_for_apple_hardware(self):
+        image = json.load(open(os.path.join(MACOS, "image.json")))
+        desc = image["tiers"]["xcode"]["description"]
+        self.assertIn("Apple software", desc)
+        self.assertIn("Apple-branded hardware", desc)
+        annotate = open(os.path.join(MACOS, "annotate.sh")).read()
+        self.assertIn("ai.cua.image.notice", annotate)
+        self.assertIn("Apple-branded hardware", annotate)
+
+    def test_tag_safety_lets_the_xcode_tier_float(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         crane = os.path.join(tmp, "crane")
@@ -138,25 +161,8 @@ class NeverPublished(unittest.TestCase):
             f.write("#!/bin/sh\necho 'MANIFEST_UNKNOWN' >&2\nexit 1\n")
         os.chmod(crane, 0o755)
         guard = os.path.join(ROOT, "scripts", "images", "check-tag-safety.sh")
-        env = dict(os.environ, CRANE=crane)
-        for tag in ("26-xcode", "26-xcode-26.6", "26-xcode-26.6-20261101-abcdef1"):
-            for extra in ([], ["--moving"]):
-                r = run([guard, *extra, f"{MACOS_REPO}:{tag}"], env=env)
-                self.assertEqual(r.returncode, 1, f"{tag} {extra}: {r.stdout}{r.stderr}")
-                self.assertIn("never published", r.stderr)
-        ok = run([guard, f"{MACOS_REPO}:26-slim-20261101-abcdef1"], env=env)
-        self.assertEqual(ok.returncode, 0, ok.stderr)
-
-    def test_release_tier_and_build_refuse_to_push_xcode(self):
-        for args in (["push", "--tier", "xcode", "--prefix", "cua-e2e-x", "--stamp", "20261101-abcdef1", "--evidence", "/nonexistent"],
-                     ["publish", "--tier", "xcode", "--stamp", "20261101-abcdef1", "--evidence", "/nonexistent"],
-                     ["promote", "--tier", "xcode", "--evidence", "/nonexistent"]):
-            r = run([os.path.join(MACOS, "release-tier.sh"), *args])
-            self.assertEqual(r.returncode, 2, r.stderr)
-            self.assertIn("never", r.stderr)
-        r = run([os.path.join(MACOS, "build.sh"), "--tier", "xcode", "--base-vm", "x", "--push", "26-xcode-26.6-20261101-abcdef1"])
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("never pushed", r.stderr)
+        r = run([guard, f"{MACOS_REPO}:26-xcode-20261101-abcdef1"], env=dict(os.environ, CRANE=crane))
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "derive-local.sh reads Xcode bundles (macOS)")
@@ -171,6 +177,11 @@ class DeriveLocal(unittest.TestCase):
                     "<key>CFBundleShortVersionString</key><string>26.6</string>"
                     "<key>LSMinimumSystemVersion</key><string>26.2</string></dict></plist>")
         return os.path.dirname(app)
+
+    def test_refuses_off_apple_hardware_in_the_script(self):
+        text = open(self.script).read()
+        self.assertIn("Apple-branded hardware", text)
+        self.assertIn('uname -m', text)
 
     def test_needs_a_base_vm(self):
         r = run([self.script])
@@ -199,6 +210,27 @@ class DeriveLocal(unittest.TestCase):
         self.assertIn("App Store", r.stderr)
         self.assertIn("developer.apple.com", r.stderr)
 
+
+
+class CuaVmmRecipeCopies(unittest.TestCase):
+    """cua-vmm embeds committed copies of the recipe (so the Rust build reads
+    only libs/cua); they must equal libs/images/macos."""
+
+    COPIES = {
+        "derive-local.sh": "macos-derive-local.sh",
+        "versions.env": "macos-versions.env",
+        "files/tier-xcode.sh": "macos-tier-xcode.sh",
+        "files/fetch.sh": "macos-fetch.sh",
+        "files/xcode-source.sh": "macos-xcode-source.sh",
+    }
+
+    def test_the_copies_match_the_recipe(self):
+        recipe = os.path.join(ROOT, "libs", "cua", "crates", "cua-vmm", "recipe")
+        for source, name in self.COPIES.items():
+            with open(os.path.join(MACOS, source), "rb") as a, open(os.path.join(recipe, name), "rb") as b:
+                self.assertEqual(
+                    a.read(), b.read(), f"{name} is behind {source}: run scripts/images/sync-cua-vmm-recipe.sh"
+                )
 
 if __name__ == "__main__":
     unittest.main()

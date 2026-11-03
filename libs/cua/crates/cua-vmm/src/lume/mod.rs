@@ -16,6 +16,7 @@
 
 pub mod builtin;
 pub mod client;
+pub mod derive;
 pub mod gpu;
 pub mod lease;
 pub mod owned;
@@ -1053,6 +1054,30 @@ impl LumeRuntime {
                 "lume bases are pulled from OCI references",
             ));
         };
+        // The macOS Space with developer tools: the published image is pulled
+        // like any other; building it here is the fallback.
+        if let Some(parent) = derive::dev_parent(reference) {
+            return self
+                .ensure_dev_base(reference, base_name, &parent, creds, pull_bytes)
+                .await;
+        }
+        self.pull_base(image, base_name, creds, pull_bytes).await
+    }
+
+    /// Pulls `image` into the stopped base VM `base_name` (the pull half of
+    /// [`Self::ensure_base_sized`]).
+    async fn pull_base(
+        &self,
+        image: &ImageSource,
+        base_name: &str,
+        creds: Option<&RegistryCredentials>,
+        pull_bytes: Option<u64>,
+    ) -> Result<CheckpointInfo> {
+        let ImageSource::Oci { reference } = image else {
+            return Err(VmmError::invalid(
+                "lume bases are pulled from OCI references",
+            ));
+        };
         let pinned = reference;
         let reference = &lume_pull_ref(reference).to_string();
         if let Some(vm) = self.client.get(base_name).await? {
@@ -1115,6 +1140,139 @@ impl LumeRuntime {
             BackendKind::Lume,
             Some(reference.clone()),
         ))
+    }
+
+    /// The base VM of the macOS Space with developer tools `reference`
+    /// (`ghcr.io/trycua/macos:26-xcode`, [`derive`]). The default is to pull
+    /// the published image, with the usual progress and disk check. When it
+    /// is not available (not published yet, no network to it), or the user
+    /// prefers the Xcode already on this Mac (`CUA_DEV_IMAGE=local`), it is
+    /// built here as a clone of the full image's base plus that Xcode. Either
+    /// way every Space is a clone of the one base.
+    async fn ensure_dev_base(
+        &self,
+        reference: &str,
+        base_name: &str,
+        parent: &str,
+        creds: Option<&RegistryCredentials>,
+        pull_bytes: Option<u64>,
+    ) -> Result<CheckpointInfo> {
+        derive::require_apple_hardware()?;
+        // One at a time in this process: two Spaces asked for together wait
+        // for the first, then both clone it.
+        static BUILD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _one_at_a_time = BUILD.lock().await;
+        let info =
+            || CheckpointInfo::now(base_name, BackendKind::Lume, Some(reference.to_string()));
+        if let Some(vm) = self.client.get(base_name).await? {
+            if vm.status == "running" {
+                return Err(VmmError::invalid(format!(
+                    "base VM '{base_name}' is running; stop it before using it as a clone source"
+                )));
+            }
+            if vm.status != "pulling" {
+                OwnedVms::default().touch(base_name);
+                return Ok(info());
+            }
+        }
+        if !derive::prefer_local() {
+            let image = ImageSource::Oci {
+                reference: reference.to_string(),
+            };
+            match self.pull_base(&image, base_name, creds, pull_bytes).await {
+                Ok(done) => return Ok(done),
+                // Not enough disk is the same for a build: say so.
+                Err(e @ VmmError::InsufficientDisk(_)) => return Err(e),
+                Err(e) => {
+                    tracing::warn!(error = %e, "the published macOS Space with developer tools is not available; building it on this Mac");
+                    crate::progress::report(
+                        crate::progress::Progress::phase(crate::progress::Phase::Creating).detail(
+                            "The published image is not available; building it on this Mac",
+                        ),
+                    );
+                }
+            }
+        }
+        // The full image the build starts from: a base the SDK already holds
+        // for this macOS version (no second download), else the image itself.
+        let version = parent
+            .split('@')
+            .next()
+            .and_then(|t| t.rsplit_once(':'))
+            .map(|(_, v)| v)
+            .unwrap_or("26");
+        let owned = OwnedVms::default();
+        let mut held = owned
+            .list()
+            .into_iter()
+            .filter(|o| {
+                o.kind == OwnedKind::Base
+                    && o.source
+                        .as_deref()
+                        .is_some_and(|s| derive::is_full_macos_base(s, version))
+            })
+            .collect::<Vec<_>>();
+        held.sort_by_key(|o| std::cmp::Reverse(o.last_used));
+        let mut parent_base = None;
+        for o in &held {
+            if matches!(self.client.get(&o.name).await?, Some(vm) if vm.status == "stopped") {
+                parent_base = Some(o.name.clone());
+                break;
+            }
+        }
+        let parent_base = match parent_base {
+            Some(b) => b,
+            None => {
+                let b = base_vm_name(parent);
+                Box::pin(self.ensure_base_sized(
+                    &ImageSource::Oci {
+                        reference: parent.to_string(),
+                    },
+                    &b,
+                    creds,
+                    pull_bytes,
+                ))
+                .await?;
+                b
+            }
+        };
+        crate::disk::ensure_space(
+            &self.vm_dir(),
+            derive::DEV_IMAGE_ESTIMATE,
+            "build the macOS Space with developer tools",
+        )?;
+        let lume = self.lume()?.ok_or_else(|| {
+            VmmError::missing(
+                "lume",
+                "binary needed to build the macOS Space with developer tools",
+            )
+        })?;
+        crate::progress::report(
+            crate::progress::Progress::phase(crate::progress::Phase::Creating)
+                .detail("Building the macOS Space with developer tools (first time only)"),
+        );
+        // Recorded before the build, as for a pull: a build cut off still
+        // leaves a VM the cache GC may remove; a failed one's record goes.
+        owned.mark(base_name, OwnedKind::Base, Some(reference));
+        let work = host::cua_home().join("vmm").join("lume").join("derive");
+        let built = derive::Derive {
+            lume: &lume,
+            storage: &self.vm_dir(),
+            base_vm: &parent_base,
+            name: base_name,
+            work: &work,
+        }
+        .run()
+        .await;
+        if let Err(e) = built {
+            if !matches!(self.client.get(base_name).await, Ok(Some(_))) {
+                owned.forget(base_name);
+            }
+            return Err(e);
+        }
+        owned.mark(base_name, OwnedKind::Base, Some(reference));
+        owned.touch(&parent_base);
+        Ok(info())
     }
 
     /// Installs the start spec's workload environment in a booted macOS
@@ -1598,9 +1756,22 @@ impl LumeRuntime {
         {
             return Err(VmmError::invalid(why));
         }
-        crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
+        // Under the secure default a macOS VM can't be protected yet (it
+        // shares Apple's NAT), and cua reaches it over that network, so a
+        // VM without one could never answer: only No protection starts it.
+        match crate::network::gate(
+            BackendKind::Lume,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )? {
+            Some(crate::network::NetworkPlan::Open { .. }) => {}
+            Some(_) => return Err(VmmError::Other(crate::network::WHY_LUME.into())),
+            None => {
+                crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
+                crate::egress::check(BackendKind::Lume, &spec.egress)?;
+            }
+        }
         crate::types::reject_injection(BackendKind::Lume, spec)?;
-        crate::egress::check(BackendKind::Lume, &spec.egress)?;
         if macos_guest(spec) {
             macos_mount_shares(&spec.mounts)?;
         } else {

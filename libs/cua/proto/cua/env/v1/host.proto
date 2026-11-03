@@ -265,6 +265,9 @@ message CreateHostSpaceRequest {
   // instruction. A host that does not enforce it leaves
   // `HostSpace.egress_enforced` empty.
   HostEgressPolicy egress = 19;
+  // Network settings, compiled and enforced by the host. Unset: what
+  // `network` and `egress` say.
+  HostNetworkSettings network_settings = 20;
   // Reached through this host's channel (no relay machine of its own).
   bool routed = 13;
   // Guest environment; the host's driver settings win on a clash.

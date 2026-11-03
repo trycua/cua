@@ -88,6 +88,8 @@
       "presence",
       "presence.cursor_shape",
       "hotspot",
+      "spawn",
+      "process.services",
       "relay_attach",
       "tunnel.forward",
       "audio.desktop",

@@ -15,7 +15,8 @@ private func published(_ ref: String) -> Bool {
         let images = json["images"] as? [[String: Any]],
         let entry = images.first(where: { $0["ref"] as? String == ref })
     else { return true }
-    return entry["published"] as? Bool ?? true
+    // An entry built on the user's own machine (derived_from) resolves while unpublished.
+    return (entry["published"] as? Bool ?? true) || entry["derived_from"] != nil
 }
 
 private func expectRef(_ ref: String, _ make: () throws -> String) {

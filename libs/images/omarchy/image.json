@@ -172,6 +172,8 @@
     "features_optional": [
       "background_input",
       "hotspot",
+      "spawn",
+      "process.services",
       "relay_attach",
       "h264_hw",
       "audio.desktop",

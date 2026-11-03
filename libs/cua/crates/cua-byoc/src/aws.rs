@@ -27,9 +27,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use aws_sdk_ec2::error::ProvideErrorMetadata;
 use aws_sdk_ec2::types::{
-    BlockDeviceMapping, EbsBlockDevice, Filter, HttpTokensState, InstanceMetadataEndpointState,
-    InstanceMetadataOptionsRequest, InstanceType, LocationType, ResourceType, ShutdownBehavior,
-    Tag, TagSpecification, VolumeType,
+    BlockDeviceMapping, CpuOptionsRequest, EbsBlockDevice, Filter, HttpTokensState,
+    InstanceMetadataEndpointState, InstanceMetadataOptionsRequest, InstanceType, LocationType,
+    NestedVirtualizationSpecification, ResourceType, ShutdownBehavior, Tag, TagSpecification,
+    VolumeType,
 };
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
@@ -793,6 +794,13 @@ impl Aws {
             .tag_specifications(spec_for(ResourceType::Instance))
             .tag_specifications(spec_for(ResourceType::Volume))
             .user_data(base64::engine::general_purpose::STANDARD.encode(&spec.user_data));
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
+        }
         if let Some(g) = group {
             req = req.security_group_ids(g);
         }

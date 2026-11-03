@@ -4522,7 +4522,9 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
     }
 
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
     return ((__rb: Uint8Array) => {
@@ -4585,7 +4587,8 @@ export function appSettingsResolveNewUi(settings: AppSettings, version: string):
     }
 
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 export function appSettingsSave(path: string, settings: AppSettings): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
@@ -14565,7 +14568,18 @@ export type AppExperiments = {
      * The shared web UI is the main window. Always on in the macOS shell
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
-    webUi: boolean
+    webUi: boolean,
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    secureSpaces: boolean,
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    childSpaces: boolean
 }
 
 /**
@@ -14592,7 +14606,9 @@ const FfiConverterTypeAppExperiments = (() => {
                 cuaVolume: FfiConverterBool.read(from),
                 yourCloud: FfiConverterBool.read(from),
                 sharing: FfiConverterBool.read(from),
-                webUi: FfiConverterBool.read(from)
+                webUi: FfiConverterBool.read(from),
+                secureSpaces: FfiConverterBool.read(from),
+                childSpaces: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14600,12 +14616,16 @@ const FfiConverterTypeAppExperiments = (() => {
             FfiConverterBool.write(value.yourCloud, into);
             FfiConverterBool.write(value.sharing, into);
             FfiConverterBool.write(value.webUi, into);
+            FfiConverterBool.write(value.secureSpaces, into);
+            FfiConverterBool.write(value.childSpaces, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
              FfiConverterBool.allocationSize(value.yourCloud) +
              FfiConverterBool.allocationSize(value.sharing) +
-             FfiConverterBool.allocationSize(value.webUi);
+             FfiConverterBool.allocationSize(value.webUi) +
+             FfiConverterBool.allocationSize(value.secureSpaces) +
+             FfiConverterBool.allocationSize(value.childSpaces);
 
         }
     };
@@ -71753,7 +71773,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 42027) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 48517) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
@@ -71762,7 +71782,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() !== 48081) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 30129) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 62204) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_save");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() !== 34252) {

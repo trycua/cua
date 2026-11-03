@@ -44,10 +44,8 @@ L=ghcr.io/trycua/linux M=ghcr.io/trycua/macos W=ghcr.io/trycua/windows
 check 0 --moving $L:24.04-slim
 check 0 --moving $L:24.04-slim-disk
 check 0 --moving $M:26
-check 1 --moving $M:26-xcode                # Xcode images are never published
-check 1 --moving $M:26-xcode-26.1
-check 1 $M:26-xcode-26.1-20261101-abcdef1    # not even a new pin
-check 0 --moving $M:26-slim
+check 0 --moving $M:26-xcode
+check 0 --moving $M:26-xcode-26.1
 check 0 --moving $W:15-disk
 check 1 --moving $L:main                   # not in the grammar
 check 1 --moving $L:24.04-full             # full is the unsuffixed tag

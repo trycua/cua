@@ -16,6 +16,11 @@ import "google/protobuf/timestamp.proto";
 //   guest loopback relays each outbound connection over the client's
 //   WebSocket, and the client dials it from its own network. Replaces the
 //   unauthenticated rcdp-socks.
+// - Spawn: the guest-to-host channel of child Spaces. A listener on guest
+//   loopback relays each connection over the WebSocket of the host that runs
+//   the Space, which serves this Space's own children (create, list, delete)
+//   and nothing else. The host knows which Space a connection comes from by
+//   the WebSocket it opened, never by anything the guest says.
 service TunnelService {
   // Authorizes TCP forwarding to a guest port and returns the WebSocket to
   // connect to.
@@ -30,6 +35,14 @@ service TunnelService {
   rpc StopHotspot(StopHotspotRequest) returns (StopHotspotResponse);
   // Reports hotspot state and counters.
   rpc GetHotspotStatus(GetHotspotStatusRequest) returns (GetHotspotStatusResponse);
+  // Starts the spawn channel and installs the Space's spawn capability.
+  // Only a caller holding the Space's own token (the host that runs it) may
+  // call it; starting it again replaces the channel and the capability.
+  rpc StartSpawn(StartSpawnRequest) returns (StartSpawnResponse);
+  // Stops the spawn channel and removes the capability from the guest.
+  rpc StopSpawn(StopSpawnRequest) returns (StopSpawnResponse);
+  // Reports the spawn channel's state.
+  rpc GetSpawnStatus(GetSpawnStatusRequest) returns (GetSpawnStatusResponse);
 }
 
 // Request for `TunnelService.Forward`.
@@ -163,4 +176,62 @@ message GetHotspotStatusResponse {
   uint64 bytes_out = 6;
   // Bytes received into the guest through the hotspot.
   uint64 bytes_in = 7;
+}
+
+// Request for `TunnelService.StartSpawn`.
+message StartSpawnRequest {
+  // The Space's spawn capability, minted by its host. The guest writes it
+  // to the token file (0600, owner: the user cua-spacesd runs as) for
+  // clients in the Space to present on the spawn listener.
+  string capability = 1;
+  // How long the ticket accepts the host's WebSocket. Unset means 60
+  // seconds.
+  google.protobuf.Duration ticket_ttl = 2;
+  // The Space's id, for the environment of new processes (`CUA_SPACE`).
+  string space_id = 3;
+}
+
+// Response for `TunnelService.StartSpawn`.
+message StartSpawnResponse {
+  // Spawn channel id.
+  string spawn_id = 1;
+  // Ticket for the spawn WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the ticket,
+  // for example "/spawn?ticket=…". The host keeps this socket open; the
+  // listener refuses connections while it is closed.
+  string ws_path = 3;
+  // Guest-side listener, as a URL clients in the Space use as their cua
+  // daemon, for example "http://127.0.0.1:41234".
+  string address = 4;
+  // Where the guest wrote the capability.
+  string token_path = 5;
+  // Where the guest wrote the listener's address (one line).
+  string address_path = 6;
+}
+
+// Request for `TunnelService.StopSpawn`.
+message StopSpawnRequest {
+  // Which channel. Empty stops the current one.
+  string spawn_id = 1;
+}
+
+// Response for `TunnelService.StopSpawn`.
+message StopSpawnResponse {}
+
+// Request for `TunnelService.GetSpawnStatus`.
+message GetSpawnStatusRequest {}
+
+// Response for `TunnelService.GetSpawnStatus`.
+message GetSpawnStatusResponse {
+  // A channel is started.
+  bool started = 1;
+  // The host's WebSocket is attached.
+  bool attached = 2;
+  // Channel id, when started.
+  string spawn_id = 3;
+  // Guest-side listener URL, when started.
+  string address = 4;
+  // Open relayed connections.
+  uint32 active_connections = 5;
 }

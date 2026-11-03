@@ -1,60 +1,97 @@
 ---
-title: Limit where a Space connects (egress policies)
-description: Allow and deny lists of addresses for a Space's outbound connections, enforced by the host outside the guest, from the first instruction.
+title: A Space's network
+description: What a Space can reach, enforced by the host outside the guest. With Secure Spaces on, the internet and its own tree, never this computer, your local network or cloud metadata.
 ---
 
-An egress policy says which destinations a Space may open connections to. The machine the Space runs on enforces it outside the guest, so nothing in the guest, root included, can change it: there are no rules inside the guest to flush.
+Secure Spaces is an [experiment](/spaces/guides/experiments) and is off until you turn it on with `cua experiments enable secure-spaces`. While it is off, Spaces keep the open network they have always had, and only the older allow and deny lists (see the last heading) apply. The rest of this page describes the experiment.
+
+With Secure Spaces on, every Space starts on **Internet only**. It reaches the public internet and the other Spaces of its own tree. It can't reach this computer, your local network, cloud metadata endpoints, Spaces of other trees or the Cua daemon. The machine the Space runs on enforces this outside the guest, from its first instruction. Nothing in the guest, root included, can change it: there are no rules inside the guest to flush.
 
 ```python skip="local-vm"
 import cua
 
 spaces = cua.embedded().spaces()
-created = await spaces.create(cua.SpaceCreateOptions(
-    on="local",
-    egress=cua.EgressPolicy(allow=["1.1.1.1"], deny=["all"]),
-))
+created = await spaces.create(cua.SpaceCreateOptions(on="local"))
 space = created.space
-assert space.egress_enforced == cua.EgressEnforcement.HOST
+print(space.network.preset)  # "internet"
 
-# Replace it while the Space runs (an empty policy removes it).
-await spaces.set_egress(space.id, cua.EgressPolicy(deny=["10.0.0.0/8"]))
+# Only GitHub's addresses, nothing else.
+await spaces.set_network(
+    space.id,
+    cua.NetworkSettings(preset="custom", custom_base="none", allow=["140.82.112.0/20"]),
+    widen=False,
+    tree=False,
+)
+
+# What it can reach now, in plain words.
+info = await spaces.network(space.id)
+print(info.summary, info.enforcement, info.always_blocked)
 ```
 
-## The policy
+From the command line, `cua spaces create --network lan` picks a preset, and `cua network show` and `cua network set` read and change it later.
 
-- Every `deny` entry blocks that destination; every `allow` entry is an exception that wins over `deny`. `deny=["all"]` with `allow=["1.1.1.1"]` leaves only 1.1.1.1 reachable.
-- An `allow` list alone blocks nothing. Both lists empty: no policy.
-- Entries are IPv4 or IPv6 addresses and CIDRs; `all` is `0.0.0.0/0` and `::/0`. A hostname is refused (`InvalidArgument`): rules are by address.
-- The destination is the address the guest sends to. DNS works while the resolver the guest uses is allowed: on a VM that is its virtual network's own resolver (`10.0.2.3` under QEMU, `172.16.0.1` in a Firecracker microVM); a container uses its engine's resolvers.
-- Never filtered: loopback inside the guest, replies to connections made to the guest (cua-spacesd, published ports), IPv6 neighbor discovery.
+## Presets
+
+| Preset | Reaches |
+| --- | --- |
+| `internet` (default) | The public internet and its own tree. |
+| `none` | Nothing. Cua still reaches the Space to run commands and show its screen. |
+| `localhost:5432,3000` | `internet`, plus this computer's localhost on the ports you list. `localhost:all` opens every port, which also opens the Docker API, databases and local AI servers, so name the ports when you can. |
+| `lan` | `internet`, plus your local network. This computer itself stays closed. |
+| `custom` | `internet` plus your own `allow` and `deny` lists. `custom:none` starts from no network instead. |
+| `unprotected` | Everything but the always-blocked list. Use it only where a runtime can't protect the Space and you need the network anyway. |
+
+`allow` and `deny` take IPv4 and IPv6 addresses and CIDRs (`deny` also takes `all`). A deny blocks; an allow is an exception to a deny and to the default blocks. A hostname is refused, because the rules are by address. A name that resolves to a blocked address, such as one that points at `127.0.0.1` or `10.0.0.1`, stays blocked: the rules judge the address the guest connects to.
+
+## Always blocked
+
+No preset or list opens these:
+
+- cloud metadata (`169.254.169.254`, `169.254.170.2`, `fd00:ec2::254`, `168.63.129.16`, `100.100.100.200`);
+- Spaces in other trees;
+- the Cua daemon on this computer;
+- this computer's own addresses, except the localhost ports the `localhost` preset lists.
+
+## Blocked unless a preset opens them
+
+Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local, unique-local IPv6, loopback, CGNAT (`100.64.0.0/10`, which covers Tailscale), multicast and other reserved ranges. `lan` opens the private, link-local and unique-local ranges. A custom `allow` can open one of them too, and `cua network show` then names what it opens ("Allows your local network (192.168.1.0/24)").
+
+DNS keeps working: the runtime's own resolver stays open on port 53.
+
+## Trees
+
+A Space created with a parent (`cua spaces create --parent studio`, or `parent=` in the SDK) joins its parent's tree. Spaces of one tree reach each other; other trees are blocked. A child's network is never more open than its parent's: its settings are cut down to what both allow. `--widen` lets it reach more, and the Space records who widened it and when. Tightening a parent tightens its children.
 
 ## Where it is enforced
 
-| Space | Enforced by |
-| --- | --- |
-| Container, runc or gVisor (any Docker engine, also the built-in runtime on a Mac) | nftables in the engine's own network namespace, on the Space's bridge port |
-| Firecracker microVM (Linux) | iptables in the network namespace pasta creates around the VM |
-| QEMU VM (Linux) | iptables in the network namespace pasta creates around QEMU |
-| A Space one of your machines provides (`on="host:..."`, `on="auto"`) | that machine, as above |
-| macOS VM, `vz` or Apple Containerization microVM, QEMU on macOS or Windows | refused (`Unsupported`): filtering them needs root (pf, WFP) |
-| Cua Cloud, your own cloud account (AWS, Google Cloud, Modal), a Space added by address | refused (`Unsupported`): no host-side point cua controls |
+| Space | Enforced by | Without protection |
+| --- | --- | --- |
+| Container, runc or gVisor (any Docker engine, also the built-in runtime on a Mac) | nftables in the engine's own network namespace, on the Space's bridge port; each tree gets its own Docker network | |
+| Firecracker microVM (Linux) | iptables in the network namespace pasta creates around the VM | |
+| QEMU VM (Linux) | iptables in the network namespace pasta creates around QEMU | |
+| A Space one of your computers provides | that computer, as above | |
+| `vz` microVM (Mac), QEMU on macOS or Windows | not yet | starts with no network; `unprotected` opens it |
+| macOS VM, Apple Containerization microVM | not yet | refused; `unprotected` starts it |
+| Your own cloud account (AWS, Google Cloud, Modal) | not yet | refused; `unprotected` creates it |
 
-`SpaceInfo.egress_enforced` is `host` for a Space with a policy. A machine whose cua predates egress policies never gets a Space with one: the create fails and the Space it made is deleted.
+A runtime that can't protect a Space never starts it open on its own. `cua network show` and `SpaceInfo.network_note` say why a Space has no network.
 
 ## Lifetime
 
-- The policy is in place before the guest's first instruction: a container's rules exist before it starts (keyed by the MAC address it is created with), a VM's namespace holds them before the VM boots.
-- It survives stop and start, suspend and resume, a restart of the daemon, forks and checkpoints (a fork inherits its source's policy).
-- `set_egress` applies at once. A running QEMU VM started without a policy first moves into its own namespace: its memory is carried over to a new QEMU process in a moment, and connections through the old one end.
+- The rules are in place before the guest's first instruction.
+- They survive stop and start, suspend and resume, a restart of the daemon, forks and checkpoints. A fork keeps its source's network and tree.
+- `set_network` applies at once where the runtime can change a running guest's network (containers, Linux VMs), and otherwise at the Space's next start. The result says which (`applied`).
+- An agent working through Cua's MCP tools can only tighten a Space's network. Opening more is yours to do, with `cua network set` or in the app.
 
-## What changes for a Space with a policy
+## Spaces from before network settings
 
-- A container created with a policy has no raw sockets (`CAP_NET_RAW`); `ping` still works through ICMP datagram sockets. Other containers on the same engine reach it only through the host (published ports), not directly over the bridge.
-- A QEMU VM with a policy reaches nothing on the host's loopback through `10.0.2.2`.
+Once Secure Spaces is on, a Space created before network settings moves to them at its next start: one with no egress policy gets `internet`, one with a policy gets `custom` with its lists kept, and one created with `network="none"` gets `none`. `cua network show` says so once. Turn the experiment off again and Spaces go back to the open network at their next start; nothing is deleted.
 
 ## Requirements
 
 - Containers: `nft` (nftables) where the container engine runs.
 - VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`.
 
-To check a policy from inside a Space as root: `nft flush ruleset; iptables -F` changes nothing, and a raw packet to a denied address gets no answer.
+To check it from inside a Space as root: `nft flush ruleset; iptables -F` changes nothing, a raw socket can't be opened in a container, and a connection to this computer's address times out.
+
+The older `egress` allow and deny lists (`SpaceCreateOptions.egress`, `set_egress`, `--egress-allow`, `--egress-deny`) still work: they are the lists of a `custom` network.

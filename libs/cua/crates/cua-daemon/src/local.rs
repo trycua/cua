@@ -1711,6 +1711,8 @@ impl VmmLocal {
         s.restrict_network = spec.restrict_network;
         s.forkable = spec.forkable;
         s.egress = spec.egress.clone();
+        s.network = spec.network.clone();
+        s.tree = spec.tree.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
         if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await
@@ -2065,6 +2067,15 @@ impl LocalRuntime for VmmLocal {
     async fn egress(&self, name: &str) -> RuntimeResult<cua_vmm::egress::EgressPolicy> {
         let (_, rt) = self.owner(name).await?;
         rt.egress(name).await.map_err(rt_err)
+    }
+
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let (_, rt) = self.owner(name).await?;
+        rt.set_network(name, settings).await.map_err(rt_err)
     }
 
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {

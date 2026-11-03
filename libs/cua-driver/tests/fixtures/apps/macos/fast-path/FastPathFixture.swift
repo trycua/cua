@@ -70,6 +70,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
     var alpha: NSButton!
     var beta: NSButton!
     var fields: [NSTextField] = []
+    var checks: [NSButton] = []
     let canvas = Canvas(frame: NSRect(x: 380, y: 200, width: 320, height: 280))
     var seen = 0
 
@@ -110,6 +111,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
             let c = NSButton(checkboxWithTitle: "Option \(i)", target: self, action: #selector(toggled(_:)))
             c.frame = NSRect(x: 20, y: 290 - (i - 1) * 28, width: 160, height: 22)
             content.addSubview(c)
+            checks.append(c)
         }
         alpha = button("Alpha", NSRect(x: 200, y: 260, width: 100, height: 30))
         beta = button("Beta", NSRect(x: 200, y: 200, width: 100, height: 30))
@@ -149,6 +151,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
             canvas.tile = NSRect(x: 40, y: 40, width: 48, height: 28); canvas.circle = false
             canvas.needsDisplay = true
             fields.forEach { $0.stringValue = "" }
+            checks.forEach { $0.state = .off }
         default: log("unknown command \(line)")
         }
         log("applied \(line)")

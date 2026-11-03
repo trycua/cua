@@ -270,7 +270,8 @@ fn window_observation(
         };
     };
     let b = &info.bounds;
-    // Front-to-back: the first normal on-screen window containing the point.
+    // `z_index` grows toward the front (the frontmost window has the highest
+    // value), so the window at the point is the one with the largest z_index.
     let front = windows
         .iter()
         .filter(|w| w.layer == 0 && w.is_on_screen)
@@ -278,7 +279,7 @@ fn window_observation(
             Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height)
                 .contains(screen.0, screen.1)
         })
-        .min_by_key(|w| w.z_index);
+        .max_by_key(|w| w.z_index);
     WindowObservation {
         exists: true,
         pid: info.pid,

@@ -21,11 +21,17 @@ import subprocess
 import time
 
 FIX = "/tmp/fpfix"
-CLI = os.path.expanduser("~/.local/bin/cua-driver")
+CLI = os.path.expanduser(os.environ.get("CUA_DRIVER_CLI", "~/.local/bin/cua-driver"))
+SESSION = os.environ.get("FP_SESSION", "fast-path-bench")
+WIN = {"x": 0.0, "y": 0.0, "scale": 1.0}
 
 
 def call(tool, args):
     t = time.perf_counter()
+    # Snapshots are session-scoped and each CLI call is its own connection,
+    # so a shared session label is what lets reads and actions chain.
+    if tool not in ("set_config", "get_config"):
+        args = dict(args, session=SESSION)
     p = subprocess.run([CLI, "call", tool, json.dumps(args)], capture_output=True, text=True, timeout=60)
     dt = (time.perf_counter() - t) * 1000
     out = p.stdout.strip()
@@ -39,7 +45,7 @@ def call(tool, args):
                 data = json.loads(m.group(0))
             except ValueError:
                 data = None
-    return {"ms": dt, "text": out, "json": data or {}, "rc": p.returncode, "err": p.stderr.strip()}
+    return {"tool": tool, "ms": dt, "text": out, "json": data or {}, "rc": p.returncode, "err": p.stderr.strip()}
 
 
 def structured(r):
@@ -95,7 +101,9 @@ def target():
     wins = s.get("windows") or []
     for w in wins:
         if "FastPath" in (w.get("title") or ""):
-            return w["pid"], w["window_id"], w.get("bounds") or w.get("frame")
+            b = w.get("bounds") or w.get("frame") or {}
+            WIN["x"], WIN["y"] = float(b.get("x", 0)), float(b.get("y", 0))
+            return w["pid"], w["window_id"], b
     raise SystemExit(f"fixture window not found: {r['text'][:400]}")
 
 
@@ -104,7 +112,11 @@ def read(pid, wid, screenshot=True, since=None):
     if since:
         args["since"] = since
     r = call("get_window_state", args)
-    return r, structured(r)
+    st = structured(r)
+    sw, wb = st.get("screenshot_width"), st.get("window_bounds") or {}
+    if sw and wb.get("width"):
+        WIN["scale"] = sw / wb["width"]
+    return r, st
 
 
 def elements(s):
@@ -126,10 +138,23 @@ def token(s, e):
 def center_local(e, win):
     f = e.get("frame") or e.get("window_frame")
     if isinstance(f, dict):
-        x, y, w, h = f["x"], f["y"], f["width"], f["height"]
+        x, y = f["x"], f["y"]
+        w, h = f.get("w", f.get("width")), f.get("h", f.get("height"))
     else:
         x, y, w, h = f
-    return x + w / 2, y + h / 2
+    return x + w / 2 - WIN["x"], y + h / 2 - WIN["y"]
+
+
+def px(x, y):
+    """Window-local points to screenshot pixels, the unit pixel clicks take."""
+    args = {"x": int(round(x * WIN["scale"])), "y": int(round(y * WIN["scale"]))}
+    # Background pixel clicks land offset by the window origin on the macOS 27.2
+    # VM (a separate bug, also with fast_path off), so pixel clicks are delivered
+    # in the foreground unless FP_PIXEL_DELIVERY says otherwise.
+    mode = os.environ.get("FP_PIXEL_DELIVERY", "foreground")
+    if mode != "background":
+        args["delivery_mode"] = mode
+    return args
 
 
 def set_mode(mode):
@@ -203,7 +228,7 @@ def task_canvas(pid, wid, mode, fx, canvas_origin):
         if mode == "off":
             r, s = read(pid, wid)
             calls.append(r)
-        r = call("click", {"pid": pid, "window_id": wid, "x": cx, "y": cy})
+        r = call("click", dict({"pid": pid, "window_id": wid}, **px(cx, cy)))
         calls.append(r)
     return calls, None
 
@@ -225,6 +250,7 @@ def run_bench(pid, wid, fx, canvas_origin, reps):
                     "wall_ms": wall,
                     "turns": len(calls),
                     "tool_ms": sum(c["ms"] for c in calls),
+                    "per_call": [(c["tool"], c["ms"]) for c in calls],
                     "errors": sum(1 for c in calls if is_error(c)),
                     "false_refusals": refusals,
                     "err": err,
@@ -233,6 +259,12 @@ def run_bench(pid, wid, fx, canvas_origin, reps):
             out[f"{name}/{mode}"] = {
                 "wall_ms_median": statistics.median(r["wall_ms"] for r in rows),
                 "turns": rows[0]["turns"],
+                "tool_ms_median": statistics.median(r["tool_ms"] for r in rows),
+                "per_tool_ms_median": {
+                    t: statistics.median(ms for r in rows for (tt, ms) in r["per_call"] if tt == t)
+                    for t in sorted({tt for r in rows for (tt, _) in r["per_call"]})
+                },
+                "all_ok": all(not r["errors"] for r in rows),
                 "errors": sum(r["errors"] for r in rows),
                 "false_refusals": sum(r["false_refusals"] for r in rows),
                 "sample_log": rows[0]["log"],
@@ -256,7 +288,7 @@ def race_tests(pid, wid, fx, canvas_origin, iterations):
         x, y = center_local(e, None)
         mark = fx.log_mark()
         fx.do(change)
-        c = call("click", {"pid": pid, "window_id": wid, "x": x, "y": y})
+        c = call("click", dict({"pid": pid, "window_id": wid}, **px(x, y)))
         return c, fx.log_since(mark)
 
     def token_click_after(change, label):
@@ -290,7 +322,7 @@ def race_tests(pid, wid, fx, canvas_origin, iterations):
         read(pid, wid)
         mark = fx.log_mark()
         fx.do(change)
-        c = call("click", {"pid": pid, "window_id": wid, "x": cx, "y": cy})
+        c = call("click", dict({"pid": pid, "window_id": wid}, **px(cx, cy)))
         res[name] = summarize(c, fx.log_since(mark))
 
     # Randomized race: a random change lands 0-50 ms after the read.
@@ -308,7 +340,7 @@ def race_tests(pid, wid, fx, canvas_origin, iterations):
             fx.do(change, wait=False)
         time.sleep(random.uniform(0, 0.05))
         args = {"pid": pid, "window_id": wid}
-        args.update({"x": x, "y": y} if pixel else {"element_token": token(s, e)})
+        args.update(px(x, y) if pixel else {"element_token": token(s, e)})
         c = call("click", args)
         log = fx.log_since(mark)
         presses = [l for l in log if l.startswith("pressed")]
@@ -328,9 +360,9 @@ def race_tests(pid, wid, fx, canvas_origin, iterations):
     x, y = center_local(e, None)
     stat = {"alpha_pixel": 0, "canvas_pixel": 0, "n": iterations}
     for _ in range(iterations):
-        if is_error(call("click", {"pid": pid, "window_id": wid, "x": x, "y": y})):
+        if is_error(call("click", dict({"pid": pid, "window_id": wid}, **px(x, y)))):
             stat["alpha_pixel"] += 1
-        if is_error(call("click", {"pid": pid, "window_id": wid, "x": cx, "y": cy})):
+        if is_error(call("click", dict({"pid": pid, "window_id": wid}, **px(cx, cy)))):
             stat["canvas_pixel"] += 1
     res["static_false_refusals"] = stat
     set_mode("off")

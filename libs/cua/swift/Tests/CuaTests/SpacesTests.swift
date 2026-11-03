@@ -144,7 +144,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "volumeRequestAccess", "volumeRequests", "volumeApprove", "volumeDeny", "volumeAudit",
             "volumeStorage", "volumeStorageSet", "volumeMountStatus", "volumeMount", "volumeUnmount",
             "volumeSyncStatus", "volumeSyncEvents", "volumeSyncResolve", "volumeCacheStats",
-            "volumeCacheSet", "volumeCacheClear", "network", "setNetwork",
+            "volumeCacheSet", "volumeCacheClear", "network", "setNetwork", "networkLog",
         ]
         let spaceHandle: Set<String> = [
             "bash", "write", "home", "upload", "download", "sendFile", "listTools", "callTool",
@@ -182,7 +182,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             { $0.volumeStorage }, { $0.volumeStorageSet }, { $0.volumeMountStatus },
             { $0.volumeMount }, { $0.volumeUnmount }, { $0.volumeSyncStatus },
             { $0.volumeSyncEvents }, { $0.volumeSyncResolve }, { $0.volumeCacheStats },
-            { $0.volumeCacheSet }, { $0.volumeCacheClear },
+            { $0.volumeCacheSet }, { $0.volumeCacheClear }, { $0.networkLog },
         ]
         let _: [(any SpaceProtocol) -> Any] = [
             { $0.bash }, { $0.write }, { $0.home }, { $0.upload }, { $0.download }, { $0.sendFile },

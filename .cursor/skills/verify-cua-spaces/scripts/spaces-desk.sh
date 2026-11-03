@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 #
 # A throwaway Linux Space for verification: Xvfb + openbox + (optional)
 # PipeWire audio + the x11-pad input-echo fixture + a source-built

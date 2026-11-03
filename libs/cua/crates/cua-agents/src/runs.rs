@@ -731,6 +731,50 @@ impl Agents {
         Ok(done)
     }
 
+    /// Whether a start of `h` must run the install script: asked for, and
+    /// something is missing. With every tool in place the script only prints
+    /// that it found them, and each of its steps writes an event (a process
+    /// or two in the guest, a quarter of a second each on a sandboxed
+    /// kernel), so a start with the tools there skips it.
+    async fn install_wanted(&self, h: &Harness, asked: bool) -> bool {
+        asked && !self.tools_in_place(h).await
+    }
+
+    /// Whether the tools of `h` (and the runner's own) are installed under
+    /// the guest user's home by this crate, in one guest call. A tool baked
+    /// into the image, or one with operating system packages, always takes
+    /// the script.
+    async fn tools_in_place(&self, h: &Harness) -> bool {
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        ids.extend(h.installs.iter().copied());
+        let Ok(order) = installables::resolve(&ids) else {
+            return false;
+        };
+        let mut tests = vec![];
+        for id in &order {
+            let Some(it) = installables::get(id) else {
+                return false;
+            };
+            if !it.apt.is_empty() {
+                return false;
+            }
+            tests.push(format!(
+                "[ -f {} ]",
+                quote(&format!(
+                    "{}/{}/{id}/{}/.cua-installed",
+                    self.home.trim_end_matches('/'),
+                    installables::TOOLS_DIR,
+                    it.version
+                ))
+            ));
+        }
+        let script = format!("{} && echo in-place", tests.join(" && "));
+        matches!(
+            self.sh(&script, Duration::from_secs(30)).await,
+            Ok(out) if out.trim() == "in-place"
+        )
+    }
+
     /// Puts what every start of `h` needs in the guest, once and in
     /// parallel: the bridge pipe, the runner and the cua skills, each skipped
     /// when it is already there. Safe to run ahead of a start (when an agent
@@ -1160,7 +1204,7 @@ impl Agents {
             h,
             &rdir,
             &runner_dir,
-            opts.install.unwrap_or(true),
+            self.install_wanted(h, opts.install.unwrap_or(true)).await,
             opts.repo
                 .as_deref()
                 .map(|r| (r, opts.branch.as_deref(), cwd.as_str())),

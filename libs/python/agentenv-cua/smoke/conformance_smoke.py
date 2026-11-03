@@ -15,6 +15,8 @@ import asyncio
 import json
 import secrets
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 from agentenv_cua.lume.provider import LumeSandboxProvider
@@ -35,6 +37,21 @@ async def trivial_tool_call(url: str, token: str) -> str:
     return " ".join(getattr(part, "text", "") for part in result.content).strip()
 
 
+async def wait_for_card(url: str, timeout_s: float) -> None:
+    """Wait until the driver's card answers: the VM has an address a little before the driver listens on it."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            await asyncio.to_thread(
+                lambda: urllib.request.urlopen(f"{url}/.well-known/agent-env.json", timeout=5).read()
+            )
+            return
+        except OSError:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"no driver card at {url} after {timeout_s:g} s") from None
+            await asyncio.sleep(3)
+
+
 async def main(args: argparse.Namespace) -> int:
     provider = LumeSandboxProvider(base=args.base, prefix="agentenv-smoke")
     token = secrets.token_urlsafe(32)
@@ -45,12 +62,14 @@ async def main(args: argparse.Namespace) -> int:
     print(f"booted {sandbox.sandbox_id} at {url}", flush=True)
     env = {"ENVIRONMENT_NAME": "cua-driver", CONTROL_TOKEN_ENV: token}
     try:
+        await wait_for_card(url, args.ready_timeout)
         report = await run_probe(
             url, args.level, timeout_s=60, ready_timeout_s=args.ready_timeout, token=token
         )
         print(f"tool call get_screen_size: {await trivial_tool_call(url, token)}", flush=True)
         # A reset gives a clean clone at the same address; the driver must come back ready and answer again.
         await provider.reset_vm(sandbox, image=args.base, env=env)
+        await wait_for_card(url, args.ready_timeout)
         await run_probe(url, "basic", timeout_s=60, ready_timeout_s=args.ready_timeout, token=token)
         print(f"after reset, get_screen_size: {await trivial_tool_call(url, token)}", flush=True)
     except Exception as e:

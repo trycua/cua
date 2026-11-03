@@ -392,7 +392,6 @@ def literals(expr):
 MATRIX_JOBS = {
     # job id: legs a pull request runs and which of them are in the reused subset
     "rust-lint": ["ubuntu-latest", "windows-latest"],
-    "rust": ["ubuntu-latest"],
     "spaces-e2e": ["ubuntu-latest"],
     "bindings": ["ubuntu-latest"],
     "python": ["ubuntu-latest"],
@@ -413,6 +412,23 @@ def test_cua_sdk_matrix_on_main_is_the_full_matrix_minus_the_pull_request_legs(j
     prefix = job["name"].split("(")[0].replace("${{ matrix.os }}", "").strip()
     for leg in pr:
         assert f"{prefix} ({leg})" in subset
+
+
+def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
+    wf = load("ci-cua-sdk.yml")
+    # The reuse subset names `rust (ubuntu-latest)`: a plain job with that name
+    # reports the result of the sharded Linux jobs.
+    assert wf["jobs"]["rust-linux-result"]["name"] == "rust (ubuntu-latest)"
+    assert wf["jobs"]["rust-linux-result"]["needs"] == ["reuse", "rust-linux"]
+    assert wf["jobs"]["rust-linux"]["strategy"]["matrix"]["shard"] == [1, 2, 3]
+    assert "--partition hash:${{ matrix.shard }}/3" in str(wf["jobs"]["rust-linux"]["steps"])
+    # Both run exactly when the old Linux leg did: never when the subset is reused on a full run.
+    assert wf["jobs"]["rust-linux"]["if"].split("&&", 3)[3] == wf["jobs"]["rust-linux-result"]["if"].split("&&", 3)[3]
+    assert "needs.reuse.outputs.pr_subset == 'true'" in wf["jobs"]["rust-linux"]["if"]
+    # The macOS and Windows legs stay in `rust`, on full runs only.
+    job = wf["jobs"]["rust"]
+    assert literals(job["strategy"]["matrix"]["os"]) == [["macos-26", "windows-latest"]]
+    assert "ci:full" in job["if"]
 
 
 def test_cua_sdk_jobs_in_the_subset_skip_only_when_it_is_reused():

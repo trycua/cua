@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-6vcpu-macos-26]
+        os: [blacksmith-4vcpu-ubuntu-2404, macos-26]
     defaults:
       run:
         working-directory: libs/cua

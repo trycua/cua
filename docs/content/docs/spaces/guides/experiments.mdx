@@ -13,7 +13,7 @@ cua experiments enable secure-spaces
 cua experiments disable secure-spaces
 ```
 
-The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, a switch for each appears under Settings, Advanced, Labs once the experiment is on (turn it on with the command first); a change made with the command shows there the next time the app starts. To turn one on for a single process, set `CUA_EXPERIMENTS=secure-spaces` (or `-secure-spaces` to force it off).
+The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, every experiment has a switch under Settings, Advanced, Labs, off until you turn it on, and it does what the command does; a change made with the command shows there the next time the app starts. To turn one on for a single process, set `CUA_EXPERIMENTS=secure-spaces` (or `-secure-spaces` to force it off).
 
 A command that belongs to an experiment that is off is left out of `--help`. If you run it anyway it says which experiment to turn on.
 

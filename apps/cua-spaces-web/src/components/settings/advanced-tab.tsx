@@ -22,12 +22,6 @@ const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this v
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
 const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
-/** Experiments that have no switch here until they are on (`cua experiments enable <name>`): the app shows the switch once the experiment is on, so it can be turned off. */
-const SHOWN_ONCE_ON = new Set(["experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
-
-/** Whether a core switch row reads on. */
-const isOn = (r: CoreRow) => r.options.some((o) => o.id === "on" && o.active);
-
 /**
  * Settings, Advanced: early releases, Labs, which software runs Spaces on
  * this Mac, and your own connection server. For options most people never
@@ -156,7 +150,7 @@ function Labs() {
   const askFirst = useFlag("spaces_ask_first_home");
   const newSetup = useFlag("spaces_new_onboarding");
   const thisMacOk = useThisMacConfirmed();
-  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id) && (!SHOWN_ONCE_ON.has(r.id) || isOn(r)));
+  const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
     "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",

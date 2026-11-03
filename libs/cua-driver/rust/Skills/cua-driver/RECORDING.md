@@ -55,9 +55,9 @@ assuming the convenience command supports every raw-tool argument.
 - Linux X11 video uses ffmpeg `x11grab`. Native Wayland routes by compositor:
   GNOME uses the trusted Shell helper frames, wlroots compositors use
   `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) use the
-  xdg-desktop-portal ScreenCast, which needs a `portal-capture` build, the
-  PipeWire client library (`libpipewire-0.3-0`), and a one-time monitor grant
-  in the portal dialog; see [LINUX.md](LINUX.md).
+  xdg-desktop-portal ScreenCast, which the released binaries carry. It needs
+  the PipeWire client library (`libpipewire-0.3-0`) and a one-time monitor
+  grant in the portal dialog; see [LINUX.md](LINUX.md).
   A successful desktop PNG does not establish video availability.
 
 ## What each turn folder contains

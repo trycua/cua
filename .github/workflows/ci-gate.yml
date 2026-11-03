@@ -16,16 +16,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      # Which workflows this gate may ignore, from the paths the PR changes (area map:
-      # .github/ci-areas.json, docs/contributing/CI.md). The merge queue entry resolves the
-      # same pull request and reads the same file list, so both events compute one set.
+      # Which workflows this gate may ignore, from the paths the PR changes, the area map
+      # (.github/ci-areas.json) and the package graph (.github/scripts/ci_graph.py); see
+      # docs/contributing/CI.md. The map and both scripts come from the base commit, never
+      # from the pull request, so a PR cannot narrow its own gate by editing them (and any
+      # .github/** change waits for every workflow). The PR's manifests are read too, only
+      # to add the dependency edges it introduces. The merge queue entry resolves the same
+      # pull request and reads the same file list, so both events compute one set.
       # Any failure here fails the gate: nothing is skipped on error.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check out the selector from the base commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: base
           persist-credentials: false
+          filter: blob:none
           sparse-checkout: |
-            .github/ci-areas.json
-            .github/scripts/ci_gate_scope.py
+            /.github/ci-areas.json
+            /.github/scripts/ci_gate_scope.py
+            /.github/scripts/ci_graph.py
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Check out the pull request's manifests
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: head
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
       - name: Scope the gate to the changed areas
         id: scope
@@ -33,6 +56,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          CI_GATE_HEAD_ROOT: ${{ github.workspace }}/head
         run: |
           set -euo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
@@ -47,7 +71,7 @@ jobs:
             --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
-          python3 .github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+          python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
       - name: Wait for every other workflow on the pull request head
         env:
           GH_TOKEN: ${{ github.token }}

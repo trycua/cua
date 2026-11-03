@@ -31,6 +31,17 @@ use super::portal::RestoreToken;
 /// valid restore token skips it.
 pub const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Bound on each stretch of portal calls that needs no user answer, so a
+/// portal that never replies fails the start instead of parking its caller.
+pub const PORTAL_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn portal_unresponsive(step: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "xdg-desktop-portal did not answer {step} within {}s",
+        PORTAL_CALL_TIMEOUT.as_secs()
+    )
+}
+
 /// A live portal ScreenCast session. The portal tears the cast down when the
 /// owning D-Bus connection goes away, so the session keeps its own runtime
 /// alive (one worker thread keeps the zbus connection driven, see #2105).
@@ -56,33 +67,39 @@ impl ScreencastSession {
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
         let (session, streams, fd) = runtime.block_on(async {
-            let connection = super::portal::fresh_session_connection().await?;
-            let proxy = Screencast::with_connection(connection).await.map_err(|e| {
-                anyhow::anyhow!(
-                    "portal ScreenCast proxy unreachable: {e}. Install \
-                     xdg-desktop-portal-gnome / xdg-desktop-portal-kde."
-                )
-            })?;
-            let session = proxy
-                .create_session(CreateSessionOptions::default())
-                .await
-                .map_err(|e| anyhow::anyhow!("portal create_session failed: {e}"))?;
-
-            let mut select_opts = SelectSourcesOptions::default()
-                .set_sources(sources)
-                .set_multiple(false)
-                .set_cursor_mode(CursorMode::Embedded)
-                .set_persist_mode(PersistMode::ExplicitlyRevoked);
             let saved_token = restore.and_then(RestoreToken::read);
-            if let Some(token) = saved_token.as_deref() {
-                select_opts = select_opts.set_restore_token(Some(token));
-            }
-            proxy
-                .select_sources(&session, select_opts)
+            let setup = tokio::time::timeout(PORTAL_CALL_TIMEOUT, async {
+                let connection = super::portal::fresh_session_connection().await?;
+                let proxy = Screencast::with_connection(connection).await.map_err(|e| {
+                    anyhow::anyhow!(
+                        "portal ScreenCast proxy unreachable: {e}. Install \
+                         xdg-desktop-portal-gnome / xdg-desktop-portal-kde."
+                    )
+                })?;
+                let session = proxy
+                    .create_session(CreateSessionOptions::default())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("portal create_session failed: {e}"))?;
+
+                let mut select_opts = SelectSourcesOptions::default()
+                    .set_sources(sources)
+                    .set_multiple(false)
+                    .set_cursor_mode(CursorMode::Embedded)
+                    .set_persist_mode(PersistMode::ExplicitlyRevoked);
+                if let Some(token) = saved_token.as_deref() {
+                    select_opts = select_opts.set_restore_token(Some(token));
+                }
+                proxy
+                    .select_sources(&session, select_opts)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("portal select_sources failed: {e}"))?
+                    .response()
+                    .map_err(|e| anyhow::anyhow!("portal select_sources response error: {e}"))?;
+                anyhow::Ok((proxy, session))
+            });
+            let (proxy, session) = setup
                 .await
-                .map_err(|e| anyhow::anyhow!("portal select_sources failed: {e}"))?
-                .response()
-                .map_err(|e| anyhow::anyhow!("portal select_sources response error: {e}"))?;
+                .map_err(|_| portal_unresponsive("the ScreenCast session setup"))??;
 
             // `start` resolves only once the user answers the consent dialog
             // (or the restore token skips it); bound that wait here.
@@ -112,10 +129,14 @@ impl ScreencastSession {
                 }
             }
 
-            let fd = proxy
-                .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
-                .await
-                .map_err(|e| anyhow::anyhow!("portal open_pipe_wire_remote failed: {e}"))?;
+            let remote = proxy.open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default());
+            let fd = match tokio::time::timeout(PORTAL_CALL_TIMEOUT, remote).await {
+                Ok(fd) => fd.map_err(|e| anyhow::anyhow!("portal open_pipe_wire_remote failed: {e}"))?,
+                Err(_) => {
+                    let _ = session.close().await;
+                    return Err(portal_unresponsive("open_pipe_wire_remote"));
+                }
+            };
             anyhow::Ok((session, streams, fd))
         })?;
         Ok(Self {
@@ -392,6 +413,32 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
         })
         .register();
 
+    // A producer that stops casting removes its node, but libpipewire parks a
+    // stream linked to it in `Paused` until the session manager gets round to
+    // destroying it, which can take long enough to record a frozen tail.
+    // Watching the registry ends the capture as soon as the source is gone.
+    let registry = core
+        .get_registry_rc()
+        .map_err(|e| anyhow::anyhow!("pipewire get_registry failed: {e}"))?;
+    let registry_listener = registry
+        .add_listener_local()
+        .global_remove({
+            let pump = pump.clone();
+            let mainloop = mainloop.clone();
+            move |id| {
+                if id == node_id {
+                    pump.borrow_mut().finish(
+                        &mainloop,
+                        Err(anyhow::anyhow!(
+                            "portal ScreenCast stream disconnected: the compositor removed the \
+                             source (session closed or sharing revoked)"
+                        )),
+                    );
+                }
+            }
+        })
+        .register();
+
     let stream = pw::stream::StreamBox::new(
         &core,
         "cua-driver-capture",
@@ -577,10 +624,9 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
     let mut params = [Pod::from_bytes(&values)
         .ok_or_else(|| anyhow::anyhow!("EnumFormat pod parse-back failed"))?];
 
-    // `DONT_RECONNECT` binds the stream to the portal's node: when the
-    // compositor removes that node, the session manager destroys this
-    // stream (surfacing as `Unconnected`) instead of parking it `Paused`
-    // while it waits to relink, possibly to an unrelated video source.
+    // `DONT_RECONNECT` binds the stream to the portal's node so the session
+    // manager never relinks it to an unrelated video source once that node
+    // is gone; the registry watch above reports the removal itself.
     stream
         .connect(
             spa::utils::Direction::Input,
@@ -626,6 +672,8 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
     drop(ticker);
     drop(listener);
     drop(stream);
+    drop(registry_listener);
+    drop(registry);
     drop(core_listener);
     drop(core);
     drop(context);

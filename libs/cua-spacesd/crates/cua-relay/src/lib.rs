@@ -47,6 +47,7 @@ pub mod mux;
 pub mod oidc;
 pub mod pairing;
 pub mod pool;
+pub mod process_memory;
 pub mod proxies;
 pub mod server;
 pub mod share_web;

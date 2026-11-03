@@ -62,9 +62,10 @@ struct Args {
     machine_window_bytes: usize,
     /// Largest number of concurrent client streams across every computer at
     /// once (S7): the relay-wide memory budget, enforced with
-    /// backpressure. Tune to the deployed pod's memory limit.
-    #[arg(long, env = "CUA_RELAY_MAX_GLOBAL_STREAMS", default_value_t = 4096)]
-    max_global_streams: u64,
+    /// backpressure. Unset: derived from the container's memory limit
+    /// (cgroup), or 4096 without one.
+    #[arg(long, env = "CUA_RELAY_MAX_GLOBAL_STREAMS")]
+    max_global_streams: Option<u64>,
     /// Seconds without a heartbeat before a computer is dropped.
     #[arg(long, env = "CUA_RELAY_IDLE_SECS", default_value_t = 90)]
     idle_secs: u64,
@@ -417,13 +418,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )),
         None => None,
     };
+    let memory_limit = cua_relay::process_memory::cgroup_memory_limit();
+    let max_global_streams = args
+        .max_global_streams
+        .unwrap_or_else(|| memory_limit.map_or(4096, cua_relay::process_memory::stream_budget_for));
+    tracing::info!(
+        max_global_streams,
+        memory_limit_mib = memory_limit.map(|b| b >> 20),
+        explicit = args.max_global_streams.is_some(),
+        "client stream budget"
+    );
     let relay = Relay::try_new(RelayConfig {
         tokens,
         max_machines_per_token: args.max_machines_per_token,
         join_rate_per_sec: args.join_rate_per_sec,
         join_burst: args.join_burst,
         max_streams_per_machine: args.max_streams_per_machine,
-        max_global_streams: args.max_global_streams,
+        max_global_streams,
         machine_max_streams: args.machine_max_streams,
         machine_window_bytes: args.machine_window_bytes,
         machine_idle_timeout: Duration::from_secs(args.idle_secs.max(5)),

@@ -1430,6 +1430,9 @@ async fn readyz(State(relay): State<Relay>) -> Response {
     (status, axum::Json(body)).into_response()
 }
 
+/// Client streams refused at the global budget since start.
+static STREAMS_REFUSED: AtomicU64 = AtomicU64::new(0);
+
 /// `GET /metrics`: the state counters in Prometheus text format (no
 /// account data).
 async fn metrics(State(relay): State<Relay>) -> Response {
@@ -1441,6 +1444,21 @@ async fn metrics(State(relay): State<Relay>) -> Response {
     text.push_str(&relay.conns.render());
     text.push_str(&relay.mesh.metrics());
     text.push_str(&crate::auth_log::metrics());
+    text.push_str(&crate::process_memory::metrics());
+    text.push_str(&format!(
+        "# HELP cua_relay_client_streams Client streams open now, across every machine.\n\
+         # TYPE cua_relay_client_streams gauge\n\
+         cua_relay_client_streams {}\n\
+         # HELP cua_relay_client_streams_budget Most client streams open at once (the memory budget, S7).\n\
+         # TYPE cua_relay_client_streams_budget gauge\n\
+         cua_relay_client_streams_budget {}\n\
+         # HELP cua_relay_client_streams_refused_total Client streams refused because the budget was spent.\n\
+         # TYPE cua_relay_client_streams_refused_total counter\n\
+         cua_relay_client_streams_refused_total {}\n",
+        relay.global_streams.load(Ordering::Relaxed),
+        relay.config.max_global_streams,
+        STREAMS_REFUSED.load(Ordering::Relaxed),
+    ));
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());
@@ -2380,6 +2398,7 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
     if relay.global_streams.fetch_add(1, Ordering::SeqCst) >= relay.config.max_global_streams {
         relay.global_streams.fetch_sub(1, Ordering::SeqCst);
         machine.active.fetch_sub(1, Ordering::SeqCst);
+        STREAMS_REFUSED.fetch_add(1, Ordering::Relaxed);
         return refuse(
             request.headers(),
             StatusCode::SERVICE_UNAVAILABLE,

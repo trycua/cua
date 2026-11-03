@@ -119,6 +119,7 @@ export { signInFailedFromError, signInFailedPhase, signInFooter, type FailedPhas
 export {
   useCloudActions,
   useConnectCloud,
+  useFirstPrompts,
   useFirstSpaceOffers,
   useNewSpaceRequests,
   useNewSpaceWizard,
@@ -130,7 +131,7 @@ export {
   type RuntimeFixHook,
 } from "./new-space-hooks";
 export { runCreateFix, type CreateFixActions } from "./create-retry";
-export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
+export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstPrompts, type FirstSpaceOffer, type PromptCap, type PromptExample, type PromptSuggestion } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
 export type { GithubAccountRow, GithubDetail, GithubRow, GithubSourceLine, GithubTone, GithubView } from "./contracts/github";
@@ -138,6 +139,8 @@ export { githubView, useGithub, type GithubHook } from "./github";
 export type { GithubReport, GithubHost, GithubAccount, GithubSource } from "./ops/github";
 export type * from "./contracts/ci-runners";
 export * from "./ci-runners";
+export type * from "./contracts/prepare";
+export * from "./prepare-core";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
 export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
@@ -244,7 +247,7 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, setFlagOverride, setRemoteFlags, useFlag, type FlagName } from "./flags";
+export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

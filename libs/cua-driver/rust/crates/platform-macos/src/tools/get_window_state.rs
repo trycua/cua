@@ -268,6 +268,13 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        // Fast path `on`: re-reads skip the screenshot unless asked for one.
+        let should_capture = should_capture
+            && !cua_driver_core::fast_path::wire::skip_reread_screenshot(
+                &args,
+                pid,
+                u64::from(window_id),
+            );
         // `include_accessibility_tree` (default true) is the mirror image of
         // `include_screenshot`: set false to SKIP the AX walk (the expensive
         // part) and return just the screenshot + window metadata — the
@@ -454,6 +461,7 @@ impl Tool for GetWindowStateTool {
                     &bounds,
                     || crate::capture::screenshot_window_image(window_id),
                 )?;
+                crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
                 // Resize and encode once from the raw pixels; the PNG bytes
                 // are identical to the former encode-decode-resize round trip.
                 let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
@@ -620,6 +628,19 @@ impl Tool for GetWindowStateTool {
                 })
                 .unzip(),
         };
+        if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
+            if !observation_only {
+                crate::fast_path_guard::record_snapshot(
+                    pid,
+                    u64::from(window_id),
+                    sid,
+                    &tree.nodes,
+                );
+                if screenshot.is_none() {
+                    crate::fast_path_guard::record_window(pid, window_id);
+                }
+            }
+        }
         // The capture registry holds PNG captures only; a JPEG read mints none.
         let capture_id = match (snapshot_id, screenshot.as_ref().filter(|_| !jpeg)) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {

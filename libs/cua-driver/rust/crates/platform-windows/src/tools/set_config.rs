@@ -46,7 +46,8 @@ impl Tool for SetConfigTool {
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enables PiP preview (applies next restart)."},
-                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position."}
+                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position."},
+                "fast_path": cua_driver_core::fast_path::wire::config_schema()
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -91,6 +92,11 @@ impl Tool for SetConfigTool {
                 tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
             }
             applied = true;
+        }
+        match cua_driver_core::fast_path::wire::apply_config_args(&args) {
+            Ok(Some(_)) => applied = true,
+            Ok(None) => {}
+            Err(message) => return ToolResult::error(message),
         }
         if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
             if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
@@ -141,6 +147,7 @@ impl Tool for SetConfigTool {
             "agent_cursor":        { "enabled": cursor_enabled },
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,
+            "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
         ToolResult::text(format!("✅ {pretty}")).with_structured(payload)

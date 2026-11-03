@@ -102,6 +102,9 @@ jobs:
           [ "${PIPESTATUS[0]}" = 0 ]
           shopt -s nullglob
           for f in out/*.xml; do xmllint --noout "$f"; done
+          # A prerelease must never reach Stable through a rollout edit (CUA-3131).
+          [ -f out/cua-spaces-appcast.xml ] && python3 .github/scripts/sparkle_feed.py check out/cua-spaces-appcast.xml
+          true
       - name: Upload the feeds
         if: ${{ !inputs.dry_run }}
         run: |

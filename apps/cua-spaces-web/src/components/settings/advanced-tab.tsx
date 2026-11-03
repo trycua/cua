@@ -154,6 +154,7 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const newSetup = useFlag("spaces_new_onboarding");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id) && (!SHOWN_ONCE_ON.has(r.id) || isOn(r)));
   const note: Record<string, string> = {
@@ -171,6 +172,14 @@ function Labs() {
         row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_new_onboarding", "Try the new setup", newSetup && askFirst)}
+        description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
+        onChoose={(_, option) => {
+          setFlagOverride("spaces_new_onboarding", option === "on");
+          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
+        }}
       />
       {askFirst ? (
         <CoreSettingsRow

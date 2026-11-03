@@ -1860,6 +1860,9 @@ impl ToolRegistry {
         } else {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
+        let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
+            .then(|| crate::fast_path::wire::delta_target(&args))
+            .flatten();
         let mut result = match wait {
             Ok(wait) => {
                 crate::post_action_wait::scope(
@@ -1870,6 +1873,21 @@ impl ToolRegistry {
             }
             Err((message, structured)) => ToolResult::error(message).with_structured(structured),
         };
+        // Fast path `on` (CUA-3102): a direct action returns the window's
+        // delta in the same result, so the agent needs no separate re-read.
+        if let Some((pid, window_id)) = delta_target.filter(|_| result.is_error != Some(true)) {
+            let mut read = serde_json::json!({
+                "pid": pid,
+                "window_id": window_id,
+                "since": "latest",
+            });
+            if let Some(session) = session.as_deref() {
+                read["session"] = Value::String(session.to_owned());
+            }
+            let delta =
+                Box::pin(self.invoke_authorized("get_window_state", read, context, evidence)).await;
+            crate::fast_path::wire::attach_delta(&mut result, delta);
+        }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result

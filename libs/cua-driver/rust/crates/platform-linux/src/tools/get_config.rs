@@ -39,7 +39,8 @@ impl Tool for GetConfigTool {
             "max_image_dimension": cfg.max_image_dimension,
             "cursor": cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip": pip_enabled,
-            "experimental_pip_geometry": pip_geometry
+            "experimental_pip_geometry": pip_geometry,
+            "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }
 }

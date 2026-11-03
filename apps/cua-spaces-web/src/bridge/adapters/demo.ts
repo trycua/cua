@@ -182,6 +182,8 @@ export interface DemoOptions {
   network?: Set<string>;
   /** Public TCP shares (Labs) on, with a scene: `?demo=shares-consent` (the first share through a share edge asks first), `shares-routes` (shares on three routes and an agent's ask), `shares-settings` (Settings, Sharing with a share edge) or `shares-cap` (the same, with today's data). */
   shares?: DemoSharesPreset;
+  /** The home's create takes its time (`?demo=slow-home`), the rest of the demo does not: the first run to look at while it is preparing. */
+  slowHome?: boolean;
 }
 
 /** What the Mac mini is creating (`?demo=creating-elsewhere`). */
@@ -319,6 +321,9 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
     ...(flags.has("network") ? { network: flags } : {}),
     shares: (["consent", "routes", "settings", "cap"] as const).find((p) => flags.has(`shares-${p}`)),
+    // Slow creates, to look at a state before it is gone (`?demo=slow-create`).
+    ...(flags.has("slow-create") ? { stepMs: 5000 } : {}),
+    ...(flags.has("slow-home") ? { slowHome: true } : {}),
     creatingElsewhere: flags.has("creating-elsewhere"),
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
@@ -536,6 +541,26 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           }
           throw new HostError(failure, "runtime");
         }
+        // The Space the new setup prepares, on a new Mac: the Linux runtime downloads, then the image, then the Space boots.
+        if (config.name?.startsWith("home-")) {
+          const MB = 1_048_576;
+          const homeStep = options.slowHome ? 7000 : step;
+          const legs: [string, string, number][] = [
+            ["preparing", "Setting up the Linux runtime", 440 * MB],
+            ["pulling", config.image ?? "image", 366 * MB],
+          ];
+          for (const [phase, detail, total] of legs) {
+            for (const fraction of [0, 0.15, 0.4, 0.7, 0.9]) {
+              if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
+              emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB } });
+              await wait(homeStep / 2);
+            }
+          }
+          for (const phase of ["creating", "booting", "waiting_for_services", "connecting"]) {
+            emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction: 0.5, detail: phase, space: id } });
+            await wait(homeStep / 2);
+          }
+        } else
         for (const phase of CREATE_PHASES) {
           for (const fraction of [0, 0.5]) {
             if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");

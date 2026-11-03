@@ -310,10 +310,17 @@ impl CloudShares {
     /// this home are ever touched.
     pub async fn sweep(&self, live: &HashSet<String>, edge_live: bool, now: u64) -> SweepReport {
         let mut out = SweepReport::default();
+        // Nothing linked, nothing to sweep. Checked before the owner id:
+        // reading that id creates it, and a sweep must not write the state
+        // file (it would bring back a deleted home, see the daemon's home
+        // watchdog).
+        let conns = self.store.connections().unwrap_or_default();
+        if conns.is_empty() {
+            return out;
+        }
         let Ok(owner) = self.owner() else {
             return out;
         };
-        let conns = self.store.connections().unwrap_or_default();
         for api in &self.nets {
             let mine: Vec<Connection> = conns
                 .iter()
@@ -388,6 +395,18 @@ mod tests {
         let net = Arc::new(FakeShareNet::default());
         let cs = CloudShares::new(dir.path(), vec![net.clone() as Arc<dyn ShareNetApi>]);
         Rig { _dir: dir, net, cs }
+    }
+
+    #[tokio::test]
+    async fn a_sweep_with_no_cloud_linked_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let net = Arc::new(FakeShareNet::default());
+        let cs = CloudShares::new(&home, vec![net as Arc<dyn ShareNetApi>]);
+        let report = cs.sweep(&HashSet::new(), false, 1).await;
+        assert!(report.rules.is_empty() && report.edges.is_empty());
+        // No owner id was minted: a deleted home stays deleted.
+        assert!(!home.exists());
     }
 
     #[test]

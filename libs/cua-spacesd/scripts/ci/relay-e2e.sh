@@ -33,16 +33,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# In CI the build container compiles through the job's sccache.
+# shellcheck source=/dev/null
+. "$repo/scripts/ci/lib/docker-sccache.sh"
+docker_sccache_args
+
 docker image inspect "$image" >/dev/null 2>&1 || docker build -t "$image" -f "$here/linux-test.Dockerfile" "$here"
 
 echo "== building binaries and the conformance test"
 # Big debug test binaries OOM GNU ld at 4 GiB: line-tables-only debug info,
 # and rust-lld on aarch64 (scripts/ci/linux/cc-rust-lld.sh; x86_64 already
 # links with rust-lld).
-docker run --rm "${mem[@]}" -v "$repo:/repo" -v "$target_volume:/target" -v "$cargo_volume:/usr/local/cargo/registry" \
+docker run --rm "${mem[@]}" ${DOCKER_SCCACHE[@]+"${DOCKER_SCCACHE[@]}"} -v "$repo:/repo" -v "$target_volume:/target" -v "$cargo_volume:/usr/local/cargo/registry" \
   -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS=4 -e CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}" -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/repo/scripts/ci/linux/cc-rust-lld.sh \
-  -w /repo/libs/cua-spacesd "$image" bash -c '
+  -w /repo/libs/cua-spacesd "$image" bash -c "$(declare -f docker_sccache_stop)"'
     set -euo pipefail
+    trap docker_sccache_stop EXIT
     cargo build --locked -p cua-spacesd -p cua-relay
     test_bin=$(cargo test --locked -p cua-spacesd-server --test conformance --no-run --message-format=json \
       | python3 -c "import json,sys; print([m[\"executable\"] for m in map(json.loads, sys.stdin) if m.get(\"reason\")==\"compiler-artifact\" and m.get(\"executable\") and m[\"target\"][\"name\"]==\"conformance\"][-1])")

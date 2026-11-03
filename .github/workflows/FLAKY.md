@@ -22,7 +22,7 @@ failed and then passed on a rerun of the same commit.
 
 | Check | Symptom | Root cause | Owner | Status |
 |---|---|---|---|---|
-| `relay e2e (docker)`: `cua-relay` `tests/metering.rs` `past_the_allowance_the_session_continues_with_an_upgrade_prompt` | fails on slow runners | test slept 300 ms and assumed both streams were counted and open for 50 ms | relay (CUA-1952 fix: PR 93, injectable clock) | fix in review |
+| `relay e2e (core)` and `relay e2e (hosted)`: `cua-relay` `tests/metering.rs` `past_the_allowance_the_session_continues_with_an_upgrade_prompt` | fails on slow runners | test slept 300 ms and assumed both streams were counted and open for 50 ms | relay (CUA-1952 fix: PR 93, injectable clock) | fix in review |
 | `tag-safety-test` (CD: Image linux) | "tag not found" while the tag is listed | `crane ls \| grep -q` under `pipefail` is killed by SIGPIPE | images (CUA-1952 fix: PR 92) | fix in review |
 | `bindings drift` | cancelled at 45 min | cold release build of cua-sdk; now dev profile | SDK (CUA-1952 fix: PR 91) | fix in review |
 | `linux-kvm (loaded-stream)` perf guard (PRs 74, 79) | fails once in a while | one sample compared to one old sample with a 2x limit on a shared disk | author of PR 74 / 79 (patch in CUA-1952) | patch ready |

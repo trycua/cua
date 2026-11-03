@@ -130,7 +130,7 @@ let
       cp -r ${src} "$work/src"
       chmod -R u+w "$work/src"
       export HOME=$work/home
-      mkdir -p "$HOME"
+      mkdir -p "$HOME" "$work/extract"
       export CUA_TEST_PYTHON=${testEnv.CUA_TEST_PYTHON}
       export CUA_TEST_PYTHON_DYNAMIC_LINKER=${testEnv.CUA_TEST_PYTHON_DYNAMIC_LINKER}
       export CUA_TEST_GLIBC_STATIC_LIB=${testEnv.CUA_TEST_GLIBC_STATIC_LIB}

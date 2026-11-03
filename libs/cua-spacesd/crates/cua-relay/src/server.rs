@@ -1317,27 +1317,23 @@ async fn machine_connect_inner(
                 clients: Mutex::default(),
             });
             // The limit was checked before the upgrade, and joins that arrive together all
-            // pass it. Settle it here, where the machine is added: the oldest sessions of a
-            // token keep their places, a newer one over the limit is dropped (it retries).
+            // pass it. Settle it here, under the same lock as the insert: a join that would
+            // put its token past the limit is dropped (it retries), so the sessions already
+            // in keep their places. Counting by arrival here, not by `generation`, keeps a
+            // join that upgraded earlier but arrives later from pushing the count past it.
             let (replaced, over_limit) = {
                 let mut machines = relay.machines.lock().expect("machines");
-                let mut replaced = machines.insert(id.clone(), machine.clone());
-                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
-                    let mut same: Vec<u64> = machines
+                let over_limit = matches!(machine.registrant, Registrant::Static(_))
+                    && machines
                         .values()
-                        .filter(|m| m.registrant == machine.registrant)
-                        .map(|m| m.generation)
-                        .collect();
-                    same.sort_unstable();
-                    same.iter().position(|g| *g == generation).unwrap_or(0)
-                        >= relay.config.max_machines_per_token
+                        .filter(|m| m.registrant == machine.registrant && m.id != id)
+                        .count()
+                        >= relay.config.max_machines_per_token;
+                let replaced = if over_limit {
+                    None
+                } else {
+                    machines.insert(id.clone(), machine.clone())
                 };
-                if over_limit {
-                    machines.remove(&id);
-                    if let Some(old) = replaced.take() {
-                        machines.insert(id.clone(), old);
-                    }
-                }
                 (replaced, over_limit)
             };
             if over_limit {

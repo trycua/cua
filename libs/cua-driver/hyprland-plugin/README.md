@@ -153,6 +153,24 @@ may be refused by Hyprland or fail during load. If load fails after a Hyprland
 upgrade, leave it unloaded, rebuild against the new exact package, and retry.
 The portable driver remains available without this plugin.
 
+In Omarchy's Lua configuration, the equivalent of a `plugin =` line is a call to
+`hl.plugin.load()`. Hyprland treats these calls as a declaration: after each
+configuration evaluation it loads newly declared modules, unloads any
+config-loaded module the evaluation no longer declares, and reloads the
+configuration if anything changed. Call it on every evaluation:
+
+```lua
+hl.plugin.load("/usr/lib/cua/hyprland/cua-hyprland-plugin.so")
+```
+
+Do not skip the call when `hl.get_loaded_plugins()` already lists
+`cua-hyprland-plugin`. That guard declares the module on one evaluation and
+drops it on the next, so Hyprland loads and unloads it in an endless chain of
+configuration reloads. At login the compositor never finishes starting.
+Conditions that give the same answer on every evaluation, such as checking that
+the module was built for the running Hyprland, are safe. A module loaded with
+`hyprctl plugin load` is not affected by the configuration's declarations.
+
 `hyprctl -j cua:status` is the authoritative runtime status surface. Consumers
 must check its compositor epoch, protocol version, advertised capabilities,
 socket path, discovery-only state, and ABI identity before connecting. A loaded

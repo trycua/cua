@@ -60,6 +60,7 @@ pub mod probe;
 pub mod progress;
 #[cfg(feature = "qemu")]
 pub mod qemu;
+pub mod resolver;
 pub mod runtime;
 pub mod screen;
 pub mod storage;

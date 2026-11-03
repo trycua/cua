@@ -856,6 +856,14 @@ impl ContainerRuntime {
         {
             hc.cap_drop = Some(vec!["NET_RAW".into()]);
         }
+        // Its own resolv.conf: a user-defined network's embedded resolver
+        // (127.0.0.11) is out of reach under gVisor ([`egress`]).
+        if let Some((bind, servers)) = self.prepare_resolv(name).await?
+            && let Some(hc) = body.host_config.as_mut()
+        {
+            hc.binds.get_or_insert_with(Vec::new).push(bind);
+            hc.dns = Some(servers.iter().map(|s| s.to_string()).collect());
+        }
         if self.forwards_ports_by_number()
             && let Some(hc) = body.host_config.as_mut()
             && let Some(bindings) = hc.port_bindings.as_mut()

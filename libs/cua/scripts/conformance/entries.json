@@ -10,7 +10,7 @@
     },
     {
       "case": "dns",
-      "what": "names resolve in the guest, IPv4 and IPv6"
+      "what": "a Space resolves names and downloads over https, on the secure and the default network; with no network the lookup fails at once"
     },
     {
       "case": "download",

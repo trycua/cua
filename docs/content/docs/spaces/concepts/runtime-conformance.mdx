@@ -18,7 +18,9 @@ does with them, and shows how Cua checks them.
   What it refuses is in `cua network log` with the destination (or the rule's
   network, for a container) and when, and a destination it allows is never
   logged as blocked.
-- **Names resolve.** Lookups work in the guest for IPv4 and IPv6.
+- **Names resolve.** A public name resolves and an install-style https
+  download works in the guest, on the secure network and on the default
+  one. A Space with no network fails the lookup at once.
 - **The guest can download.** The coding app's package (about 100 MB)
   downloads inside the Space under the default network.
 - **A private image pulls.** Cua pulls with the registry credential the

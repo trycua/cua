@@ -45,7 +45,9 @@ pub enum Case {
     /// The secure default network holds: the internet answers; the host,
     /// the local network, cloud metadata and other trees' Spaces do not.
     Policy,
-    /// Names resolve in the guest, for both address families.
+    /// A Space resolves names: a public name resolves and an install-style
+    /// https download works, on the secure network and on the default one;
+    /// in a Space whose network is `none` the lookup fails at once.
     Dns,
     /// The guest downloads a large package from the internet (the coding
     /// app's package).
@@ -105,7 +107,9 @@ impl Case {
             Case::Policy => {
                 "the default network holds: internet yes; host, LAN, cloud metadata, other trees no, and each refusal is in the network log with its destination and time"
             }
-            Case::Dns => "names resolve in the guest, IPv4 and IPv6",
+            Case::Dns => {
+                "a Space resolves names and downloads over https, on the secure and the default network; with no network the lookup fails at once"
+            }
             Case::Download => "the guest downloads the coding app's package",
             Case::Registry => "a private image is pulled with the host-held registry credential",
             Case::Children => "a home creates, lists, uses and deletes a child Space, audited",

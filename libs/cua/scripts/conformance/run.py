@@ -313,11 +313,13 @@ def run_entry(entry, args, out_dir, log):
             row("policy", "fail" if fails else "pass", "; ".join(fails) or "internet yes; metadata, host and its addresses no; refusals are logged with destination and time")
         elif "policy" in cases and policy["expect"] == "pass" and mode != "secure":
             row("policy", "fail", "ran open although the runtime declares it protects the network")
-        # --- dns
+        # --- dns: names resolve and an install-style download works on the secure network; with
+        #     no network the lookup fails at once (the default network follows, after the others)
+        dns_fails = []
+        dns_ms = None
         if "dns" in cases:
-            rc, o, e, ms = run.exec(name, 'getent ahosts registry.npmjs.org | head -3; python3 -c "import socket;print(len(socket.getaddrinfo(\'registry.npmjs.org\',443)))" 2>&1; curl -sS -m 20 -o /dev/null -w "curl %{http_code}" https://registry.npmjs.org/')
-            ok = rc == 0 and "curl 200" in o and "STREAM" in o
-            row("dns", "pass" if ok else "fail", (o + e).strip().replace("\n", " | ")[:300], ms)
+            dns_fails, dns_notes, dns_ms = dns_checks(run, name, entry, policy, mode)
+            row("dns", "fail" if dns_fails else "pass", "; ".join(dns_fails) or "; ".join(dns_notes), dns_ms)
         # --- download
         if "download" in cases:
             script = ('case "$(uname -m)" in aarch64|arm64) p=linux-arm64;; *) p=linux-x64;; esac; '
@@ -354,11 +356,30 @@ def run_entry(entry, args, out_dir, log):
             if good:
                 rows["ready"]["detail"] += f"; cached x{len(good)}: " + ", ".join(f"{t / 1000:.1f}s" for t in good) + f" (median {sorted(good)[len(good) // 2] / 1000:.1f}s)"
                 rows["ready"]["cached_ms"] = good
+        # --- dns on the default (open) network: a second daemon without the secure default
+        if "dns" in cases and "dns" in rows and rows["dns"]["status"] == "pass" and mode == "secure" \
+                and policy["expect"] == "pass" and not args.no_open_dns:
+            run.sh("sandbox", "rm", name, "-f", timeout=300)
+            run.stop()
+            run = Run(args.cua, home, "open", env_extra, log)
+            if not run.start():
+                row("dns", "fail", rows["dns"]["detail"] + "; default network: the daemon did not start")
+            else:
+                open_name = "conf-open"
+                rc, o, e, ms = run.sh(*create_args(entry, image, open_name), timeout=args.timeout)
+                if rc != 0:
+                    row("dns", "fail", rows["dns"]["detail"] + "; default network: create failed: " + (e or o).strip()[:200])
+                else:
+                    run.sh("spaces", "add", f"local:{open_name}")
+                    fails, notes, _ = dns_checks(run, open_name, entry, policy, "open")
+                    row("dns", "fail" if fails else "pass",
+                        rows["dns"]["detail"] + "; default network: " + ("; ".join(fails) or "; ".join(notes)), rows["dns"]["ms"])
+                run.sh("sandbox", "rm", open_name, "-f", timeout=300)
     finally:
         listener.close()
         # --- teardown, then prove nothing is left
         if run is not None:
-            for n in (name, "conf-fork", "conf-child", "conf-big", "conf-home"):
+            for n in (name, "conf-open", "conf-fork", "conf-child", "conf-big", "conf-home"):
                 run.sh("sandbox", "rm", n, "-f", timeout=300)
             run.sh("sandbox", "checkpoints", "prune", timeout=120)
             run.stop()
@@ -380,6 +401,50 @@ def home_image_for(entry, args):
     if entry["id"] in override:
         return override[entry["id"]]
     return args.home_image + "-disk" if entry["kind"] == "vm" and not args.home_image.endswith("-disk") else args.home_image
+
+
+RESOLVE = ('getent ahosts nodejs.org | head -2; '
+           'python3 -c "import socket;print(len(socket.getaddrinfo(\'nodejs.org\',443)))" 2>&1; '
+           # an install-style download: redirects followed, failures are errors, a file comes back
+           'curl -fsSL -m 60 -o /tmp/dns-probe.json -w "curl %{http_code} %{size_download}" https://nodejs.org/dist/index.json')
+NO_NETWORK = ('getent hosts nodejs.org >/dev/null 2>&1; echo "getent=$?"; '
+              'curl -sS -m 20 -o /dev/null https://nodejs.org/ >/dev/null 2>&1; echo "curl=$?"')
+
+
+def dns_checks(run, name, entry, policy, mode):
+    """The 'a Space resolves names' case on one Space. Returns (failures, notes, ms)."""
+    fails, notes = [], []
+    rc, o, e, ms = run.exec(name, RESOLVE, timeout=150)
+    m = re.search(r"curl 200 (\d+)", o)
+    if rc == 0 and m and int(m.group(1)) > 1000 and "STREAM" in o:
+        notes.append(f"{mode}: nodejs.org resolves and downloads {m.group(1)} bytes")
+    else:
+        fails.append(f"{mode}: " + (o + e).strip().replace("\n", " | ")[:260])
+    if mode == "secure" and policy["expect"] == "pass":
+        # No network: the lookup must fail at once, not hang, and the network comes back after.
+        rc, o, e, _ = run.sh("network", "set", name, "--network", "none", timeout=120)
+        said = (e or o).strip()
+        if rc != 0 and re.search(r"not supported|cannot|can't|does not|refus|unsupported", said, re.I):
+            # The runtime says, in words, that it cannot run a Space without network: gated, with its reason.
+            notes.append("none: gated by the runtime: " + said[:120])
+        elif rc != 0:
+            fails.append("none: could not set the network: " + said[:160])
+        else:
+            t = time.monotonic()
+            rc, o, e, _ = run.exec(name, NO_NETWORK, timeout=90)
+            took = time.monotonic() - t
+            g, c = re.search(r"getent=(\d+)", o), re.search(r"curl=(\d+)", o)
+            if not (g and c and g.group(1) != "0" and c.group(1) == "6"):
+                fails.append("none: a name resolved or the failure was not a resolution error: " + (o + e).strip().replace("\n", " | ")[:160])
+            elif took > 20:
+                fails.append(f"none: the lookup failed only after {took:.0f} s")
+            else:
+                notes.append(f"none: lookup fails at once ({took:.1f} s)")
+            rc, o, e, _ = run.sh("network", "set", name, "--network", "internet", timeout=120)
+            rc, o, e, _ = run.exec(name, RESOLVE, timeout=150)
+            if not (rc == 0 and "curl 200" in o):
+                fails.append("back on the internet preset names do not resolve: " + (o + e).strip().replace("\n", " | ")[:160])
+    return fails, notes, ms
 
 
 def row_children(run, entry, name, args, row, mode):
@@ -572,6 +637,7 @@ def main():
     ap.add_argument("--home-root", default="/tmp/cua-conf",
                     help="where the isolated Cua homes are made (short: Unix socket paths are limited)")
     ap.add_argument("--keep-home", action="store_true")
+    ap.add_argument("--no-open-dns", action="store_true", help="skip the dns case on the default (open) network, which restarts the daemon")
     ap.add_argument("--out", default=str(HERE / "results"))
     args = ap.parse_args()
     if not args.cua:

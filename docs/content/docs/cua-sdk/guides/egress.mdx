@@ -56,7 +56,17 @@ No preset or list opens these:
 
 Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local, unique-local IPv6, loopback, CGNAT (`100.64.0.0/10`, which covers Tailscale), multicast and other reserved ranges. `lan` opens the private, link-local and unique-local ranges. A custom `allow` can open one of them too, and `cua network show` then names what it opens ("Allows your local network (192.168.1.0/24)").
 
-DNS keeps working: the runtime's own resolver stays open on port 53.
+## Names
+
+Every Space asks the same few name servers, and the rules open exactly those on port 53 and nothing else. A container Space is given its own `/etc/resolv.conf` naming them, because a Docker network's built-in resolver (`127.0.0.11`) is out of reach under gVisor. The servers are, in order of preference:
+
+1. the ones in `CUA_GUEST_DNS` (a comma list), when you set it for the daemon;
+2. the ones the container engine's computer uses (a corporate resolver stays the one that answers your internal names), at most three;
+3. Cloudflare and Google (`1.1.1.1`, `8.8.8.8`) when the engine's computer has none a Space can reach. A resolver that is a loopback address (a local stub such as `127.0.0.53`) or a link-local address is never given to a Space, because only the engine's computer reaches it. A resolver on the engine's own computer (Colima's virtual machine is its own resolver) is opened on port 53 only.
+
+A Space on the `none` preset gets a `resolv.conf` without a name server, so a lookup fails at once instead of hanging, and no DNS leaves it. Changing the preset applies to a running Space at once. Because the rules are by address, a Space can ask only its own servers, so a name server of your own is reached by putting it in `CUA_GUEST_DNS`, not by an `allow` entry. IPv6 name servers are used only on a network that has IPv6, which Space networks do not yet.
+
+A Space made before this change has no mounted file: Cua writes its `/etc/resolv.conf` once it runs, which can be after the first programs in it have started. The Apple Containerization runtime and the virtual machines have their own resolvers, as before.
 
 ## Rules by name
 

@@ -116,6 +116,45 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: python3 .github/scripts/mark_perception_release_prs_tagged.py
 
+      # Release Please reads each component's version from the merged PR body.
+      # Text above the body's version heading makes it parse to no releases, and
+      # Release Please then tags EVERY component with the PR title's version
+      # (#6350 tagged 13 components v0.20.0). Run the same engine on each
+      # merged, untagged release PR first: move the heading back to the top
+      # when that is all it takes, and stop before any tag otherwise.
+      - name: Guard merged release PRs against tagging other components
+        if: >-
+          github.event_name == 'push' ||
+          (inputs.component == 'automatic' && inputs.bump == 'automatic')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          ENGINE="$RUNNER_TEMP/release-please-engine"
+          npm install --prefix "$ENGINE" --ignore-scripts --no-audit --no-fund release-please@17.3.0 > /dev/null
+          export NODE_PATH="$ENGINE/node_modules"
+          GUARD=.github/scripts/release_please_tag_guard.cjs
+          FAILED=0
+          for number in $(gh pr list --state merged --base main --label "autorelease: pending" \
+              --limit 100 --json number --jq '.[].number'); do
+            PR="$RUNNER_TEMP/release-pr-$number.json"
+            gh pr view "$number" --json number,title,headRefName,body,mergeCommit > "$PR"
+            if node "$GUARD" check "$PR"; then
+              continue
+            fi
+            if node "$GUARD" repair "$PR" > "$PR.md"; then
+              gh pr edit "$number" --body-file "$PR.md"
+              echo "::warning::Release PR #$number: moved its version heading to the top of the notes so only its own component is tagged."
+            else
+              echo "::error::Release PR #$number would tag components it does not release. Edit its body so the version heading (## [x.y.z](...)) is the first line after '---', then rerun this workflow."
+              FAILED=1
+            fi
+          done
+          exit "$FAILED"
+
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
         id: release-auto

@@ -1478,6 +1478,7 @@ impl WarmPool {
             Ok::<_, String>(inst)
         }
         .await;
+        let booted = started.elapsed();
         // The agent stack goes in while the member is hidden, so the Space
         // that claims it has its coding apps. A member that cannot be
         // prepared is still a member: it is claimed bare, and the stack goes
@@ -1538,7 +1539,8 @@ impl WarmPool {
         };
         let footprint_mb = self.inner.host.used_mb(backend, &name).await.unwrap_or(0);
         if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
-            s.boot_s = ewma(s.boot_s, started.elapsed().as_secs_f64());
+            // The boot alone: preparing and saving are measured on their own.
+            s.boot_s = ewma(s.boot_s, booted.as_secs_f64());
         }
         tracing::info!(
             member = %name,

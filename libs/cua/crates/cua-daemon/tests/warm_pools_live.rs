@@ -96,16 +96,21 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
     let warm = std::env::var("CUA_WARM_LIVE_MODE").as_deref() != Ok("cold");
     let image = std::env::var("CUA_WARM_LIVE_IMAGE")
         .unwrap_or_else(|_| cua_daemon::local::warm_pools_image());
-    let harness = std::env::var("CUA_WARM_LIVE_HARNESS").unwrap_or_else(|_| "claude-code".into());
+    // The apps measured, one after the other against the same prepared
+    // Space (comma separated; default: the four most used).
+    let harnesses: Vec<String> = std::env::var("CUA_WARM_LIVE_HARNESS")
+        .unwrap_or_else(|_| "openai-codex,hermes,claude-code,opencode".into())
+        .split(',')
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .collect();
     let n = env_u64("CUA_WARM_LIVE_N", 10) as usize;
     let gap = Duration::from_millis(env_u64("CUA_WARM_LIVE_GAP_MS", 3000));
     let out_path = std::env::var_os("CUA_WARM_LIVE_OUT").map(std::path::PathBuf::from);
     // The experiment, for this process only.
     cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::WarmPools, Some(warm));
-    // SAFETY: set before any thread reads them.
-    unsafe {
-        std::env::set_var("CUA_WARM_POOLS_HARNESSES", &harness);
-    }
+    // The apps the warm Space is prepared for: the daemon's default, or
+    // `CUA_WARM_POOLS_HARNESSES` as given.
     let state = home.join("sandboxes");
     let vmm = Arc::new(VmmLocal::default());
     let rt = Runtime::new(RuntimeConfig {
@@ -119,7 +124,13 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
         .enable_pool(cua_sandbox_core::StateStore::new(state.clone()), rx)
         .expect("pool enabled once");
     let tag = format!("{:06x}", std::process::id() & 0xff_ffff);
-    let names: Vec<String> = (0..n).map(|i| format!("wp-{tag}-{i}")).collect();
+    let names: Vec<String> = harnesses
+        .iter()
+        .flat_map(|h| {
+            let (tag, h) = (tag.clone(), h.replace(['-', '_'], ""));
+            (0..n).map(move |i| format!("wp-{tag}-{h}-{i}"))
+        })
+        .collect();
     let request = |name: &str| CreateRequest {
         location: Some("local".into()),
         name: Some(name.into()),
@@ -160,7 +171,8 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                 rt.delete(&warmup).await.unwrap();
             }
         }
-        for (i, name) in names.iter().enumerate() {
+        for (k, name) in names.iter().enumerate() {
+            let (harness, i) = (&harnesses[k / n], k % n);
             if i > 0 {
                 tokio::time::sleep(gap).await;
             }
@@ -173,18 +185,17 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
             let c = client(&made.endpoints["env"], &token).await;
             let agents = Agents::new(c).await.unwrap();
             // What every start of the app does first: the stack check.
-            let h = cua_agents::harness::harness(&harness).expect("a harness");
+            let h = cua_agents::harness::harness(harness).expect("a harness");
             let t1 = Instant::now();
             agents.prewarm(h, true).await.unwrap();
             agents.ensure(h.installs, |_| {}).await.unwrap();
             let apps_ms = t1.elapsed().as_millis() as u64;
             let t2 = Instant::now();
-            let mut env = std::collections::BTreeMap::new();
-            // The scripted key never reaches a model: no turn is taken.
-            env.insert("ANTHROPIC_API_KEY".to_string(), "sk-ant-not-a-key".to_string());
+            // A credential no model ever sees: no turn is taken.
+            let env = h.placeholder_env();
             let started = agents
                 .start(
-                    &harness,
+                    harness,
                     "",
                     RunOptions {
                         env,
@@ -197,6 +208,7 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                 .await
                 .unwrap();
             let mut ready_at = None;
+            let mut failed: Option<String> = None;
             let deadline = Instant::now() + Duration::from_secs(900);
             while Instant::now() < deadline {
                 if let Ok(st) = agents.status(&started.run_id).await {
@@ -205,14 +217,26 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                         break;
                     }
                     if st.status == RunStatus::Failed {
-                        panic!("the agent failed to start: {} {:?}", st.reason, st.error);
+                        failed = Some(format!("{} {:?}", st.reason, st.error));
+                        break;
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
+            if let Some(why) = failed {
+                let line = serde_json::json!({
+                    "harness": harness, "i": i, "error": why.chars().take(300).collect::<String>(),
+                    "create_ms": create_ms, "mode": if warm { "warm" } else { "cold" },
+                });
+                eprintln!("{line}");
+                lines.push(line);
+                let _ = agents.stop(&started.run_id).await;
+                let _ = rt.delete(name).await;
+                continue;
+            }
             let agent_ms = ready_at.expect("the agent session opened within 15 minutes");
             let line = serde_json::json!({
-                "i": i, "mode": if warm { "warm" } else { "cold" }, "gap_ms": gap.as_millis() as u64,
+                "harness": harness, "i": i, "mode": if warm { "warm" } else { "cold" }, "gap_ms": gap.as_millis() as u64,
                 "warm_ready": warm_ready, "create_ms": create_ms, "apps_ms": apps_ms,
                 "agent_ms": agent_ms, "total_ms": t0.elapsed().as_millis() as u64,
             });
@@ -237,6 +261,14 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                 }
             }
             let _ = agents.stop(&started.run_id).await;
+            if let Some(hold) = std::env::var("CUA_WARM_LIVE_HOLD_S").ok().and_then(|v| v.parse::<u64>().ok())
+                && k + 1 == names.len()
+            {
+                // Left running for a person to look at (`docker exec`).
+                eprintln!("holding {name} for {hold} s");
+                tokio::time::sleep(Duration::from_secs(hold)).await;
+            }
+            let _ = rt.delete(name).await;
         }
         for name in &names {
             let _ = rt.delete(name).await;

@@ -1221,10 +1221,7 @@ async fn warm_session(
     h: &cua_agents::harness::Harness,
 ) -> std::result::Result<(), String> {
     use cua_agents::{RunStatus, runs::RunOptions};
-    let mut env = std::collections::BTreeMap::new();
-    if let Some(k) = h.keys.first() {
-        env.insert((*k).to_string(), "warm-up-not-a-key".to_string());
-    }
+    let env = h.placeholder_env();
     let started = agents
         .start(
             id,
@@ -1282,10 +1279,10 @@ pub fn warm_pools_image() -> String {
 }
 
 /// The coding apps a warm Space is prepared for: `CUA_WARM_POOLS_HARNESSES`
-/// (comma separated harness ids), else Claude Code and Codex.
+/// (comma separated harness ids), else the four most used (Codex, Hermes, Claude Code, OpenCode).
 pub fn warm_pools_harnesses() -> Vec<String> {
     let v = std::env::var("CUA_WARM_POOLS_HARNESSES")
-        .unwrap_or_else(|_| "claude-code,openai-codex".into());
+        .unwrap_or_else(|_| "openai-codex,hermes,claude-code,opencode".into());
     v.split(',')
         .map(str::trim)
         .filter(|h| !h.is_empty() && *h != "none")
@@ -3520,7 +3517,7 @@ mod tests {
         unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
         assert_eq!(
             super::warm_pools_harnesses(),
-            ["claude-code", "openai-codex"]
+            ["openai-codex", "hermes", "claude-code", "opencode"]
         );
         unsafe { std::env::set_var("CUA_WARM_POOLS_HARNESSES", " claude-code , ,none ") };
         assert_eq!(super::warm_pools_harnesses(), ["claude-code"]);
@@ -3528,7 +3525,7 @@ mod tests {
         assert!(super::warm_pools_harnesses().is_empty());
         unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
         // Every default is a harness this build can install.
-        for id in ["claude-code", "openai-codex"] {
+        for id in ["openai-codex", "hermes", "claude-code", "opencode"] {
             assert!(
                 cua_agents::harness::harness(id).is_some_and(|h| h.ready),
                 "{id}"

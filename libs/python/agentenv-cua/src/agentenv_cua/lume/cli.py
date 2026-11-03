@@ -118,9 +118,15 @@ class Lume:
         )
 
     async def set(
-        self, name: str, *, cpu: Optional[int] = None, memory_mb: Optional[int] = None
+        self,
+        name: str,
+        *,
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        display: Optional[str] = None,
     ) -> None:
         args = [
+            *(["--display", display] if display else []),
             *(["--cpu", str(cpu)] if cpu else []),
             *(["--memory", f"{memory_mb}MB"] if memory_mb else []),
         ]

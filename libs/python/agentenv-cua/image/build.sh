@@ -40,13 +40,13 @@ if [ -n "$base_image" ]; then
 else
   lume clone "$base_vm" "$name"
 fi
-lume set "$name" --display 1920x1080
+lume set "$name" --display 1280x800
 
 # lume mounts a shared folder at /Volumes/My Shared Files/<its basename>, so the folder is named `payload`.
 payload_root=$(mktemp -d)
 payload="$payload_root/payload"
 mkdir -p "$payload"
-cp "$HERE/provision.sh" "$payload/"
+cp "$HERE/provision.sh" "$HERE/set-display.swift" "$payload/"
 cp -R "$PKG/src/agentenv_cua/drivers/cua_driver_macos" "$payload/"
 cleanup() { if [ "$built" = 0 ]; then lume stop "$name" >/dev/null 2>&1 || true; lume delete "$name" --force >/dev/null 2>&1 || true; fi; rm -rf "$payload_root"; }
 trap cleanup EXIT

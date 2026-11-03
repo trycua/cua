@@ -37,7 +37,13 @@ base = "agentenv-macos-bench"   # a local lume VM, or image = "ghcr.io/<org>/<re
 - **Ready checks** cover three things:
   - the pinned executable's sha256;
   - the pinned tool list (`mcp.json`, pinned per OS: macOS lists different tools from Linux);
-  - the TCC grants. These include a capture that actually works, and they're checked after every reset, so a lost grant shows up as a harness error rather than an agent failure.
+  - the TCC grants, checked after every reset, so a lost grant shows up as a harness error rather than an agent failure. A capture that works is the framework's own `capture` ready check.
+- **First screenshot.** macOS 15 and later ask once, per app, whether it may capture the screen directly, even with Screen Recording granted. cua-driver skips captures (`direct_capture_consent_required`) until that answer is recorded, so the image records it ahead of time: an entry for `com.trycua.driver` in the user's `ScreenCaptureApprovals.plist`.
+- **Display.** `display` in the provider config (default `1280x800`, the size the conformance fixtures need) is set on each clone with `lume set --display` before it boots. A guest otherwise boots in the mode its disk last had, so the driver's start script runs `set-display`, which picks the display's largest 1x mode and gives it the sRGB profile (screenshots then hold the pixels as drawn).
+- **Pointer.** The computer has one pointer: the driver serialises pointer actions and delivers them in the foreground, since a headless computer has nobody whose pointer it could disturb.
+- **Image extras.** `provision.sh` also puts a GNU-style `stat -c` and a `python3` with a current Tk first on the PATH of commands the driver runs (the conformance fixture is a Tk program written for Linux), and turns off the base image's login-item banner and Cua Spacesd window, which cover the top right of the screen and the whole screen.
+
+Known gaps against the conformance probe on macOS: the fixture is X11-specific in four checks. `P6 typed text arrives as key events` expects Tk's X11 keysym name `comma` (Tk on macOS reports `,`), `P6 a chord selects all` and `P6 a repeated key` use Ctrl+/ (Tk on macOS selects all with Cmd+A), and `P7 scrolls ... each arrive` counts X11 wheel buttons 4 and 5 (Tk on macOS reports MouseWheel events). They need a platform-aware fixture in the probe, not changes here.
 
 `mcp.json` is generated on a macOS VM with `pin_manifest.py`. `image/build.sh` does this when the folder has none.
 

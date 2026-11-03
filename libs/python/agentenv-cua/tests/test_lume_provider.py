@@ -123,6 +123,22 @@ async def test_create_vm_clones_the_base_boots_it_with_its_settings_shared_and_r
     assert GUEST_BOOT_FILE.endswith("agentenv/boot.json")
 
 
+async def test_each_clone_gets_the_display_size_before_it_first_boots_and_after_a_reset(provider, lume):
+    sandbox = await provider.create_vm(exposed_ports=[18765])
+    await provider.reset_vm(sandbox, image="bench-base", env={})
+
+    sets = [c for c in lume.calls if c[1] == "set"]
+    assert len(sets) == 2 and all(c[c.index("--display") + 1] == "1280x800" for c in sets)
+    for call_set in sets:
+        position = lume.calls.index(call_set)
+        assert lume.calls[position - 1][1] == "clone"
+
+
+def test_the_display_size_must_be_width_x_height(tmp_path):
+    with pytest.raises(ValueError, match="WIDTHxHEIGHT"):
+        LumeSandboxProvider(base="b", display="big", state_dir=str(tmp_path))
+
+
 async def test_a_third_running_vm_on_the_mac_is_refused(provider, lume):
     lume._add("someone-elses-vm", "running")
     await provider.create_vm(exposed_ports=[18765])

@@ -15,6 +15,7 @@ Configure it under ``[sandbox.providers.lume.config]``::
     image = "ghcr.io/trycua/<repo>:<tag>"  # a registry image, pulled once into a local base
     ssh_user = "lume"                      # the image's login, for exec
     ssh_password = "env:LUME_SSH_PASSWORD"
+    display = "1280x800"                   # the virtual display's size, set on each clone before it first boots
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ MAX_RUNNING_PER_HOST = 2
 #: Where boot settings land in the guest, under lume's shared-directory mount.
 GUEST_BOOT_FILE = "/Volumes/My Shared Files/agentenv/boot.json"
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_DISPLAY = re.compile(r"^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$")
+#: The size the conformance fixtures need; the image puts the guest in whatever size its clone is given.
+DEFAULT_DISPLAY = "1280x800"
 _IP_POLL_S = 2.0
 
 
@@ -170,6 +174,7 @@ class LumeSandboxProvider(SandboxProvider):
         state_dir: Optional[str] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
+        display: str = DEFAULT_DISPLAY,
         boot_timeout_s: float = 600,
         exec_timeout_s: float = 600,
         max_running: int = MAX_RUNNING_PER_HOST,
@@ -181,6 +186,8 @@ class LumeSandboxProvider(SandboxProvider):
             )
         if not _NAME.match(prefix):
             raise ValueError(f"prefix {prefix!r} must be lowercase letters, digits and dashes")
+        if not _DISPLAY.match(display):
+            raise ValueError(f"display {display!r} must be WIDTHxHEIGHT, such as 1280x800")
         if max_running > MAX_RUNNING_PER_HOST:
             raise ValueError(
                 f"max_running {max_running} is above the {MAX_RUNNING_PER_HOST} macOS VMs per Mac that "
@@ -190,7 +197,7 @@ class LumeSandboxProvider(SandboxProvider):
         self.lume = lume_cli or Lume(lume, storage=storage)
         self.ssh_user, self.ssh_password = ssh_user, ssh_password
         self.state_dir = Path(state_dir or Path.home() / ".agentenv" / "lume")
-        self.cpu, self.memory_mb = cpu, memory_mb
+        self.cpu, self.memory_mb, self.display = cpu, memory_mb, display
         self.boot_timeout_s, self.exec_timeout_s = boot_timeout_s, exec_timeout_s
         self.max_running = max_running
         self._create_lock = asyncio.Lock()
@@ -208,6 +215,7 @@ class LumeSandboxProvider(SandboxProvider):
             "state_dir",
             "cpu",
             "memory_mb",
+            "display",
             "boot_timeout_s",
             "exec_timeout_s",
             "max_running",
@@ -276,7 +284,9 @@ class LumeSandboxProvider(SandboxProvider):
             await self._write_boot(name, env or {})
             try:
                 await self.lume.clone(source, name)
-                await self.lume.set(name, cpu=self.cpu, memory_mb=self.memory_mb)
+                await self.lume.set(
+                    name, cpu=self.cpu, memory_mb=self.memory_mb, display=self.display
+                )
                 await self._remember_mac(name)
                 await self._run(name)
             except BaseException:
@@ -314,7 +324,9 @@ class LumeSandboxProvider(SandboxProvider):
         await self.lume.delete(name)
         await self._write_boot(name, env)
         await self.lume.clone(state["source"], name)
-        await self.lume.set(name, cpu=self.cpu, memory_mb=self.memory_mb)
+        await self.lume.set(
+            name, cpu=self.cpu, memory_mb=self.memory_mb, display=self.display
+        )
         await self._restore_mac(name, state.get("mac"))
         await self._run(name)
         ip = await self._wait_for_ip(name)

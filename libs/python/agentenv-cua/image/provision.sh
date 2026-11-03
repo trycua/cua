@@ -6,6 +6,9 @@
 #   - CuaDriver.app 0.38.0 from the cua-driver-rs release (sha256-checked), in /Applications
 #   - the cua-driver macOS driver at /opt/agentenv/drivers/cua-driver, with a venv holding the AgentEnv protocol
 #   - TCC rows (Accessibility, Screen Recording, PostEvent) for com.trycua.driver, bound to the installed bundle
+#   - /opt/agentenv/bin: set-display, a GNU `stat -c` shim and a python3 with a current Tk, first on the PATH of
+#     commands the driver runs. The driver's start script runs set-display to put the guest's display in the size
+#     lume gives the virtual display (a clone otherwise boots in the mode the image was last in)
 #   - LaunchAgents that start the cua-driver daemon and the driver server in the GUI session at login; the driver
 #     reads its boot settings from /Volumes/My Shared Files/agentenv/boot.json, which the lume provider shares
 #
@@ -56,6 +59,52 @@ uv python install "$PYTHON_VERSION"
 uv venv --allow-existing -p "$PYTHON_VERSION" "$DRIVER_DIR/venv"
 VIRTUAL_ENV="$DRIVER_DIR/venv" uv pip install "agentenv-framework-protocol[computer]==${PROTOCOL_VERSION}"
 
+say "set-display"
+as_root mkdir -p /opt/agentenv/bin
+as_root chown "$(id -un):staff" /opt/agentenv/bin
+command -v swiftc >/dev/null || { echo "swiftc missing: the base must be ghcr.io/trycua/macos:26 (full tier)" >&2; exit 2; }
+swiftc -O "$PAYLOAD/set-display.swift" -o /opt/agentenv/bin/set-display
+
+say "GNU stat -c shim"
+# The conformance probe is written for Linux and asks `stat -c %u FILE`; the macOS stat spells that `-f %u`. The
+# driver puts this directory first on its commands' PATH.
+cat > /opt/agentenv/bin/stat <<'SH'
+#!/bin/sh
+# `stat -c FORMAT FILE...` as GNU stat takes it, on the macOS stat (format letters %u %U %g %G %s %a %n %F).
+if [ "$1" = "-c" ] && [ "$#" -ge 3 ]; then
+  fmt=$(printf '%s' "$2" | sed -e 's/%U/%Su/g' -e 's/%G/%Sg/g' -e 's/%s/%z/g' -e 's/%a/%Lp/g' -e 's/%n/%N/g' -e 's/%F/%HT/g')
+  shift 2
+  exec /usr/bin/stat -f "$fmt" "$@"
+fi
+exec /usr/bin/stat "$@"
+SH
+chmod 755 /opt/agentenv/bin/stat
+
+say "python3 with a current Tk"
+# The probe's Tk fixture runs `python3`. The system python3's Tk 8.5 draws almost none of its widgets on macOS 26 and
+# can't go fullscreen, so commands the driver runs get the driver's own python (a uv build with Tk 9) as python3.
+cat > /opt/agentenv/bin/python3 <<SH
+#!/bin/sh
+exec "$DRIVER_DIR/venv/bin/python" "\$@"
+SH
+chmod 755 /opt/agentenv/bin/python3
+
+say "no Cua Spacesd"
+# The base image starts Cua Spacesd at login, and its window covers the whole screen, over whatever an agent or the
+# conformance fixture draws. A bench computer is driven through the AgentEnv driver, so turn it off.
+if [ -f /Library/LaunchAgents/com.trycua.spacesd.plist ]; then
+  as_root mv /Library/LaunchAgents/com.trycua.spacesd.plist /Library/LaunchAgents/com.trycua.spacesd.plist.disabled
+fi
+launchctl bootout "gui/$(id -u)/com.trycua.spacesd" 2>/dev/null || true
+pkill -x cua-spacesd 2>/dev/null || true
+
+say "no Login Items banners"
+# Each clone's first boot shows a "Software from ... can run in the background" alert over the top right of the
+# screen, where a click aimed at the screen lands on it (and opens System Settings) instead of on the app under it.
+# The agent that posts it is off for this user.
+launchctl bootout "gui/$(id -u)/com.apple.backgroundtaskmanagement.agent" 2>/dev/null || true
+launchctl disable "gui/$(id -u)/com.apple.backgroundtaskmanagement.agent"
+
 say "TCC rows for ${BUNDLE_ID}"
 req=$(codesign -d -r- /Applications/CuaDriver.app 2>&1 | sed -n 's/^\(# *\)\{0,1\}designated => //p')
 [ -n "$req" ] || { echo "CuaDriver.app has no designated requirement" >&2; exit 1; }
@@ -71,6 +120,18 @@ for service in kTCCServiceAccessibility kTCCServiceScreenCapture kTCCServicePost
 done
 for pid in $(pgrep -x tccd); do as_root kill "$pid" 2>/dev/null || true; done
 
+say "direct screen-capture approval for ${BUNDLE_ID}"
+# macOS 15+ asks once per app, even with Screen Recording granted, before the first direct capture. replayd keeps
+# the answer in the user's ScreenCaptureApprovals.plist; an entry keyed by the bundle identifier counts as approved
+# (it is how a managed Mac records the approval ahead of time), and cua-driver reads it as recorded consent.
+approvals="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+mkdir -p "$(dirname "$approvals")"
+defaults write "$approvals" "$BUNDLE_ID" -dict \
+  kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+  kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
+killall -HUP replayd >/dev/null 2>&1 || true
+defaults read "$approvals" "$BUNDLE_ID" | grep -Fq kScreenCaptureApprovalLastAlerted
+
 say "LaunchAgents"
 mkdir -p "$LA" "$HOME/Library/Logs/agentenv"
 cat > "$DRIVER_DIR/start-driver.sh" <<'SH'
@@ -80,6 +141,9 @@ cat > "$DRIVER_DIR/start-driver.sh" <<'SH'
 set -euo pipefail
 boot="/Volumes/My Shared Files/agentenv/boot.json"
 for _ in $(seq 1 60); do [ -f "$boot" ] && break; sleep 1; done
+# The guest boots in the display mode its disk last had; take the size lume gave the virtual display.
+/opt/agentenv/bin/set-display || true
+export PATH="/opt/agentenv/bin:$PATH"
 cd /opt/agentenv/drivers/cua-driver
 if [ -f "$boot" ]; then
   eval "$(venv/bin/python -c 'import json,shlex,sys; e=json.load(open(sys.argv[1]))["env"]; print("\n".join(f"export {k}={shlex.quote(v)}" for k,v in e.items() if k.replace("_","").isalnum()))' "$boot")"

@@ -159,19 +159,19 @@ impl ScreencastSession {
 /// negotiation; every [`Frame`] carries one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawFormat {
-    BGRx,
-    BGRA,
-    RGBx,
-    RGBA,
+    Bgrx,
+    Bgra,
+    Rgbx,
+    Rgba,
 }
 
 impl RawFormat {
     pub fn from_video_format(format: VideoFormat) -> Option<Self> {
         match format {
-            VideoFormat::BGRx => Some(Self::BGRx),
-            VideoFormat::BGRA => Some(Self::BGRA),
-            VideoFormat::RGBx => Some(Self::RGBx),
-            VideoFormat::RGBA => Some(Self::RGBA),
+            VideoFormat::BGRx => Some(Self::Bgrx),
+            VideoFormat::BGRA => Some(Self::Bgra),
+            VideoFormat::RGBx => Some(Self::Rgbx),
+            VideoFormat::RGBA => Some(Self::Rgba),
             _ => None,
         }
     }

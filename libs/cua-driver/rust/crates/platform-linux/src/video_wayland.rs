@@ -498,10 +498,10 @@ mod portal_video {
     /// ffmpeg `rawvideo` pixel format matching a negotiated PipeWire layout.
     pub(super) fn ffmpeg_pix_fmt(format: RawFormat) -> &'static str {
         match format {
-            RawFormat::BGRx => "bgr0",
-            RawFormat::BGRA => "bgra",
-            RawFormat::RGBx => "rgb0",
-            RawFormat::RGBA => "rgba",
+            RawFormat::Bgrx => "bgr0",
+            RawFormat::Bgra => "bgra",
+            RawFormat::Rgbx => "rgb0",
+            RawFormat::Rgba => "rgba",
         }
     }
 
@@ -909,10 +909,10 @@ mod tests {
     #[test]
     fn negotiated_formats_map_to_rawvideo_pixel_formats() {
         use crate::wayland::portal_screencast::RawFormat;
-        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::BGRx), "bgr0");
-        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::BGRA), "bgra");
-        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::RGBx), "rgb0");
-        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::RGBA), "rgba");
+        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::Bgrx), "bgr0");
+        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::Bgra), "bgra");
+        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::Rgbx), "rgb0");
+        assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::Rgba), "rgba");
     }
 
     /// A non-blocking pipe; the test decides whether and how fast its reader

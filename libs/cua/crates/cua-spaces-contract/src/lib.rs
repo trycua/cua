@@ -2303,6 +2303,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn persistent_agent_create_carries_brief_and_standby() {
+        let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
+            "agent": "claude-code", "name": "ada", "space": "s",
+            "brief": "standing", "standby": true
+        }))
+        .unwrap();
+        assert_eq!(m.brief.as_deref(), Some("standing"));
+        assert_eq!(m.standby, Some(true));
+        let manifest = manifest_json();
+        let tool = manifest
+            .find("\"standby\"")
+            .expect("standby is in the manifest");
+        assert!(manifest[tool..].contains("\"brief\"") || manifest.contains("\"brief\""));
+    }
+
+    #[test]
     fn former_tool_names_resolve_but_are_not_published() {
         for (old, new) in TOOL_ALIASES {
             assert_eq!(tool(old).map(|t| t.name), Some(*new), "{old}");

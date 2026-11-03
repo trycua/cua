@@ -696,6 +696,7 @@ impl Job {
                 harness: self.agent.harness.to_string(),
                 space: space.to_string(),
                 model: self.model.clone(),
+                brief: None,
                 base_url: None,
                 env_from_host: vec![],
                 env: Default::default(),

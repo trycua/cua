@@ -790,6 +790,10 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Standing instructions: the first message each run takes carries them
+    /// in front of its text (the thread shows only the message).
+    #[serde(default)]
+    pub brief: Option<String>,
     /// A custom model endpoint base URL.
     #[serde(default)]
     pub base_url: Option<String>,
@@ -813,6 +817,11 @@ pub struct PersistentAgentCreate {
     /// Parallel sessions. Default 1.
     #[serde(default)]
     pub sessions: Option<u32>,
+    /// Keep a run open with its session ready, so a message starts its turn
+    /// at once (the agent is started in the background, and again if it
+    /// ends). Default false.
+    #[serde(default)]
+    pub standby: Option<bool>,
     /// A schedule: every N minutes (with `prompt`).
     #[serde(default)]
     pub every_minutes: Option<i64>,

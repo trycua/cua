@@ -83,6 +83,11 @@ pub struct Policy {
     /// [`Rights::default`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rights: Option<Rights>,
+    /// Keep a run open with its session ready (the supervisor starts one when
+    /// there is none, and it never exits for being idle), so the next message
+    /// starts its turn at once instead of starting the agent first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub standby: bool,
 }
 
 fn local() -> String {
@@ -97,6 +102,7 @@ impl Default for Policy {
             once: false,
             guard: true,
             rights: None,
+            standby: false,
         }
     }
 }
@@ -122,6 +128,8 @@ pub struct MemberOptions {
     pub rights: Option<Rights>,
     /// `on: auto`: the durable Space (by name) `spec.space` is now.
     pub durable_space: Option<String>,
+    /// Keep a run ready ([`Policy::standby`]); `None` leaves it as it is.
+    pub standby: Option<bool>,
 }
 
 /// An answer to an approval, as `thread_post` gets it.
@@ -429,7 +437,24 @@ impl Persistent {
                         r.harness, spec.harness
                     )));
                 }
-                r
+                // The model it is asked for now is the one its next message
+                // names (an open run switches to it before the turn).
+                if spec.model.is_some() || spec.base_url.is_some() || spec.brief.is_some() {
+                    self.update(&r.name, |x| {
+                        if spec.model.is_some() {
+                            x.model = spec.model.clone();
+                        }
+                        if spec.base_url.is_some() {
+                            x.base_url = spec.base_url.clone();
+                        }
+                        if spec.brief.is_some() {
+                            x.brief = spec.brief.clone();
+                        }
+                    })?;
+                    self.get(&r.name)?
+                } else {
+                    r
+                }
             }
             None => {
                 // Names are keys on this machine, but a Space's `@claude` is its
@@ -465,6 +490,7 @@ impl Persistent {
                 once: opts.once,
                 guard: true,
                 rights: opts.rights.clone(),
+                standby: opts.standby.unwrap_or(r.policy.standby),
             };
             r.durable_space = opts.durable_space.clone();
             r.sessions = opts.sessions.unwrap_or(1);
@@ -832,6 +858,14 @@ impl Persistent {
             "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
             task.seq, task.author.name
         );
+        // The member's standing instructions go in front of the first message
+        // each run takes (the thread shows only what the person wrote).
+        let framed = match rec.brief.as_deref().filter(|b| !b.trim().is_empty()) {
+            Some(brief) if rec.run_id.is_none() || rec.briefed_run != rec.run_id => {
+                format!("{}\n\n{framed}", brief.trim())
+            }
+            _ => framed,
+        };
         let update = |state, note: String| {
             Draft::update(
                 Author::system("dispatch"),
@@ -871,6 +905,10 @@ impl Persistent {
         }
         match sent {
             Ok(d) => {
+                if rec.brief.is_some() {
+                    let run = d.run_id.clone();
+                    let _ = self.update_in(rec, |r| r.briefed_run = Some(run));
+                }
                 let base = if d.started { 0 } else { base };
                 if !d.started {
                     // A follow-up to a running agent: its steps are timed too.

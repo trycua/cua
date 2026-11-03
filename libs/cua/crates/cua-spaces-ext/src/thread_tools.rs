@@ -335,6 +335,7 @@ pub(crate) async fn agent_add(
             harness: a.agent,
             space,
             model: a.model,
+            brief: a.brief,
             base_url: a.base_url,
             env_from_host: a.env_from_host,
             env: a.env,
@@ -346,6 +347,7 @@ pub(crate) async fn agent_add(
             sessions: a.sessions,
             rights,
             durable_space,
+            standby: a.standby,
         },
     )?;
     let mut out = with_member(&rec, p);

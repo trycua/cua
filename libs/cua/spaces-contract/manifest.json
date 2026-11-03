@@ -2674,6 +2674,10 @@
             "description": "A custom model endpoint base URL.",
             "type": "string"
           },
+          "brief": {
+            "description": "Standing instructions: the first message each run takes carries them\nin front of its text (the thread shows only the message).",
+            "type": "string"
+          },
           "daily_at": {
             "description": "A schedule: every day at `HH:MM` local time (with `prompt`).",
             "type": "string"
@@ -2810,6 +2814,10 @@
           "space": {
             "description": "The Space it works in (id or name).",
             "type": "string"
+          },
+          "standby": {
+            "description": "Keep a run open with its session ready, so a message starts its turn\nat once (the agent is started in the background, and again if it\nends). Default false.",
+            "type": "boolean"
           },
           "title": {
             "description": "The schedule's title. Default: the first words of `prompt`.",

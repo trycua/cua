@@ -55,6 +55,7 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         ssh: None,
         restrict_network: false,
         egress: None,
+        network: None,
         netns: false,
         pasta_pid: None,
         extra_args: vec![],

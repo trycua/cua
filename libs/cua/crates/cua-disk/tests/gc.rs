@@ -87,6 +87,7 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         ssh: None,
         restrict_network: false,
         egress: None,
+        network: None,
         netns: false,
         pasta_pid: None,
         extra_args: vec![],

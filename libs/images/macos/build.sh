@@ -34,7 +34,6 @@
 #                  and /etc/cua-image/spacesd-source. With --app the doctor
 #                  expects the bundle's own build-info git_sha.
 #   --push TAG     after the gate passes, `lume push` TAG to the macos repo
-#                  (slim and full only: the xcode tier is never pushed).
 #                  TAG must be a new immutable pin of this tier
 #                  (<version>[-slim|-xcode[-X.Y]]-<yyyymmdd>-<sha7>);
 #                  scripts/images/check-tag-safety.sh refuses anything else.
@@ -99,10 +98,6 @@ if [ "$TIER" != slim ] && [ -z "$BASE_VM" ]; then
     echo "--tier $TIER builds on the gated VM of the tier below: pass --base-vm" >&2; exit 2
 fi
 [ -n "$MEMORY" ] || { [ "$TIER" = xcode ] && MEMORY=8GB || MEMORY=4GB; }
-if [ -n "$PUSH_TAG" ] && [ "$TIER" = xcode ]; then
-    echo "the xcode tier is never pushed: it carries Xcode, which Apple's terms do not let us redistribute (each Mac derives it: derive-local.sh)" >&2
-    exit 2
-fi
 MACOS_BASE_IMAGE="$MACOS_BASE_REPO:$MACOS_BASE_TAG"
 BASE_IMAGE="${BASE_IMAGE:-$MACOS_BASE_IMAGE}"
 VM="${VM:-cua-e2e-macos-$TIER-$$}"
@@ -184,11 +179,29 @@ case "$TIER" in
         fetch "$UV_URL" "$UV_SHA256"; fetch "$NODE_URL" "$NODE_SHA256"; fetch "$PNPM_URL" "$PNPM_SHA256"
         fetch "$GO_URL" "$GO_SHA256"; fetch "$RUSTUP_URL" "$RUSTUP_SHA256" ;;
     xcode)
+        # Xcode comes from this Mac, never from a sign-in: the pinned .xip in
+        # the runner's cache if it has one, else the pinned Xcode.app installed
+        # on the runner (what a GitHub macOS image has preinstalled too).
+        # shellcheck source=files/xcode-source.sh
+        . "$HERE/files/xcode-source.sh"
+        mkdir -p "$SETUP/xcode"
         xip="$XCODE_CACHE/$XCODE_XIP"
-        [ -f "$xip" ] || { echo "$xip is missing: put the Xcode $XCODE_VERSION .xip in CUA_XCODE_CACHE" >&2; exit 2; }
-        [ "$(shasum -a 1 "$xip" | cut -d' ' -f1)" = "$XCODE_XIP_SHA1" ] ||
-            { echo "checksum mismatch: $xip" >&2; exit 1; }
-        ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/"
+        if [ -f "$xip" ]; then
+            [ "$(shasum -a 1 "$xip" | cut -d' ' -f1)" = "$XCODE_XIP_SHA1" ] ||
+                { echo "checksum mismatch: $xip" >&2; exit 1; }
+            ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/"
+        else
+            app=""
+            for c in "${CUA_XCODE_APP:-}" "/Applications/Xcode_$XCODE_VERSION.app" "$(xcode-select -p 2>/dev/null | sed 's|/Contents/Developer$||')" /Applications/Xcode*.app; do
+                [ -n "$c" ] && [ -d "$c" ] && [ "$(plist "$c" CFBundleShortVersionString)" = "$XCODE_VERSION" ] && { app="$c"; break; }
+            done
+            [ -n "$app" ] || { echo "no Xcode $XCODE_VERSION on this runner: put $XCODE_XIP in $XCODE_CACHE, or install Xcode $XCODE_VERSION (/Applications/Xcode_$XCODE_VERSION.app)" >&2; exit 2; }
+            [ "$(/usr/libexec/PlistBuddy -c 'Print :ProductBuildVersion' "$app/Contents/version.plist")" = "$XCODE_BUILD" ] ||
+                { echo "$app is not build $XCODE_BUILD" >&2; exit 1; }
+            log "using the runner's $app (build $XCODE_BUILD)"
+            stage_xcode "$app" "$SETUP/xcode"
+            : >"$SETUP/xcode/pinned"
+        fi
         fetch_xcode_tools ;;
 esac
 "$SETUP/Cua Spacesd.app/Contents/MacOS/cua-spacesd" build-info >"$OUT/build-info.json"

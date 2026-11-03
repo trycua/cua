@@ -1949,6 +1949,17 @@ public final class AppModel {
 
     // MARK: - Experiments
 
+    /// The experiments the daemon enforces (Secure Spaces, Child Spaces) as
+    /// the cua home keeps them: what `cua experiments enable` set shows here
+    /// the next time Settings is read.
+    public func refreshDaemonExperiments() {
+        let kept = appSettingsLoad(path: settingsPath).experiments
+        guard kept.secureSpaces != settings.experiments.secureSpaces
+            || kept.childSpaces != settings.experiments.childSpaces else { return }
+        settings.experiments.secureSpaces = kept.secureSpaces
+        settings.experiments.childSpaces = kept.childSpaces
+    }
+
     /// Settings, Experiments: a switch and one line per experiment.
     public var experimentsPage: AppSettingsPage { appExperimentsPage(experiments: settings.experiments) }
 

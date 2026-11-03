@@ -208,6 +208,22 @@ pub trait Runtime: Send + Sync {
         let _ = name;
         Ok(Default::default())
     }
+
+    /// Replaces instance `name`'s network settings ([`crate::network`]),
+    /// kept with it from now on (they win over a later start spec's). Says
+    /// whether the running guest is under them now or from its next start.
+    /// Runtimes that keep none refuse.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        let _ = (name, settings);
+        Err(VmmError::Unsupported {
+            backend: self.kind().as_str(),
+            op: "changing network settings (this runtime keeps none: create the Space again)",
+        })
+    }
 }
 
 /// Resolves an OCI reference to a local bootable disk (qcow2). Implemented by

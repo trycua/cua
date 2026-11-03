@@ -708,6 +708,15 @@ pub struct SpaceInfo {
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_enforced: Option<crate::egress::Enforcement>,
+    /// Its network settings ([`crate::network`]), with a note when its
+    /// network is not what was asked. `None` when this computer keeps no
+    /// record of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::SpaceNetwork>,
+    /// Its place in a tree of Spaces ([`crate::tree`]): `None` for a
+    /// top-level Space with nothing recorded about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<crate::tree::TreeLink>,
     /// A Space that is a machine on the relay: who owns it and who else
     /// has it, as this account sees it ([`crate::sharing`]). `None` for
     /// other Spaces.
@@ -768,6 +777,25 @@ impl SpaceInfo {
             on_expire: String::new(),
             egress: Default::default(),
             egress_enforced: None,
+            network: record
+                .network_settings
+                .as_ref()
+                .and_then(|p| crate::network::from_pb(p).ok())
+                .map(|settings| crate::network::SpaceNetwork {
+                    settings,
+                    note: (!record.network_note.is_empty()).then(|| record.network_note.clone()),
+                    notice_pending: record.network_notice_pending,
+                }),
+            tree: (!record.parent.is_empty()).then(|| crate::tree::TreeLink {
+                parent: Some(record.parent.clone()),
+                root: (!record.root.is_empty()).then(|| record.root.clone()),
+                depth: record.depth,
+                origin: if record.origin.is_empty() {
+                    crate::tree::ORIGIN_CHILD.into()
+                } else {
+                    record.origin.clone()
+                },
+            }),
             created_at_unix: record
                 .added_at
                 .as_ref()

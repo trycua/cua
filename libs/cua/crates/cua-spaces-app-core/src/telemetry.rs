@@ -2116,7 +2116,9 @@ mod tests {
                     "cua_volume".into(),
                     "your_cloud".into(),
                     "sharing".into(),
-                    "web_ui".into()
+                    "web_ui".into(),
+                    "secure_spaces".into(),
+                    "child_spaces".into()
                 ]
             }]
         );

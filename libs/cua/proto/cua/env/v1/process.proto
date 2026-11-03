@@ -55,6 +55,21 @@ service ProcessService {
   // process group), and later requests carrying a lower epoch fail with
   // FAILED_PRECONDITION / `ERROR_REASON_STALE_EPOCH`.
   rpc AdvanceEpoch(AdvanceEpochRequest) returns (AdvanceEpochResponse);
+  // Keeps a command running as a named service: started at once, started
+  // again by its restart policy when it exits or fails its health check,
+  // started when cua-spacesd starts (after the guest boots) unless
+  // `start_on_boot` is false, and its output kept in log files. Putting a
+  // name that exists replaces it (the old process is stopped first).
+  rpc PutService(PutServiceRequest) returns (PutServiceResponse);
+  // Stops a service and forgets it (its log files go too).
+  rpc DeleteService(DeleteServiceRequest) returns (DeleteServiceResponse);
+  // Lists services with their state.
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  // Starts, stops or restarts a service. A stopped service stays stopped
+  // until started (also across a restart of cua-spacesd).
+  rpc ControlService(ControlServiceRequest) returns (ControlServiceResponse);
+  // The end of a service's log.
+  rpc GetServiceLogs(GetServiceLogsRequest) returns (GetServiceLogsResponse);
 }
 
 // What to run.
@@ -496,4 +511,172 @@ message AdvanceEpochResponse {
   uint64 epoch = 1;
   // Running processes killed because they carried a lower epoch.
   uint32 killed = 2;
+}
+
+// When a service is started again.
+enum RestartPolicy {
+  // Unset: `RESTART_POLICY_ALWAYS`.
+  RESTART_POLICY_UNSPECIFIED = 0;
+  // Whenever it ends, however it ends.
+  RESTART_POLICY_ALWAYS = 1;
+  // When it ends with a non-zero code, a signal, or a failed health check.
+  RESTART_POLICY_ON_FAILURE = 2;
+  // Never: it runs once.
+  RESTART_POLICY_NEVER = 3;
+}
+
+// How a service's health is checked. Set exactly one of `exec`, `http`,
+// `tcp`.
+message HealthProbe {
+  // A command that exits 0 when the service is healthy.
+  ProcessConfig exec = 1;
+  // A URL that answers 2xx or 3xx (`http://127.0.0.1:8080/health`).
+  string http = 2;
+  // A port that accepts a TCP connection (`127.0.0.1:5432`).
+  string tcp = 3;
+  // Between checks. Unset: 10 seconds.
+  google.protobuf.Duration interval = 4;
+  // For one check. Unset: 5 seconds.
+  google.protobuf.Duration timeout = 5;
+  // Failed checks in a row that mark it unhealthy and restart it. 0: 3.
+  uint32 failure_threshold = 6;
+  // Grace after a start before the first check counts. Unset: 10 seconds.
+  google.protobuf.Duration start_period = 7;
+}
+
+// A service: a named command kept running.
+message ServiceSpec {
+  // Name: lowercase letters, digits, `-`, `_` and `.`, 1 to 63 of them,
+  // starting with a letter or digit.
+  string name = 1;
+  // What to run (`timeout` is ignored).
+  ProcessConfig config = 2;
+  // When it is started again. Unset: always.
+  RestartPolicy restart = 3;
+  // First wait before a restart; it doubles on each quick failure. Unset:
+  // 1 second.
+  google.protobuf.Duration backoff_min = 4;
+  // Longest wait before a restart. Unset: 60 seconds.
+  google.protobuf.Duration backoff_max = 5;
+  // Health check. Unset: the service is healthy while it runs.
+  HealthProbe probe = 6;
+  // Start it when cua-spacesd starts. Unset: true.
+  optional bool start_on_boot = 7;
+  // Size at which the log file is rotated (one older file is kept). 0:
+  // 10 MiB.
+  uint64 log_max_bytes = 8;
+}
+
+// Where a service is.
+enum ServiceState {
+  // Not reported.
+  SERVICE_STATE_UNSPECIFIED = 0;
+  // Starting (or waiting for its first health check).
+  SERVICE_STATE_STARTING = 1;
+  // Running, and healthy when it has a check.
+  SERVICE_STATE_RUNNING = 2;
+  // Running, but its last checks failed.
+  SERVICE_STATE_UNHEALTHY = 3;
+  // Ended; waiting `next_start_at` to start again.
+  SERVICE_STATE_BACKOFF = 4;
+  // Stopped by a caller.
+  SERVICE_STATE_STOPPED = 5;
+  // Ended and its policy does not start it again.
+  SERVICE_STATE_EXITED = 6;
+  // Could not be started (the command does not exist, ...).
+  SERVICE_STATE_FAILED = 7;
+}
+
+// A service and how it is doing.
+message ServiceStatus {
+  // What it runs.
+  ServiceSpec spec = 1;
+  // Where it is.
+  ServiceState state = 2;
+  // Its current process, while it runs.
+  uint32 pid = 3;
+  // Starts after the first one.
+  uint32 restarts = 4;
+  // When the current (or last) process started.
+  google.protobuf.Timestamp started_at = 5;
+  // How the last process ended.
+  ProcessEnd last_end = 6;
+  // The last failed health check, empty when the last one passed.
+  string probe_error = 7;
+  // When it starts again (state `SERVICE_STATE_BACKOFF`).
+  google.protobuf.Timestamp next_start_at = 8;
+  // Its log file in the guest.
+  string log_path = 9;
+}
+
+// Request for `ProcessService.PutService`.
+message PutServiceRequest {
+  // The service.
+  ServiceSpec spec = 1;
+}
+
+// Response for `ProcessService.PutService`.
+message PutServiceResponse {
+  // Its state right after it was put.
+  ServiceStatus service = 1;
+}
+
+// Request for `ProcessService.DeleteService`.
+message DeleteServiceRequest {
+  // Name.
+  string name = 1;
+}
+
+// Response for `ProcessService.DeleteService`.
+message DeleteServiceResponse {}
+
+// Request for `ProcessService.ListServices`.
+message ListServicesRequest {}
+
+// Response for `ProcessService.ListServices`.
+message ListServicesResponse {
+  // By name.
+  repeated ServiceStatus services = 1;
+}
+
+// What `ControlService` does.
+enum ServiceAction {
+  // Not set (refused).
+  SERVICE_ACTION_UNSPECIFIED = 0;
+  // Start it (no-op when it runs).
+  SERVICE_ACTION_START = 1;
+  // Stop it and keep it stopped.
+  SERVICE_ACTION_STOP = 2;
+  // Stop it, then start it.
+  SERVICE_ACTION_RESTART = 3;
+}
+
+// Request for `ProcessService.ControlService`.
+message ControlServiceRequest {
+  // Name.
+  string name = 1;
+  // What to do.
+  ServiceAction action = 2;
+}
+
+// Response for `ProcessService.ControlService`.
+message ControlServiceResponse {
+  // Its state after the action.
+  ServiceStatus service = 1;
+}
+
+// Request for `ProcessService.GetServiceLogs`.
+message GetServiceLogsRequest {
+  // Name.
+  string name = 1;
+  // How many bytes from the end. 0: 64 KiB; at most 4 MiB.
+  uint64 tail_bytes = 2;
+}
+
+// Response for `ProcessService.GetServiceLogs`.
+message GetServiceLogsResponse {
+  // The end of its output (stdout and stderr interleaved as written).
+  bytes data = 1;
+  // True when older output was left out.
+  bool truncated = 2;
 }

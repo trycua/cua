@@ -28,9 +28,13 @@ export interface Experiments {
   yourCloud?: boolean;
   sharing?: boolean;
   webUi?: boolean;
+  /** Secure Spaces: a Space reaches the internet and nothing else on the network unless opened. Off unless turned on; the daemon enforces it. */
+  secureSpaces?: boolean;
+  /** Child Spaces: a Space may make Spaces of its own. Off unless turned on; the daemon enforces it. */
+  childSpaces?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false, secureSpaces: false, childSpaces: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

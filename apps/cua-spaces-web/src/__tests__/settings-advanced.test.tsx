@@ -61,4 +61,11 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
     expect(form.querySelector('[data-host-field="relay"]')).toBeTruthy();
     expect(form.querySelector('[data-host-field="direct"]')).toBeTruthy();
   });
+
+  it("keeps the Secure Spaces and Child Spaces switches out of Labs until they are on", async () => {
+    const { router } = await mountApp("/settings/advanced", host);
+    await router.load();
+    await waitFor(() => expect(document.querySelector("[data-self-hosting]")).toBeTruthy());
+    expect(document.body.textContent).not.toMatch(/Secure Spaces|Child Spaces/);
+  });
 });

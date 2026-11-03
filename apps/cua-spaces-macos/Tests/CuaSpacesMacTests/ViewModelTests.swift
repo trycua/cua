@@ -432,7 +432,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing", "experiment:secure_spaces", "experiment:child_spaces"])
         // Sharing and Your cloud are on unless turned off; no New UI row.
         let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in

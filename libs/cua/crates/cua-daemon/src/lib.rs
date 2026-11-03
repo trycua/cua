@@ -24,6 +24,9 @@ use cua_proto::daemon::v1::{DaemonErrorInfo, DaemonErrorReason};
 use prost::Message;
 use std::path::PathBuf;
 
+/// Child Spaces: a Space makes and manages Spaces of its own.
+#[cfg(all(feature = "server", feature = "spaces"))]
+pub mod children;
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "byoc")]

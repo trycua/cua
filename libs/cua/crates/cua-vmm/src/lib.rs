@@ -26,6 +26,7 @@ pub mod auto;
 pub mod bulk;
 pub mod cleanup;
 pub mod cloudinit;
+pub mod conformance;
 #[cfg(feature = "container")]
 pub mod container;
 #[cfg(feature = "containerization")]
@@ -36,6 +37,7 @@ pub mod egress;
 pub mod elf;
 pub mod error;
 pub mod exec;
+pub mod experiments;
 pub mod filetable;
 pub mod gpu;
 pub mod host;
@@ -49,6 +51,7 @@ pub mod lume;
 pub mod managed;
 #[cfg(feature = "microvm")]
 pub mod microvm;
+pub mod network;
 pub mod preflight;
 pub mod probe;
 pub mod progress;

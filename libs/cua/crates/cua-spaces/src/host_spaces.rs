@@ -225,6 +225,10 @@ fn host_request(opts: &SpaceCreate, fork: Option<&str>) -> pb::CreateHostSpaceRe
         gpu: opts.gpu.clone().unwrap_or_default(),
         headless: opts.headless,
         egress: egress_to_pb(&opts.egress),
+        network_settings: opts
+            .network_settings
+            .as_ref()
+            .map(crate::network::to_host_pb),
         ..Default::default()
     }
 }
@@ -1680,6 +1684,17 @@ impl HostSpacesServer {
             Ok(n) => n,
             Err(e) => return Err(self.refuse(caller, &label, Error::invalid(e.to_string()))),
         };
+        // The caller's settings (already intersected with any parent on its
+        // side); a caller from before them sends `network` and `egress`.
+        let network_settings = match req
+            .network_settings
+            .as_ref()
+            .map(crate::network::from_host_pb)
+            .transpose()
+        {
+            Ok(s) => s,
+            Err(e) => return Err(self.refuse(caller, &label, e)),
+        };
         let following = self.creating.follow(key, &caller.account);
         let fork_source = req.fork_source.trim().to_string();
         let created = if !fork_source.is_empty() {
@@ -1743,6 +1758,7 @@ impl HostSpacesServer {
                 headless: req.headless,
                 // Enforced by this host, from the guest's first instruction.
                 egress: egress_from_pb(req.egress.clone()),
+                network_settings: network_settings.clone(),
                 ..Default::default()
             };
             match self.spaces.create(create.clone()).await {
@@ -3723,6 +3739,10 @@ impl Spaces {
             direct: false,
             network: network_word(opts.network).into(),
             egress: egress_to_pb(&opts.egress),
+            network_settings: opts
+                .network_settings
+                .as_ref()
+                .map(crate::network::to_host_pb),
             attach: Some(pb::AttachRelayRequest {
                 relay_url: relay.url.clone(),
                 machine_token: reg.machine_token.clone(),

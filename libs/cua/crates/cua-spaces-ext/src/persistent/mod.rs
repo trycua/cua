@@ -31,6 +31,7 @@ pub mod bridge;
 pub mod durable;
 pub mod home;
 pub mod identity;
+pub mod jobs;
 pub mod join;
 pub mod members;
 pub mod notify;
@@ -1764,6 +1765,7 @@ impl Persistent {
         // ended above closed theirs).
         self.dispatch(&mut report).await;
         self.tick_watched(&mut report).await;
+        self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
         report
     }

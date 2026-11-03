@@ -199,6 +199,7 @@ impl SpacesExtension for DriveExtension {
             || named_volumes::OPS.contains(&tool)
             || tool == "agent_start.home"
             || tool == cua_spaces::agents::WATCH_OP
+            || tool == cua_spaces::space_jobs::WATCH_OP
             || tool == cua_spaces::extension::MEMBER_AUTH_OP
     }
 
@@ -250,6 +251,21 @@ impl SpacesExtension for DriveExtension {
                     field("agent")?,
                 )?;
                 return Ok(ToolOutcome::json(&json!({"watched": true})));
+            }
+            if tool == cua_spaces::space_jobs::WATCH_OP {
+                let field = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| Error::invalid(format!("{tool}: `{k}` is required")))
+                };
+                let out = spaces.persistent().watch_job(
+                    &caller,
+                    field("space")?,
+                    field("job")?,
+                    args.get("name").and_then(Value::as_str).unwrap_or_default(),
+                    args.get("wake").and_then(Value::as_str),
+                )?;
+                return Ok(ToolOutcome::json(&out));
             }
             if named_volumes::OPS.contains(&tool) {
                 return named_volumes::call(spaces, tool, args).await;

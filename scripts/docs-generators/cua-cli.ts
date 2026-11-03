@@ -95,10 +95,16 @@ export interface CuaDumpDocs {
 export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'spaces-and-computers',
-    title: 'Spaces, computers and teams',
+    title: 'Spaces',
+    summary: 'Your Spaces, what they can reach, and keeping commands running in them',
+    commands: ['spaces', 'network'],
+  },
+  {
+    slug: 'computers-and-teams',
+    title: 'Computers and teams',
     summary:
-      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+      'Your computers, unattended access on this computer, teams, sharing, your remote use this month, and a cua-spacesd by URL',
+    commands: ['machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -134,7 +140,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'account-and-setup',
     title: 'Account and setup',
     summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
-    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry', 'experiments'],
   },
   {
     slug: 'pool',

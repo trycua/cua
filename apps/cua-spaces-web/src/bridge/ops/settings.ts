@@ -318,6 +318,8 @@ const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   yourCloud: "experiment:your_cloud",
   sharing: "experiment:sharing",
   webUi: "experiment:web_ui",
+  secureSpaces: "experiment:secure_spaces",
+  childSpaces: "experiment:child_spaces",
 };
 
 /**

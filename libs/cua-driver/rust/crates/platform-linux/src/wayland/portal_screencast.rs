@@ -157,14 +157,115 @@ impl ScreencastSession {
     }
 }
 
-/// One dequeued video frame. `pixels` covers exactly `stride * height` bytes
-/// in the negotiated `format`; rows may carry padding beyond `width * 4`.
+/// The packed 32-bit layouts [`run_frame_stream`] offers during format
+/// negotiation; every [`Frame`] carries one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawFormat {
+    BGRx,
+    BGRA,
+    RGBx,
+    RGBA,
+}
+
+impl RawFormat {
+    pub fn from_video_format(format: VideoFormat) -> Option<Self> {
+        match format {
+            VideoFormat::BGRx => Some(Self::BGRx),
+            VideoFormat::BGRA => Some(Self::BGRA),
+            VideoFormat::RGBx => Some(Self::RGBx),
+            VideoFormat::RGBA => Some(Self::RGBA),
+            _ => None,
+        }
+    }
+
+    /// One pixel of this layout as RGBA8888. `x`-suffixed layouts carry no
+    /// alpha, so their pixels read as opaque.
+    fn rgba(self, px: &[u8]) -> [u8; 4] {
+        match self {
+            Self::BGRx => [px[2], px[1], px[0], 0xFF],
+            Self::BGRA => [px[2], px[1], px[0], px[3]],
+            Self::RGBx => [px[0], px[1], px[2], 0xFF],
+            Self::RGBA => [px[0], px[1], px[2], px[3]],
+        }
+    }
+}
+
+const BYTES_PER_PIXEL: usize = 4;
+
+/// One dequeued video frame whose geometry has been checked against its
+/// payload, so consumers can index rows without bounds failures.
 pub struct Frame<'a> {
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub format: VideoFormat,
-    pub pixels: &'a [u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    format: RawFormat,
+    pixels: &'a [u8],
+}
+
+impl<'a> Frame<'a> {
+    /// Rejects frames a producer described inconsistently: an unsupported
+    /// format, empty dimensions, rows narrower than `width` pixels, or a
+    /// payload shorter than `stride * height`.
+    pub fn new(
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: VideoFormat,
+        pixels: &'a [u8],
+    ) -> anyhow::Result<Self> {
+        let format = RawFormat::from_video_format(format).ok_or_else(|| {
+            anyhow::anyhow!("portal ScreenCast negotiated unsupported pixel format {format:?}")
+        })?;
+        if width == 0 || height == 0 {
+            anyhow::bail!("portal ScreenCast produced an empty {width}x{height} frame");
+        }
+        let stride = stride as usize;
+        let row = width as usize * BYTES_PER_PIXEL;
+        if stride < row {
+            anyhow::bail!(
+                "portal ScreenCast frame stride {stride} is narrower than its {width}-pixel rows \
+                 ({row} bytes)"
+            );
+        }
+        let needed = stride * height as usize;
+        if pixels.len() < needed {
+            anyhow::bail!(
+                "portal ScreenCast buffer holds {} bytes but {width}x{height} rows of {stride} \
+                 bytes need {needed}",
+                pixels.len()
+            );
+        }
+        Ok(Self {
+            width,
+            height,
+            stride,
+            format,
+            pixels,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn format(&self) -> RawFormat {
+        self.format
+    }
+
+    /// Copy the visible pixels into `out`, dropping any row padding so the
+    /// result is `width * 4` bytes per row.
+    pub fn pack_rows(&self, out: &mut Vec<u8>) {
+        let row = self.width as usize * BYTES_PER_PIXEL;
+        out.clear();
+        out.reserve(row * self.height as usize);
+        for line in self.pixels.chunks(self.stride).take(self.height as usize) {
+            out.extend_from_slice(&line[..row]);
+        }
+    }
 }
 
 /// Whether [`run_frame_stream`] keeps pumping after a sink callback.
@@ -208,7 +309,32 @@ struct Pump<S> {
     negotiated: libspa::param::video::VideoInfoRaw,
     started_at: Instant,
     saw_frame: bool,
+    /// Most recent error the remote core reported against the connection
+    /// itself; libpipewire only turns it into an `Unconnected` transition,
+    /// dropping the message.
+    core_error: Option<String>,
     outcome: Option<anyhow::Result<()>>,
+}
+
+/// Why a `pw_stream` state transition ends the capture, if it does.
+///
+/// libpipewire moves a stream to `Unconnected` without any `Error` when the
+/// server destroys its node (`proxy_removed`) or the core connection drops
+/// (`on_core_error` with `-EPIPE`), and a server-sent node error arrives as
+/// an `Error` transition. `Paused` is not terminal: the compositor pauses a
+/// source it may resume, and a damage-free desktop stays `Streaming`.
+fn stream_loss(new: &pipewire::stream::StreamState, core_error: Option<&str>) -> Option<String> {
+    use pipewire::stream::StreamState;
+    match new {
+        StreamState::Error(error) => Some(format!("portal ScreenCast stream failed: {error}")),
+        StreamState::Unconnected => Some(match core_error {
+            Some(error) => format!("portal ScreenCast stream disconnected: {error}"),
+            None => "portal ScreenCast stream disconnected: the compositor removed the source \
+                 (session closed or sharing revoked)"
+                .to_owned(),
+        }),
+        StreamState::Connecting | StreamState::Paused | StreamState::Streaming => None,
+    }
 }
 
 impl<S: FrameSink> Pump<S> {
@@ -233,8 +359,9 @@ impl<S: FrameSink> Pump<S> {
 }
 
 /// Connect to the PipeWire remote behind a portal ScreenCast and feed frames
-/// from `node_id` to `sink` until the sink stops, the sink or the stream
-/// errors, or no first frame arrives in time. Blocks the calling thread.
+/// from `node_id` to `sink` until the sink stops, the sink errors, the
+/// stream errors or disconnects, a producer delivers an inconsistent frame,
+/// or no first frame arrives in time. Blocks the calling thread.
 ///
 /// Only raw shared-memory formats are offered (no DMA-BUF modifier
 /// negotiation) so the compositor falls back to memfd buffers that
@@ -262,8 +389,21 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
         negotiated: Default::default(),
         started_at: Instant::now(),
         saw_frame: false,
+        core_error: None,
         outcome: None,
     }));
+
+    let core_listener = core
+        .add_listener_local()
+        .error({
+            let pump = pump.clone();
+            move |id, _seq, res, message| {
+                if id == pw::core::PW_ID_CORE {
+                    pump.borrow_mut().core_error = Some(format!("{message} ({res})"));
+                }
+            }
+        })
+        .register();
 
     let stream = pw::stream::StreamBox::new(
         &core,
@@ -282,11 +422,9 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
             let pump = pump.clone();
             let mainloop = mainloop.clone();
             move |_stream, _user, _old, new| {
-                if let pw::stream::StreamState::Error(error) = new {
-                    pump.borrow_mut().finish(
-                        &mainloop,
-                        Err(anyhow::anyhow!("portal ScreenCast stream failed: {error}")),
-                    );
+                let mut pump = pump.borrow_mut();
+                if let Some(reason) = stream_loss(&new, pump.core_error.as_deref()) {
+                    pump.finish(&mainloop, Err(anyhow::anyhow!(reason)));
                 }
             }
         })
@@ -339,8 +477,17 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
                     return;
                 };
                 let chunk = data.chunk();
-                let (offset, chunk_size, chunk_stride) =
-                    (chunk.offset() as usize, chunk.size(), chunk.stride());
+                let (offset, chunk_size, chunk_stride, chunk_flags) = (
+                    chunk.offset() as usize,
+                    chunk.size(),
+                    chunk.stride(),
+                    chunk.flags(),
+                );
+                // A producer marks buffers it could not fill; they carry no
+                // frame and go straight back to it.
+                if chunk_flags.contains(spa::buffer::ChunkFlags::CORRUPTED) {
+                    return;
+                }
                 // Producers may leave stride unset; derive it for the packed
                 // 32-bit formats negotiated below.
                 let stride = if chunk_stride > 0 {
@@ -350,21 +497,26 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
                 } else {
                     width * 4
                 };
-                let payload_len = stride as usize * height as usize;
-                let Some(payload) = data
+                let data_type = data.type_();
+                let frame = data
                     .data()
-                    .and_then(|bytes| bytes.get(offset..offset + payload_len))
-                else {
-                    return;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "portal ScreenCast delivered a {data_type:?} buffer that is not \
+                             memory-mapped; only shared-memory frames are supported"
+                        )
+                    })
+                    .and_then(|bytes| {
+                        let payload = bytes.get(offset..).unwrap_or(&[]);
+                        Frame::new(width, height, stride, info.format(), payload)
+                    });
+                let result = match frame {
+                    Ok(frame) => {
+                        pump.saw_frame = true;
+                        pump.sink.frame(frame)
+                    }
+                    Err(error) => Err(error),
                 };
-                pump.saw_frame = true;
-                let result = pump.sink.frame(Frame {
-                    width,
-                    height,
-                    stride,
-                    format: info.format(),
-                    pixels: payload,
-                });
                 pump.apply(&mainloop, result);
             }
         })
@@ -438,11 +590,17 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
     let mut params = [Pod::from_bytes(&values)
         .ok_or_else(|| anyhow::anyhow!("EnumFormat pod parse-back failed"))?];
 
+    // `DONT_RECONNECT` binds the stream to the portal's node: when the
+    // compositor removes that node, the session manager destroys this
+    // stream (surfacing as `Unconnected`) instead of parking it `Paused`
+    // while it waits to relink, possibly to an unrelated video source.
     stream
         .connect(
             spa::utils::Direction::Input,
             Some(node_id),
-            pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
+            pw::stream::StreamFlags::AUTOCONNECT
+                | pw::stream::StreamFlags::MAP_BUFFERS
+                | pw::stream::StreamFlags::DONT_RECONNECT,
             &mut params,
         )
         .map_err(|e| anyhow::anyhow!("pipewire stream.connect failed: {e}"))?;
@@ -481,6 +639,7 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
     drop(ticker);
     drop(listener);
     drop(stream);
+    drop(core_listener);
     drop(core);
     drop(context);
 
@@ -498,25 +657,13 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
 /// Mirrors `ext_screencopy::encode_buffer_to_png`: BGRx/BGRA are
 /// little-endian BGRA (so swap R and B), RGBx/RGBA are already RGBA in memory.
 pub fn encode_frame_to_png(frame: &Frame<'_>) -> anyhow::Result<Vec<u8>> {
-    let (width, height, stride) = (frame.width, frame.height, frame.stride as usize);
-    let pixels = frame.pixels;
-    let mut rgba: Vec<u8> = Vec::with_capacity((width as usize) * (height as usize) * 4);
-    for y in 0..(height as usize) {
-        let row_start = y * stride;
-        for x in 0..(width as usize) {
-            let i = row_start + x * 4;
-            let (r, g, b, a) = match frame.format {
-                VideoFormat::BGRx => (pixels[i + 2], pixels[i + 1], pixels[i], 0xFF),
-                VideoFormat::BGRA => (pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]),
-                VideoFormat::RGBx => (pixels[i], pixels[i + 1], pixels[i + 2], 0xFF),
-                VideoFormat::RGBA => (pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]),
-                // Treat unknown formats as BGRA, the most common compositor
-                // output on Linux.
-                _ => (pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]),
-            };
-            rgba.extend_from_slice(&[r, g, b, a]);
-        }
-    }
+    let (width, height) = (frame.width, frame.height);
+    let mut packed = Vec::new();
+    frame.pack_rows(&mut packed);
+    let rgba: Vec<u8> = packed
+        .chunks_exact(BYTES_PER_PIXEL)
+        .flat_map(|px| frame.format.rgba(px))
+        .collect();
     use image::{codecs::png::PngEncoder, ImageBuffer, ImageEncoder, Rgba};
     let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, rgba)
         .ok_or_else(|| anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height))?;
@@ -592,4 +739,96 @@ pub fn probe_screencast_portal() -> anyhow::Result<bool> {
             .map_err(|e| anyhow::anyhow!("name_has_owner failed: {e}"))?;
         Ok(has_owner)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pipewire::stream::StreamState;
+
+    #[test]
+    fn frame_rejects_rows_narrower_than_its_width() {
+        let pixels = [0u8; 8];
+        let error = Frame::new(2, 1, 4, VideoFormat::BGRx, &pixels)
+            .err()
+            .expect("stride 4 cannot hold two 4-byte pixels");
+        assert!(error.to_string().contains("stride 4"), "{error}");
+    }
+
+    #[test]
+    fn frame_rejects_payloads_shorter_than_its_geometry() {
+        let pixels = [0u8; 15];
+        let error = Frame::new(2, 2, 8, VideoFormat::BGRx, &pixels)
+            .err()
+            .expect("15 bytes cannot hold 2 rows of 8");
+        let message = error.to_string();
+        assert!(message.contains("holds 15 bytes"), "{message}");
+        assert!(message.contains("need 16"), "{message}");
+    }
+
+    #[test]
+    fn frame_rejects_formats_outside_the_negotiated_set() {
+        let pixels = [0u8; 4];
+        let error = Frame::new(1, 1, 4, VideoFormat::NV12, &pixels)
+            .err()
+            .expect("NV12 is never offered to the producer");
+        assert!(error.to_string().contains("NV12"), "{error}");
+        assert!(Frame::new(0, 1, 4, VideoFormat::BGRx, &pixels).is_err());
+        assert!(Frame::new(1, 0, 4, VideoFormat::BGRx, &pixels).is_err());
+    }
+
+    #[test]
+    fn packing_drops_row_padding_and_trailing_bytes() {
+        // Two 2-pixel rows with 4 bytes of padding each, plus a trailing byte
+        // the producer left in the buffer.
+        let pixels: Vec<u8> = (1u8..=25).collect();
+        let frame = Frame::new(2, 2, 12, VideoFormat::BGRA, &pixels).unwrap();
+        let mut packed = Vec::new();
+        frame.pack_rows(&mut packed);
+        assert_eq!(
+            packed,
+            [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 19, 20]
+        );
+    }
+
+    #[test]
+    fn png_encoding_swaps_bgr_channels_and_reads_x_layouts_as_opaque() {
+        use image::GenericImageView;
+        let pixels = [0x10u8, 0x20, 0x30, 0x00];
+        let bgrx = Frame::new(1, 1, 4, VideoFormat::BGRx, &pixels).unwrap();
+        let png = encode_frame_to_png(&bgrx).unwrap();
+        let image = image::load_from_memory(&png).unwrap();
+        assert_eq!(image.get_pixel(0, 0).0, [0x30, 0x20, 0x10, 0xFF]);
+
+        let rgba = Frame::new(1, 1, 4, VideoFormat::RGBA, &pixels).unwrap();
+        let png = encode_frame_to_png(&rgba).unwrap();
+        let image = image::load_from_memory(&png).unwrap();
+        assert_eq!(image.get_pixel(0, 0).0, [0x10, 0x20, 0x30, 0x00]);
+    }
+
+    #[test]
+    fn stream_errors_and_disconnects_end_the_capture() {
+        let error = stream_loss(&StreamState::Error("target not found".into()), None)
+            .expect("server-sent node errors are terminal");
+        assert!(error.contains("target not found"), "{error}");
+
+        let removed = stream_loss(&StreamState::Unconnected, None)
+            .expect("a stream that drops to Unconnected never reconnects");
+        assert!(removed.contains("removed the source"), "{removed}");
+
+        let lost = stream_loss(&StreamState::Unconnected, Some("connection error (-32)"))
+            .expect("core errors explain the disconnect");
+        assert!(lost.contains("connection error (-32)"), "{lost}");
+    }
+
+    #[test]
+    fn pauses_and_connection_progress_keep_the_capture_alive() {
+        for state in [
+            StreamState::Connecting,
+            StreamState::Paused,
+            StreamState::Streaming,
+        ] {
+            assert_eq!(stream_loss(&state, Some("stale core error")), None);
+        }
+    }
 }

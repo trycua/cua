@@ -776,10 +776,12 @@ mod optional_json_object_text {
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<String>, D::Error> {
-        Ok(Option::<Value>::deserialize(deserializer)?.and_then(|v| match v {
-            Value::Object(_) => Some(v.to_string()),
-            _ => None,
-        }))
+        Ok(
+            Option::<Value>::deserialize(deserializer)?.and_then(|v| match v {
+                Value::Object(_) => Some(v.to_string()),
+                _ => None,
+            }),
+        )
     }
 }
 

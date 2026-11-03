@@ -319,6 +319,17 @@ actor FakeSpacesBackend: SpacesTransport {
         case "space_service":
             return .object(["services": .array([])])
 
+        case "space_job":
+            if arguments["action"]?.stringValue == "list" { return .object(["jobs": .array([])]) }
+            return .object(["job": "j-1", "state": "running"])
+
+        case "network_show":
+            return .object(["settings": .object(["preset": "internet"]), "enforcement": "enforced"])
+
+        case "network_set":
+            return .object(["applied": "now",
+                            "network": .object(["settings": .object(["preset": arguments["network"] ?? "internet"])])])
+
         case "space_write":
             let path = arguments["path"]?.stringValue ?? ""
             files.insert(Self.expand(path))

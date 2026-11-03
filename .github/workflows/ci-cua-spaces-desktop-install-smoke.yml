@@ -55,7 +55,7 @@ jobs:
   windows:
     name: Windows x64 install, launch, uninstall
     needs: resolve
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 20

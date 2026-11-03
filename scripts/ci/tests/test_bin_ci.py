@@ -149,6 +149,22 @@ class Fixes(unittest.TestCase):
             os.unlink(fh.name)
 
 
+class Windows(unittest.TestCase):
+    def test_a_rustc_error_fails(self):
+        # PR 6355: Unix-only code left an unused import on Windows.
+        log = "error: unused import: `AsyncBufReadExt`\n  --> crates\\cua-spaces\\src\\tree_hub.rs:32:17\nerror: could not compile `cua-spaces` (lib)\n"
+        self.assertEqual(ci.classify_xwin(log, 101)[0], "FAIL")
+
+    def test_a_c_dependency_that_cannot_cross_build_only_warns(self):
+        log = "error: failed to run custom build command for `audiopus_sys v0.2.2`\nwarning: build failed, waiting for other jobs to finish...\n"
+        status, detail = ci.classify_xwin(log, 101)
+        self.assertEqual(status, "warn")
+        self.assertIn("audiopus_sys", detail)
+
+    def test_clean_build_passes(self):
+        self.assertEqual(ci.classify_xwin("Finished", 0)[0], "pass")
+
+
 class Hook(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

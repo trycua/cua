@@ -9,7 +9,9 @@ pull request workflows and passes when they pass. This page explains which of th
 each failure. Run it before you push. It catches in minutes what otherwise costs a full CI round:
 
 - rustfmt, and clippy `-D warnings` on the crates you changed and the crates that depend on them;
-- the same clippy cross-compiled for Windows (`cargo xwin`), which catches code that only Unix uses;
+- each workspace's Windows CI lane, cross-compiled with `cargo xwin` on the same packages (read from the
+  workflow), which catches code that only Unix uses. A C dependency that cannot be cross-built on your
+  machine is reported as a warning, and every crate that does not need it is still checked;
 - lockfiles that no longer match their manifests, including the nested workspaces under `examples/` and `tests/`;
 - stale generated files: the cua SDK and Cua Driver UniFFI bindings, the Electron and SwiftUI app bindings,
   the Spaces contract manifest and control fixtures, and the Cua Driver contract;

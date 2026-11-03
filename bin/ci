@@ -66,6 +66,7 @@ class Check:
     ci: Tuple[Tuple[str, str], ...] = ()  # (workflow, text it must contain)
     advisory: bool = False  # never fails the run
     isolate_home: bool = False  # run with an empty HOME, as on a fresh CI runner
+    classify: Optional[Callable[[str, int], Tuple[str, str]]] = None  # (log, rc) -> (status, detail)
     skip_reason: Optional[str] = None  # planned but cannot run here
 
 
@@ -212,7 +213,27 @@ def changed_files(base: str) -> List[str]:
 
 # ---------------------------------------------------------------- Rust workspaces
 
-RUST_WINDOWS_WORKSPACES = {"libs/cua", "libs/cua-spacesd", "libs/cua-driver/rust"}  # have Windows CI lanes
+# The Windows CI lane of each workspace, read from its workflow so the
+# cross-compiled local run checks exactly the packages CI does:
+# workspace -> (workflow, regex whose group 1 is the cargo arguments, local cargo subcommand)
+WINDOWS_LANES = {
+    "libs/cua": ("ci-cua-sdk.yml", r"- name: Clippy \(native\)\s+run: >\s+cargo clippy (--locked .*? -- -D warnings)", "clippy"),
+    "libs/cua-spacesd": ("ci-cua-spacesd.yml", r"- name: Clippy\s+run: cargo clippy (--workspace --all-targets --locked -- -D warnings)", "clippy"),
+    "libs/cua-driver/rust": ("ci-rust-windows.yml", r"run: cargo test (-p cua-driver .*?--all-targets) --no-run --locked", "check"),
+}
+
+
+def windows_lane(root: str) -> Optional[Tuple[str, List[str]]]:
+    """(cargo args, packages) of the workspace's Windows CI lane, or None."""
+    lane = WINDOWS_LANES.get(root)
+    if not lane:
+        return None
+    path = ROOT / ".github/workflows" / lane[0]
+    m = re.search(lane[1], path.read_text(), re.S) if path.exists() else None
+    if not m:
+        return None
+    args = " ".join(m.group(1).split())
+    return args, re.findall(r"-p (\S+)", args)
 
 
 @dataclass
@@ -575,6 +596,23 @@ def unix_api_scan(changes: Changes) -> List[str]:
     return hits
 
 
+def classify_xwin(log: str, rc: int) -> Tuple[str, str]:
+    """A C dependency that cannot be cross-built here is not a finding.
+
+    `--keep-going` checks every crate that does not need it; only rustc
+    errors in those crates fail the check.
+    """
+    if rc == 0:
+        return "pass", ""
+    if re.search(r"could not compile `[^`]+`", log):
+        return "FAIL", ""
+    blocked = sorted(set(re.findall(r"failed to run custom build command for `([^`]+)`", log)))
+    if blocked:
+        return "warn", (f"could not cross-build {', '.join(blocked)} for Windows on this machine; "
+                        "the crates that need it were not checked, every other crate passed")
+    return "FAIL", ""
+
+
 def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
     out: List[Check] = []
     if not have("cargo"):
@@ -606,19 +644,30 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
                          f"cargo clippy --locked {lflags} --all-targets -- -D warnings", cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
-        if root in RUST_WINDOWS_WORKSPACES:
-            if ctx.xwin:
-                out.append(Check(f"rust-windows:{root}", f"Windows clippy, cross-compiled ({llabel})",
-                                 f"cargo xwin clippy --locked --target x86_64-pc-windows-msvc {lflags} --all-targets -- -D warnings",
-                                 cwd=root, tools=("cargo",), group=group, tier="build", heavy=True,
-                                 hint="code that only Unix uses must be #[cfg(unix)] too (or #[cfg_attr(windows, allow(dead_code))] with a reason)"))
-            else:
-                hits = unix_api_scan(changes)
-                out.append(Check(f"rust-windows:{root}", "Windows cfg (grep for Unix-only APIs; cargo-xwin not installed)",
-                                 "printf '%s\\n' " + " ".join(shlex.quote(h) for h in hits) + " && exit 1" if hits else "true",
-                                 advisory=True,
-                                 hint="these lines use Unix-only APIs outside #[cfg(unix)]; for a real Windows compile: "
-                                      "cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"))
+        lane = windows_lane(root)
+        if lane:
+            args, lane_pkgs = lane
+            closure = deps_closure(ws, lane_pkgs) if lane_pkgs else set(ws.members)
+            if changes.full or set(names) & closure:
+                sub = WINDOWS_LANES[root][2]
+                if "--locked" not in args:
+                    args += " --locked"
+                if sub == "check":
+                    cmd = f"cargo xwin check --keep-going --target x86_64-pc-windows-msvc {args}"
+                else:
+                    cmd = f"cargo xwin clippy --keep-going --target x86_64-pc-windows-msvc {args}"
+                wf = WINDOWS_LANES[root][0]
+                if ctx.xwin:
+                    out.append(Check(f"rust-windows:{root}", f"Windows {sub}, cross-compiled (the {wf} Windows lane)", cmd,
+                                     cwd=root, tools=("cargo",), group="xwin", tier="build", heavy=True, classify=classify_xwin,
+                                     hint="code that only Unix uses must be #[cfg(unix)] too (or #[cfg_attr(windows, allow(dead_code))] with a reason)"))
+                else:
+                    hits = unix_api_scan(changes)
+                    out.append(Check(f"rust-windows:{root}", "Windows cfg (grep for Unix-only APIs; cargo-xwin not installed)",
+                                     "printf '%s\\n' " + " ".join(shlex.quote(h) for h in hits) + " && exit 1" if hits else "true",
+                                     advisory=True,
+                                     hint="these lines use Unix-only APIs outside #[cfg(unix)]; for a real Windows compile: "
+                                          "cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"))
         tflags = "--workspace" if changes.full else plist
         out.append(Check(f"rust-test:{root}", f"unit tests ({label})",
                          f"cargo test --locked --no-fail-fast {tflags} -- --test-threads=4", cwd=root,
@@ -713,14 +762,18 @@ ERROR_RX = re.compile(r"(error|Diff in|would reformat|FAIL|stale|out of sync|dri
 
 def excerpt(log: Path, limit: int = 14) -> List[str]:
     lines = [l.rstrip() for l in log.read_text(errors="replace").splitlines() if l.strip()]
+    rustc = [l for l in lines if re.match(r"(error(\[E\d+\])?: (?!failed to run custom build|could not compile|build failed)|\s+--> )", l)]
+    if rustc:
+        return [l[:220] for l in rustc[:limit]]
     hits = [l for l in lines if ERROR_RX.search(l) and not l.lstrip().startswith(("Compiling", "Checking", "Downloaded", "test ", "Running"))]
     pick = hits[:limit] if hits else lines[-limit:]
     return [l[:220] for l in pick]
 
 
 class Runner:
-    def __init__(self, ctx: Context, logdir: Path) -> None:
+    def __init__(self, ctx: Context, logdir: Path, quiet: bool = False) -> None:
         self.ctx = ctx
+        self.quiet = quiet
         self.logdir = logdir
         self.locks: Dict[str, threading.Lock] = {}
         self.print_lock = threading.Lock()
@@ -773,8 +826,12 @@ class Runner:
                     if home:
                         shutil.rmtree(home, ignore_errors=True)
         status = "pass" if rc == 0 else ("warn" if c.advisory else "FAIL")
-        res = Result(c, status, time.monotonic() - start, logfile)
-        self.report(res)
+        detail = ""
+        if c.classify:
+            status, detail = c.classify(logfile.read_text(errors="replace"), rc)
+        res = Result(c, status, time.monotonic() - start, logfile, detail)
+        if not self.quiet:
+            self.report(res)
         return res
 
     def report(self, r: Result) -> None:
@@ -807,7 +864,9 @@ def print_result(r: Result) -> None:
     print(f"  {tag}  {r.check.title}  {color(secs, '2')}".rstrip(), flush=True)
     if r.status == "skip":
         print(f"        {r.detail}")
-    if r.status in ("FAIL", "warn") and r.log:
+    if r.status == "warn" and r.detail:
+        print(f"        {r.detail}")
+    elif r.status in ("FAIL", "warn") and r.log:
         for line in excerpt(r.log):
             print(f"        | {line}")
         fixes = fix_commands(r)
@@ -849,10 +908,10 @@ def apply_fixes(results: List[Result], ctx: Context, logdir: Path) -> List[Resul
             continue
         print(f"  {color('fixing', '36')} {r.check.title}: {'; '.join(cmds)}", flush=True)
         ok = all(subprocess.run(["bash", "-c", cmd], cwd=str(ROOT), env=ctx.env()).returncode == 0 for cmd in cmds)
-        again = Runner(ctx, logdir).run(r.check) if ok else r
+        again = Runner(ctx, logdir, quiet=True).run(r.check) if ok else r
         if again.status == "pass":
             again.status, again.detail = "fixed", "fixed; review and commit the changes"
-            print_result(again)
+        print_result(again)
         out.append(again)
     return out
 
@@ -1012,6 +1071,10 @@ def all_check_refs() -> List[Tuple[str, str, str]]:
 
 def verify_sync() -> int:
     bad = 0
+    for root, (wf, _, _) in WINDOWS_LANES.items():
+        if not windows_lane(root):
+            bad += 1
+            print(f"out of sync: rust-windows:{root}: cannot find the Windows lane command in .github/workflows/{wf}")
     for cid, wf, text in all_check_refs():
         path = ROOT / ".github/workflows" / wf
         body = path.read_text() if path.exists() else ""

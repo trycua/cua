@@ -24,7 +24,7 @@
 //!   and the host acts only after its owner answers.
 //! - Public TCP shares ([`Experiment::TcpShares`]): enforced the same way.
 //! - Warm start ([`Experiment::WarmPools`]): enforced the same way. The cua
-//!   daemon keeps one prepared agent home ready on this computer.
+//!   daemon keeps one prepared warm Space ready on this computer.
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -78,7 +78,7 @@ pub struct Experiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one agent home kept ready, with its coding apps
+    /// Warm pools: one Linux Space kept ready, with its coding apps
     /// installed, so the next Create from Home starts at once. Off unless
     /// turned on; the daemon enforces it (the switch is kept in the cua home).
     pub warm_pools: bool,
@@ -214,7 +214,7 @@ impl Experiment {
                 "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
             }
             Experiment::WarmPools => {
-                "Keep one agent home ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
+                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }

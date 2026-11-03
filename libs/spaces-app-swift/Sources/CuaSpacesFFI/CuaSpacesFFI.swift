@@ -17106,7 +17106,7 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var mobile: Bool
     /**
-     * Warm pools: one agent home kept ready, with its coding apps
+     * Warm pools: one Linux Space kept ready, with its coding apps
      * installed, so the next Create from Home starts at once. Off unless
      * turned on; the daemon enforces it (the switch is kept in the cua home).
      */
@@ -17159,7 +17159,7 @@ public struct AppExperiments: Equatable, Hashable {
          * is kept in the cua home).
          */mobile: Bool,
         /**
-         * Warm pools: one agent home kept ready, with its coding apps
+         * Warm pools: one Linux Space kept ready, with its coding apps
          * installed, so the next Create from Home starts at once. Off unless
          * turned on; the daemon enforces it (the switch is kept in the cua home).
          */warmPools: Bool) {

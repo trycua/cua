@@ -69,7 +69,7 @@ const REFILL_DELAY: Duration = Duration::from_millis(1500);
 /// [`WarmPool::refill_later`]).
 const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 
-/// The explicit-pool source of the `warm-pools` experiment's agent home
+/// The explicit-pool source of the `warm-pools` experiment's Linux Space
 /// ([`crate::local::VmmLocal::apply_pools`]). A shape that has it is kept
 /// warm on purpose for creates that follow each other: a refill starts the
 /// moment a member is claimed, and a create that finds no member ready waits
@@ -78,9 +78,9 @@ const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 pub const WARM_SOURCE: &str = "warm-pools";
 
 /// The longest a create waits for a member that is starting
-/// ([`WARM_SOURCE`]): a member that was started with an install can take a
-/// while, but never more than a cold start plus the install it saves.
-const WARM_WAIT_MAX: Duration = Duration::from_secs(90);
+/// ([`WARM_SOURCE`]): about what a cold start and the install it saves take.
+/// Past it the create starts cold, as it does without the experiment.
+const WARM_WAIT_MAX: Duration = Duration::from_secs(30);
 
 /// The longest the agent stack of a member takes to install.
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(900);
@@ -391,6 +391,29 @@ impl Shape {
         self.explicit
             .get(WARM_SOURCE)
             .is_some_and(|e| !self.idle(e))
+            && self.refill_estimate().is_some_and(|d| d < WARM_WAIT_MAX)
+    }
+
+    /// Whether the shape is kept warm for the experiment, whatever the
+    /// estimate (the refill after a claim starts at once).
+    fn is_warm_source(&self) -> bool {
+        self.explicit
+            .get(WARM_SOURCE)
+            .is_some_and(|e| !self.idle(e))
+    }
+
+    /// How long the member that is starting takes to be ready, as measured,
+    /// and `None` before this shape has had a member (the first member of a
+    /// new install pulls the image and installs the apps: a create does not
+    /// wait for that, it starts cold).
+    fn refill_estimate(&self) -> Option<Duration> {
+        let boot = self.boot_s?;
+        let secs = if self.prepared_image.is_some() || self.prepare.is_empty() {
+            boot
+        } else {
+            boot + self.prepare_s?
+        };
+        Some(Duration::from_secs_f64(secs))
     }
 
     /// Whether explicit pool `e` is idle now (no create of the shape for
@@ -899,7 +922,7 @@ impl WarmPool {
             .lock()
             .unwrap()
             .get(&key)
-            .is_some_and(|s| s.waits_for_refill());
+            .is_some_and(|s| s.is_warm_source());
         self.refill_later(&key, if warm { Duration::ZERO } else { REFILL_DELAY });
         Some(inst)
     }
@@ -942,15 +965,41 @@ impl WarmPool {
                         || self.inner.refilling.lock().unwrap().contains(key)
                         || self.inner.due.lock().unwrap().contains(key))
             };
-            let left = deadline.checked_duration_since(Instant::now())?;
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                tracing::warn!(
+                    shape = key,
+                    "warm-pools: the member that was starting did not arrive in time; starting cold"
+                );
+                return None;
+            };
             if !starting {
+                if waited || self.is_warm_shape(key) {
+                    tracing::info!(
+                        shape = key,
+                        "warm-pools: no prepared Space was ready and none is starting; starting cold"
+                    );
+                }
                 return None;
             }
             waited = true;
             if tokio::time::timeout(left, notified).await.is_err() {
+                tracing::warn!(
+                    shape = key,
+                    "warm-pools: the member that was starting did not arrive in time; starting cold"
+                );
                 return None;
             }
         }
+    }
+
+    /// Whether shape `key` is kept warm for the `warm-pools` experiment.
+    fn is_warm_shape(&self, key: &str) -> bool {
+        self.inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get(key)
+            .is_some_and(|s| s.is_warm_source())
     }
 
     /// Records a create of `spec`'s shape that started on the default tier
@@ -1293,9 +1342,9 @@ impl WarmPool {
     /// stays within `pool.memory_percent` of the memory and above the free
     /// floor.
     ///
-    /// The one agent home of the `warm-pools` experiment ([`WARM_SOURCE`])
+    /// The one warm Space of the `warm-pools` experiment ([`WARM_SOURCE`])
     /// is not held to the percentage while it is the only member held (on a
-    /// built-in runtime of 4 GiB, 15 percent is less than one agent home):
+    /// built-in runtime of 4 GiB, 15 percent is less than one warm Space):
     /// it still needs the free floor, so it never takes memory a Space in use
     /// needs.
     async fn memory_allows(&self, backend: BackendKind, estimate_mb: u64, key: &str) -> bool {
@@ -1308,7 +1357,7 @@ impl WarmPool {
             .lock()
             .unwrap()
             .get(key)
-            .is_some_and(|s| s.waits_for_refill());
+            .is_some_and(|s| s.is_warm_source());
         let pct = u64::from(self.settings().memory_percent);
         let held: u64 = {
             let shapes = self.inner.shapes.lock().unwrap();
@@ -2844,9 +2893,9 @@ mod tests {
         assert!(f.state.leases().is_empty());
     }
 
-    /// The `warm-pools` agent home: one member, prepared with the coding
+    /// The `warm-pools` Space: one member, prepared with the coding
     /// apps, kept ready after every claim.
-    async fn keep_agent_home(f: &Fixture, s: &StartSpec) -> String {
+    async fn keep_warm_space(f: &Fixture, s: &StartSpec) -> String {
         let rt: Arc<dyn VmmRuntime> = f.rt.clone();
         f.pool
             .set_explicit_prepared(
@@ -2881,7 +2930,7 @@ mod tests {
     #[tokio::test]
     async fn a_warm_pools_member_has_its_coding_apps_before_it_is_ready() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         assert_eq!(
             f.host.prepared.lock().unwrap().clone(),
@@ -2898,7 +2947,7 @@ mod tests {
     async fn a_backend_that_cannot_prepare_its_members_keeps_them_bare() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         f.host.can_prepare.store(false, SeqCst);
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         assert!(f.host.prepared.lock().unwrap().is_empty());
         assert!(!f.pool.records()[0].prepared);
@@ -2914,7 +2963,7 @@ mod tests {
     async fn a_member_that_fails_to_prepare_is_still_a_member() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         f.host.fail_prepare.store(true, SeqCst);
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         assert!(!f.pool.records()[0].prepared, "claimed bare, never refused");
         assert!(
@@ -2928,7 +2977,7 @@ mod tests {
     #[tokio::test]
     async fn the_next_create_finds_a_member_because_a_claim_refills_at_once() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         for i in 0..4 {
             let got = f
@@ -2955,8 +3004,27 @@ mod tests {
         let rt = FakeRuntime::default();
         rt.start_ms.store(150, SeqCst);
         let f = fixture(PoolSettings::default(), rt);
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
-        // The first member is still starting: the create waits for it.
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        // The very first member (a new install) is not waited for: the
+        // create starts cold.
+        let t = Instant::now();
+        assert!(
+            f.pool
+                .claim(&spec("early", "t0"), BackendKind::Container, true)
+                .await
+                .is_none(),
+            "no member has been ready yet: cold"
+        );
+        assert!(t.elapsed() < Duration::from_millis(100));
+        until_ready(&f, &key, 1).await;
+        assert!(
+            f.pool
+                .claim(&spec("first", "t1"), BackendKind::Container, true)
+                .await
+                .is_some()
+        );
+        // Now a member is starting and its boot is known: the next create
+        // waits for it.
         let t = Instant::now();
         let got = f
             .pool
@@ -2964,13 +3032,8 @@ mod tests {
             .await;
         assert!(got.is_some(), "claimed the member that was starting");
         assert!(
-            t.elapsed() >= Duration::from_millis(100),
+            t.elapsed() >= Duration::from_millis(80),
             "it waited for the boot"
-        );
-        assert_eq!(
-            f.rt.starts.load(SeqCst),
-            1,
-            "no second boot for this create (the refill starts the next member)"
         );
         until_ready(&f, &key, 1).await;
     }
@@ -3008,7 +3071,7 @@ mod tests {
         rt.start_ms.store(100, SeqCst);
         rt.fail_starts.store(true, SeqCst);
         let f = fixture(PoolSettings::default(), rt);
-        keep_agent_home(&f, &spec("one", "t")).await;
+        keep_warm_space(&f, &spec("one", "t")).await;
         let t = Instant::now();
         let got = f
             .pool
@@ -3022,7 +3085,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_agent_home_goes_back_when_nobody_creates() {
+    async fn the_warm_space_goes_back_when_nobody_creates() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         let rt: Arc<dyn VmmRuntime> = f.rt.clone();
         let key = f
@@ -3050,7 +3113,7 @@ mod tests {
         assert_eq!(
             f.rt.members().len(),
             0,
-            "an idle agent home keeps no member"
+            "an idle warm Space keeps no member"
         );
         let t = Instant::now();
         assert!(
@@ -3067,7 +3130,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_one_agent_home_is_not_held_to_the_percentage_but_to_the_free_floor() {
+    async fn the_one_warm_space_is_not_held_to_the_percentage_but_to_the_free_floor() {
         // A small engine VM: 15 percent of it is less than one member.
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         *f.host.memory.lock().unwrap() = Memory {
@@ -3091,12 +3154,12 @@ mod tests {
             0,
             "an ordinary pool respects the share"
         );
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         assert_eq!(
             f.rt.members().len(),
             1,
-            "the agent home gets its one member"
+            "the warm Space gets its one member"
         );
         // Not below the floor: with 1.2 GB free it starts nothing.
         f.pool
@@ -3115,7 +3178,7 @@ mod tests {
     async fn later_members_boot_from_the_filesystem_of_the_first_prepared_one() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         f.rt.can_save.store(true, SeqCst);
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         assert_eq!(
             f.rt.saved.lock().unwrap().len(),
@@ -3160,7 +3223,7 @@ mod tests {
     #[tokio::test]
     async fn a_runtime_that_cannot_save_prepares_every_member() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
-        let key = keep_agent_home(&f, &spec("one", "t")).await;
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
         until_ready(&f, &key, 1).await;
         f.pool
             .claim(&spec("s", "t1"), BackendKind::Container, true)

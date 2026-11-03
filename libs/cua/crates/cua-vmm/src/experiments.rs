@@ -39,7 +39,7 @@ pub enum Gate {
     /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
     /// AWS x86 pool host with nested KVM.
     WindowsKvm,
-    /// Warm pools: one prepared agent home is kept ready on this computer
+    /// Warm pools: one prepared Linux Space is kept ready on this computer
     /// (its coding apps already installed), so the next Create from Home
     /// claims it instead of making one.
     WarmPools,
@@ -131,7 +131,7 @@ impl Gate {
                 "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
             }
             Gate::WarmPools => {
-                "Keep one agent home ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
+                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }

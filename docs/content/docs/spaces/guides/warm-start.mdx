@@ -1,11 +1,11 @@
 ---
 title: Warm start
-description: Keep one agent home ready on this computer, with its coding apps installed, so the next Create from Home starts at once. An experiment, off until you turn it on.
+description: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once. An experiment, off until you turn it on.
 ---
 
 When you ask for something on Home, Cua makes a Linux Space for the agent, puts the coding app in it and starts the app. The Space takes a few seconds to start and the app takes much longer to install the first time. Warm start does that work before you ask.
 
-With the experiment on, this computer keeps one agent home ready in the background: the same Linux Space that Home creates for a new agent, with Claude Code and Codex already installed in it. Create takes it, which takes a fraction of a second, and the agent starts in a Space that already has its app. Cua starts the next agent home as soon as the last one is taken, so the one after is ready when you have typed the next request.
+With the experiment on, this computer keeps one Linux Space ready in the background: the same Linux Space that Home creates for a new agent, with Claude Code and Codex already installed in it. Create takes it, which takes a fraction of a second, and the agent starts in a Space that already has its app. Cua starts the next warm Space as soon as the last one is taken, so the one after is ready when you have typed the next request.
 
 ## Turn it on
 
@@ -17,7 +17,7 @@ Or open Settings, Advanced, Labs and turn on Warm start. Turn it off the same wa
 
 ## What it does
 
-- Keeps at most one agent home ready. It is hidden: it is on no list and costs nothing you see until Create takes it.
+- Keeps at most one Linux Space ready. It is hidden: it is on no list and costs nothing you see until Create takes it.
 - Installs the coding apps in it while it waits, so Create does not wait for an install. By default these are Claude Code and Codex. To choose others, set `CUA_WARM_POOLS_HARNESSES` for the cua daemon to a comma separated list of app ids, or to `none` to keep a bare Space.
 - Starts the next one at once after Create takes it. If you create again before it is ready, that Create waits for the one that is starting, which began before it, instead of starting another from scratch.
 - Gives the Space back after two hours without a Create, and whenever this computer needs the memory or CPUs for work you started. A warm Space never makes a Create fail: if there is no room, or anything goes wrong, Create starts a Space the way it does without the experiment.

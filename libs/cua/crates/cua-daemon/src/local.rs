@@ -772,7 +772,7 @@ impl VmmLocal {
             }
         }
         if cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools) {
-            match self.keep_agent_home(pool).await {
+            match self.keep_warm_space(pool).await {
                 Ok(()) => {
                     sources.insert(crate::pool::WARM_SOURCE.to_string());
                 }
@@ -809,13 +809,13 @@ impl VmmLocal {
         });
     }
 
-    /// The `warm-pools` experiment: keeps one agent home ready, the Space
+    /// The `warm-pools` experiment: keeps one Linux Space ready, the Space
     /// the Spaces app's Home makes for a new agent, with the coding apps of
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
     /// so the create that Home makes claims it. It is kept ready after each
     /// claim at once, and drains after [`WARM_POOLS_IDLE`] without a create.
-    async fn keep_agent_home(
+    async fn keep_warm_space(
         &self,
         pool: &crate::pool::WarmPool,
     ) -> std::result::Result<(), String> {
@@ -833,7 +833,7 @@ impl VmmLocal {
         let spec = Sandboxes::local_start_spec(&o, "warm", Some("warm"));
         let p = self.prepare(&spec).await.map_err(|e| e.to_string())?;
         if p.injected {
-            return Err("the agent home image has no cua-spacesd".to_string());
+            return Err("the image has no cua-spacesd".to_string());
         }
         let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
         let key = pool
@@ -851,7 +851,7 @@ impl VmmLocal {
             )
             .ok_or_else(|| "this shape does not pool".to_string())?;
         pool.note_request(&p.spec, p.backend, spacesd, requested_words(&spec));
-        tracing::debug!(shape = %key, "warm-pools: keeping one agent home ready");
+        tracing::debug!(shape = %key, "warm-pools: keeping one Linux Space ready");
         Ok(())
     }
 
@@ -1264,7 +1264,7 @@ async fn warm_session(
     result
 }
 
-/// The image of the agent home the `warm-pools` experiment keeps ready: the
+/// The image of the Linux Space the `warm-pools` experiment keeps ready: the
 /// one the Spaces app's Home creates for a new agent, the first published
 /// Linux image of the catalog (the app reads the same file).
 pub fn warm_pools_image() -> String {
@@ -1275,7 +1275,7 @@ pub fn warm_pools_image() -> String {
         .unwrap_or_else(|| "ghcr.io/trycua/linux:24.04".to_string())
 }
 
-/// The coding apps a warm agent home is prepared for: `CUA_WARM_POOLS_HARNESSES`
+/// The coding apps a warm Space is prepared for: `CUA_WARM_POOLS_HARNESSES`
 /// (comma separated harness ids), else Claude Code and Codex.
 pub fn warm_pools_harnesses() -> Vec<String> {
     let v = std::env::var("CUA_WARM_POOLS_HARNESSES")
@@ -1287,7 +1287,7 @@ pub fn warm_pools_harnesses() -> Vec<String> {
         .collect()
 }
 
-/// How long the agent home sits unused before it is given back.
+/// How long the warm Space sits unused before it is given back.
 pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 
 /// What the warm pool asks of this machine: cua-spacesd of its members, and
@@ -3503,7 +3503,7 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_home_is_the_image_home_creates_and_its_apps_can_be_chosen() {
+    fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
         // The Spaces app's Home creates the catalog's first Linux image for a
         // new agent (the wizard's `first_space_offers`); a different image
         // here would never be claimed.

@@ -16,7 +16,7 @@
 //! - `warm_ready`: warm Spaces the daemon held when the create began.
 //!
 //! `CUA_WARM_LIVE_MODE=warm` (default) turns the experiment on and waits for
-//! the prepared agent home first; `cold` leaves it off, so every create
+//! the prepared warm Space first; `cold` leaves it off, so every create
 //! starts a Space and installs the coding app, as without the experiment.
 //!
 //! ```text
@@ -129,7 +129,7 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
     let mut lines: Vec<serde_json::Value> = vec![];
     let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
         if warm {
-            // The first agent home is made and prepared (the image is
+            // The first warm Space is made and prepared (the image is
             // pulled and the app installed once); creates start after it.
             let began = Instant::now();
             let deadline = Instant::now() + Duration::from_secs(env_u64("CUA_WARM_LIVE_WAIT_S", 2400));
@@ -140,13 +140,13 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "no prepared agent home within the wait: {:?}",
+                    "no prepared warm Space within the wait: {:?}",
                     vmm.pool().map(|p| p.status())
                 );
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
             eprintln!(
-                "prepared agent home ready after {:.0}s",
+                "prepared warm Space ready after {:.0}s",
                 began.elapsed().as_secs_f64()
             );
         } else {

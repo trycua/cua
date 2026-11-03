@@ -65,6 +65,7 @@ class Check:
     env: Dict[str, str] = field(default_factory=dict)
     ci: Tuple[Tuple[str, str], ...] = ()  # (workflow, text it must contain)
     advisory: bool = False  # never fails the run
+    isolate_home: bool = False  # run with an empty HOME, as on a fresh CI runner
     skip_reason: Optional[str] = None  # planned but cannot run here
 
 
@@ -423,8 +424,7 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
         add(Check("image-refs", "image refs come from the catalog",
                   "python3 scripts/images/check-image-refs.py && python3 scripts/images/gen-image-constants.py --check "
                   "&& python3 scripts/images/record-image-sizes.py --check",
-                  fix="python3 scripts/images/gen-image-constants.py", safe_fix=False,
-                  hint="reference images through the catalog (scripts/images/README.md) or allowlist them in scripts/images/image-refs-allowlist.json",
+                  hint="reference images through the catalog (scripts/images/README.md) or allowlist them in scripts/images/image-refs-allowlist.json; stale constants: python3 scripts/images/gen-image-constants.py",
                   ci=(("ci-check-image-refs.yml", "python3 scripts/images/check-image-refs.py"),
                       ("ci-check-image-refs.yml", "python3 scripts/images/gen-image-constants.py --check"))))
     if changes.touches(r"^(scripts/images/|libs/images/)"):
@@ -623,7 +623,7 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
         out.append(Check(f"rust-test:{root}", f"unit tests ({label})",
                          f"cargo test --locked --no-fail-fast {tflags} -- --test-threads=4", cwd=root,
                          tools=("cargo",), group=group, tier="build",
-                         env={"CUA_ENV_TEST_SANDBOX": "1", "RUST_MIN_STACK": "8388608"}))
+                         env={"CUA_ENV_TEST_SANDBOX": "1", "RUST_MIN_STACK": "8388608"}, isolate_home=True))
     return out
 
 
@@ -756,8 +756,22 @@ class Runner:
                     return Result(c, "skip", time.monotonic() - start, logfile, problem)
                 log.write(f"$ (cd {c.cwd} && {c.cmd})\n".encode())
                 log.flush()
-                rc = subprocess.run(["bash", "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL, env={**self.ctx.env(), **c.env}).returncode
+                env = {**self.ctx.env(), **c.env}
+                home = None
+                if c.isolate_home:
+                    # Tests that read the host's apps or config pass on a clean
+                    # runner and fail here; keep the toolchains where they are.
+                    real = Path.home()
+                    env.setdefault("CARGO_HOME", str(real / ".cargo"))
+                    env.setdefault("RUSTUP_HOME", str(real / ".rustup"))
+                    home = tempfile.mkdtemp(prefix="bin-ci-home-")
+                    env["HOME"] = home
+                try:
+                    rc = subprocess.run(["bash", "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, env=env).returncode
+                finally:
+                    if home:
+                        shutil.rmtree(home, ignore_errors=True)
         status = "pass" if rc == 0 else ("warn" if c.advisory else "FAIL")
         res = Result(c, status, time.monotonic() - start, logfile)
         self.report(res)

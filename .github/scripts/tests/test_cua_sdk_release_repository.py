@@ -205,7 +205,7 @@ def test_spaces_sparkle_cutover_is_off_and_guarded() -> None:
 
 def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> None:
     publish = step("cd-cua-spaces.yml", "installer-manifest", "Publish the release")["run"]
-    assert "--prerelease --latest=false" in publish
+    assert "--latest=false" in publish and "--prerelease" in publish
     assert "UNSIGNED" in publish
     feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")
     assert feeds["if"] == "needs.electron-plan.outputs.prerelease != 'true' || github.repository != 'trycua/cua'"

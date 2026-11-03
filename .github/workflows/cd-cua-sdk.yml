@@ -758,9 +758,10 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          flags=(--draft=false)
-          # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          # Never the repo-wide "Latest": only Cua Spaces is (release-latest-policy test).
+          flags=(--draft=false --latest=false)
+          # Staging builds and X.Y.Z-suffix versions are prereleases.
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           if [ "$CANONICAL" != true ] || grep -q UNSIGNED dist/signing-*/*.txt; then
             label="staging"; [ "$CANONICAL" = true ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".

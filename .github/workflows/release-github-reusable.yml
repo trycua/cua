@@ -204,6 +204,8 @@ jobs:
           body: ${{ steps.prepare-body.outputs.BODY }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
+          # Only Cua Spaces is the repo-wide "Latest" (release-latest-policy test).
+          make_latest: "false"
           # Only use GitHub auto-generated notes if module_path is not specified
           generate_release_notes: ${{ inputs.module_path == '' && inputs.generate_notes }}
           files: |

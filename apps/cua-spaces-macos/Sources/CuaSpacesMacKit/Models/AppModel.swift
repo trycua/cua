@@ -1973,7 +1973,7 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app) as
+    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
@@ -1983,13 +1983,15 @@ public final class AppModel {
             || kept.askFirst != settings.experiments.askFirst
             || kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile else { return }
+            || kept.mobile != settings.experiments.mobile
+            || kept.warmPools != settings.experiments.warmPools else { return }
         settings.experiments.secureSpaces = kept.secureSpaces
         settings.experiments.childSpaces = kept.childSpaces
         settings.experiments.askFirst = kept.askFirst
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
+        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.

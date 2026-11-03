@@ -2252,7 +2252,8 @@ mod tests {
                     "ask_first".into(),
                     "ci_runners".into(),
                     "tcp_shares".into(),
-                    "mobile".into()
+                    "mobile".into(),
+                    "warm_pools".into()
                 ]
             }]
         );

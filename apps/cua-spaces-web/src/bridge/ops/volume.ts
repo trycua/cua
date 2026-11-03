@@ -138,6 +138,7 @@ export function readExperiments(raw: string | undefined): Experiments {
       ciRunners: stored.ciRunners === true,
       tcpShares: stored.tcpShares === true,
       mobile: stored.mobile === true,
+      warmPools: stored.warmPools === true,
     };
   } catch {
     return NO_EXPERIMENTS;

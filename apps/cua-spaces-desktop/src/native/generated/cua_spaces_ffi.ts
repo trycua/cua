@@ -14603,7 +14603,13 @@ export type AppExperiments = {
      * push events). Off unless turned on; the daemon enforces it (the switch
      * is kept in the cua home).
      */
-    mobile: boolean
+    mobile: boolean,
+    /**
+     * Warm pools: one agent home kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    warmPools: boolean
 }
 
 /**
@@ -14636,7 +14642,8 @@ const FfiConverterTypeAppExperiments = (() => {
                 askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
-                mobile: FfiConverterBool.read(from)
+                mobile: FfiConverterBool.read(from),
+                warmPools: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14650,6 +14657,7 @@ const FfiConverterTypeAppExperiments = (() => {
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
+            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
@@ -14661,7 +14669,8 @@ const FfiConverterTypeAppExperiments = (() => {
              FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
-             FfiConverterBool.allocationSize(value.mobile);
+             FfiConverterBool.allocationSize(value.mobile) +
+             FfiConverterBool.allocationSize(value.warmPools);
 
         }
     };

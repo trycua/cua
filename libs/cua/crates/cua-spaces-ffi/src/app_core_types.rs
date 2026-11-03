@@ -6991,6 +6991,10 @@ pub struct AppExperiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
+    /// Warm pools: one agent home kept ready, with its coding apps
+    /// installed, so the next Create from Home starts at once. Off unless
+    /// turned on; the daemon enforces it (the switch is kept in the cua home).
+    pub warm_pools: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).

@@ -23,6 +23,8 @@
 //!   asks on a card before something leaves its Space (a push to GitHub),
 //!   and the host acts only after its owner answers.
 //! - Public TCP shares ([`Experiment::TcpShares`]): enforced the same way.
+//! - Warm start ([`Experiment::WarmPools`]): enforced the same way. The cua
+//!   daemon keeps one prepared agent home ready on this computer.
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -76,6 +78,10 @@ pub struct Experiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
+    /// Warm pools: one agent home kept ready, with its coding apps
+    /// installed, so the next Create from Home starts at once. Off unless
+    /// turned on; the daemon enforces it (the switch is kept in the cua home).
+    pub warm_pools: bool,
 }
 
 impl Default for Experiments {
@@ -91,6 +97,7 @@ impl Default for Experiments {
             ci_runners: false,
             tcp_shares: false,
             mobile: false,
+            warm_pools: false,
         }
     }
 }
@@ -119,10 +126,12 @@ pub enum Experiment {
     TcpShares,
     /// Mobile.
     Mobile,
+    /// Warm start.
+    WarmPools,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 10] = [
+pub const ALL: [Experiment; 11] = [
     Experiment::CuaVolume,
     Experiment::YourCloud,
     Experiment::Sharing,
@@ -133,6 +142,7 @@ pub const ALL: [Experiment; 10] = [
     Experiment::CiRunners,
     Experiment::TcpShares,
     Experiment::Mobile,
+    Experiment::WarmPools,
 ];
 
 impl Experiment {
@@ -150,6 +160,7 @@ impl Experiment {
             Experiment::CiRunners => "ci_runners",
             Experiment::TcpShares => "tcp_shares",
             Experiment::Mobile => "mobile",
+            Experiment::WarmPools => "warm_pools",
         }
     }
 
@@ -171,6 +182,7 @@ impl Experiment {
             Experiment::CiRunners => "CI runners",
             Experiment::TcpShares => "Public TCP shares",
             Experiment::Mobile => "Phone app",
+            Experiment::WarmPools => "Warm start",
         }
     }
 
@@ -201,6 +213,9 @@ impl Experiment {
             Experiment::Mobile => {
                 "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
             }
+            Experiment::WarmPools => {
+                "Keep one agent home ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
+            }
         }
     }
 }
@@ -219,6 +234,7 @@ impl Experiments {
             Experiment::CiRunners => self.ci_runners,
             Experiment::TcpShares => self.tcp_shares,
             Experiment::Mobile => self.mobile,
+            Experiment::WarmPools => self.warm_pools,
         }
     }
 
@@ -235,6 +251,7 @@ impl Experiments {
             Experiment::CiRunners => self.ci_runners = on,
             Experiment::TcpShares => self.tcp_shares = on,
             Experiment::Mobile => self.mobile = on,
+            Experiment::WarmPools => self.warm_pools = on,
         }
         self
     }
@@ -356,6 +373,8 @@ mod tests {
                 "experiment:tcp_shares-note",
                 "experiment:mobile",
                 "experiment:mobile-note",
+                "experiment:warm_pools",
+                "experiment:warm_pools-note",
             ]
         );
         for r in switches(&p) {
@@ -403,7 +422,8 @@ mod tests {
                 "ask_first",
                 "ci_runners",
                 "tcp_shares",
-                "mobile"
+                "mobile",
+                "warm_pools"
             ]
         );
     }
@@ -439,7 +459,7 @@ mod tests {
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false, "secureSpaces": false, "childSpaces": false, "askFirst": false, "ciRunners": false, "tcpShares": false, "mobile": false})
+            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false, "secureSpaces": false, "childSpaces": false, "askFirst": false, "ciRunners": false, "tcpShares": false, "mobile": false, "warmPools": false})
         );
         // An explicit off is kept.
         let off: Experiments = serde_json::from_str(r#"{"yourCloud":false}"#).unwrap();

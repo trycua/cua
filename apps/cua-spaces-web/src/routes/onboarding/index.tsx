@@ -101,7 +101,7 @@ function OnboardingPage() {
   }, [canGoBack, fr.back]);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] dark:bg-[#07080a]" data-step={view.step}>
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-w:40%] [--ob-art-h:min(58vh,560px,46vw)] [@media(min-width:1000px)]:[--ob-art-w:46%] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between pr-10 pl-[var(--ob-x)] pt-[calc(var(--titlebar-height)+12px)] pb-2">
@@ -110,9 +110,9 @@ function OnboardingPage() {
           {view.later}
         </button>
       </header>
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pl-[var(--ob-x)] [@media(min-width:720px)]:pr-[var(--ob-art-w)]">
         {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
-        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
+        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:719px)]:grow-[50]" />
         <div className="flex w-full max-w-[520px] shrink-0 flex-col">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
@@ -121,7 +121,7 @@ function OnboardingPage() {
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
-        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:999px)]:grow-[50]" />
+        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:719px)]:grow-[50]" />
       </div>
       <Dots view={view} />
     </div>
@@ -944,7 +944,11 @@ function Backdrop() {
  * The keys beside the page: the agent's key, the blue key for this
  * computer (faded while it is checked or needs a fix) and, on step 2, a
  * small dashed outline for the optional extra Space that fills in while
- * one is being made.
+ * one is being made. They show at every width the Mac app's window allows
+ * (720 px and up): from 1000 px they take 46% of the window, below it 40%.
+ * The window keeps its last size, so a first run opened from "Finish
+ * setting up" is often narrower than 1000 px; the keys used to drop out
+ * there.
  */
 function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
   const agent = ["claude-code", "codex", "hermes", "openclaw"].includes(art.agent) ? art.agent.replace("claude-code", "claude") : "other";
@@ -952,7 +956,7 @@ function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
   // One fixed-ratio box, centred on the heading block and clamped to sit fully
   // inside the window, so the dashed outline is never cut at any size.
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] [@media(min-width:1000px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
+    <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[var(--ob-art-w)] [@media(min-width:720px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
       <div
         className="absolute left-1/2 aspect-[6/7] -translate-x-1/2"
         style={{ height: "var(--ob-art-h)", top: "clamp(64px, calc(45% - var(--ob-art-h) / 2), calc(100% - var(--ob-art-h) - 24px))" }}
@@ -961,20 +965,20 @@ function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
           src={`/onboarding/agent-${agent}.webp`}
           alt=""
           draggable={false}
-          className={cn("absolute w-[62%] transition-all duration-500", connect ? "top-[32%] left-[2%]" : "top-[36%] left-[6%]")}
+          className={cn("absolute w-[62%] transition-all duration-500 motion-reduce:transition-none", connect ? "top-[32%] left-[2%]" : "top-[36%] left-[6%]")}
         />
         <img
           src="/onboarding/cua.webp"
           alt=""
           draggable={false}
-          className={cn("absolute top-[4%] right-[2%] w-[44%] transition-all duration-500", art.computer === "faded" && "opacity-40 blur-[1px]")}
+          className={cn("absolute top-[4%] right-[2%] w-[44%] transition-all duration-500 motion-reduce:transition-none", art.computer === "faded" && "opacity-40 blur-[1px]")}
         />
         {art.extra !== "none" ? (
           <div className="absolute right-[8%] bottom-[2%] w-[27%]">
             {art.extra === "outline" ? (
               <SlotOutline />
             ) : (
-              <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity", art.extra === "filling" ? "animate-pulse opacity-40" : "opacity-95")} />
+              <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity motion-reduce:transition-none", art.extra === "filling" ? "animate-pulse opacity-40 motion-reduce:animate-none" : "opacity-95")} />
             )}
           </div>
         ) : null}

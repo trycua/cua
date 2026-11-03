@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.4](https://github.com/trycua/cua/compare/cua-spaces-v0.19.3...cua-spaces-v0.19.4) (2026-11-03)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.10.1 in Cua Spaces ([#6336](https://github.com/trycua/cua/issues/6336)) ([546de7b](https://github.com/trycua/cua/commit/546de7b3701cbd4628e308c5f361e774518ae1c4))
+* **spaces-macos:** install a downloaded update when the app quits (CUA-3065) ([#6281](https://github.com/trycua/cua/issues/6281)) ([964e3f6](https://github.com/trycua/cua/commit/964e3f62847be2fda9c31b098aef666106975d19))
+* **spaces:** plain message when a Mac cannot run Spaces, and first-run fixes (CUA-3063) ([#6323](https://github.com/trycua/cua/issues/6323)) ([7f3b4dd](https://github.com/trycua/cua/commit/7f3b4dd742d128bbd867ca20974ef08b69ccbdd9))
+
 ## [0.19.3](https://github.com/trycua/cua/compare/cua-spaces-v0.19.2...cua-spaces-v0.19.3) (2026-11-02)
 
 

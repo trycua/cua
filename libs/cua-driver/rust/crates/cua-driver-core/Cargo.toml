@@ -82,3 +82,8 @@ windows = { version = "0.58", features = [
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+
+# `fast_path_standalone` lets the std-only fast_path checks compile alone
+# with `rustc --test` (no workspace build needed); see fast_path/mod.rs.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fast_path_standalone)"] }

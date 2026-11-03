@@ -58,6 +58,7 @@ impl Tool for GetConfigTool {
             "cursor":              cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,
+            "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());

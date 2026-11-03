@@ -2270,6 +2270,16 @@
       "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` form.",
       "type": "string"
      },
+     "fast_path": {
+      "description": "Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start.",
+      "enum": [
+       "off",
+       "shadow",
+       "guard",
+       "on"
+      ],
+      "type": "string"
+     },
      "max_image_dimension": {
       "description": "Max dimension for screenshot resizing (0 = no limit).",
       "type": "integer"

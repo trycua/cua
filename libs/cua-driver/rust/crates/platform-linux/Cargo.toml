@@ -87,12 +87,11 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.
 url = "2"
-# PipeWire client for the ScreenCast capture paths — dequeues frames from
-# the node id returned by `open_pipe_wire_remote`. 0.10 is the first release
-# whose `libspa-sys` bindgen (0.72) keeps forward-declared SPA structs such
-# as `spa_pod_builder` transparent under libclang 18+; 0.8 emitted them as
-# opaque and failed to compile on current distros. Needs libpipewire-0.3
-# headers at build time — gated behind the `portal-capture` feature.
+# PipeWire client for the ScreenCast video route — dequeues frames from the
+# node id returned by `open_pipe_wire_remote`. The frame pump is written
+# against the 0.10 ownership types (`MainLoopRc`, `ContextRc`, `StreamBox`).
+# Needs libpipewire-0.3 headers at build time — gated behind the
+# `portal-capture` feature.
 pipewire = { version = "0.10", optional = true }
 # Companion to pipewire — needed to construct the SPA_PARAM_EnumFormat pod
 # (raw BGRx/BGRA/RGBx/RGBA at announced width/height) we hand to
@@ -142,10 +141,9 @@ portal-input = [
     "dep:calloop",
     "dep:enumflags2",
 ]
-# PipeWire-backed ScreenCast capture (portal window screenshots and the
-# full-desktop video route for KDE/KWin and other compositors without
-# wlr-screencopy) keeps its newer system-header requirement and remains
-# enabled by Nix/modern desktop builds.
+# PipeWire-backed ScreenCast capture (the full-desktop video route for
+# KDE/KWin and other compositors without wlr-screencopy) keeps its newer
+# system-header requirement and remains enabled by Nix/modern desktop builds.
 portal-capture = [
     "ashpd/screencast",
     "dep:pipewire",

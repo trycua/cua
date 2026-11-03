@@ -10,13 +10,11 @@
 //!   negotiate a raw BGRx/BGRA/RGBx/RGBA format, and deliver dequeued frames
 //!   to a [`FrameSink`] on the calling thread until the sink asks to stop.
 //!
-//! [`screenshot_window_via_portal`] composes the two for one frame; the
-//! Wayland video backend composes them for a paced full-desktop recording.
+//! The Wayland video backend composes them for a paced full-desktop recording.
 
 use std::cell::RefCell;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use ashpd::desktop::screencast::{
@@ -175,17 +173,6 @@ impl RawFormat {
             VideoFormat::RGBx => Some(Self::RGBx),
             VideoFormat::RGBA => Some(Self::RGBA),
             _ => None,
-        }
-    }
-
-    /// One pixel of this layout as RGBA8888. `x`-suffixed layouts carry no
-    /// alpha, so their pixels read as opaque.
-    fn rgba(self, px: &[u8]) -> [u8; 4] {
-        match self {
-            Self::BGRx => [px[2], px[1], px[0], 0xFF],
-            Self::BGRA => [px[2], px[1], px[0], px[3]],
-            Self::RGBx => [px[0], px[1], px[2], 0xFF],
-            Self::RGBA => [px[0], px[1], px[2], px[3]],
         }
     }
 }
@@ -652,95 +639,6 @@ pub fn run_frame_stream<S: FrameSink + 'static>(
     }
 }
 
-/// Channel-swap a PipeWire video frame into RGBA8888 and PNG-encode it.
-///
-/// Mirrors `ext_screencopy::encode_buffer_to_png`: BGRx/BGRA are
-/// little-endian BGRA (so swap R and B), RGBx/RGBA are already RGBA in memory.
-pub fn encode_frame_to_png(frame: &Frame<'_>) -> anyhow::Result<Vec<u8>> {
-    let (width, height) = (frame.width, frame.height);
-    let mut packed = Vec::new();
-    frame.pack_rows(&mut packed);
-    let rgba: Vec<u8> = packed
-        .chunks_exact(BYTES_PER_PIXEL)
-        .flat_map(|px| frame.format.rgba(px))
-        .collect();
-    use image::{codecs::png::PngEncoder, ImageBuffer, ImageEncoder, Rgba};
-    let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, rgba)
-        .ok_or_else(|| anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height))?;
-    let mut out: Vec<u8> = Vec::new();
-    PngEncoder::new(&mut out).write_image(
-        img.as_raw(),
-        width,
-        height,
-        image::ExtendedColorType::Rgba8,
-    )?;
-    Ok(out)
-}
-
-/// Consent is expensive (system dialog) and reuse is cheap, so the window
-/// screenshot session lives for the rest of the process.
-static WINDOW_SESSION: OnceLock<ScreencastSession> = OnceLock::new();
-
-struct FirstFramePng(Option<anyhow::Result<Vec<u8>>>);
-
-impl FrameSink for FirstFramePng {
-    fn frame(&mut self, frame: Frame<'_>) -> anyhow::Result<FrameFlow> {
-        self.0 = Some(encode_frame_to_png(&frame));
-        Ok(FrameFlow::Stop)
-    }
-}
-
-/// Capture the user-selected window or monitor via `xdg-desktop-portal`
-/// ScreenCast. On first invocation per process the portal dialog asks the
-/// user to pick a source; subsequent calls reuse the same node
-/// transparently. Returns PNG bytes of the latest frame on the stream.
-pub fn screenshot_window_via_portal() -> anyhow::Result<Vec<u8>> {
-    if WINDOW_SESSION.get().is_none() {
-        let session = ScreencastSession::open(
-            BitFlags::<SourceType>::from(SourceType::Window) | SourceType::Monitor,
-            None,
-            CONSENT_TIMEOUT,
-        )?;
-        let _ = WINDOW_SESSION.set(session);
-    }
-    let session = WINDOW_SESSION
-        .get()
-        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast session unavailable"))?;
-    let sink = run_frame_stream(
-        session.pipewire_fd()?,
-        session.node_id()?,
-        StreamOptions::default(),
-        FirstFramePng(None),
-    )?;
-    sink.0
-        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast: no frame arrived within timeout"))?
-}
-
-/// Probe whether the portal ScreenCast interface is reachable on the
-/// session bus without taking an actual capture (avoids cached consent).
-pub fn probe_screencast_portal() -> anyhow::Result<bool> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build tokio runtime: {e}"))?;
-    rt.block_on(async {
-        let conn = zbus::Connection::session()
-            .await
-            .map_err(|e| anyhow::anyhow!("session bus unreachable: {e}"))?;
-        let proxy = zbus::fdo::DBusProxy::new(&conn)
-            .await
-            .map_err(|e| anyhow::anyhow!("dbus proxy creation failed: {e}"))?;
-        let bus_name: zbus::names::BusName = "org.freedesktop.portal.Desktop"
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("bus name parse failed: {e}"))?;
-        let has_owner = proxy
-            .name_has_owner(bus_name)
-            .await
-            .map_err(|e| anyhow::anyhow!("name_has_owner failed: {e}"))?;
-        Ok(has_owner)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,21 +687,6 @@ mod tests {
             packed,
             [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 19, 20]
         );
-    }
-
-    #[test]
-    fn png_encoding_swaps_bgr_channels_and_reads_x_layouts_as_opaque() {
-        use image::GenericImageView;
-        let pixels = [0x10u8, 0x20, 0x30, 0x00];
-        let bgrx = Frame::new(1, 1, 4, VideoFormat::BGRx, &pixels).unwrap();
-        let png = encode_frame_to_png(&bgrx).unwrap();
-        let image = image::load_from_memory(&png).unwrap();
-        assert_eq!(image.get_pixel(0, 0).0, [0x30, 0x20, 0x10, 0xFF]);
-
-        let rgba = Frame::new(1, 1, 4, VideoFormat::RGBA, &pixels).unwrap();
-        let png = encode_frame_to_png(&rgba).unwrap();
-        let image = image::load_from_memory(&png).unwrap();
-        assert_eq!(image.get_pixel(0, 0).0, [0x10, 0x20, 0x30, 0x00]);
     }
 
     #[test]

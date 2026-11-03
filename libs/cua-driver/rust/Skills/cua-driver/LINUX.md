@@ -274,7 +274,10 @@ first `start_recording` with `record_video:true` opens the desktop's screen
 share dialog, the granted monitor is remembered through a restore token, and
 frames are encoded with ffmpeg. That route exists only in builds with the
 `portal-capture` feature (the Nix package); other builds report the missing
-feature in `last_error` instead of failing silently. Portal-backed GNOME
+feature in `last_error` instead of failing silently. It also needs the
+PipeWire client library (`libpipewire-0.3-0` on Debian and Ubuntu), which the
+driver loads only when that recording starts; without it, that recording
+reports the missing library and every other tool works. Portal-backed GNOME
 recording is still an evidence gap. Capture and recording availability
 therefore depend on the compositor, installed helpers, build features, and
 portal grant.

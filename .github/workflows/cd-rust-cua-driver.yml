@@ -222,6 +222,9 @@ jobs:
     # aarch64 variant automatically and the glibc floor holds on both arches.
     # The C deps below all exist in bullseye, including libwayland-dev for the
     # native Wayland backend (#1910).
+    # libpipewire is not part of that floor. These binaries omit portal-capture,
+    # and builds that enable it load libpipewire-0.3 at runtime, so hosts
+    # without it (Ubuntu 20.04 ships none) still run every other tool.
     container:
       image: debian:11
     steps:
@@ -241,7 +244,7 @@ jobs:
           # snapshot.debian.org answers 504 under load; retry each fetch.
           apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
-          # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
+          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
           apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 install -y --no-install-recommends \

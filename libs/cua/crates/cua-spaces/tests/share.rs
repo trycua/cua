@@ -467,6 +467,41 @@ async fn relay_register_publishes_a_space_for_the_accounts_devices() {
     );
 }
 
+/// A Space added by hand (a URL and a token) is the owner's own business on
+/// this computer: adding it, listing it and using it never puts it on the
+/// relay, so no other computer or phone of the account lists it. Only an
+/// explicit `relay_register` publishes a Space.
+#[tokio::test]
+async fn a_space_added_by_hand_is_never_published_to_the_relay() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let env = MockServer::start(MockAuth::default()).await;
+    // The Space could be attached (the feature is there): nothing asks it to.
+    env.state.advertise(&["relay_attach"]);
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .build();
+    let info = spaces
+        .add(&env.url(), None, Some("typed-in".into()))
+        .await
+        .unwrap();
+    // Use it the ways an app does: list, open, read its state.
+    assert!(spaces.list().unwrap().iter().any(|i| i.id == info.id));
+    let _ = spaces.space(&info.id).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let ada = cua_host::RelayClient::new(&relay.url).unwrap();
+    assert!(
+        ada.machines("ada-token").await.unwrap().is_empty(),
+        "nothing of the account's directory came from adding a Space"
+    );
+    assert!(env.state.relay_attached.lock().unwrap().is_none());
+}
+
 /// The hermetic world of the tests below: a fake relay with two accounts
 /// (`ada` owns, `bob` is someone she shares with) and Spaces for each.
 async fn two_accounts() -> (FakeRelay, Spaces, Spaces, Vec<tempfile::TempDir>) {

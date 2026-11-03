@@ -30,12 +30,15 @@ pub mod access;
 pub mod bridge;
 pub mod durable;
 pub mod home;
+pub mod host_tools;
 pub mod identity;
 pub mod jobs;
 pub mod join;
 pub mod members;
 pub mod notify;
 pub mod phases;
+pub mod phone;
+pub mod push_card;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
 pub mod wake;
@@ -640,6 +643,7 @@ impl Persistent {
             cua_spaces::agents::keys::global().names()
         };
         for k in &spec.env_from_host {
+            cua_spaces::agents::refuse_host_only(k)?;
             if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
                     "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connections)"
@@ -744,8 +748,11 @@ impl Persistent {
     }
 
     fn session(&self, rec: &AgentRecord) -> cua_volume::Session {
-        self.drive
-            .session(cua_volume::Context::agent(&rec.name, Some(&rec.space)))
+        self.drive.session(crate::drive_runtime::agent_context(
+            &self.spaces,
+            &rec.name,
+            Some(&rec.space),
+        ))
     }
 
     /// A fresh agent runner for `space` (one guest round trip), remembered

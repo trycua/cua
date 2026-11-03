@@ -51,6 +51,7 @@ pub mod lume;
 pub mod managed;
 #[cfg(feature = "microvm")]
 pub mod microvm;
+pub mod netgw;
 pub mod network;
 pub mod preflight;
 pub mod probe;
@@ -60,6 +61,7 @@ pub mod qemu;
 pub mod runtime;
 pub mod screen;
 pub mod storage;
+pub mod tree;
 pub mod types;
 #[cfg(feature = "vnc")]
 pub mod vnc;

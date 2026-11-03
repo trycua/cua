@@ -771,6 +771,7 @@ impl Persistent {
                 approval: seq,
                 approve: false,
                 note: why.into(),
+                ..Default::default()
             });
             store.append(d)?;
         }

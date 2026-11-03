@@ -133,6 +133,10 @@ pub mod metadata {
     /// Spawn channel WebSocket path (ticket-authenticated): the host that
     /// runs the Space serves its child-Space API over it.
     pub const SPAWN_WS_PATH: &str = "/spawn";
+    /// Host ports WebSocket path (ticket-authenticated): the host that runs
+    /// the Space carries its listed host ports, published on the Space's
+    /// own loopback.
+    pub const HOST_PORTS_WS_PATH: &str = "/hostports";
     /// File (in a [`spawn_dirs`] directory) holding a Space's spawn
     /// capability.
     pub const SPAWN_TOKEN_FILE: &str = "spawn-token";

@@ -317,6 +317,7 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          command -v docker >/dev/null || pkgs=\"$pkgs docker.io\"\n\
          for i in 1 2 3 4 5; do apt-get update -qq && apt-get install -y -qq $pkgs && break; sleep 5; done\n\
          systemctl enable --now docker\n\
+         {hostnet}\
          # gVisor for container Spaces. Pool hosts are shared, so a missing gVisor\n\
          # must not become silent runc: the boot fails (the boot log says why) and\n\
          # spacesd refuses runc (CUA_REQUIRE_GVISOR). --overlay2=none keeps the\n\
@@ -341,6 +342,14 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          {prepull}\
          echo 'cua: host ready'\n",
         runsc_args = RUNSC_ARGS,
+        hostnet = if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+            crate::hostnet::install_snippet(&crate::hostnet::HostNet {
+                provider: b.provider,
+                extra_cidrs: &[],
+            })
+        } else {
+            String::new()
+        },
         qemu = qemu,
         expires = b.expires,
         usd = b.usd_per_hour,

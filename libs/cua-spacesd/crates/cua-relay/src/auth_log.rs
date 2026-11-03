@@ -47,6 +47,8 @@ pub enum Reason {
     WrongIssuer,
     /// `aud` holds none of the configured audiences.
     WrongAudience,
+    /// `azp` is not one of the configured authorized parties.
+    UnauthorizedParty,
     /// `exp` has passed (beyond the leeway).
     Expired,
     /// `nbf` is in the future.
@@ -88,6 +90,7 @@ impl Reason {
             Self::BadSignature => "bad_signature",
             Self::WrongIssuer => "wrong_issuer",
             Self::WrongAudience => "wrong_audience",
+            Self::UnauthorizedParty => "unauthorized_party",
             Self::Expired => "expired",
             Self::NotYetValid => "not_yet_valid",
             Self::MissingClaim => "missing_claim",

@@ -4,6 +4,8 @@
 import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
+import { SharedLinks } from "@/components/links/shared-links";
+import { SharingSettings } from "@/components/links/sharing-settings";
 import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { RuntimeKindRows } from "@/components/settings/runtime-rows";
@@ -18,10 +20,10 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /** Experiments that have no switch here until they are on (`cua experiments enable <name>`): the app shows the switch once the experiment is on, so it can be turned off. */
-const SHOWN_ONCE_ON = new Set(["experiment:secure_spaces", "experiment:child_spaces"]);
+const SHOWN_ONCE_ON = new Set(["experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /** Whether a core switch row reads on. */
 const isOn = (r: CoreRow) => r.options.some((o) => o.id === "on" && o.active);
@@ -50,6 +52,7 @@ export function AdvancedTab() {
     <div data-settings-tab="advanced">
       <EarlyReleases />
       <Labs />
+      <Sharing />
       {runtimes || autoConnect || overflow ? (
         <SettingsGroup title="Which software runs Spaces on this machine">
           {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
@@ -127,6 +130,18 @@ function flagRow(id: string, label: string, on: boolean): CoreRow {
   };
 }
 
+/** Public TCP shares (Labs): how they are shared, and what is shared now. Only while the Labs switch is on. */
+function Sharing() {
+  const on = useExperiments().data?.experiments.tcpShares === true;
+  if (!on) return null;
+  return (
+    <>
+      <SharingSettings />
+      <SharedLinks />
+    </>
+  );
+}
+
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
   return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
@@ -145,6 +160,10 @@ function Labs() {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
     "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
     "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
+    "experiment:ask_first": "An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+    "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
+    "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
+    "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
   };
   return (
     <SettingsGroup title="Labs">

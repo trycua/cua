@@ -103,7 +103,7 @@ impl Case {
     pub fn what(self) -> &'static str {
         match self {
             Case::Policy => {
-                "the default network holds: internet yes; host, LAN, cloud metadata, other trees no"
+                "the default network holds: internet yes; host, LAN, cloud metadata, other trees no, and each refusal is in the network log with its destination and time"
             }
             Case::Dns => "names resolve in the guest, IPv4 and IPv6",
             Case::Download => "the guest downloads the coding app's package",
@@ -662,5 +662,47 @@ mod tests {
             "{} is missing the generated table:\n{table}",
             doc.display()
         );
+    }
+
+    /// Rules by name (`example.com`, `*.example.com`) are kept exactly where
+    /// the Cua network gateway is the guest's resolver, and are refused with
+    /// the same words everywhere else: no runtime silently ignores a name.
+    #[test]
+    fn named_rules_are_kept_by_the_gateway_and_refused_elsewhere() {
+        use crate::egress::EgressPolicy;
+        use crate::network::{NetworkContext, NetworkSettings};
+        let mut settings = NetworkSettings::internet();
+        settings.custom = EgressPolicy {
+            allow: vec!["example.com".into()],
+            deny: vec!["*.ads.example.net".into()],
+        };
+        let ctx = NetworkContext::default();
+        // No runtime other than the gateway's compiles names into address rules.
+        let refused = network::compile_mode(&settings, &ctx, network::Mode::Secure)
+            .expect_err("a name is never compiled into an address rule");
+        assert_eq!(refused.0, network::DOMAINS_GATEWAY_ONLY);
+        for e in entries() {
+            for os in e.hosts {
+                let behind_gateway = matches!(
+                    network::network_support(e.backend, os, Placement::Local),
+                    NetworkSupport::Enforced { point } if point == crate::netgw::POINT
+                );
+                let named = network::compile_named(&settings, &ctx, network::Mode::Secure);
+                if behind_gateway {
+                    let (_, domains) =
+                        named.unwrap_or_else(|x| panic!("{} on {os}: {}", e.id, x.0));
+                    assert_eq!(domains.allow, ["example.com"], "{} on {os}", e.id);
+                    assert_eq!(domains.deny, ["*.ads.example.net"], "{} on {os}", e.id);
+                }
+                // The old default never carries names to a runtime.
+                let (_, old) = network::compile_named(&settings, &ctx, network::Mode::Legacy)
+                    .expect("legacy drops names");
+                assert!(
+                    old.is_empty(),
+                    "{} on {os}: names under the old default",
+                    e.id
+                );
+            }
+        }
     }
 }

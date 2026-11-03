@@ -42,6 +42,21 @@ pub enum Memory {
     File { path: PathBuf, shared: bool },
 }
 
+/// Where QEMU's `-netdev stream` connects to the network gateway.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NetStream {
+    /// A Unix socket (macOS).
+    Unix(PathBuf),
+    /// A loopback TCP port (Windows).
+    Tcp(u16),
+}
+
+/// The guest's MAC address (QEMU's default, given explicitly: the gateway
+/// leases [`GUEST_IP`] to it).
+pub const GUEST_MAC: &str = "52:54:00:12:34:56";
+/// The guest's address on QEMU's user network, and on the gateway's.
+pub const GUEST_IP: &str = "10.0.2.15";
+
 /// Everything needed to build a `qemu-system-*` argv.
 #[derive(Clone, Debug)]
 pub struct LaunchConfig {
@@ -65,6 +80,10 @@ pub struct LaunchConfig {
     /// `(host_port, guest_port)` TCP forwards on 127.0.0.1.
     pub forwards: Vec<(u16, u16)>,
     pub restrict_network: bool,
+    /// The guest's network through the Cua network gateway
+    /// ([`crate::netgw`]) instead of QEMU's own user network: the gateway
+    /// then publishes `forwards` itself.
+    pub gateway: Option<NetStream>,
     pub vnc_display: Option<u16>,
     pub qmp_port: u16,
     /// QMP on this chardev instead of `qmp_port`: `unix:<path>` or
@@ -287,16 +306,33 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         }
     }
 
-    // Network: user-mode NAT with loopback-only forwards.
-    let mut net = String::from("user,id=net0");
-    if cfg.restrict_network {
-        net.push_str(",restrict=on");
-    }
-    for (host, guest) in &cfg.forwards {
-        net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
-    }
+    // Network: user-mode NAT with loopback-only forwards, or the network
+    // gateway (which publishes the forwards itself). No network keeps the
+    // user network, restricted.
+    let net = match (&cfg.gateway, cfg.restrict_network) {
+        (Some(NetStream::Unix(p)), false) => format!(
+            "stream,id=net0,server=off,addr.type=unix,addr.path={}",
+            p.display()
+        ),
+        (Some(NetStream::Tcp(port)), false) => {
+            format!("stream,id=net0,server=off,addr.type=inet,addr.host=127.0.0.1,addr.port={port}")
+        }
+        _ => {
+            let mut net = String::from("user,id=net0");
+            if cfg.restrict_network {
+                net.push_str(",restrict=on");
+            }
+            for (host, guest) in &cfg.forwards {
+                net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
+            }
+            net
+        }
+    };
     push(&["-netdev", &net]);
-    push(&["-device", "virtio-net-pci,netdev=net0"]);
+    push(&[
+        "-device",
+        &format!("virtio-net-pci,netdev=net0,mac={GUEST_MAC}"),
+    ]);
     if cfg.free_page_reporting {
         push(&[
             "-device",
@@ -451,6 +487,7 @@ mod tests {
             firmware: Firmware::Bios,
             forwards: vec![(40022, 22), (40080, 8080)],
             restrict_network: false,
+            gateway: None,
             vnc_display: Some(3),
             qmp_port: 4444,
             qmp_listen: None,
@@ -628,7 +665,7 @@ mod tests {
         for device in [
             "ramfb",
             "nvme,drive=disk0,serial=cua-disk0,bootindex=1",
-            "virtio-net-pci,netdev=net0",
+            "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56",
             "usb-storage,drive=cd0,bus=xhci.0,bootindex=0",
         ] {
             assert!(has(&a, ["-device", device]));
@@ -697,6 +734,10 @@ mod tests {
             let actual = serde_json::to_string_pretty(&build(&c)).unwrap();
             let path =
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/argv/{name}.json"));
+            // UPDATE_ARGV=1 rewrites the fixtures (review the diff: an argv change is a behaviour change).
+            if std::env::var_os("UPDATE_ARGV").is_some() {
+                std::fs::write(&path, &actual).unwrap();
+            }
             assert_eq!(actual, std::fs::read_to_string(path).unwrap(), "{name}");
         }
     }
@@ -809,6 +850,38 @@ mod tests {
                  hostfwd=tcp:127.0.0.1:40080-:8080"
             ]
         ));
+        // Through the network gateway: a stream to it, no hostfwd (the
+        // gateway publishes the ports); no network still wins.
+        c.restrict_network = false;
+        c.gateway = Some(NetStream::Unix("/t/cuagw/q.sock".into()));
+        let a = build(&c);
+        assert!(has(
+            &a,
+            [
+                "-netdev",
+                "stream,id=net0,server=off,addr.type=unix,addr.path=/t/cuagw/q.sock"
+            ]
+        ));
+        assert!(has(
+            &a,
+            [
+                "-device",
+                "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56"
+            ]
+        ));
+        assert!(!a.iter().any(|x| x.contains("hostfwd")));
+        c.gateway = Some(NetStream::Tcp(40100));
+        let a = build(&c);
+        assert!(has(
+            &a,
+            [
+                "-netdev",
+                "stream,id=net0,server=off,addr.type=inet,addr.host=127.0.0.1,addr.port=40100"
+            ]
+        ));
+        c.restrict_network = true;
+        let a = build(&c);
+        assert!(a.iter().any(|x| x.starts_with("user,id=net0,restrict=on")));
     }
 
     #[test]

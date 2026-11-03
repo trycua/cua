@@ -66,6 +66,6 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
     const { router } = await mountApp("/settings/advanced", host);
     await router.load();
     await waitFor(() => expect(document.querySelector("[data-self-hosting]")).toBeTruthy());
-    expect(document.body.textContent).not.toMatch(/Secure Spaces|Child Spaces/);
+    expect(document.body.textContent).not.toMatch(/Secure Spaces|Child Spaces|Ask first/);
   });
 });

@@ -1253,6 +1253,7 @@ impl Runtime for ContainerRuntime {
                     table: None,
                     network: spec.network.clone(),
                     tree: spec.tree.clone(),
+                    drop_labels: vec![],
                 },
             )?,
         }
@@ -1809,6 +1810,10 @@ impl Runtime for ContainerRuntime {
                     policy,
                 )),
                 tree: previous.as_ref().and_then(|k| k.tree.clone()),
+                drop_labels: previous
+                    .as_ref()
+                    .map(|k| k.drop_labels.clone())
+                    .unwrap_or_default(),
             },
         )?;
         if !running && self.needs_recreate(name, &i) {
@@ -1830,6 +1835,10 @@ impl Runtime for ContainerRuntime {
         Ok(egress::kept(name).map(|k| k.policy).unwrap_or_default())
     }
 
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        self.blocked(name).await
+    }
+
     /// Kept with the container; on the engine host at once while it runs
     /// (a container not yet on its tree's network gets them at its next
     /// start, recreated first).
@@ -1845,7 +1854,7 @@ impl Runtime for ContainerRuntime {
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         let previous = egress::kept(name);
         let k = egress::Kept {
-            policy: settings.custom.clone(),
+            policy: settings.custom.split_domains().0,
             network: Some(settings.clone()),
             ..previous.clone().unwrap_or_default()
         };
@@ -2532,12 +2541,23 @@ impl ContainerRuntime {
     /// at 4 MiB and 5 s. The exit code is ignored: `cat` exits non-zero when
     /// one of several files is missing but still prints the rest.
     async fn exec_capture(&self, name: &str, argv: &[&str]) -> Result<String> {
+        self.exec_capture_as(name, argv, None).await
+    }
+
+    /// [`Self::exec_capture`] as `user` (`"0"`: root; none: the image's user).
+    pub(crate) async fn exec_capture_as(
+        &self,
+        name: &str,
+        argv: &[&str],
+        user: Option<&str>,
+    ) -> Result<String> {
         const CAP: usize = 4 << 20;
         let fut = async {
             let opts = CreateExecOptions::<String> {
                 cmd: Some(argv.iter().map(|a| a.to_string()).collect()),
                 attach_stdout: Some(true),
                 attach_stderr: Some(false),
+                user: user.map(str::to_string),
                 ..Default::default()
             };
             let created = match self.docker.create_exec(name, opts).await {
@@ -2630,6 +2650,12 @@ impl DockerExec {
     )> {
         let opts = CreateExecOptions::<String> {
             cmd: Some(vec!["/bin/sh".into(), "-c".into(), script.to_string()]),
+            // As root, whatever user the image runs as: a rootfs archive made as
+            // an unprivileged user (the headless image runs as `cua`) skips every
+            // directory it cannot read (/root, /etc/ssl/private, ...) and tar
+            // exits 2, so a checkpoint of such a Space failed (and would have
+            // been incomplete).
+            user: Some("0".into()),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             ..Default::default()
@@ -2959,15 +2985,21 @@ pub const MAIN_HOSTNAME: &str = "main";
 /// refuses `--add-host` on them), so the entries go on the sandbox only.
 /// `None` without sidecars, so plain sandboxes are unchanged.
 fn sidecar_hosts(spec: &StartSpec) -> Option<Vec<String>> {
-    if spec.sidecars.is_empty() {
-        return None;
+    let mut hosts: Vec<String> = Vec::new();
+    if !spec.sidecars.is_empty() {
+        hosts.extend(
+            std::iter::once(MAIN_HOSTNAME)
+                .chain(spec.sidecars.iter().map(|s| s.name.as_str()))
+                .map(|h| format!("{h}:127.0.0.1")),
+        );
     }
-    Some(
-        std::iter::once(MAIN_HOSTNAME)
-            .chain(spec.sidecars.iter().map(|s| s.name.as_str()))
-            .map(|h| format!("{h}:127.0.0.1"))
-            .collect(),
-    )
+    // `host`: the computer that runs it, as on every runtime (only the
+    // ports its rules open answer there). Only under the secure default,
+    // where the host's rules decide.
+    if egress::secure() {
+        hosts.push(format!("{}:host-gateway", crate::tree::HOST_NAME));
+    }
+    (!hosts.is_empty()).then_some(hosts)
 }
 
 /// Why a sandbox with sidecars cannot run on gVisor under Docker.
@@ -3357,13 +3389,11 @@ mod tests {
             "a container: network takes no hosts"
         );
         // Names resolve on every container of the group.
-        assert_eq!(
-            main.host_config.as_ref().unwrap().extra_hosts,
-            Some(vec![
-                "main:127.0.0.1".to_string(),
-                "db:127.0.0.1".to_string()
-            ])
-        );
+        let mut want = vec!["main:127.0.0.1".to_string(), "db:127.0.0.1".to_string()];
+        if egress::secure() {
+            want.push("host:host-gateway".to_string());
+        }
+        assert_eq!(main.host_config.as_ref().unwrap().extra_hosts, Some(want));
         assert!(
             hc.port_bindings.is_none(),
             "a container: network publishes nothing"
@@ -3497,9 +3527,10 @@ mod tests {
         let plain = StartSpec::new("sb", ImageSource::Existing);
         let bare = create_body("sb", "img:1", &plain, HashMap::new(), "runc".into());
         assert!(bare.env.is_none());
-        assert!(
-            bare.host_config.as_ref().unwrap().extra_hosts.is_none(),
-            "no sidecars, no host entries"
+        assert_eq!(
+            bare.host_config.as_ref().unwrap().extra_hosts,
+            egress::secure().then(|| vec!["host:host-gateway".to_string()]),
+            "no sidecars: only `host` (under the secure default)"
         );
         assert!(
             bare.entrypoint.is_none() && bare.cmd.is_none(),

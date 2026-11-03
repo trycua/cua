@@ -305,6 +305,16 @@ struct InFlight {
 
 static IN_FLIGHT: Mutex<Vec<InFlight>> = Mutex::new(Vec::new());
 
+impl InFlight {
+    /// Still running: it has no outcome yet and its [`Flight`] exists. A
+    /// create whose future was dropped (a closed request) drops its
+    /// `Flight` without finishing it; that must not keep its name "being
+    /// created" until the daemon restarts.
+    fn running(&self) -> bool {
+        self.done.borrow().is_none() && self.done.has_changed().is_ok()
+    }
+}
+
 /// This create's registration; ends it with [`Flight::finish`].
 pub(crate) struct Flight {
     home: PathBuf,
@@ -320,14 +330,14 @@ pub(crate) fn register(home: &Path, key: &CreateKey) -> Result<Flight> {
     if !key.id.is_empty()
         && all
             .iter()
-            .any(|f| f.home == home && f.key.id == key.id && f.done.borrow().is_none())
+            .any(|f| f.home == home && f.key.id == key.id && f.running())
     {
         return Err(Error::invalid(format!(
             "{} is already being created; wait for it or cancel it (cancel_create)",
             key.id
         )));
     }
-    all.retain(|f| f.done.borrow().is_none());
+    all.retain(|f| f.running());
     let cancel = cua_sandbox_core::CancellationToken::new();
     let (tx, rx) = tokio::sync::watch::channel(None);
     all.push(InFlight {
@@ -367,7 +377,7 @@ impl Flight {
     pub fn finish(&self, outcome: CancelOutcome) {
         let _ = self.done.send(Some(outcome));
         let mut all = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
-        all.retain(|f| f.done.borrow().is_none());
+        all.retain(|f| f.running());
     }
 }
 
@@ -383,7 +393,7 @@ fn find_running(
 )> {
     let all = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
     all.iter()
-        .find(|f| f.home == home && f.key.matches(key) && f.done.borrow().is_none())
+        .find(|f| f.home == home && f.key.matches(key) && f.running())
         .map(|f| (f.key.clone(), f.cancel.clone(), f.done.clone()))
 }
 
@@ -712,5 +722,24 @@ mod tests {
             message: String::new(),
         });
         register(home.path(), &key).expect("free again once it ended");
+    }
+
+    #[test]
+    fn a_create_dropped_without_finishing_frees_its_name() {
+        // A closed request drops the create's future: its `Flight` goes with
+        // it and `finish` never runs. The name must not stay "being created".
+        let home = tempfile::tempdir().unwrap();
+        let key = CreateKey {
+            id: "local:dropped".into(),
+            name: "dropped".into(),
+            create_id: None,
+            stem: "dropped".into(),
+            generated: false,
+        };
+        let flight = register(home.path(), &key).unwrap();
+        assert!(register(home.path(), &key).is_err(), "still running");
+        drop(flight);
+        assert!(find_running(home.path(), "local:dropped").is_none());
+        register(home.path(), &key).expect("free again once its flight was dropped");
     }
 }

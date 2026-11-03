@@ -21,6 +21,7 @@ Register, provision, list and release Spaces.
 | [`list_spaces`](#list_spaces) | List the Spaces this connection can see. |
 | [`create_space`](#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. |
 | [`network_show`](#network_show) | Show a Space's network: preset, what it opens, where it is enforced, what is always blocked. |
+| [`network_log`](#network_log) | List what a Space tried to reach and its network blocked. |
 | [`network_set`](#network_set) | Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do. |
 | [`delete_space`](#delete_space) | Delete a Space's sandbox and forget it. |
 | [`stop_space`](#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
@@ -199,6 +200,35 @@ JSON: `settings` (preset, lists), `summary`, `widenings` (what it opens beyond i
 
 [`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox)
 
+### network_log
+
+List what a Space tried to reach and its network blocked.
+
+Lists what a Space on this computer tried to reach and its network blocked. When a connection from a Space fails or hangs, call this: if the destination is here, it is blocked on purpose (this computer, the local network, cloud metadata or another tree), and retrying won't help. Tell the user what was blocked in plain words; changing it is theirs to do.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:network_log`, in `spaces:readonly`; read-only, idempotent |
+| Swift SDK | `Spaces.network_log(space)` |
+| Rust | `Spaces::network_events` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `space` | `string` | required | Space id or name. |
+
+#### Result
+
+JSON array, most recent first: `reason` (`platform:metadata`, `default:host-loopback`, `default:lan`, `user:deny`, `default:none`, ...), `dst`, `proto`, `count`, `last_unix`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`wrong_provider`](/spaces/reference#wrong_provider), [`sandbox`](/spaces/reference#sandbox)
+
 ### network_set
 
 Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.
@@ -223,6 +253,7 @@ Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `
 | `network` | `string` | required | `internet`, `none`, or `custom` / `custom:none` with `allow` and `deny`. Opening more than the Space has now is the user's to do (`cua network set`, or the app): refused here. |
 | `space` | `string` | required | Space id or name. |
 | `tree` | `boolean` | none | Its child Spaces take the same settings (each within its parent's). |
+| `via` | `string` | none | Where its internet traffic leaves: `internet` (its own network) or `space:<name>` (a Space of its tree). This machine and a SOCKS5 proxy are the user's to choose (`cua network set --via`). Unset: the exit it has. A child keeps its parent's. |
 
 #### Result
 
@@ -923,105 +954,3 @@ JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, 
 #### Errors
 
 [`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`capability_missing`](/spaces/reference#capability_missing)
-
-## Hotspot
-
-Share this computer's network with a Space.
-
-| Tool | Description |
-| --- | --- |
-| [`hotspot_start`](#hotspot_start) | Start sharing this computer's network with a Space. |
-| [`hotspot_stop`](#hotspot_stop) | Stop sharing this computer's network. |
-| [`hotspot_status`](#hotspot_status) | Report which Spaces are sharing this computer's network, with counters. |
-
-### hotspot_start
-
-Start sharing this computer's network with a Space.
-
-Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.
-
-| | |
-| --- | --- |
-| Providers | all (cloud, local, direct, relay) |
-| Platforms | all (macos, windows, linux) |
-| Metering | free |
-| Approval | permission `spaces:hotspot_start`; destructive |
-| Requires (spacesd) | `hotspot` |
-| Swift SDK | `connection.hotspot.start(sharingWith:)` |
-| Rust | `Spaces::hotspot_start` |
-
-#### Parameters
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `bypass` | `string[]` | none | Destinations (CIDRs or host suffixes) that keep using the Space's own network. |
-| `set_system_proxy` | `boolean` | `true` | Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes) at the hotspot. Default true. |
-| `space` | `string` | required | Space id or name. |
-
-#### Result
-
-JSON: the hotspot (`space`, `state`, `hotspot_id`, `socks_address`, `active_connections`, `bytes_out`, `bytes_in`, `served_here`).
-
-#### Errors
-
-[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`spacesd_not_available`](/spaces/reference#spacesd_not_available), [`capability_missing`](/spaces/reference#capability_missing)
-
-#### Notes
-
-- Capability-gated rather than cloud-only: any Space whose spacesd supports `hotspot` can borrow this computer's network.
-
-### hotspot_stop
-
-Stop sharing this computer's network.
-
-| | |
-| --- | --- |
-| Providers | all (cloud, local, direct, relay) |
-| Platforms | all (macos, windows, linux) |
-| Metering | free |
-| Approval | permission `spaces:hotspot_stop`; destructive |
-| Requires (spacesd) | `hotspot` |
-| Swift SDK | `connection.hotspot.stop()` |
-| Rust | `Spaces::hotspot_stop` |
-
-#### Parameters
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | `string` | none | Space id or name. Default: every Space with an active hotspot. |
-
-#### Result
-
-JSON: `{"stopped": [...]}`, the hotspots that were stopped.
-
-#### Errors
-
-[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`spacesd_not_available`](/spaces/reference#spacesd_not_available), [`capability_missing`](/spaces/reference#capability_missing)
-
-### hotspot_status
-
-Report which Spaces are sharing this computer's network, with counters.
-
-| | |
-| --- | --- |
-| Providers | all (cloud, local, direct, relay) |
-| Platforms | all (macos, windows, linux) |
-| Metering | free |
-| Approval | permission `spaces:hotspot_status`, in `spaces:readonly`; read-only, idempotent |
-| Requires (spacesd) | `hotspot` |
-| Swift SDK | `connection.hotspot.status()` |
-| Rust | `Spaces::hotspot_statuses` |
-
-#### Parameters
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | `string` | none | Space id or name. Default: every Space with an active hotspot. |
-
-#### Result
-
-JSON: `{"hotspots": [...]}`, each shaped like hotspot_start's result.
-
-#### Errors
-
-[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`spacesd_not_available`](/spaces/reference#spacesd_not_available), [`capability_missing`](/spaces/reference#capability_missing)

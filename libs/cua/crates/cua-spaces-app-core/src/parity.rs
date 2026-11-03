@@ -253,6 +253,21 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/connectors.json"),
         include_str!("../parity/golden/connectors.json"),
     ),
+    (
+        "github-connection",
+        include_str!("../parity/github-connection.json"),
+        include_str!("../parity/golden/github-connection.json"),
+    ),
+    (
+        "thread-cards",
+        include_str!("../parity/thread-cards.json"),
+        include_str!("../parity/golden/thread-cards.json"),
+    ),
+    (
+        "ci-runners",
+        include_str!("../parity/ci-runners.json"),
+        include_str!("../parity/golden/ci-runners.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -813,6 +828,340 @@ pub mod frame {
             }
         }
         Value::Array(out)
+    }
+
+    /// Settings, Connections, GitHub, as lines: the rows, and the open host's page.
+    pub fn github_connection(v: &Value, open: Option<&str>) -> Value {
+        let list = |x: &Value| x.as_array().cloned().unwrap_or_default();
+        let mut lines = vec![Value::String(format!(
+            "{} / {}",
+            str_of(&v["title"]),
+            str_of(&v["footer"])
+        ))];
+        if let Some(n) = v["notice"].as_str() {
+            lines.push(Value::String(format!("notice: {n}")));
+        }
+        for r in list(&v["rows"]) {
+            lines.push(Value::String(format!(
+                "{} [{}]: {}",
+                str_of(&r["title"]),
+                str_of(&r["tone"]),
+                str_of(&r["line"])
+            )));
+            if let Some(w) = r["warning"].as_str() {
+                lines.push(Value::String(format!("  warning: {w}")));
+            }
+        }
+        lines.push(Value::String(format!("<{}>", str_of(&v["rescanLabel"]))));
+        let mut page = Vec::new();
+        for d in list(&v["details"]) {
+            if Some(str_of(&d["host"])) != open {
+                continue;
+            }
+            page.push(Value::String(format!(
+                "{}: {}",
+                str_of(&d["title"]),
+                str_of(&d["line"])
+            )));
+            page.push(Value::String(format!(
+                "[{}] {} / {}",
+                if d["enabled"] == true { "on" } else { "off" },
+                str_of(&d["switchLabel"]),
+                str_of(&d["switchHelp"])
+            )));
+            if let Some(l) = d["accountsLabel"].as_str() {
+                page.push(Value::String(format!(
+                    "{l}: {}",
+                    str_of(&d["accountsHelp"])
+                )));
+                for a in list(&d["accounts"]) {
+                    page.push(Value::String(format!(
+                        "  {} {}{}{}",
+                        if a["selected"] == true { "*" } else { "-" },
+                        str_of(&a["login"]),
+                        a["tag"]
+                            .as_str()
+                            .map(|t| format!(" ({t})"))
+                            .unwrap_or_default(),
+                        a["note"]
+                            .as_str()
+                            .map(|t| format!(" [{t}]"))
+                            .unwrap_or_default()
+                    )));
+                }
+                if let Some(a) = d["autoLabel"].as_str() {
+                    page.push(Value::String(format!("  <{a}>")));
+                }
+            }
+            page.push(Value::String(str_of(&d["sourcesTitle"]).to_string()));
+            for s in list(&d["sources"]) {
+                page.push(Value::String(format!(
+                    "  {}{}",
+                    str_of(&s["line"]),
+                    s["tag"]
+                        .as_str()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default()
+                )));
+            }
+            if let Some(hlp) = d["help"].as_str() {
+                page.push(Value::String(format!("help: {hlp}")));
+            }
+            page.push(Value::String(format!(
+                "<{}>{} <{}>",
+                str_of(&d["rescanLabel"]),
+                d["pasteLabel"]
+                    .as_str()
+                    .map(|p| format!(" <{p}>"))
+                    .unwrap_or_default(),
+                str_of(&d["closeLabel"])
+            )));
+        }
+        json!({ "lines": lines, "page": page })
+    }
+
+    /// The CI Runners page, as lines: the checklist, the overview line,
+    /// the tabs, each job (and an open job's detail), the picker, the
+    /// autopilots, the help and the connect sheet.
+    pub fn ci_runners(v: &Value) -> Value {
+        let list = |x: &Value| x.as_array().cloned().unwrap_or_default();
+        let setup: Vec<Value> = match v["setup"].as_object() {
+            None => vec![],
+            Some(_) => {
+                let mut l = vec![Value::String(format!(
+                    "{} {}",
+                    str_of(&v["setup"]["title"]),
+                    str_of(&v["setup"]["progress"])
+                ))];
+                for r in list(&v["setup"]["rows"]) {
+                    l.push(Value::String(format!(
+                        "{} [{}] {}{}",
+                        str_of(&r["title"]),
+                        str_of(&r["state"]),
+                        str_of(&r["detail"]),
+                        r["action"]["label"]
+                            .as_str()
+                            .map(|a| format!(" <{a}>"))
+                            .unwrap_or_default()
+                    )));
+                }
+                l
+            }
+        };
+        let stats: Vec<Value> = list(&v["stats"])
+            .iter()
+            .map(|s| {
+                Value::String(format!(
+                    "{}: {}{}",
+                    str_of(&s["label"]),
+                    str_of(&s["value"]),
+                    s["tone"]
+                        .as_str()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default()
+                ))
+            })
+            .collect();
+        let tabs: Vec<Value> = list(&v["jobs"]["tabs"])
+            .iter()
+            .map(|t| {
+                Value::String(format!(
+                    "{}{} {}",
+                    if t["selected"] == true { "*" } else { "" },
+                    str_of(&t["label"]),
+                    t["count"]
+                ))
+            })
+            .collect();
+        let mut jobs: Vec<Value> = Vec::new();
+        for r in list(&v["jobs"]["rows"]) {
+            jobs.push(Value::String(format!(
+                "{} / {} / {} / wait {} / run {} / cost {} / {}{}",
+                str_of(&r["title"]),
+                str_of(&r["repo"]),
+                str_of(&r["stateLabel"]),
+                str_of(&r["wait"]),
+                str_of(&r["run"]),
+                str_of(&r["cost"]),
+                str_of(&r["when"]),
+                if r["expanded"] == true { " (open)" } else { "" }
+            )));
+            if let Some(d) = r["detail"].as_object() {
+                if let Some(t) = d.get("timeline").filter(|t| t.is_object()) {
+                    jobs.push(Value::String(format!(
+                        "  timeline {}% {} / {}% {}",
+                        t["waitPct"],
+                        str_of(&t["waitLabel"]),
+                        t["runPct"],
+                        str_of(&t["runLabel"])
+                    )));
+                }
+                for fct in list(&d["facts"]) {
+                    jobs.push(Value::String(format!(
+                        "  {}: {}",
+                        str_of(&fct["label"]),
+                        str_of(&fct["value"])
+                    )));
+                }
+                jobs.push(Value::String(format!(
+                    "  <{}> {} <{}> log {} {} {}",
+                    str_of(&d["openLabel"]),
+                    d["openUrl"].as_str().unwrap_or("no link"),
+                    str_of(&d["logLabel"]),
+                    str_of(&d["log"]["jobKey"]),
+                    str_of(&d["log"]["pool"]),
+                    str_of(&d["log"]["slot"])
+                )));
+            }
+        }
+        if jobs.is_empty() {
+            jobs.push(Value::String(format!(
+                "empty: {}",
+                str_of(&v["jobs"]["empty"])
+            )));
+        }
+        let picker: Vec<Value> = if v["pickerOpen"] == true {
+            let p = &v["repositories"];
+            let mut l = vec![Value::String(format!(
+                "{}: {} <{}> <{}>",
+                str_of(&p["title"]),
+                str_of(&p["summary"]),
+                str_of(&p["chooseLabel"]),
+                str_of(&p["connectLabel"])
+            ))];
+            for r in list(&p["rows"]) {
+                l.push(Value::String(format!(
+                    "{} / {} / {}{}",
+                    str_of(&r["name"]),
+                    str_of(&r["status"]),
+                    str_of(&r["jobs"]),
+                    if r["canToggle"] == true {
+                        " (switch)"
+                    } else {
+                        ""
+                    }
+                )));
+            }
+            if list(&p["rows"]).is_empty() {
+                l.push(Value::String(format!("empty: {}", str_of(&p["empty"]))));
+            }
+            l
+        } else {
+            vec![]
+        };
+        let mut autopilot: Vec<Value> = Vec::new();
+        for a in list(&v["sizing"]) {
+            autopilot.push(Value::String(format!(
+                "{} / {}: {} / {} / {}{}",
+                str_of(&v["sizingTitle"]),
+                str_of(&v["cloudLabel"]),
+                str_of(&a["title"]),
+                list(&a["goals"])
+                    .iter()
+                    .map(|g| format!(
+                        "{}{}",
+                        if g["selected"] == true { "*" } else { "" },
+                        str_of(&g["label"])
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+                str_of(&a["budget"]),
+                a["budgetTone"]
+                    .as_str()
+                    .map(|t| format!(" ({t})"))
+                    .unwrap_or_default()
+            )));
+            autopilot.push(Value::String(format!("  {}", str_of(&a["goalNote"]))));
+            for p in list(&a["plans"]) {
+                autopilot.push(Value::String(format!(
+                    "  {}: {}",
+                    str_of(&p["label"]),
+                    str_of(&p["line"])
+                )));
+            }
+            for r in list(&a["reasons"]) {
+                autopilot.push(Value::String(format!("  why: {}", str_of(&r))));
+            }
+        }
+        if list(&v["sizing"]).is_empty() {
+            autopilot.push(Value::String(format!(
+                "{} / none: {}",
+                str_of(&v["sizingTitle"]),
+                str_of(&v["noCloud"])
+            )));
+        }
+        let help: Vec<Value> = list(&v["help"])
+            .iter()
+            .map(|h| {
+                Value::String(format!(
+                    "{}{}{}",
+                    if h["open"] == true { "v " } else { "> " },
+                    str_of(&h["title"]),
+                    h["body"]
+                        .as_str()
+                        .map(|b| format!(": {b}"))
+                        .unwrap_or_default()
+                ))
+            })
+            .collect();
+        let connect: Vec<Value> = match v["connect"].as_object() {
+            None => vec![],
+            Some(c) => {
+                let g = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("");
+                let mut l = vec![Value::String(format!(
+                    "{} [{}]: {} <{}{}>{} <{}>",
+                    g("title"),
+                    g("phase"),
+                    g("body"),
+                    g("primary"),
+                    if c.get("busy") == Some(&Value::Bool(true)) {
+                        " busy"
+                    } else {
+                        ""
+                    },
+                    c.get("secondary")
+                        .and_then(Value::as_str)
+                        .map(|s| format!(" <{s}>"))
+                        .unwrap_or_default(),
+                    g("close")
+                ))];
+                if let Some(u) = c.get("url").and_then(Value::as_str) {
+                    l.push(Value::String(format!("  page {u}")));
+                }
+                if let Some(e) = c.get("error").and_then(Value::as_str) {
+                    l.push(Value::String(format!("  error {e}")));
+                }
+                if let Some(t) = c.get("token").filter(|t| t.is_object()) {
+                    l.push(Value::String(format!(
+                        "  {} = {} / {} / {} <{}> {}{}",
+                        str_of(&t["orgLabel"]),
+                        str_of(&t["org"]),
+                        str_of(&t["tokenLabel"]),
+                        str_of(&t["tokenHelp"]),
+                        str_of(&t["createLabel"]),
+                        str_of(&t["createUrl"]),
+                        if t["canSubmit"] == true {
+                            " (can connect)"
+                        } else {
+                            " (needs an organization)"
+                        }
+                    )));
+                }
+                l
+            }
+        };
+        json!({
+            "button": v["connectButton"]["label"],
+            "setup": setup,
+            "stats": stats,
+            "tabs": tabs,
+            "jobs": jobs,
+            "repositories": picker,
+            "sizing": autopilot,
+            "help": help,
+            "connect": connect,
+            "note": v["note"],
+        })
     }
 
     /// One Settings row: `- id kind: label = value ~placeholder [button] {options} (disabled) ?help <link>`.
@@ -1998,6 +2347,9 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "tips" => run_tips(&flow, h),
         "pro-banner" => run_pro_banner(&flow, h),
         "connectors" => run_connectors(&flow, h),
+        "github-connection" => run_github_connection(&flow, h),
+        "thread-cards" => run_thread_cards(&flow, h),
+        "ci-runners" => run_ci_runners(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -4999,6 +5351,65 @@ fn run_tips(f: &Value, h: &dyn Host) -> Result<Value, String> {
         }));
     }
     Ok(json!({ "flow": "tips", "frames": frames }))
+}
+
+/// Settings, Connections, GitHub: each step is the daemon's `github.status`
+/// (`githubConnection.view`), with one host's page open.
+fn run_github_connection(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let input = step["input"]
+            .as_str()
+            .map(|n| f["inputs"][n].clone())
+            .unwrap_or(Value::Null);
+        let v = c(h, "githubConnection.view", json!({ "input": input }))?;
+        frames.push(json!({ "step": step["step"], "section": frame::github_connection(&v, step["open"].as_str()) }));
+    }
+    Ok(json!({ "flow": "github-connection", "frames": frames }))
+}
+
+/// The thread's cards: each step calls one core method (the push card, or
+/// how an author shows) and records its view as the core drew it.
+fn run_thread_cards(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let method = step["method"].as_str().ok_or("step without a method")?;
+        let view = c(h, method, step["args"].clone())?;
+        frames.push(json!({ "step": step["step"], "view": view }));
+    }
+    Ok(json!({ "flow": "thread-cards", "frames": frames }))
+}
+
+/// The CI Runners page: each step may set the overview (`cua ci overview`,
+/// by name from the flow's `overviews`) and send page actions
+/// (`ciRunners.reduce`), then draws the page (`ciRunners.view`).
+fn run_ci_runners(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    let mut overview = Value::Null;
+    let mut state = c(
+        h,
+        "ciRunners.reduce",
+        json!({ "action": { "type": "tab", "tab": "all" } }),
+    )?;
+    for step in f["steps"].as_array().into_iter().flatten() {
+        if let Some(name) = step["overview"].as_str() {
+            overview = f["overviews"][name].clone();
+        }
+        for a in step["actions"].as_array().into_iter().flatten() {
+            state = c(
+                h,
+                "ciRunners.reduce",
+                json!({ "state": state, "action": a }),
+            )?;
+        }
+        let v = c(
+            h,
+            "ciRunners.view",
+            json!({ "overview": overview, "state": state }),
+        )?;
+        frames.push(json!({ "step": step["step"], "page": frame::ci_runners(&v) }));
+    }
+    Ok(json!({ "flow": "ci-runners", "frames": frames }))
 }
 
 /// The account area: the Pro banner (Free only, not closable) and the

@@ -127,6 +127,10 @@ fn unix_now() -> u64 {
 /// How often the daemon checks whether the built-in Linux runtime VM runs
 /// with no Linux Space in it.
 const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
+/// How often exits and published host ports are checked against each
+/// Space's settings.
+#[cfg(feature = "spaces")]
+const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -705,6 +709,25 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             }
         }));
     }
+    // The open-file guard: warns and heals before "Too many open files"
+    // takes the Keyvault, agents and Space calls down together.
+    if let Some(every) = crate::fd_guard::interval() {
+        #[cfg(feature = "spaces")]
+        let shed: crate::fd_guard::Shed = {
+            let runtime = shared.runtime.clone();
+            std::sync::Arc::new(move || {
+                let runtime = runtime.clone();
+                Box::pin(async move { runtime.spaces().shed_mesh_forwards().await })
+            })
+        };
+        #[cfg(not(feature = "spaces"))]
+        let shed: crate::fd_guard::Shed = std::sync::Arc::new(|| Box::pin(async { 0 }));
+        tasks.push(tokio::spawn(crate::fd_guard::run(
+            every,
+            shed,
+            shared.shutdown.subscribe(),
+        )));
+    }
     if std::env::var(crate::maintenance::ENV_DAEMON_MAINTENANCE).as_deref() != Ok("0") {
         tasks.push(tokio::spawn(maintenance_loop(
             shared.clone(),
@@ -719,6 +742,26 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
         shared.clone(),
         shared.shutdown.subscribe(),
     ));
+    // Exits ("Exit through") and the host's ports at `localhost`: kept in
+    // line with each Space's settings, re-attached after a Space or its
+    // exit restarts. Part of Secure Spaces; a Space whose exit isn't
+    // running stays closed (it fails closed).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            loop {
+                if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+                    rt.spaces().reconcile_network().await;
+                }
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
+                }
+            }
+        }));
+    }
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]
     tasks.extend(crate::cloud_sweep::spawn(

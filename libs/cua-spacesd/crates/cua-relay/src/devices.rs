@@ -106,6 +106,10 @@ pub const PROOF_SKEW_SECS: u64 = 120;
 pub const ACCESS_AUDIT_INTERVAL_SECS: u64 = 600;
 /// Devices one account may register.
 pub const MAX_DEVICES_PER_ACCOUNT: usize = 64;
+
+/// Devices of one account waiting for an approval (a live one-time code)
+/// at once.
+pub const MAX_WAITING_PER_ACCOUNT: usize = 5;
 /// `enrolled_by` of a device enrolled by a fresh interactive sign-in.
 pub const BY_FRESH_SIGN_IN: &str = "bootstrap:fresh-sign-in";
 /// Minimum move of `enrolled_until` that a session's sliding renewal
@@ -235,6 +239,15 @@ pub struct DeviceRecord {
     /// Operating system the device reported (`macos`, `windows`, `linux`).
     #[serde(default)]
     pub platform: String,
+    /// A phone (the Cua Spaces phone app): a smaller kind of device that
+    /// reaches machines through a short list of calls only
+    /// ([`crate::phone`]). Sticky: once a device is a phone it stays one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone: bool,
+    /// What the device says it can host for the pool, fixed once it is
+    /// enrolled like its name and platform. A phone states none today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::phone::Capabilities>,
     /// SHA-256 of the pending one-time code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_sha256: Option<String>,
@@ -244,6 +257,13 @@ pub struct DeviceRecord {
 }
 
 impl DeviceRecord {
+    /// Whether this is a phone: marked as one, or enrolled as an iPhone, iPad or
+    /// Android before the mark existed (the mark is also backfilled when the
+    /// store is opened).
+    pub fn is_phone(&self) -> bool {
+        self.phone || crate::phone::platform_is_phone(&self.platform)
+    }
+
     /// The state at `now`.
     pub fn state(&self, now: u64) -> DeviceState {
         if self.revoked_at.is_some() {
@@ -1039,6 +1059,11 @@ pub struct Registration<'a> {
     /// The account token's authentication context proves a second factor
     /// ([`crate::oidc::Identity::mfa`]).
     pub mfa: bool,
+    /// The device is a phone: it reported a phone platform, or its sign-in
+    /// token was issued to the phone app's client ([`crate::phone`]).
+    pub phone: bool,
+    /// What it states it can host (already checked).
+    pub capabilities: Option<crate::phone::Capabilities>,
 }
 
 /// Device store settings.
@@ -1254,9 +1279,19 @@ impl DeviceStore {
         };
         let StoredState {
             grace_started_at,
-            devices,
+            mut devices,
             audit: mut legacy_audit,
         } = stored;
+        // A device enrolled as an iPhone, iPad or Android before phones were a
+        // class has no mark: it is a phone all the same. Marked here, and
+        // written back below, so no later code has to ask the platform.
+        let mut backfilled = false;
+        for d in devices.values_mut() {
+            if !d.phone && crate::phone::platform_is_phone(&d.platform) {
+                d.phone = true;
+                backfilled = true;
+            }
+        }
         let state = State {
             grace_started_at,
             devices,
@@ -1296,7 +1331,7 @@ impl DeviceStore {
         let mut store = Self::with_state(Some(path), policy, state, audit_key, audit);
         *store.sessions.get_mut().expect("sessions") = (sessions.1, sessions.0);
         store.storage = storage;
-        if fresh || moved {
+        if fresh || moved || backfilled {
             let mut state = store.state.lock().expect("devices");
             if fresh {
                 state.grace_started_at = now_secs();
@@ -1629,16 +1664,36 @@ impl DeviceStore {
                         }
                     }));
                 }
-            } else if state
-                .devices
-                .values()
-                .filter(|d| d.account == account && d.revoked_at.is_none())
-                .count()
-                >= MAX_DEVICES_PER_ACCOUNT
-            {
-                return Err(DeviceError::Forbidden(format!(
-                    "an account may register at most {MAX_DEVICES_PER_ACCOUNT} devices; revoke one first"
-                )));
+            } else {
+                // A device that never got enrolled and whose code has run out
+                // holds nothing: a stolen token cannot lock the owner out of
+                // registering their own by piling up junk. Devices waiting for
+                // approval (a live code) are few.
+                let held = |d: &&DeviceRecord| {
+                    d.account == account
+                        && d.revoked_at.is_none()
+                        && (d.enrolled_at.is_some() || d.code_expires.is_some_and(|e| e > now))
+                };
+                if state.devices.values().filter(held).count() >= MAX_DEVICES_PER_ACCOUNT {
+                    return Err(DeviceError::Forbidden(format!(
+                        "an account may register at most {MAX_DEVICES_PER_ACCOUNT} devices; revoke one first"
+                    )));
+                }
+                let waiting = state
+                    .devices
+                    .values()
+                    .filter(|d| {
+                        d.account == account
+                            && d.revoked_at.is_none()
+                            && d.enrolled_at.is_none()
+                            && d.code_expires.is_some_and(|e| e > now)
+                    })
+                    .count();
+                if waiting >= MAX_WAITING_PER_ACCOUNT && !r.bootstrap {
+                    return Err(DeviceError::Forbidden(format!(
+                        "{MAX_WAITING_PER_ACCOUNT} phones and computers are already waiting for approval; approve or revoke one, or wait ten minutes"
+                    )));
+                }
             }
             let fresh = !state.devices.contains_key(&id);
             let mut device = state.devices.get(&id).cloned().unwrap_or(DeviceRecord {
@@ -1661,15 +1716,30 @@ impl DeviceStore {
                 strong: false,
                 last_seen: None,
                 platform: String::new(),
+                phone: false,
+                capabilities: None,
                 code_sha256: None,
                 code_expires: None,
             });
-            if !name.is_empty() {
-                device.name = name.clone();
+            // What an enrolled device is (its name and platform, so its class)
+            // is fixed once it is enrolled: registering again with a stale
+            // token cannot relabel it. Renaming is `rename`.
+            let settled = !fresh && device.state(now) == DeviceState::Enrolled;
+            if !settled {
+                if !name.is_empty() {
+                    device.name = name.clone();
+                }
+                let platform = clean_platform(r.platform);
+                if !platform.is_empty() {
+                    device.platform = platform;
+                }
+                if r.capabilities.is_some() {
+                    device.capabilities = r.capabilities.clone();
+                }
             }
-            let platform = clean_platform(r.platform);
-            if !platform.is_empty() {
-                device.platform = platform;
+            if r.phone {
+                // Sticky: a phone never becomes a computer by registering again.
+                device.phone = true;
             }
             if machine.is_some() {
                 device.machine = machine.clone();
@@ -1804,6 +1874,7 @@ impl DeviceStore {
         approver: &str,
         code: Option<&str>,
         target: Option<&str>,
+        step_up: bool,
     ) -> Result<DeviceRecord, DeviceError> {
         let now = now_secs();
         let ttl = self.policy.ttl_secs;
@@ -1843,11 +1914,27 @@ impl DeviceStore {
                     "a device cannot approve itself".into(),
                 ));
             }
+            let approver_is_phone = state.devices.get(&approving_id).is_some_and(|d| d.is_phone());
             let device = state
                 .devices
                 .get_mut(&id)
                 .filter(|d| d.account == account)
                 .ok_or(DeviceError::NotFound)?;
+            // A phone is a smaller kind of device: it cannot enroll a computer
+            // (a stolen phone must not be able to make itself a full device).
+            if approver_is_phone && !device.is_phone() {
+                return Err(DeviceError::Forbidden(
+                    "a phone cannot approve a computer; approve it from a computer".into(),
+                ));
+            }
+            // A stolen, unlocked phone must not be able to enroll more
+            // devices on its own: approving from a phone needs a sign-in made
+            // just now (the token's `auth_time`).
+            if approver_is_phone && !step_up {
+                return Err(DeviceError::Forbidden(
+                    "approving a phone or computer from a phone needs you to sign in again just now".into(),
+                ));
+            }
             match device.state(now) {
                 DeviceState::Revoked => {
                     return Err(DeviceError::Forbidden("the device was revoked".into()))
@@ -2002,6 +2089,18 @@ impl DeviceStore {
         Ok((token, expires))
     }
 
+    /// Whether device `id` is enrolled right now (not pending, expired or
+    /// revoked).
+    pub fn is_enrolled(&self, id: &str) -> bool {
+        self.get(id)
+            .is_some_and(|d| d.state(now_secs()) == DeviceState::Enrolled)
+    }
+
+    /// Whether device `id` is a phone ([`DeviceRecord::phone`]).
+    pub fn is_phone(&self, id: &str) -> bool {
+        self.get(id).is_some_and(|d| d.is_phone())
+    }
+
     /// The enrolled device behind session `token` for `account`, if the
     /// session is live and the device still enrolled.
     pub fn session_device(&self, account: &str, token: &str) -> Option<String> {
@@ -2132,9 +2231,17 @@ impl DeviceStore {
         account: &str,
         actor: &str,
         id: &str,
+        step_up: bool,
     ) -> Result<DeviceRecord, DeviceError> {
         let now = now_secs();
         let revoked = self.mutate(|state| {
+            // A phone may take itself off the account; taking another device
+            // off needs a sign-in made just now.
+            if actor != id && !step_up && state.devices.get(actor).is_some_and(|d| d.is_phone()) {
+                return Err(DeviceError::Forbidden(
+                    "removing another phone or computer from a phone needs you to sign in again just now".into(),
+                ));
+            }
             let device = state
                 .devices
                 .get_mut(id)
@@ -2236,6 +2343,8 @@ pub(crate) mod tests {
             auth_time,
             email_verified,
             mfa,
+            phone: false,
+            capabilities: None,
         })
     }
 
@@ -2256,6 +2365,51 @@ pub(crate) mod tests {
             grace_secs: 0,
             ..DevicePolicy::default()
         }
+    }
+
+    /// A device enrolled as an iPhone before phones were a class carries no
+    /// mark. It is a phone all the same: by its platform at once, and marked
+    /// (and written back) when the store is opened.
+    #[test]
+    fn a_device_enrolled_as_an_iphone_before_the_mark_is_a_phone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        let ts = now_secs();
+        let public = key.public();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        store
+            .register(&Registration {
+                account: "acct",
+                user: "acct",
+                public_key: &public,
+                name: "Dillon's iPhone",
+                platform: "ios",
+                machine_id: None,
+                ts,
+                sig: &sig,
+                bootstrap: true,
+                auth_time: Some(now_secs()),
+                email_verified: false,
+                mfa: false,
+                // The old relay did not mark it.
+                phone: false,
+                capabilities: None,
+            })
+            .unwrap();
+        assert!(!store.get(&key.id()).unwrap().phone, "no mark was written");
+        assert!(store.get(&key.id()).unwrap().is_phone());
+        assert!(store.is_phone(&key.id()), "a phone by its platform");
+        // Opened again, it carries the mark, and the file does too.
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert!(reopened.get(&key.id()).unwrap().phone);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"phone\":true"), "{raw}");
+        // A computer is not made one.
+        let laptop = TestKey::new();
+        register(&reopened, "acct", &laptop, true, Some(now_secs())).unwrap();
+        assert!(!reopened.is_phone(&laptop.id()));
     }
 
     /// A policy with a grace period running (the safe default is ended; a
@@ -2300,11 +2454,11 @@ pub(crate) mod tests {
         let code = pending.code.unwrap();
         // ...until an enrolled device confirms its code.
         assert!(matches!(
-            store.approve("acct", &second.id(), Some(&code), None),
+            store.approve("acct", &second.id(), Some(&code), None, true),
             Err(DeviceError::Forbidden(_))
         ));
         assert!(matches!(
-            store.approve("other", &first.id(), Some(&code), None),
+            store.approve("other", &first.id(), Some(&code), None, true),
             Err(DeviceError::Forbidden(_))
         ));
         let approved = store
@@ -2313,13 +2467,14 @@ pub(crate) mod tests {
                 &first.id(),
                 Some(&code.to_lowercase().replace('-', "")),
                 None,
+                true,
             )
             .unwrap();
         assert_eq!(approved.enrolled_by.as_deref(), Some(first.id().as_str()));
         assert!(session(&store, "acct", &second).is_ok());
         // The code is single use.
         assert!(store
-            .approve("acct", &first.id(), Some(&code), None)
+            .approve("acct", &first.id(), Some(&code), None, true)
             .is_err());
 
         let kinds: Vec<_> = store
@@ -2373,7 +2528,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(
             !store
-                .approve("acct", &thief.id(), Some(&code), None)
+                .approve("acct", &thief.id(), Some(&code), None, true)
                 .unwrap()
                 .strong
         );
@@ -2382,8 +2537,12 @@ pub(crate) mod tests {
         let r = register(&store, "acct", &owner, true, Some(now_secs())).unwrap();
         assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
         assert!(r.device.strong);
-        store.revoke("acct", &owner.id(), &thief.id()).unwrap();
-        store.revoke("acct", &owner.id(), &accomplice.id()).unwrap();
+        store
+            .revoke("acct", &owner.id(), &thief.id(), true)
+            .unwrap();
+        store
+            .revoke("acct", &owner.id(), &accomplice.id(), true)
+            .unwrap();
         // Now a strong device exists: a fresh sign-in alone no longer
         // enrolls another one.
         let next = TestKey::new();
@@ -2486,7 +2645,9 @@ pub(crate) mod tests {
             .unwrap()
             .code
             .unwrap();
-        store.approve("acct", &a.id(), Some(&code), None).unwrap();
+        store
+            .approve("acct", &a.id(), Some(&code), None, true)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2100));
         assert_eq!(
             store.get(&a.id()).unwrap().state(now_secs()),
@@ -2497,9 +2658,11 @@ pub(crate) mod tests {
         let again = register(&store, "acct", &a, true, Some(now_secs())).unwrap();
         assert_eq!(again.device.state(now_secs()), DeviceState::Enrolled);
         // b (expired) needs an approval from a; by id this time.
-        store.approve("acct", &a.id(), None, Some(&b.id())).unwrap();
+        store
+            .approve("acct", &a.id(), None, Some(&b.id()), true)
+            .unwrap();
         let token = session(&store, "acct", &b).unwrap();
-        store.revoke("acct", &a.id(), &b.id()).unwrap();
+        store.revoke("acct", &a.id(), &b.id(), true).unwrap();
         assert!(store.session_device("acct", &token).is_none());
         assert!(session(&store, "acct", &b).is_err());
         assert!(matches!(
@@ -2848,7 +3011,9 @@ pub(crate) mod tests {
             Some(laptop.id())
         );
         assert_eq!(reopened.session_device("other", &laptop_session), None);
-        reopened.revoke("acct", &laptop.id(), &phone.id()).unwrap();
+        reopened
+            .revoke("acct", &laptop.id(), &phone.id(), true)
+            .unwrap();
         assert_eq!(reopened.session_device("acct", &phone_session), None);
         drop(reopened);
         let again = DeviceStore::open(path, enforcing()).unwrap();
@@ -2922,7 +3087,7 @@ pub(crate) mod tests {
         for _ in 0..40 {
             session(&store, "acct", &phone).unwrap();
         }
-        store.revoke("acct", &key.id(), &phone.id()).unwrap();
+        store.revoke("acct", &key.id(), &phone.id(), true).unwrap();
         let live = store.sessions.lock().unwrap().0.len();
         assert_eq!(live, 4);
         let lines = std::fs::read_to_string(&journal).unwrap().lines().count();
@@ -3387,7 +3552,7 @@ pub(crate) mod tests {
             .code
             .unwrap();
         store
-            .approve("acct", &first.id(), Some(&code), None)
+            .approve("acct", &first.id(), Some(&code), None, true)
             .unwrap();
         assert!(session(&store, "acct", &third).is_ok());
     }
@@ -3448,7 +3613,7 @@ pub(crate) mod tests {
         register(&store, "acct", &other, true, Some(now_secs())).unwrap();
         set_until(now_secs() + 3 * 86_400);
         session(&store, "acct", &key).unwrap();
-        store.revoke("acct", &other.id(), &key.id()).unwrap();
+        store.revoke("acct", &other.id(), &key.id(), true).unwrap();
         let revoked_until = until();
         assert!(session(&store, "acct", &key).is_err());
         assert_eq!(until(), revoked_until);
@@ -3545,7 +3710,7 @@ pub(crate) mod tests {
             .code
             .unwrap();
         let approved = store
-            .approve("acct", &first.id(), Some(&code), None)
+            .approve("acct", &first.id(), Some(&code), None, true)
             .unwrap();
         assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
     }
@@ -3667,7 +3832,9 @@ pub(crate) mod tests {
         .unwrap()
         .code
         .unwrap();
-        store.approve("acct", &new.id(), Some(&code), None).unwrap();
+        store
+            .approve("acct", &new.id(), Some(&code), None, true)
+            .unwrap();
         assert_eq!(
             store
                 .get(&other_machine.id())
@@ -3744,18 +3911,24 @@ pub(crate) mod tests {
         register(&store, "acct", &a, true, Some(now_secs())).unwrap();
         register(&store, "acct", &b, false, None).unwrap();
         let err = store
-            .approve("acct", &a.id(), Some("ZZZZ-ZZZZ"), None)
+            .approve("acct", &a.id(), Some("ZZZZ-ZZZZ"), None, true)
             .unwrap_err();
         assert_eq!(err, DeviceError::CodeNotFound);
         assert!(err.to_string().contains("approve by id"), "{err}");
         // `cua devices approve dev_…` sends the id as the code.
         let approved = store
-            .approve("acct", &a.id(), Some(&format!(" {} ", b.id())), None)
+            .approve("acct", &a.id(), Some(&format!(" {} ", b.id())), None, true)
             .unwrap();
         assert_eq!(approved.id, b.id());
         assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
         assert_eq!(
-            store.approve("acct", &a.id(), Some("dev_000000000000000000000000"), None),
+            store.approve(
+                "acct",
+                &a.id(),
+                Some("dev_000000000000000000000000"),
+                None,
+                true
+            ),
             Err(DeviceError::NotFound)
         );
     }

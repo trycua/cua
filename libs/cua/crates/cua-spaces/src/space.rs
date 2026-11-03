@@ -375,9 +375,10 @@ impl Space {
         let _ = self.inner.image.set((reference, digest));
     }
 
-    /// Container or VM (`container`, `vm`) and CPU architecture (`arm64`,
-    /// `amd64`): what the guest reported at the handshake (its runtime and
-    /// arch), else the local sandbox's record. Empty when unknown.
+    /// Container, VM or microVM (`container`, `vm`, `microvm`) and CPU
+    /// architecture (`arm64`, `amd64`): the kind the local runtime recorded
+    /// (a microVM's guest reports itself as a container), else what the guest
+    /// reported at the handshake. Empty when unknown.
     pub fn platform(&self) -> (String, String) {
         use pb::{Architecture, Runtime};
         let caps = self.capabilities();
@@ -399,7 +400,9 @@ impl Space {
                 live.to_string()
             }
         };
-        (or(kind, recorded.0), or(arch, recorded.1))
+        // What the runtime that runs it recorded wins over what the guest
+        // says of itself (a microVM's guest reports a container).
+        (or(&recorded.0, kind.to_string()), or(arch, recorded.1))
     }
 
     pub(crate) fn set_platform(&self, kind: String, arch: String) {
@@ -717,6 +720,20 @@ pub struct SpaceInfo {
     /// top-level Space with nothing recorded about it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<crate::tree::TreeLink>,
+    /// When viewers may move the clipboard between this computer and the
+    /// Space ([`crate::clipboard`]). `viewing` unless it was set.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::clipboard::ClipboardSetting::is_default"
+    )]
+    pub clipboard: crate::clipboard::ClipboardSetting,
+    /// What it sees of the Cua Volume: its own folder (the default) or
+    /// nothing.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::registry::VolumeSetting::is_own"
+    )]
+    pub volume_setting: crate::registry::VolumeSetting,
     /// A Space that is a machine on the relay: who owns it and who else
     /// has it, as this account sees it ([`crate::sharing`]). `None` for
     /// other Spaces.
@@ -796,6 +813,9 @@ impl SpaceInfo {
                     record.origin.clone()
                 },
             }),
+            clipboard: record.clipboard.parse().unwrap_or_default(),
+            volume_setting: crate::registry::VolumeSetting::parse(&record.volume)
+                .unwrap_or_default(),
             created_at_unix: record
                 .added_at
                 .as_ref()

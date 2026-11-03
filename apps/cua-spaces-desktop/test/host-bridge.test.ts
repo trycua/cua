@@ -214,7 +214,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(problems).toEqual([]);
     // Every method of this area has its case (the first run's are checked below).
     // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
-    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
+    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "onboarding.reset", "host.joinWithCode"]);
     expect(HOST_METHODS.filter((m) => !checkedBelow.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
@@ -706,6 +706,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "welcome", option: "show" });
     expect(await call("onboarding.get")).toMatchObject({ completed: false });
     expect(events.some((e) => e.event === "session.changed")).toBe(true);
+  });
+
+  it("Reset & Show forgets the first run from its first step, and says so", async () => {
+    await call("onboarding.complete", { mode: "host" });
+    events.length = 0;
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
+    expect(await call("onboarding.get")).toEqual({ completed: false, mode: "client" });
+    expect(events.some((e) => e.event === "session.changed")).toBe(true);
+    // Twice is the same as once.
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
   });
 
   it("the Keyvault's switches show its state and run through the broker", async () => {

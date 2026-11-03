@@ -42,6 +42,14 @@
   --warning: oklch(0.72 0.15 75);
   --destructive: oklch(0.58 0.2 27);
   --destructive-foreground: oklch(0.985 0 0);
+  /* Diff counts and bars on a push card (the card sits on --muted at half
+     strength over the page): the text colours clear 4.5:1 there, the bar
+     squares are the same hues, brighter, and need only 3:1. */
+  --diff-add: oklch(0.45 0.13 150);
+  --diff-del: oklch(0.5 0.18 27);
+  --diff-add-bar: oklch(0.6 0.15 150);
+  --diff-del-bar: oklch(0.6 0.2 27);
+  --diff-none-bar: oklch(0.52 0.012 264 / 0.3);
   --thumb: oklch(0.93 0.005 264);
   --thumb-line: oklch(0.905 0.005 264);
   /* Borderless tiles and rows: a fill a step off the page, and one step more on hover. */
@@ -94,6 +102,11 @@
   --power-on: var(--success);
   --warning: oklch(0.8 0.14 80);
   --destructive: oklch(0.66 0.19 25);
+  --diff-add: oklch(0.78 0.15 152);
+  --diff-del: oklch(0.76 0.14 25);
+  --diff-add-bar: oklch(0.72 0.15 152);
+  --diff-del-bar: oklch(0.66 0.19 25);
+  --diff-none-bar: oklch(1 0 0 / 0.22);
   --thumb: oklch(0.255 0.01 264);
   --thumb-line: oklch(0.285 0.01 264);
   --tile: oklch(0.242 0.01 264);
@@ -156,6 +169,11 @@
   --color-warning: var(--warning);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+  --color-diff-add-bar: var(--diff-add-bar);
+  --color-diff-del-bar: var(--diff-del-bar);
+  --color-diff-none-bar: var(--diff-none-bar);
   --color-thumb: var(--thumb);
   --color-thumb-line: var(--thumb-line);
   --color-tile: var(--tile);

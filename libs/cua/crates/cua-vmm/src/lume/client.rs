@@ -141,6 +141,14 @@ pub struct RunVm {
     pub storage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_path: Option<String>,
+    /// This run's network (`gateway:<socket>`: behind a Cua network
+    /// gateway); `None` keeps the VM's configured network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// `"disabled"`: start the VM with no VNC server (Lume's VNC server
+    /// listens on every interface); `None` keeps Lume's default (enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -456,6 +464,26 @@ impl LumeClient {
             .send()
             .await
             .map_err(|e| self.net_err(e))?;
+        if r.status() == 400
+            && req
+                .network
+                .as_deref()
+                .is_some_and(|n| n.starts_with("gateway:"))
+        {
+            // A Lume that predates network gateways rejects the run as an
+            // argument error with no hint of why.
+            let text = r.text().await.unwrap_or_default();
+            return Err(VmmError::Lume {
+                status: 400,
+                message: format!(
+                    "this Lume does not take a network gateway ({}). The secure network default \
+                     for macOS Spaces needs a Lume built from this repository \
+                     (libs/lume/scripts/install-local.sh); CUA_SECURE_DEFAULT=0 runs on Apple's \
+                     NAT as before",
+                    text.trim()
+                ),
+            });
+        }
         Self::check(r).await.map(|_| ())
     }
 
@@ -1085,6 +1113,24 @@ pub(crate) mod tests {
         assert_eq!(b["organization"], "trycua");
         assert!(b.get("registry").is_none());
         assert_eq!(pull_body("macos:1", "n")["image"], "macos:1");
+    }
+
+    #[test]
+    fn run_body_turns_vnc_off_only_when_asked() {
+        let on = serde_json::to_value(RunVm {
+            no_display: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(on.get("vnc").is_none(), "{on}");
+        let off = serde_json::to_value(RunVm {
+            no_display: true,
+            vnc: Some("disabled".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(off["vnc"], "disabled");
+        assert_eq!(off["noDisplay"], true);
     }
 
     #[test]

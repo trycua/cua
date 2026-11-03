@@ -361,6 +361,11 @@ current `menuBar` setting and Done leaves out its "Shows in" fact.
 - The usage switch writes `settings.set {telemetry}` at once, and shows only
   once the host has reported the setting (`settings.get`'s `telemetry`).
 - `finish()` calls `session.completeOnboarding {mode}` and forgets progress.
+- Settings, About, "Reset & Show" (after a confirmation) goes back to the first page:
+  `session.resetOnboarding` (host method `onboarding.reset`, Tauri `reset_onboarding`) removes the
+  host's `onboarding.json`, then `forgetWelcome` (`onboarding-reset.ts`) clears the page's keys.
+  Both follow the core's list (`onboarding.resetPlan`, golden `contracts/onboarding-reset.json`);
+  nothing else (Spaces, computers, Keyvault, sign-in, settings) is touched.
 - No new operations: hosts answer `host.status` (permissions, `configured`),
   `settings.set`, `session.*`, as before.
   Swift host (`WebBridge`): onboarding stays native, and the shell never opens

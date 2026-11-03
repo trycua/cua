@@ -87,6 +87,10 @@ pub(crate) struct Kept {
     /// The tree it belongs to; `None`: its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<String>,
+    /// The counted (drop) rules of `table`, in order, with their reason and
+    /// network, for `cua network log` ([`egress::drop_labels`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drop_labels: Vec<(String, String)>,
 }
 
 fn dir() -> PathBuf {
@@ -129,6 +133,7 @@ pub(crate) fn copy(from: &str, to: &str) -> Result<()> {
                 table: None,
                 network: k.network,
                 tree: k.tree,
+                drop_labels: vec![],
             },
         ),
         None => Ok(()),
@@ -161,6 +166,12 @@ pub(crate) fn tree_of(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+/// The name container `name` of tree `tree` answers to on its tree's
+/// network: `<space>.<tree>`.
+pub fn tree_alias(name: &str, tree: &str) -> String {
+    crate::tree::member_name(name, tree)
+}
+
 /// The Docker network of tree `tree` for the cua home tagged `home_tag`:
 /// `cua-t-<12 hex>`.
 pub fn tree_network(home_tag: &str, tree: &str) -> String {
@@ -173,6 +184,27 @@ pub fn tree_network(home_tag: &str, tree: &str) -> String {
 /// else when its policy blocks anything.
 pub(crate) fn blocks(name: &str) -> bool {
     secure() || kept(name).is_some_and(|k| policy_blocks(&k.policy))
+}
+
+/// The MAC address a container's rules are keyed by: the one its endpoint
+/// reports, else, for a container that is not running, the one labelled
+/// at creation. Docker 29 reports no MAC for a stopped container (the
+/// endpoint's `MacAddress` is empty until it runs again), so without the
+/// label every stopped Space "must be recreated" and none could restart
+/// under the secure default. The MAC is pinned at creation next to the
+/// label, and the rules are keyed again by the address the running
+/// container really has right after it starts, so a mismatch cannot go
+/// unnoticed.
+pub(crate) fn rules_mac(
+    reported: Option<&str>,
+    labelled: Option<&str>,
+    running: bool,
+) -> Option<String> {
+    reported.and_then(egress::normalize_mac).or_else(|| {
+        (!running)
+            .then(|| labelled.and_then(egress::normalize_mac))
+            .flatten()
+    })
 }
 
 /// What a stopped container must have before it may start policed: the
@@ -404,8 +436,12 @@ impl ContainerRuntime {
             DEFAULT_NETWORK.to_string()
         };
         let mac = mac_for(name);
+        // On its tree's network, its tree reaches it by name too:
+        // `<space>.<tree>` (crate::tree::member_name).
+        let aliases = secure().then(|| vec![tree_alias(name, &tree_of(name))]);
         let endpoint = bollard::models::EndpointSettings {
             mac_address: Some(mac.clone()),
+            aliases,
             ..Default::default()
         };
         Ok(Some((
@@ -502,16 +538,18 @@ impl ContainerRuntime {
             ));
         }
         let (net, ep) = nets.into_iter().next().expect("one network");
-        let mac = ep
-            .mac_address
-            .as_deref()
-            .and_then(egress::normalize_mac)
-            .ok_or_else(|| {
-                VmmError::other(format!(
-                    "container {name} has no MAC address on {net} yet; start it once, or \
+        let label_mac = i
+            .config
+            .as_ref()
+            .and_then(|c| c.labels.as_ref())
+            .and_then(|l| l.get(LABEL_MAC))
+            .map(String::as_str);
+        let mac = rules_mac(ep.mac_address.as_deref(), label_mac, running).ok_or_else(|| {
+            VmmError::other(format!(
+                "container {name} has no MAC address on {net} yet; start it once, or \
                      recreate it"
-                ))
-            })?;
+            ))
+        })?;
         let bridge = self.bridge_device(&net).await?;
         let pid = if running {
             i.state.as_ref().and_then(|s| s.pid).unwrap_or(0)
@@ -639,7 +677,19 @@ impl ContainerRuntime {
             text.push_str(&egress::engine_remove(t));
         }
         text.push_str(&egress::engine_ruleset(&target, &rules));
-        self.engine_apply(&text).await?;
+        if let Err(e) = self.engine_apply(&text).await {
+            // A deny inside the tree needs the kernel's bridge conntrack:
+            // say so plainly when that is what the host lacks.
+            if !rules.user_rules_in_tree().is_empty()
+                && self
+                    .engine_apply(egress::BRIDGE_CONNTRACK_PROBE)
+                    .await
+                    .is_err()
+            {
+                return Err(VmmError::Engine(egress::NO_BRIDGE_CONNTRACK.into()));
+            }
+            return Err(e);
+        }
         keep(
             name,
             &Kept {
@@ -647,8 +697,51 @@ impl ContainerRuntime {
                 table: Some(target.table),
                 network: network.or(previous_kept.as_ref().and_then(|k| k.network.clone())),
                 tree: previous_kept.and_then(|k| k.tree),
+                // The `inet` chain's drops, then the bridge's tree chain's.
+                drop_labels: egress::drop_labels(&rules)
+                    .into_iter()
+                    .chain(egress::tree_drop_labels(&rules))
+                    .collect(),
             },
         )
+    }
+
+    /// What container `name` tried to reach and its rules refused: the
+    /// counters of its drop rules on the engine host (by rule, so the
+    /// destination is the rule's network).
+    pub(crate) async fn blocked(&self, name: &str) -> Result<Vec<egress::NetworkEvent>> {
+        let Some(k) = kept(name) else {
+            return Ok(vec![]);
+        };
+        let Some(table) = k.table else {
+            return Ok(vec![]);
+        };
+        let out = self
+            .engine_sh(r#"nft -j list chain inet "$1" verdict"#, &[&table])
+            .await?;
+        if out.code != 0 {
+            // No table (yet): nothing counted.
+            return Ok(vec![]);
+        }
+        let mut counts = egress::nft_drop_counters(&out.stdout);
+        // Its denies of members of its own tree, on the bridge (when it has
+        // any): their counters follow, as their labels do.
+        if k.drop_labels.len() > counts.len() {
+            let tree = self
+                .engine_sh(r#"nft -j list chain bridge "$1" tree"#, &[&table])
+                .await?;
+            if tree.code == 0 {
+                counts.extend(egress::nft_drop_counters(&tree.stdout));
+            }
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        Ok(egress::merge_events(egress::stamp_counted(
+            name,
+            egress::drop_events(&k.drop_labels, &counts),
+            now,
+        )))
     }
 
     /// Removes container `name`'s rules from the engine host and forgets
@@ -660,6 +753,7 @@ impl ContainerRuntime {
             tracing::warn!(container = name, error = %e, "could not remove a deleted container's egress rules");
         }
         let tree = tree_of(name);
+        egress::forget_counted(name);
         forget(name);
         // Its tree's network goes with the tree's last member.
         self.drop_tree_network_if_empty(&tree).await;
@@ -682,13 +776,19 @@ impl ContainerRuntime {
             .and_then(|c| c.labels.as_ref())
             .and_then(|l| l.get(LABEL_MAC))
             .and_then(|m| egress::normalize_mac(m));
-        let configured = i
-            .network_settings
-            .as_ref()
-            .and_then(|n| n.networks.as_ref())
-            .and_then(|n| n.values().next())
-            .and_then(|e| e.mac_address.as_deref())
-            .and_then(egress::normalize_mac);
+        let running = matches!(
+            Self::status_from(i),
+            crate::Status::Running | crate::Status::Paused
+        );
+        let configured = rules_mac(
+            i.network_settings
+                .as_ref()
+                .and_then(|n| n.networks.as_ref())
+                .and_then(|n| n.values().next())
+                .and_then(|e| e.mac_address.as_deref()),
+            labelled.as_deref(),
+            running,
+        );
         let raw_dropped = i
             .host_config
             .as_ref()
@@ -740,13 +840,120 @@ impl ContainerRuntime {
                 .await;
             return Err(e);
         }
+        self.fix_gvisor_dns(name).await;
         Ok(())
     }
+
+    /// Gives a gVisor container a resolver that answers.
+    ///
+    /// On a user-defined network (every tree's, under the secure default)
+    /// Docker points the container at its embedded resolver, 127.0.0.11, which
+    /// gVisor's network stack cannot reach: every lookup by name is refused,
+    /// so nothing in the Space can `git clone` or install. The engine host's
+    /// own resolvers are reachable (the egress rules allow them on port 53),
+    /// so the container's resolv.conf is rewritten to name them. Best effort:
+    /// a container that keeps the embedded resolver is as it was before.
+    async fn fix_gvisor_dns(&self, name: &str) {
+        let runtime = self
+            .docker
+            .inspect_container(name, None)
+            .await
+            .ok()
+            .and_then(|i| i.host_config)
+            .and_then(|h| h.runtime)
+            .unwrap_or_default();
+        if runtime != "runsc" {
+            return;
+        }
+        let Ok(current) = self.exec_capture(name, &["cat", "/etc/resolv.conf"]).await else {
+            return;
+        };
+        if !uses_embedded_resolver(&current) {
+            return;
+        }
+        let Ok(probe) = self
+            .engine_sh(
+                r#"for f in /etc/resolv.conf /run/systemd/resolve/resolv.conf; do
+  [ -r "$f" ] && sed -n 's/^nameserver[[:space:]]*\([0-9a-fA-F:.]*\).*/dns=\1/p' "$f"
+done"#,
+                &[],
+            )
+            .await
+        else {
+            return;
+        };
+        let resolvers: Vec<IpAddr> = probe
+            .stdout
+            .lines()
+            .filter_map(|l| l.strip_prefix("dns=").and_then(|v| v.trim().parse().ok()))
+            .filter(|ip: &IpAddr| !ip.is_loopback())
+            .collect();
+        let Some(text) = resolv_conf_for(&resolvers) else {
+            tracing::warn!(
+                container = name,
+                "no engine resolver to give a gVisor container"
+            );
+            return;
+        };
+        let write = format!(
+            "printf '%s' '{}' > /etc/resolv.conf",
+            text.replace('\'', "")
+        );
+        if let Err(e) = self
+            .exec_capture_as(name, &["sh", "-c", &write], Some("0"))
+            .await
+        {
+            tracing::warn!(
+                container = name,
+                "could not set the container's resolver: {e}"
+            );
+        }
+    }
+}
+
+/// Whether a resolv.conf names only Docker's embedded resolver.
+pub(crate) fn uses_embedded_resolver(resolv_conf: &str) -> bool {
+    let names: Vec<&str> = resolv_conf
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("nameserver"))
+        .map(str::trim)
+        .collect();
+    !names.is_empty() && names.iter().all(|n| *n == "127.0.0.11")
+}
+
+/// The resolv.conf that names `resolvers` (none: nothing to write).
+pub(crate) fn resolv_conf_for(resolvers: &[IpAddr]) -> Option<String> {
+    if resolvers.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for r in resolvers.iter().take(3) {
+        out.push_str(&format!("nameserver {r}\n"));
+    }
+    out.push_str("options ndots:0\n");
+    Some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gvisor_container_is_given_the_engine_hosts_resolvers() {
+        let embedded = "# Generated by Docker\nnameserver 127.0.0.11\noptions ndots:0\n";
+        assert!(uses_embedded_resolver(embedded));
+        assert!(!uses_embedded_resolver("nameserver 192.168.5.1\n"));
+        assert!(!uses_embedded_resolver(
+            "nameserver 127.0.0.11\nnameserver 1.1.1.1\n"
+        ));
+        assert!(!uses_embedded_resolver(""));
+        let ips: Vec<IpAddr> = vec!["192.168.5.1".parse().unwrap(), "1.1.1.1".parse().unwrap()];
+        assert_eq!(
+            resolv_conf_for(&ips).as_deref(),
+            Some("nameserver 192.168.5.1\nnameserver 1.1.1.1\noptions ndots:0\n")
+        );
+        assert!(resolv_conf_for(&[]).is_none());
+    }
 
     #[test]
     fn the_probe_and_apply_scripts_take_their_arguments_positionally() {
@@ -758,6 +965,12 @@ mod tests {
 
     #[test]
     fn one_network_per_tree() {
+        assert_eq!(tree_alias("worker_1", "local:Swarm"), "worker-1.swarm");
+        assert_eq!(
+            tree_alias("swarm", "swarm"),
+            "swarm.swarm",
+            "a top-level Space"
+        );
         let a = tree_network("home1", "local:root");
         assert_eq!(a, tree_network("home1", "local:root"));
         assert!(a.starts_with(TREE_NETWORK_PREFIX));
@@ -804,6 +1017,39 @@ mod tests {
         assert!(must_recreate(None, &["bridge".into()], None, None, true));
         // The old default: any network will do.
         assert!(!must_recreate(None, &["bridge".into()], mac, mac, true));
+    }
+
+    #[test]
+    fn a_stopped_container_is_keyed_by_its_labelled_mac() {
+        let label = Some("02:AA:BB:CC:DD:EE");
+        // Running: only what the endpoint reports counts.
+        assert_eq!(
+            rules_mac(Some("02:aa:bb:cc:dd:ee"), label, true).as_deref(),
+            Some("02:aa:bb:cc:dd:ee")
+        );
+        assert_eq!(rules_mac(None, label, true), None);
+        assert_eq!(rules_mac(Some(""), label, true), None);
+        // Stopped, on an engine that reports no MAC for it (Docker 29): the
+        // label pinned at creation stands in, so it can start again.
+        assert_eq!(
+            rules_mac(Some(""), label, false).as_deref(),
+            Some("02:aa:bb:cc:dd:ee")
+        );
+        assert_eq!(
+            rules_mac(None, label, false).as_deref(),
+            Some("02:aa:bb:cc:dd:ee")
+        );
+        // Nothing labelled: nothing to key by (recreate it).
+        assert_eq!(rules_mac(None, None, false), None);
+        // The label alone never makes a stopped container look recreated.
+        let mac = rules_mac(None, label, false);
+        assert!(!must_recreate(
+            None,
+            &["bridge".into()],
+            Some("02:aa:bb:cc:dd:ee"),
+            mac.as_deref(),
+            true
+        ));
     }
 
     #[test]

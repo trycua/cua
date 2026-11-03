@@ -33,6 +33,8 @@ import type { MachineAccessNotice } from "./contracts/devices";
 import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
+import { GITHUB_WEBKIT_METHODS } from "./ops/github";
+import { CI_WEBKIT_METHODS } from "./ops/ci";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
@@ -53,6 +55,7 @@ export const WEBKIT_METHODS = [
   "session.signOut",
   "onboarding.get",
   "onboarding.complete",
+  "onboarding.reset",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
@@ -62,6 +65,11 @@ export const WEBKIT_METHODS = [
   "spaces.deleteMany",
   "spaces.leave",
   "spaces.rename",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
@@ -82,6 +90,7 @@ export const WEBKIT_METHODS = [
   "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
+  ...GITHUB_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
   ...KEYVAULT_MANAGE_WEBKIT_METHODS,
   // The pages beyond Spaces, the Keyvault and Agents (ops/webkit-pages.ts).
@@ -192,8 +201,14 @@ export const WEBKIT_METHODS = [
   "links.list",
   "links.create",
   "links.stop",
+  "links.approve",
+  "links.deny",
+  "shares.settings.get",
+  "shares.settings.set",
+  "shares.edge.remove",
   "cli.plan",
   "cli.install",
+  ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
 ] as const;
 

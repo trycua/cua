@@ -35,6 +35,7 @@ pub mod named_volumes;
 pub mod persistent;
 mod persistent_tools;
 pub mod presence_datagrams;
+pub mod push_client;
 pub mod replica_runtime;
 pub mod session_journal;
 pub mod stream;
@@ -86,6 +87,7 @@ pub fn register(
     stream::register();
     presence_datagrams::register();
     register_budget_alerts();
+    push_client::register();
     builder
         .extension(Arc::new(DriveExtension::new(drive)))
         .extension(Arc::new(TeleportExtension::new(sessions)))
@@ -195,6 +197,7 @@ impl SpacesExtension for DriveExtension {
             || drive_tools::SERVICE_TOOLS.contains(&tool)
             || persistent_tools::TOOLS.contains(&tool)
             || thread_tools::TOOLS.contains(&tool)
+            || persistent::phone::TOOLS.contains(&tool)
             || tool == cua_spaces::agents::MEMBER_OP
             || named_volumes::OPS.contains(&tool)
             || tool == "agent_start.home"
@@ -214,11 +217,13 @@ impl SpacesExtension for DriveExtension {
                 ..
             } = call;
             if drive_tools::SERVICE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
                 return Box::pin(drive_tools::service_tool(spaces, ctx, tool, args)).await;
             }
             if drive_tools::DRIVE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
+                let mut args = args;
+                drive_tools::name_principal(spaces, &mut args);
                 let feed = spaces.drive_feed();
                 return drive_tools::drive_tool_synced(
                     &self.drive,
@@ -285,6 +290,9 @@ impl SpacesExtension for DriveExtension {
             }
             if thread_tools::TOOLS.contains(&tool) || tool == cua_spaces::agents::MEMBER_OP {
                 return thread_tools::call(spaces, &caller, tool, args).await;
+            }
+            if persistent::phone::TOOLS.contains(&tool) {
+                return persistent::phone::call(spaces, &caller, tool, args).await;
             }
             persistent_tools::call(spaces, &caller, tool, args).await
         })

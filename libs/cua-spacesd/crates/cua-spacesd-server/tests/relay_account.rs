@@ -420,6 +420,8 @@ async fn sharing_with_another_account_and_forged_assertions() {
             teams: Vec::new(),
             space: None,
             space_role: None,
+            dev: None,
+            dcls: None,
         });
     let response = http_client()
         .request(
@@ -533,5 +535,93 @@ async fn rotation_and_removal() {
     );
     let (_, list) = s.api("GET", "/v1/machines", Some(&s.ada()), None).await;
     assert!(list["machines"].as_array().unwrap().is_empty());
+    s.shutdown.cancel();
+}
+
+/// A ticket is minted for the account that asked for it, whatever principal
+/// the request names: a collaborator who is later removed cannot keep access
+/// with a ticket made under an id nobody revokes.
+#[tokio::test]
+async fn a_ticket_minted_under_a_chosen_principal_dies_with_the_share() {
+    let s = setup().await;
+    let (status, _) = s
+        .api(
+            "PATCH",
+            &format!("/v1/machines/{}", s.machine_id),
+            Some(&s.ada()),
+            Some(serde_json::json!({"allow": ["bob@example.com"]})),
+        )
+        .await;
+    assert_eq!(status, http::StatusCode::OK);
+    let bob = s.client(TransportPreference::Native, Some(s.bob())).await;
+    let minted = bob
+        .system()
+        .create_viewer_ticket(CreateViewerTicketRequest {
+            // The default policy is view only; the name is the caller's to
+            // choose only for the root token.
+            principal: Some(Principal {
+                id: "viewer:nobody-ever-revoked".into(),
+                display_name: "Nobody".into(),
+                color: String::new(),
+                kind: PrincipalKind::Human as i32,
+            }),
+            ..Default::default()
+        })
+        .await
+        .expect("an editor mints a ticket")
+        .into_inner();
+    // The ticket carries the minting account, not the chosen name.
+    let body = minted.ticket.split('.').nth(1).unwrap();
+    use base64::Engine as _;
+    let payload: serde_json::Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(body)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["p"], "viewer:bob", "{payload}");
+    let grant: serde_json::Value = serde_json::from_str(payload["r"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        grant["p"],
+        SessionPolicy::ViewOnly as i32,
+        "no policy asked for is view only"
+    );
+    // The viewer sends its ticket in `x-cua-env-authorization`.
+    let ticket = minted.ticket.clone();
+    let url = s.url();
+    let probe = || {
+        let (ticket, url) = (ticket.clone(), url.clone());
+        async move {
+            let r = http_client()
+                .request(
+                    http::Request::post(format!("{url}/cua.env.v1.SystemService/Health"))
+                        .header("content-type", "application/grpc-web")
+                        .header("x-cua-env-authorization", format!("Bearer {ticket}"))
+                        .body(full(vec![0, 0, 0, 0, 0]))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = r.status();
+            let g = r
+                .headers()
+                .get("grpc-status")
+                .map(|v| v.to_str().unwrap().to_owned());
+            // An answered call has its status in the body's trailers; a
+            // refused one is trailers-only, with the status in the headers.
+            status == http::StatusCode::OK && matches!(g.as_deref(), None | Some("0"))
+        }
+    };
+    assert!(probe().await, "the ticket works");
+    // Ada removes Bob: his ticket stops working at once.
+    s.api(
+        "PATCH",
+        &format!("/v1/machines/{}", s.machine_id),
+        Some(&s.ada()),
+        Some(serde_json::json!({"allow": []})),
+    )
+    .await;
+    std::fs::write(&s.policy_file, r#"{"owner":"ada"}"#).unwrap();
+    assert!(!probe().await, "the ticket died with the share");
     s.shutdown.cancel();
 }

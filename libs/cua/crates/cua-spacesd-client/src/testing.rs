@@ -3191,6 +3191,34 @@ impl TunnelService for Svc {
         Err(Status::unimplemented("mock: hotspot"))
     }
 
+    async fn start_exit(
+        &self,
+        _: tonic::Request<pb::StartExitRequest>,
+    ) -> Result<tonic::Response<pb::StartExitResponse>, Status> {
+        Err(Status::unimplemented("mock: exit"))
+    }
+
+    async fn stop_exit(
+        &self,
+        _: tonic::Request<pb::StopExitRequest>,
+    ) -> Result<tonic::Response<pb::StopExitResponse>, Status> {
+        Err(Status::unimplemented("mock: exit"))
+    }
+
+    async fn start_host_ports(
+        &self,
+        _: tonic::Request<pb::StartHostPortsRequest>,
+    ) -> Result<tonic::Response<pb::StartHostPortsResponse>, Status> {
+        Err(Status::unimplemented("mock: host ports"))
+    }
+
+    async fn stop_host_ports(
+        &self,
+        _: tonic::Request<pb::StopHostPortsRequest>,
+    ) -> Result<tonic::Response<pb::StopHostPortsResponse>, Status> {
+        Err(Status::unimplemented("mock: host ports"))
+    }
+
     async fn get_hotspot_status(
         &self,
         _: tonic::Request<pb::GetHotspotStatusRequest>,
@@ -3217,6 +3245,27 @@ impl TunnelService for Svc {
         _: tonic::Request<pb::GetSpawnStatusRequest>,
     ) -> Result<tonic::Response<pb::GetSpawnStatusResponse>, Status> {
         Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn publish_share_slot(
+        &self,
+        _: tonic::Request<pb::PublishShareSlotRequest>,
+    ) -> Result<tonic::Response<pb::PublishShareSlotResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
+    }
+
+    async fn unpublish_share_slot(
+        &self,
+        _: tonic::Request<pb::UnpublishShareSlotRequest>,
+    ) -> Result<tonic::Response<pb::UnpublishShareSlotResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
+    }
+
+    async fn list_share_slots(
+        &self,
+        _: tonic::Request<pb::ListShareSlotsRequest>,
+    ) -> Result<tonic::Response<pb::ListShareSlotsResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
     }
 }
 

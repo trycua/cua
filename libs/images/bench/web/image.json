@@ -197,6 +197,8 @@
     "features_optional": [
       "hotspot",
       "spawn",
+      "exit",
+      "host_ports",
       "process.services",
       "relay_attach",
       "h264_hw",

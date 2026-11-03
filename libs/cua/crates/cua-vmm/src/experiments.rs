@@ -24,17 +24,40 @@ pub enum Gate {
     /// Child Spaces: a Space makes Spaces of its own through a channel only
     /// it can reach, inside a budget for its tree (`cua spaces children`).
     ChildSpaces,
+    /// Ask first: what an agent does that leaves its Space (a push to
+    /// GitHub) waits for a card only its owner can answer.
+    AskFirst,
+    /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`).
+    CiRunners,
+    /// Public TCP shares: a raw TCP service in a Space (a game server) at a
+    /// public address (`cua share --tcp`).
+    TcpShares,
+    /// Mobile: the Cua Spaces phone app. The daemon answers a phone's tools
+    /// (starting a task, tool rows, changes and diffs, approval scopes) and
+    /// reports events for its push alerts.
+    Mobile,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
-    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces, Gate::ChildSpaces];
+    pub const ALL: &'static [Gate] = &[
+        Gate::SecureSpaces,
+        Gate::ChildSpaces,
+        Gate::AskFirst,
+        Gate::CiRunners,
+        Gate::TcpShares,
+        Gate::Mobile,
+    ];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "secure-spaces",
             Gate::ChildSpaces => "child-spaces",
+            Gate::AskFirst => "ask-first",
+            Gate::CiRunners => "ci-runners",
+            Gate::TcpShares => "tcp-shares",
+            Gate::Mobile => "mobile",
         }
     }
 
@@ -43,6 +66,10 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "secure_spaces",
             Gate::ChildSpaces => "child_spaces",
+            Gate::AskFirst => "ask_first",
+            Gate::CiRunners => "ci_runners",
+            Gate::TcpShares => "tcp_shares",
+            Gate::Mobile => "mobile",
         }
     }
 
@@ -57,6 +84,10 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "Secure Spaces",
             Gate::ChildSpaces => "Child Spaces",
+            Gate::AskFirst => "Ask first",
+            Gate::CiRunners => "CI runners",
+            Gate::TcpShares => "Public TCP shares",
+            Gate::Mobile => "Phone app",
         }
     }
 
@@ -68,6 +99,18 @@ impl Gate {
             }
             Gate::ChildSpaces => {
                 "A Space can make Spaces of its own, inside a budget, and keep a command running."
+            }
+            Gate::AskFirst => {
+                "An agent asks you on a card before anything leaves its Space, such as a push to GitHub, and the host does it only after your answer."
+            }
+            Gate::CiRunners => {
+                "Run GitHub Actions jobs in a fresh Space each, on your computers, with `cua ci`."
+            }
+            Gate::TcpShares => {
+                "Share a raw TCP service in a Space, such as a game server, at a public address."
+            }
+            Gate::Mobile => {
+                "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
             }
         }
     }
@@ -207,5 +250,7 @@ mod tests {
         assert_eq!(super::env_says(Some("-secure_spaces"), g), Some(false));
         assert_eq!(Gate::parse("SECURE_SPACES"), Some(g));
         assert_eq!(Gate::parse("nope"), None);
+        assert_eq!(Gate::parse("Mobile"), Some(Gate::Mobile));
+        assert_eq!(Gate::Mobile.id(), "mobile");
     }
 }

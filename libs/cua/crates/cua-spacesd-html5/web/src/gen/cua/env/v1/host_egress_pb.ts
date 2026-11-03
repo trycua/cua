@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/host_egress.proto.
  */
 export const file_cua_env_v1_host_egress: GenFile = /*@__PURE__*/
-  fileDesc("ChxjdWEvZW52L3YxL2hvc3RfZWdyZXNzLnByb3RvEgpjdWEuZW52LnYxIi8KEEhvc3RFZ3Jlc3NQb2xpY3kSDQoFYWxsb3cYASADKAkSDAoEZGVueRgCIAMoCSJYChlTZXRIb3N0U3BhY2VFZ3Jlc3NSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEiwKBmVncmVzcxgCIAEoCzIcLmN1YS5lbnYudjEuSG9zdEVncmVzc1BvbGljeSIuChpTZXRIb3N0U3BhY2VFZ3Jlc3NSZXNwb25zZRIQCghlbmZvcmNlZBgBIAEoCSKhAQoTSG9zdE5ldHdvcmtTZXR0aW5ncxIOCgZwcmVzZXQYASABKAkSFwoPbG9jYWxob3N0X3BvcnRzGAIgAygNEhsKE2FsbF9sb2NhbGhvc3RfcG9ydHMYAyABKAgSDQoFYWxsb3cYBCADKAkSDAoEZGVueRgFIAMoCRITCgtjdXN0b21fYmFzZRgGIAEoCRISCgp3aWRlbmVkX2J5GAcgASgJYgZwcm90bzM");
+  fileDesc("ChxjdWEvZW52L3YxL2hvc3RfZWdyZXNzLnByb3RvEgpjdWEuZW52LnYxIi8KEEhvc3RFZ3Jlc3NQb2xpY3kSDQoFYWxsb3cYASADKAkSDAoEZGVueRgCIAMoCSJYChlTZXRIb3N0U3BhY2VFZ3Jlc3NSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEiwKBmVncmVzcxgCIAEoCzIcLmN1YS5lbnYudjEuSG9zdEVncmVzc1BvbGljeSIuChpTZXRIb3N0U3BhY2VFZ3Jlc3NSZXNwb25zZRIQCghlbmZvcmNlZBgBIAEoCSKuAQoTSG9zdE5ldHdvcmtTZXR0aW5ncxIOCgZwcmVzZXQYASABKAkSFwoPbG9jYWxob3N0X3BvcnRzGAIgAygNEhsKE2FsbF9sb2NhbGhvc3RfcG9ydHMYAyABKAgSDQoFYWxsb3cYBCADKAkSDAoEZGVueRgFIAMoCRITCgtjdXN0b21fYmFzZRgGIAEoCRISCgp3aWRlbmVkX2J5GAcgASgJEgsKA3ZpYRgIIAEoCWIGcHJvdG8z");
 
 /**
  * Which destinations a Space may open connections to: every `deny` entry
@@ -152,6 +152,13 @@ export type HostNetworkSettings = Message<"cua.env.v1.HostNetworkSettings"> & {
    * @generated from field: string widened_by = 7;
    */
   widenedBy: string;
+
+  /**
+   * Where its internet traffic leaves (see the daemon's NetworkSettings.via).
+   *
+   * @generated from field: string via = 8;
+   */
+  via: string;
 };
 
 /**

@@ -345,6 +345,7 @@ Request for `HostSpacesService.CreateHostSpace`.
 | `routed` | 13 | `bool` | Reached through this host's channel (no relay machine of its own). |
 | `env` | 15 | map of `string` to `string` | Guest environment; the host's driver settings win on a clash. |
 | `gpu` | 16 | `string` | A GPU option of the host's runtime; empty: none. |
+| `tree` | 21 | `string` | The tree this Space joins on the host, when the caller made it a child of a Space on its own machine: the tree's id, qualified with the id of the machine it started on (`<machine>/local:<name>`). The host keeps the Space in that tree, so the tree's members on both machines reach each other. Empty: a tree of its own. |
 
 ### CreateHostSpaceResponse
 

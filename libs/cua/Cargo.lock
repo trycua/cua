@@ -2414,6 +2414,7 @@ dependencies = [
  "cua-host",
  "cua-proto",
  "cua-sandbox-core",
+ "cua-share",
  "cua-spaces",
  "cua-spacesd-client",
  "cua-vmm",
@@ -2459,6 +2460,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-ci"
+version = "0.10.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "cua-home",
+ "cua-sdk",
+ "cua-vmm",
+ "hex",
+ "humantime",
+ "libc",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "ring",
+ "security-framework 3.7.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "cua-cli"
 version = "0.10.1"
 dependencies = [
@@ -2472,6 +2502,7 @@ dependencies = [
  "cua-agents",
  "cua-auth",
  "cua-byoc",
+ "cua-ci",
  "cua-cluster",
  "cua-compat",
  "cua-contrib",
@@ -2991,6 +3022,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-push"
+version = "0.10.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cua-replica-lab"
 version = "0.10.1"
 dependencies = [
@@ -3131,6 +3183,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tracing",
  "url",
@@ -3230,7 +3283,9 @@ dependencies = [
  "cua-connections",
  "cua-create-failure",
  "cua-home",
+ "cua-host",
  "cua-keyvault",
+ "cua-sandbox-core",
  "cua-telemetry",
  "serde",
  "serde_json",
@@ -3347,10 +3402,12 @@ dependencies = [
  "cua-media-transport",
  "cua-mesh",
  "cua-proto",
+ "cua-push",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
  "cua-spaces-contract",
+ "cua-spaces-ext",
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-teleport",

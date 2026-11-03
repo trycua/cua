@@ -15,6 +15,9 @@ does with them, and shows how Cua checks them.
   tree. It does not reach this computer, your local network, cloud metadata
   or the Spaces of other trees. The host enforces it, outside the guest, so
   nothing inside the Space (root included) can change it.
+  What it refuses is in `cua network log` with the destination (or the rule's
+  network, for a container) and when, and a destination it allows is never
+  logged as blocked.
 - **Names resolve.** Lookups work in the guest for IPv4 and IPv6.
 - **The guest can download.** The coding app's package (about 100 MB)
   downloads inside the Space under the default network.
@@ -43,10 +46,10 @@ without the promise, is a bug.
 | `engine-gvisor` | linux | enforced on linux | yes | yes | no |
 | `engine-runc` | linux | enforced on linux | yes | yes | no |
 | `firecracker-microvm` | linux | enforced on linux | yes | yes | yes |
-| `vz-microvm` | linux | refused on macos | yes | yes | no |
+| `vz-microvm` | linux | enforced on macos | yes | yes | no |
 | `containerization-microvm` | linux | refused on macos | no | no | no |
-| `qemu-vm` | linux | enforced on linux, refused on macos, refused on windows | yes | yes | no |
-| `lume-macos-vm` | macos | refused on macos | no | no | no |
+| `qemu-vm` | linux | enforced on linux, enforced on macos, enforced on windows | yes | yes | no |
+| `lume-macos-vm` | macos | enforced on macos | no | no | no |
 
 Pause, checkpoint and fork are what the runtime can do with a running Space.
 Where a runtime cannot, asking for one is refused with a reason. The built-in
@@ -103,6 +106,11 @@ Cua home and its own daemon, deletes what it makes, and writes a matrix:
 ```bash skip="no-runner"
 CUA=/path/to/cua libs/cua/scripts/conformance/run.py --entry vz-microvm --out results/
 ```
+
+The children case needs the `cua` CLI in the guest. When the Space under
+test does not ship it, the run makes a home Space from the `agent-home` image
+(the slim Linux image plus the CLI) on the same runtime and runs the case
+there; `--home-image` and `--entry-home-image ID=IMAGE` name another build.
 
 The roster and what each entry must do is `libs/cua/scripts/conformance/entries.json`,
 generated from the registry.

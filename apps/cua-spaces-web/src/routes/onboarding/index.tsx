@@ -262,7 +262,7 @@ const HEADLINE_APPS = [
 ];
 
 /**
- * "An agent on another machine": the other choice beside the coding apps found here. It opens the
+ * "An agent on another computer": the other choice beside the coding apps found here. It opens the
  * join sheet for this machine's own Space: one line to paste into whichever agent runs elsewhere.
  * Not offered before the machine has a Space to join.
  */
@@ -274,7 +274,7 @@ function OtherMachineRow() {
   return (
     <div className="flex min-h-12 items-center gap-3 py-2" data-first-run-other-machine="">
       <div className="min-w-0 flex-1">
-        <div className="text-[14px]">An agent on another machine</div>
+        <div className="text-[14px]">An agent on another computer</div>
         <div className="text-[13px] text-muted-foreground">Copy one line to paste into it.</div>
       </div>
       <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => setOpen(true)} data-first-run-other-machine-open="">

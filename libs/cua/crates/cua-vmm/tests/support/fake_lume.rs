@@ -145,6 +145,7 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
             st.vms.insert(new, vm);
             (200, json!({ "message": "cloned" }))
         }
+        ("GET", "/lume/vms") => (200, Value::Array(st.vms.values().cloned().collect())),
         ("GET", _) => match st.vms.get_mut(name) {
             Some(vm) => {
                 let seen = vm.clone();

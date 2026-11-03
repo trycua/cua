@@ -308,6 +308,9 @@ class BaseVirtualizationService: VMVirtualizationService {
                     "localizedName": bridgeInterface.localizedDisplayName ?? "unknown",
                 ])
             network.attachment = VZBridgedNetworkDeviceAttachment(interface: bridgeInterface)
+        case .gateway(let socket):
+            Logger.info("Using gateway networking", metadata: ["socket": socket])
+            network.attachment = try GatewayNetwork.attachment(socket: socket)
         }
 
         network.macAddress = vzMacAddress

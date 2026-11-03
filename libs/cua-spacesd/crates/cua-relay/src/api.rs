@@ -186,6 +186,17 @@ impl Caller {
         }
     }
 
+    /// A phone must have signed in just now to do this (see
+    /// [`crate::device_api::phone_needs_recent_sign_in`]).
+    pub(crate) fn phone_needs_recent_sign_in(&self, relay: &Relay) -> Result<(), Response> {
+        match self {
+            Caller::Account(who, Ok(g)) => {
+                crate::device_api::phone_needs_recent_sign_in(relay, who, g.device())
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The acting device (enrolled account device) or `machine`.
     pub(crate) fn actor(&self) -> Option<String> {
         match self {
@@ -503,6 +514,7 @@ async fn register(
             .ok()
             .and_then(|g| g.device().map(str::to_owned)),
     };
+    let is_new = existing.is_none();
     let old_allow = existing.map(|r| r.allow).unwrap_or_default();
     // A brand-new machine still needs only the account token (hosting never
     // enrolls the host as a client), but one that arrives with neither an
@@ -518,6 +530,23 @@ async fn register(
         Ok(crate::device_api::Gate::Device(_)) | Ok(crate::device_api::Gate::Off)
     ) || who.mfa
         || pairing.as_ref().is_some_and(|p| p.proven);
+    // With phone support on, a new computer is added from an enrolled device
+    // or with a pairing code, never by a token alone (a stolen token could
+    // otherwise plant a computer that looks like the owner's), and a phone
+    // adds none.
+    if relay.config.push.is_some() {
+        if let Ok(crate::device_api::Gate::Device(d)) = &device {
+            if relay.devices.is_phone(d) {
+                return error(StatusCode::FORBIDDEN, "a phone does not host computers");
+            }
+        }
+        if is_new && !proven {
+            return error(
+                StatusCode::FORBIDDEN,
+                "add computers from a computer you already added, or with a pairing code",
+            );
+        }
+    }
     let meta = body.meta.clone();
     // Metadata is checked before anything is registered.
     if let Some(meta) = meta.clone() {
@@ -805,9 +834,19 @@ fn locked_view(relay: &Relay, record: &MachineRecord, role: Role) -> MachineView
         allow: Vec::new(),
         viewers: Vec::new(),
         clients: Vec::new(),
-        host: record.host.clone(),
+        // With phone support on, a token with no enrolled device learns names, not
+        // which Space belongs to which computer or what a computer reports.
+        host: if relay.config.push.is_some() {
+            None
+        } else {
+            record.host.clone()
+        },
         confirmed: record.confirmed,
-        meta: record.meta.clone(),
+        meta: if relay.config.push.is_some() {
+            Default::default()
+        } else {
+            record.meta.clone()
+        },
         team: None,
     }
 }
@@ -866,6 +905,9 @@ async fn patch_one(
     if let Err(r) = caller.require_device() {
         return r;
     }
+    if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
+        return r;
+    }
     let (before, role) = match authorize(&caller, &relay, &id) {
         Ok(v) => v,
         Err(r) => return r,
@@ -914,6 +956,9 @@ async fn delete_one(
     if let Err(r) = caller.require_device() {
         return r;
     }
+    if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
+        return r;
+    }
     let (_, role) = match authorize(&caller, &relay, &id) {
         Ok(v) => v,
         Err(r) => return r,
@@ -944,6 +989,9 @@ async fn set_sharing(relay: Relay, id: String, headers: HeaderMap, sharing: bool
         Err(r) => return r,
     };
     if let Err(r) = caller.require_device() {
+        return r;
+    }
+    if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
         return r;
     }
     let (before, role) = match authorize(&caller, &relay, &id) {
@@ -1000,6 +1048,9 @@ async fn confirm(
         );
     }
     if let Err(r) = caller.require_device() {
+        return r;
+    }
+    if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
         return r;
     }
     let (before, role) = match authorize(&caller, &relay, &id) {
@@ -1067,6 +1118,9 @@ async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: Head
     };
     let caller = Caller::Account(who.clone(), gate);
     if let Err(r) = caller.require_device() {
+        return r;
+    }
+    if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
         return r;
     }
     let (record, role) = match authorize(&caller, &relay, &id) {

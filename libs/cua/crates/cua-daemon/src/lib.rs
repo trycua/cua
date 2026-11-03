@@ -37,6 +37,7 @@ pub mod doctor;
 /// Spaces).
 #[cfg(feature = "spaces")]
 pub mod extension;
+pub mod fd_guard;
 #[cfg(feature = "test-fixtures")]
 pub mod fixtures;
 pub mod guard;
@@ -58,7 +59,12 @@ mod runtime;
 pub mod server;
 pub mod share_types;
 pub mod shares;
-pub use share_types::{ShareAccess, ShareCheck, ShareInfo, ShareTarget};
+/// Routes of public TCP shares and the share settings (from `cua-share`).
+pub use cua_share::route as share_route;
+pub use share_types::{
+    ShareAccess, ShareCheck, ShareInfo, ShareSettingsInfo, ShareTarget, ShareTcp, ShareWaiting,
+    TcpShareOptions,
+};
 #[cfg(feature = "spaces")]
 pub mod share_hub;
 #[cfg(feature = "spaces")]

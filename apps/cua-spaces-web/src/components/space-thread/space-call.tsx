@@ -10,6 +10,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { isMacPlatform } from "@/lib/utils";
 
 import { harnessName, queuedNote, summonPlan, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
+import { useNetworkSheetFor } from "@/components/network/use-network";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toast";
 
@@ -52,6 +53,7 @@ export function SpaceCall({
   thread,
   identity,
   facts,
+  detailsExtra,
   more,
   windows,
   desktop,
@@ -88,6 +90,8 @@ export function SpaceCall({
   thread: SpaceThread;
   identity: string | null;
   facts: readonly SpaceFact[];
+  /** Rows after the facts, before More (the Network row). */
+  detailsExtra?: ReactNode;
   /** The classic page's sections (resources, all facts, Teleport, windows, runs). */
   more: ReactNode;
   /** The Space's windows (Stream rows without the desktop). */
@@ -113,6 +117,11 @@ export function SpaceCall({
   const { core, data } = useBridge();
   const [folded, setFolded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // One dialog at a time: the Network sheet replaces the details it was opened from.
+  const networkOpen = useNetworkSheetFor() !== null;
+  useEffect(() => {
+    if (networkOpen) setMoreOpen(false);
+  }, [networkOpen]);
   const [addOpen, setAddOpen] = useState(false);
   const roster = useMemo(
     () => buildRoster({ members: thread.members, shares: thread.shares, entries: thread.entries, me: thread.me, identity, role: thread.role, owner, harnessName: (h) => harnessName(core, h) }),
@@ -356,6 +365,7 @@ export function SpaceCall({
           roster={roster}
           presence={presence}
           facts={panelFacts(facts)}
+          extra={detailsExtra}
           onMore={() => setMoreOpen(true)}
           windows={windows}
           desktop={desktop}

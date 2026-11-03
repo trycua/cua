@@ -274,6 +274,12 @@ message CreateHostSpaceRequest {
   map<string, string> env = 15;
   // A GPU option of the host's runtime; empty: none.
   string gpu = 16;
+  // The tree this Space joins on the host, when the caller made it a child
+  // of a Space on its own machine: the tree's id, qualified with the id of
+  // the machine it started on (`<machine>/local:<name>`). The host keeps the
+  // Space in that tree, so the tree's members on both machines reach each
+  // other. Empty: a tree of its own.
+  string tree = 21;
 }
 
 // Response for `HostSpacesService.CreateHostSpace`.

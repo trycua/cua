@@ -677,6 +677,8 @@ fn mint(ctx: &Ctx, grant: &Grant) -> String {
         teams: Vec::new(),
         space: None,
         space_role: None,
+        dev: None,
+        dcls: None,
     })
 }
 

@@ -84,6 +84,17 @@ impl Scoped {
         self.shared.runtime.spaces()
     }
 
+    /// One line of the hash-chained audit log of what Spaces ask of their
+    /// children API (`<home>/children-audit.jsonl`): who, what, which Space.
+    /// A log that cannot be written never blocks the request.
+    fn audit(&self, action: &str, target: &str, detail: &str) {
+        let log =
+            cua_spaces::audit::AuditLog::new(self.spaces().home_dir().join("children-audit.jsonl"));
+        if let Err(e) = log.append(&format!("space:{}", self.space), action, target, detail) {
+            tracing::warn!(error = %e, "could not write the children audit log");
+        }
+    }
+
     /// Parent links of every registered Space.
     pub(crate) fn links(&self) -> tree::Links {
         links_of(self.spaces())
@@ -363,7 +374,10 @@ impl Scoped {
             }
             let _ = self.spaces().set_children(&victim, false);
             match r {
-                Ok(m) => last = m.into_inner().message,
+                Ok(m) => {
+                    self.audit("delete", &victim, "");
+                    last = m.into_inner().message
+                }
                 Err(s) if s.code() == tonic::Code::NotFound => {}
                 Err(s) => return Err(s),
             }
@@ -594,9 +608,13 @@ impl SpaceService for Scoped {
         let claims = claims(&req)?;
         let child = self.child_request(&claims, req.into_inner())?;
         let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
-        let _held = super::admit(&self.shared, &claims.root, ask)?;
+        let name = child.name.clone();
+        let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
+            self.audit("refuse", &name, e.message());
+        })?;
         let resp = self.owner().create_space(Request::new(child)).await?;
         if let Some(s) = &resp.get_ref().space {
+            self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
             super::record_cost(&self.shared, &claims.root, &s.id, ask);
         }
@@ -744,6 +762,7 @@ impl SpaceService for Scoped {
                 usd_per_hour: 0.0,
             },
         )?;
+        let name_of_fork = name.clone();
         let resp = self
             .owner()
             .fork_space(Request::new(pb::ForkSpaceRequest { source, name }))
@@ -761,6 +780,7 @@ impl SpaceService for Scoped {
                 m.labels.remove(LABEL_ROOT);
                 m.labels.remove(LABEL_DEPTH);
             });
+            self.audit("fork", &s.id, &name_of_fork);
             self.adopt(&claims, &s.id);
         }
         Ok(resp)
@@ -839,7 +859,7 @@ impl SpaceService for Scoped {
         &self,
         _: Request<pb::GetSpaceNetworkRequest>,
     ) -> R<pb::GetSpaceNetworkResponse> {
-        // Network settings are the owner's, never an agent's.
+        // Network, clipboard and Volume settings are the owner's, never an agent's.
         deny()
     }
 
@@ -847,7 +867,31 @@ impl SpaceService for Scoped {
         &self,
         _: Request<pb::SetSpaceNetworkRequest>,
     ) -> R<pb::SetSpaceNetworkResponse> {
-        // Network settings are the owner's, never an agent's.
+        // Network, clipboard and Volume settings are the owner's, never an agent's.
+        deny()
+    }
+
+    async fn get_space_network_log(
+        &self,
+        _: Request<pb::GetSpaceNetworkLogRequest>,
+    ) -> R<pb::GetSpaceNetworkLogResponse> {
+        // Network, clipboard and Volume settings are the owner's, never an agent's.
+        deny()
+    }
+
+    async fn set_space_clipboard(
+        &self,
+        _: Request<pb::SetSpaceClipboardRequest>,
+    ) -> R<pb::SetSpaceClipboardResponse> {
+        // Network, clipboard and Volume settings are the owner's, never an agent's.
+        deny()
+    }
+
+    async fn set_space_volume(
+        &self,
+        _: Request<pb::SetSpaceVolumeRequest>,
+    ) -> R<pb::SetSpaceVolumeResponse> {
+        // Network, clipboard and Volume settings are the owner's, never an agent's.
         deny()
     }
 
@@ -1027,5 +1071,118 @@ impl DaemonService for Scoped {
 
     async fn shutdown(&self, _: Request<pb::ShutdownRequest>) -> R<pb::ShutdownResponse> {
         deny()
+    }
+}
+
+/// Shares on the spawn channel: an agent in a Space shares a raw TCP
+/// service of its own Space (or a child it made) at a public address
+/// (public TCP shares, an experiment). Nothing else: no HTTP links, no
+/// ports of this computer, no files, and only its own shares are listed or
+/// stopped.
+#[tonic::async_trait]
+impl cua_proto::daemon::v1::share_service_server::ShareService for Scoped {
+    async fn create_share(
+        &self,
+        req: Request<pb::CreateShareRequest>,
+    ) -> R<pb::CreateShareResponse> {
+        let mut r = req.into_inner();
+        if !r.tcp {
+            return Err(refused(
+                "share a TCP port of itself or its children publicly (tcp)",
+            ));
+        }
+        // Only the owner agrees to a share edge's cost.
+        r.consent = false;
+        let target = r.target.get_or_insert_with(Default::default);
+        if target.kind == pb::ShareTargetKind::Unspecified as i32
+            || target.kind == pb::ShareTargetKind::Port as i32
+        {
+            // "Port 25565" from inside a Space means this Space's port.
+            target.kind = pb::ShareTargetKind::SpacePort as i32;
+        }
+        if target.kind != pb::ShareTargetKind::SpacePort as i32 {
+            return Err(refused("share a TCP port of itself or its children"));
+        }
+        if target.space.is_empty() {
+            target.space = self.space.clone();
+        }
+        let svc = self.owner();
+        let rt = svc.rt();
+        let create = crate::share_svc::real::create_from_pb(r, Some(self.space.clone()))
+            .map_err(crate::server::st)?;
+        let hub = crate::share_svc::real::hub(rt).map_err(crate::server::st)?;
+        let share = hub.create(rt, create).await.map_err(crate::server::st)?;
+        Ok(Response::new(pb::CreateShareResponse {
+            share: Some(crate::share_svc::real::share_to_pb(&share)),
+        }))
+    }
+
+    async fn list_shares(&self, _: Request<pb::ListSharesRequest>) -> R<pb::ListSharesResponse> {
+        let svc = self.owner();
+        let hub = crate::share_svc::real::hub(svc.rt()).map_err(crate::server::st)?;
+        Ok(Response::new(pb::ListSharesResponse {
+            shares: hub
+                .list_from(&self.space)
+                .iter()
+                .map(crate::share_svc::real::share_to_pb)
+                .collect(),
+        }))
+    }
+
+    async fn stop_share(&self, req: Request<pb::StopShareRequest>) -> R<pb::StopShareResponse> {
+        let r = req.into_inner();
+        let svc = self.owner();
+        let rt = svc.rt();
+        let hub = crate::share_svc::real::hub(rt).map_err(crate::server::st)?;
+        let gone = hub
+            .stop_from(
+                rt,
+                &self.space,
+                (!r.id.is_empty()).then_some(r.id.as_str()),
+                r.all,
+            )
+            .map_err(crate::server::st)?;
+        Ok(Response::new(pb::StopShareResponse {
+            stopped: gone.into_iter().map(|s| s.handle).collect(),
+        }))
+    }
+
+    async fn check_share(&self, _: Request<pb::CheckShareRequest>) -> R<pb::CheckShareResponse> {
+        Err(refused(
+            "share a TCP port of itself or its children publicly",
+        ))
+    }
+
+    // The owner's decisions and settings: never from inside a Space.
+    async fn approve_share(
+        &self,
+        _: Request<pb::ApproveShareRequest>,
+    ) -> R<pb::ApproveShareResponse> {
+        Err(refused("ask the owner: only they approve public shares"))
+    }
+
+    async fn deny_share(&self, _: Request<pb::DenyShareRequest>) -> R<pb::DenyShareResponse> {
+        Err(refused("ask the owner: only they decide on public shares"))
+    }
+
+    async fn get_share_settings(
+        &self,
+        _: Request<pb::GetShareSettingsRequest>,
+    ) -> R<pb::GetShareSettingsResponse> {
+        Err(refused("share settings are the owner's"))
+    }
+
+    async fn set_share_settings(
+        &self,
+        _: Request<pb::SetShareSettingsRequest>,
+    ) -> R<pb::SetShareSettingsResponse> {
+        Err(refused("share settings are the owner's"))
+    }
+
+    async fn remove_share_edge(
+        &self,
+        _: Request<pb::RemoveShareEdgeRequest>,
+    ) -> R<pb::RemoveShareEdgeResponse> {
+        Err(refused("share settings are the owner's"))
     }
 }

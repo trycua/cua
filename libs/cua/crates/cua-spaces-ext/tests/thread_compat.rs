@@ -361,7 +361,15 @@ async fn the_run_tools_take_a_member_name() {
     .unwrap();
     assert_eq!(
         keys(&m),
-        ["delivered", "phase", "reason", "run_id", "status"]
+        [
+            "delivered",
+            "entry_seq",
+            "mode",
+            "phase",
+            "reason",
+            "run_id",
+            "status"
+        ]
     );
     assert_eq!(inbox(&fx), ["and the tests"]);
     // Both, or neither, is refused.

@@ -346,25 +346,12 @@ async fn dispatch(
             let a: i::SpaceOnly = args(tool, a)?;
             Ok(ToolOutcome::json(&spaces.network_info(&a.space).await?))
         }
-        "network_set" => {
-            let a: i::NetworkSet = args(tool, a)?;
-            let s = crate::network::parse_network(
-                &a.network,
-                a.allow.as_deref().unwrap_or_default(),
-                a.deny.as_deref().unwrap_or_default(),
-            )?;
-            let current = spaces.network_info(&a.space).await?.settings;
-            crate::network::refuse_widening_by_agent(&s, Some(&current))?;
-            let tree = a.tree.unwrap_or(false);
-            let applied = spaces.set_network(&a.space, &s, false, tree).await?;
-            Ok(ToolOutcome::json(&json!({
-                "applied": match applied {
-                    crate::network::Applied::Now => "now",
-                    crate::network::Applied::NextStart => "next_start",
-                },
-                "network": spaces.network_info(&a.space).await?,
-            })))
+        "network_log" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_events(&a.space).await?))
         }
+        // Boxed: its locals stay out of this function's frame.
+        "network_set" => Box::pin(network_set(spaces, tool, a)).await,
         "stop_space" => {
             let a: i::StopSpace = args(tool, a)?;
             if a.suspend.unwrap_or(false) {
@@ -948,21 +935,7 @@ async fn dispatch(
         }
         // --- hotspot ----------------------------------------------------------
         #[cfg(feature = "spaces-hotspot")]
-        "hotspot_start" => {
-            let a: i::HotspotStart = args(tool, a)?;
-            space_for(spaces, tool, &a.space).await?;
-            let status = spaces
-                .hotspot_start(
-                    &a.space,
-                    crate::hotspot::HotspotOptions {
-                        set_system_proxy: a.set_system_proxy.unwrap_or(true),
-                        bypass: a.bypass.unwrap_or_default(),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(ToolOutcome::json(&status))
-        }
+        "hotspot_start" => Box::pin(hotspot_start(spaces, tool, a)).await,
         #[cfg(feature = "spaces-hotspot")]
         "hotspot_stop" => {
             let a: i::HotspotTarget = args(tool, a)?;
@@ -1030,8 +1003,73 @@ async fn dispatch(
 /// `phase`, and for a host added by its direct address or a Space on a
 /// host, `via`: `direct` (its Tailscale or LAN address, no relay) or
 /// `relay`.
+async fn network_set(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::NetworkSet = args(tool, a)?;
+    let current = spaces.network_info(&a.space).await?.settings;
+    let mut s = crate::network::parse_network(
+        &a.network,
+        a.allow.as_deref().unwrap_or_default(),
+        a.deny.as_deref().unwrap_or_default(),
+    )?;
+    // The exit: as asked, else the one it has.
+    s = match a.via.as_deref() {
+        Some(word) => crate::network::with_via(s, word)?,
+        None => crate::network::with_via(
+            s,
+            &current
+                .via
+                .as_ref()
+                .map(|v| v.as_word())
+                .unwrap_or_default(),
+        )?,
+    };
+    crate::network::refuse_widening_by_agent(&s, Some(&current))?;
+    crate::network::refuse_exit_by_agent(&s, Some(&current))?;
+    let tree = a.tree.unwrap_or(false);
+    let applied = spaces.set_network(&a.space, &s, false, tree).await?;
+    Ok(ToolOutcome::json(&json!({
+        "applied": match applied {
+            crate::network::Applied::Now => "now",
+            crate::network::Applied::NextStart => "next_start",
+        },
+        "network": spaces.network_info(&a.space).await?,
+    })))
+}
+
+#[cfg(feature = "spaces-hotspot")]
+async fn hotspot_start(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::HotspotStart = args(tool, a)?;
+    space_for(spaces, tool, &a.space).await?;
+    crate::hotspot::require_confirmed(a.confirm)?;
+    let secure = cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure;
+    // Under Secure Spaces, "this computer" is the exit for this run:
+    // the Space's own rules apply first (the internet only unless
+    // they allow more). Without the experiment it is as it was.
+    let dialer = if secure {
+        let rules = match spaces.network_info(&a.space).await {
+            Ok(info) => crate::exit::ExitPolicy::of(&info.settings)?,
+            Err(_) => crate::exit::ExitPolicy::default_internet(),
+        };
+        crate::exit::this_machine(std::sync::Arc::new(rules))
+    } else {
+        crate::hotspot::direct_dialer()
+    };
+    let status = spaces
+        .hotspot_start(
+            &a.space,
+            crate::hotspot::HotspotOptions {
+                set_system_proxy: a.set_system_proxy.unwrap_or(!secure),
+                bypass: a.bypass.unwrap_or_default(),
+                dialer,
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(ToolOutcome::json(&status))
+}
+
 fn row_extra(info: &crate::SpaceInfo, direct_hosts: &[String], phase: &str) -> Value {
-    let mut extra = json!({ "phase": phase });
+    let mut extra = json!({ "phase": phase, "clipboard": info.clipboard.as_str() });
     let via = if direct_hosts.contains(&info.id) || info.host.starts_with("direct:") {
         Some("direct")
     } else if !info.host.is_empty() {
@@ -1258,9 +1296,13 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             if a.force.unwrap_or(false) {
                 agents.interrupt(&a.run_id).await?;
             }
+            let steered = a.force.unwrap_or(false);
             let st = agents.send(&a.run_id, &a.text, vec![]).await?;
             Ok(ToolOutcome::json(&json!({
                 "delivered": true, "run_id": a.run_id, "status": st.status, "phase": st.phase,
+                // `queued` behind the running turn, `steered` (the running turn
+                // was interrupted first) or `started` (a turn of its own).
+                "mode": if steered { "steered" } else if st.phase == "working" { "queued" } else { "started" },
                 "reason": if st.phase == "working" { "queued after the running turn" } else { "a new turn in the same session" },
             })))
         }

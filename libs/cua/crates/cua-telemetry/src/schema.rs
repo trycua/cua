@@ -660,6 +660,10 @@ pub const EXPERIMENTS: &[&str] = &[
     "sharing",
     "secure_spaces",
     "child_spaces",
+    "ask_first",
+    "ci_runners",
+    "tcp_shares",
+    "mobile",
 ];
 /// The Spaces app's interface language, as a fixed set: the languages it
 /// ships or plans to; any other language reads `other`. No region, no text.
@@ -1753,7 +1757,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiments_on",
                 Kind::Set(EXPERIMENTS),
-                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, joined with +), or none.",
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, joined with +), or none.",
             ),
             p(
                 "ui_locale",
@@ -2183,7 +2187,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiment",
                 Kind::Enum(EXPERIMENTS),
-                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces or child_spaces.",
+                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares or mobile.",
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",

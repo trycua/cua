@@ -120,6 +120,11 @@ pub struct SpaceCreate {
     /// Create it as a child of this Space (id or name): its network is no
     /// more open than its parent's, and it joins the parent's tree.
     pub parent: Option<String>,
+    /// The tree of another computer this Space joins ([`crate::overlay`]):
+    /// set by a computer that creates a child on one of your other computers,
+    /// so the new Space is a member of the same tree there. The id is
+    /// qualified with the computer the tree started on.
+    pub tree: Option<String>,
     /// With `parent`: let its network be more open than its parent's
     /// (recorded on the Space as who widened it and when).
     pub widen: bool,
@@ -380,6 +385,16 @@ impl SpacesBuilder {
                 mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
+                #[cfg(feature = "spaces-hotspot")]
+                exits: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                host_ports: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                tree_hubs: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                overlay: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                topologies: Default::default(),
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
                 resources: crate::resources::Hub::new(),
@@ -471,6 +486,8 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         egress_enforced: None,
         network: None,
         tree: None,
+        clipboard: Default::default(),
+        volume_setting: Default::default(),
         sharing: None,
     }
 }
@@ -597,6 +614,21 @@ pub(crate) struct Inner {
     pub(crate) mesh: crate::mesh::MeshClients,
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
+    /// The exits of running Spaces ([`crate::exit`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) exits: crate::exit::ExitTable,
+    /// Host ports published in running Spaces ([`crate::host_ports`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) host_ports: crate::host_ports::HostPortsTable,
+    /// Containers carried for their tree's VMs ([`crate::tree_hub`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) tree_hubs: crate::tree_hub::TreeHubTable,
+    /// The tree overlay across your computers ([`crate::overlay`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) overlay: crate::overlay::Table,
+    /// The topology hint last written into each running Space (a hash).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) topologies: tokio::sync::Mutex<BTreeMap<String, u64>>,
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
     /// The resource sampler and its watchers ([`crate::resources`]).
@@ -915,6 +947,19 @@ impl Spaces {
     /// its peers and, per peer, the path (direct or relayed) and counters.
     pub async fn mesh_status(&self) -> Vec<(String, cua_mesh::Status)> {
         self.inner.mesh.status().await
+    }
+
+    /// Drops the mesh's loopback forwards and the connections they carry,
+    /// to give descriptors back when the process runs short (the daemon's
+    /// descriptor guard). Spaces over the mesh reconnect on their next
+    /// call. Returns how many forwards were dropped.
+    pub async fn shed_mesh_forwards(&self) -> usize {
+        let (n, spaces) = self.inner.mesh.shed_forwards().await;
+        let mut connections = self.inner.connections.lock().await;
+        for space in spaces {
+            connections.remove(&space);
+        }
+        n
     }
 
     pub(crate) fn relay(&self) -> Result<crate::relay::RelayAccount> {
@@ -1309,6 +1354,8 @@ impl Spaces {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
         }))
     }
@@ -1353,6 +1400,8 @@ impl Spaces {
                     info.created_at_unix = m.created_at_unix;
                 }
                 info.egress = m.egress.clone();
+                info.clipboard = m.clipboard;
+                info.volume_setting = m.volume;
                 info.egress_enforced =
                     (!m.egress.is_empty()).then_some(crate::egress::Enforcement::Host);
                 info.network = Some(crate::network::SpaceNetwork {
@@ -1387,6 +1436,7 @@ impl Spaces {
     pub fn fill_records(&self, records: &mut [cua_proto::daemon::v1::Space]) {
         let meta = self.inner.registry.all_meta();
         let lifetimes = crate::lifetimes::all(self.home_dir());
+        let tree_addrs = cua_vmm::tree::addresses();
         for r in records {
             r.created_at_unix = r.added_at.as_ref().map_or(0, |t| t.seconds.max(0));
             if let Some(m) = meta.get(&r.id) {
@@ -1405,6 +1455,8 @@ impl Spaces {
                     allow: m.egress.allow.clone(),
                     deny: m.egress.deny.clone(),
                 });
+                r.clipboard = m.clipboard.as_str().into();
+                r.volume = m.volume.as_str().into();
                 r.egress_enforced = if m.egress.is_empty() {
                     String::new()
                 } else {
@@ -1417,6 +1469,10 @@ impl Spaces {
                 r.root = m.root.clone().unwrap_or_default();
                 r.depth = m.depth;
                 r.origin = crate::tree::TreeLink::of(m).origin;
+            }
+            // A VM's address in its tree ([`cua_vmm::tree`]).
+            if let Some(a) = r.id.strip_prefix("local:").and_then(|n| tree_addrs.get(n)) {
+                r.tree_address = a.to_string();
             }
             if let Some(l) = self.lifetime_of(&r.id, &lifetimes) {
                 r.expires_at_unix = i64::try_from(l.expires_at_unix).unwrap_or(0);
@@ -1988,15 +2044,9 @@ impl Spaces {
                     .image_info()
                     .map(|i| (i.reference.clone(), i.digest.clone()));
                 let placed = sandbox.placement().0;
+                let runtime = sandbox.runtime_type().to_string();
                 platform = sandbox.image_info().map(|i| {
-                    let kind = match i.variant.as_str() {
-                        "rootfs" => "container",
-                        "containerdisk" | "lume" => "vm",
-                        // An external runtime provider's image: the kind
-                        // the provider presents as.
-                        _ if placed != cua_sandbox_core::placement::Kind::Auto => placed.as_str(),
-                        _ => "",
-                    };
+                    let kind = kind_of_runtime(&runtime, &i.variant, placed);
                     (kind.to_string(), i.arch.clone().unwrap_or_default())
                 });
                 for (svc, _) in sandbox
@@ -2484,6 +2534,7 @@ impl Spaces {
         };
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
         let labels = opts.labels.clone();
+        let joined_tree = opts.tree.clone().filter(|_| opts.parent.is_none());
         let egress = opts.egress.clone();
         let network = crate::network::CreateNetwork {
             settings: opts
@@ -2614,6 +2665,10 @@ impl Spaces {
             let kept = self.inner.registry.update_meta(&id, |m| {
                 m.labels = labels.clone();
                 m.created_at_unix = now;
+                // A member of a tree that started on another computer.
+                if let Some(t) = &joined_tree {
+                    m.overlay_tree = Some(t.clone());
+                }
             });
             // The policy was enforced from the guest's first instruction
             // (by this machine's runtime, or the host that created it).
@@ -2680,9 +2735,17 @@ impl Spaces {
         result
     }
 
-    pub(crate) async fn create_inner(&self, opts: SpaceCreate) -> Result<SpaceCreated> {
+    pub(crate) async fn create_inner(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::placement;
         let omitted = opts.on.is_none();
+        // A child made on another of your computers joins its parent's tree
+        // there: the computer gets the tree's id, qualified with this one.
+        if opts.tree.is_none()
+            && !matches!(opts.on, None | Some(On::Local))
+            && let Some(root) = self.tree_root_of(opts.parent.as_deref())
+        {
+            opts.tree = Some(cua_vmm::tree::qualify(&cua_vmm::tree::overlay_id(), &root));
+        }
         let (on, source) = match opts.on.clone() {
             Some(on) => (on, cua_sandbox_core::settings::Source::Explicit),
             None => cua_sandbox_core::settings::Settings::load()
@@ -2767,9 +2830,18 @@ impl Spaces {
         {
             // Your own cloud account (`aws`, `gcp`, `hetzner`, `modal`): a sandbox there
             // whose driver joined the relay.
-            if opts.network == cua_sandbox_core::NetworkMode::None {
+            // A cloud that keeps network rules itself (Modal) takes
+            // network=none; any other refuses it here, before anything is made.
+            if opts.network == cua_sandbox_core::NetworkMode::None
+                && !self
+                    .inner
+                    .sandboxes
+                    .contrib_provider(word)
+                    .is_ok_and(|p| p.takes_network_rules())
+            {
                 return Err(Error::invalid(format!(
-                    "network=none applies to VMs on your machines, not Spaces in your cloud ({word})"
+                    "network=none applies to VMs on your computers and to Modal, not Spaces in \
+                     this cloud ({word})"
                 )));
             }
             if opts.reuse {
@@ -2778,13 +2850,7 @@ impl Spaces {
                      list_spaces"
                 )));
             }
-            // Nothing there enforces network settings: only No protection.
-            crate::network::refuse_on_provider(
-                &opts
-                    .network_settings
-                    .clone()
-                    .unwrap_or_else(crate::network::NetworkSettings::internet),
-            )?;
+            // `create_in_cloud` keeps the Space's network or refuses it.
             let info = self.create_in_cloud(word, opts).await?;
             return Ok(SpaceCreated::Ready {
                 info,
@@ -2840,7 +2906,9 @@ impl Spaces {
             forkable: opts.forkable,
             network: opts.network,
             egress: opts.egress,
-            network_tree: self.tree_root_of(opts.parent.as_deref()),
+            network_tree: self
+                .tree_root_of(opts.parent.as_deref())
+                .or_else(|| opts.tree.clone()),
             network_settings: opts.network_settings,
         };
         // `create` runs a `wait = false` create in the background
@@ -3568,6 +3636,13 @@ impl Spaces {
 
     // --------------------------------------------------------------- power
 
+    /// Whether the local Space `id` is running now (its sandbox's power
+    /// state, from state files only). The state is the second half of
+    /// [`Self::power_of`]; the first is how it is turned off.
+    pub fn is_running(&self, id: &str) -> bool {
+        self.power_of(id).1 == "running"
+    }
+
     /// [`SpaceInfo::power`] and [`SpaceInfo::power_state`] of the Space
     /// `id`, from state files only: empty for a Space that cannot be turned
     /// off and on. A Space one of your machines provides says so in its
@@ -4069,8 +4144,52 @@ where
     result
 }
 
+/// The kind a local Space's runtime makes it: the runtime that runs it says
+/// what it is (a microVM's guest reports itself as a container, and its image
+/// is a root filesystem); else the image's variant; else the kind an external
+/// provider presents as.
+fn kind_of_runtime(
+    runtime: &str,
+    variant: &str,
+    placed: cua_sandbox_core::placement::Kind,
+) -> String {
+    match runtime {
+        "vz" | "firecracker" | "containerization" => return "microvm".into(),
+        "qemu" | "lume" | "qemu-docker" => return "vm".into(),
+        _ => {}
+    }
+    match variant {
+        "rootfs" => "container",
+        "containerdisk" | "lume" => "vm",
+        _ if placed != cua_sandbox_core::placement::Kind::Auto => placed.as_str(),
+        _ => "",
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_spaces_kind_is_what_its_runtime_makes_it() {
+        use cua_sandbox_core::placement::Kind;
+        // A microVM runs a root filesystem and its guest says "container".
+        assert_eq!(kind_of_runtime("vz", "rootfs", Kind::Auto), "microvm");
+        assert_eq!(
+            kind_of_runtime("firecracker", "rootfs", Kind::Auto),
+            "microvm"
+        );
+        assert_eq!(kind_of_runtime("qemu", "containerdisk", Kind::Auto), "vm");
+        assert_eq!(
+            kind_of_runtime("container", "rootfs", Kind::Auto),
+            "container"
+        );
+        assert_eq!(
+            kind_of_runtime("managed", "rootfs", Kind::Auto),
+            "container"
+        );
+        assert_eq!(kind_of_runtime("other", "", Kind::Auto), "");
+    }
+
     #[tokio::test]
     async fn a_failed_registration_tears_the_fork_down_and_keeps_its_error() {
         use std::sync::atomic::{AtomicU32, Ordering::SeqCst};

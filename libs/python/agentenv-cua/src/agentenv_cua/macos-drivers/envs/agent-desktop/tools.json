@@ -1,0 +1,1002 @@
+{
+ "version": "1.0.2",
+ "tools": [
+  {
+   "name": "snapshot",
+   "command": "snapshot",
+   "description": "Capture an app's accessibility tree as JSON, with a ref for each element you can act on.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     },
+     "window_id": {
+      "type": "string",
+      "description": "A window ID from list_windows."
+     },
+     "interactive_only": {
+      "type": "boolean",
+      "description": "Only the elements you can act on."
+     },
+     "compact": {
+      "type": "boolean",
+      "description": "Collapse single-child unnamed nodes."
+     },
+     "skeleton": {
+      "type": "boolean",
+      "description": "A shallow map, with children_count on cut branches."
+     },
+     "max_depth": {
+      "type": "integer",
+      "description": "Maximum tree depth (default 10)."
+     },
+     "include_bounds": {
+      "type": "boolean",
+      "description": "Include each element's bounds."
+     },
+     "surface": {
+      "type": "string",
+      "enum": [
+       "window",
+       "focused",
+       "menu",
+       "menubar",
+       "sheet",
+       "popover",
+       "alert"
+      ],
+      "description": "The surface to snapshot (default window)."
+     },
+     "root": {
+      "type": "string",
+      "description": "Start from this ref's subtree instead of the window."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "Poll until an element matching role:text appears."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "Observation deadline in milliseconds (default 3000)."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "find",
+   "command": "find",
+   "description": "Search an app's elements by role, name, value or text.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     },
+     "window_id": {
+      "type": "string",
+      "description": "A window ID from list_windows."
+     },
+     "role": {
+      "type": "string",
+      "description": "An accessibility role: button, textfield, checkbox..."
+     },
+     "name": {
+      "type": "string",
+      "description": "The accessible name or label."
+     },
+     "value": {
+      "type": "string",
+      "description": "The current value."
+     },
+     "text": {
+      "type": "string",
+      "description": "Text in the name, value, title or description."
+     },
+     "description": {
+      "type": "string",
+      "description": "The accessible description."
+     },
+     "native_id": {
+      "type": "string",
+      "description": "The native automation id (AXIdentifier)."
+     },
+     "exact": {
+      "type": "boolean",
+      "description": "Require exact, case-insensitive name, description and value matches."
+     },
+     "root": {
+      "type": "string",
+      "description": "Search only this ref's subtree."
+     },
+     "surface": {
+      "type": "string",
+      "enum": [
+       "window",
+       "focused",
+       "menu",
+       "menubar",
+       "sheet",
+       "popover",
+       "alert"
+      ],
+      "description": "The surface to search."
+     },
+     "state": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "State filters, each TOKEN or TOKEN=true|false."
+     },
+     "count": {
+      "type": "boolean",
+      "description": "Return the match count only."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "Traversal deadline in milliseconds (default 5000)."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "get",
+   "command": "get",
+   "description": "Read one property of an element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "property": {
+      "type": "string",
+      "enum": [
+       "text",
+       "value",
+       "title",
+       "bounds",
+       "role",
+       "states"
+      ],
+      "description": "The property to read (default text)."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "is",
+   "command": "is",
+   "description": "Check one state of an element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "property": {
+      "type": "string",
+      "enum": [
+       "visible",
+       "enabled",
+       "checked",
+       "focused",
+       "expanded",
+       "selected"
+      ],
+      "description": "The state to check (default visible)."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "screenshot",
+   "command": "screenshot",
+   "description": "Take a PNG screenshot of an app's window.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     },
+     "window_id": {
+      "type": "string",
+      "description": "A window ID from list_windows."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "list_apps",
+   "command": "list-apps",
+   "description": "List the running apps.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "list_windows",
+   "command": "list-windows",
+   "description": "List the open windows, with the window IDs other tools take.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "click",
+   "command": "click",
+   "description": "Click an element through its accessibility press action.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "double_click",
+   "command": "double-click",
+   "description": "Double-click an element with the real pointer.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "triple_click",
+   "command": "triple-click",
+   "description": "Triple-click an element with the real pointer.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "right_click",
+   "command": "right-click",
+   "description": "Open an element's context menu.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "type",
+   "command": "type",
+   "description": "Insert text into a text element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "text": {
+      "type": "string",
+      "description": "The text to type."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "set_value",
+   "command": "set-value",
+   "description": "Set an element's value directly.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "value": {
+      "type": "string",
+      "description": "The value to set."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref",
+     "value"
+    ]
+   }
+  },
+  {
+   "name": "clear",
+   "command": "clear",
+   "description": "Clear an element's value.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "focus",
+   "command": "focus",
+   "description": "Set keyboard focus on an element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "select",
+   "command": "select",
+   "description": "Select an option in a list or dropdown.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "value": {
+      "type": "string",
+      "description": "The option to select."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref",
+     "value"
+    ]
+   }
+  },
+  {
+   "name": "toggle",
+   "command": "toggle",
+   "description": "Toggle a checkbox or switch.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "check",
+   "command": "check",
+   "description": "Set a checkbox or switch to checked (idempotent).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "uncheck",
+   "command": "uncheck",
+   "description": "Set a checkbox or switch to unchecked (idempotent).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "expand",
+   "command": "expand",
+   "description": "Expand a disclosure element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "collapse",
+   "command": "collapse",
+   "description": "Collapse a disclosure element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "scroll",
+   "command": "scroll",
+   "description": "Scroll an element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "direction": {
+      "type": "string",
+      "enum": [
+       "up",
+       "down",
+       "left",
+       "right"
+      ],
+      "description": "up, down, left or right (default down)."
+     },
+     "amount": {
+      "type": "integer",
+      "description": "Scroll units (default 3)."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "scroll_to",
+   "command": "scroll-to",
+   "description": "Scroll an element into view.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref from a snapshot, as printed: @<snapshot_id>:e<N>."
+     },
+     "timeout_ms": {
+      "type": "integer",
+      "description": "How long to wait for the ref to resolve, in milliseconds (default 5000)."
+     },
+     "wait_for": {
+      "type": "string",
+      "description": "After the action, poll until an element matching role:text appears, then return its snapshot."
+     },
+     "wait_for_gone": {
+      "type": "string",
+      "description": "After the action, poll until no element matches role:text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "ref"
+    ]
+   }
+  },
+  {
+   "name": "press",
+   "command": "press",
+   "description": "Press a key combo in an app: return, escape, cmd+c, shift+tab...",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "combo": {
+      "type": "string",
+      "description": "The key combo."
+     },
+     "window_id": {
+      "type": "string",
+      "description": "A window ID from list_windows."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "combo"
+    ]
+   }
+  },
+  {
+   "name": "hover",
+   "command": "hover",
+   "description": "Move the real pointer over an element.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ref": {
+      "type": "string",
+      "description": "The element's qualified ref."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "drag",
+   "command": "drag",
+   "description": "Drag from one element or point to another with the real pointer.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "from_ref": {
+      "type": "string",
+      "description": "The source ref."
+     },
+     "to_ref": {
+      "type": "string",
+      "description": "The destination ref."
+     },
+     "from_xy": {
+      "type": "string",
+      "description": "The source as x,y."
+     },
+     "to_xy": {
+      "type": "string",
+      "description": "The destination as x,y."
+     },
+     "duration": {
+      "type": "integer",
+      "description": "The drag's duration in milliseconds."
+     },
+     "drop_delay": {
+      "type": "integer",
+      "description": "Hold over the destination this many ms before releasing (default 500)."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "launch",
+   "command": "launch",
+   "description": "Launch an app, or attach to the running one.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The application name or bundle ID."
+     },
+     "args": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Command-line arguments for the app."
+     },
+     "cwd": {
+      "type": "string",
+      "description": "The working directory."
+     },
+     "activate": {
+      "type": "boolean",
+      "description": "Bring the app forward and wait for a window."
+     },
+     "timeout": {
+      "type": "integer",
+      "description": "Upper bound for the whole launch, in ms (default 30000)."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "close_app",
+   "command": "close-app",
+   "description": "Quit an app.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "app": {
+      "type": "string",
+      "description": "The application name."
+     },
+     "force": {
+      "type": "boolean",
+      "description": "Terminate its processes instead of quitting."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "app"
+    ]
+   }
+  },
+  {
+   "name": "focus_window",
+   "command": "focus-window",
+   "description": "Bring a window forward.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "window_id": {
+      "type": "string",
+      "description": "A window ID from list_windows."
+     },
+     "app": {
+      "type": "string",
+      "description": "Application name."
+     },
+     "title": {
+      "type": "string",
+      "description": "Part of the window's title."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "clipboard_get",
+   "command": "clipboard-get",
+   "description": "Read the clipboard.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "format": {
+      "type": "string",
+      "enum": [
+       "text",
+       "auto",
+       "image",
+       "file-urls"
+      ],
+      "description": "text (default), auto, image or file-urls."
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "clipboard_set",
+   "command": "clipboard-set",
+   "description": "Write text to the clipboard.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "text": {
+      "type": "string",
+      "description": "The text."
+     }
+    },
+    "additionalProperties": false,
+    "required": [
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "wait",
+   "command": "wait",
+   "description": "Pause, or block until an element, window, text or menu appears.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ms": {
+      "type": "integer",
+      "description": "Milliseconds to pause."
+     },
+     "element": {
+      "type": "string",
+      "description": "Block until this element ref appears."
+     },
+     "window": {
+      "type": "string",
+      "description": "Block until a window with this title appears."
+     },
+     "text": {
+      "type": "string",
+      "description": "Block until this text appears in the app's tree."
+     },
+     "menu": {
+      "type": "boolean",
+      "description": "Block until a menu is open."
+     },
+     "menu_closed": {
+      "type": "boolean",
+      "description": "Block until the menu is dismissed."
+     },
+     "app": {
+      "type": "string",
+      "description": "Scope the wait to this app."
+     },
+     "timeout": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (default 30000)."
+     }
+    },
+    "additionalProperties": false
+   }
+  }
+ ]
+}

@@ -73,6 +73,7 @@ docs/_build/
 .pybuilder/
 target/
 artifacts/
+!libs/python/agentenv-cua/src/agentenv_cua/macos-apps/artifacts/
 # Jupyter Notebook
 .ipynb_checkpoints
 # IPython

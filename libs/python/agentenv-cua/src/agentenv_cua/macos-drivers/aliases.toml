@@ -1,0 +1,5 @@
+# Ids a task, or --driver, can name these drivers by; a store's env of the id wins over an alias.
+[envs]
+agent-desktop = ["agent-desktop-macos"]
+macos-harness = ["macos-harness"]
+codex-cu = ["codex-cu"]

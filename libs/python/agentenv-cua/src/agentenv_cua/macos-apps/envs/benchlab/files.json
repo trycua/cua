@@ -1,0 +1,20 @@
+{
+ "commit": "22a67eacd15dc71811e330ed88951dd615bb395d",
+ "files": [
+  {
+   "path": "swift/BenchLab.swift",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/automated-eval/macos_bench/swift/BenchLab.swift",
+   "sha256": "239f4f2815f1153b024cb6995d34593b25e79e3041191a844f1a45407f510343"
+  },
+  {
+   "path": "swift/BenchLabInterrupts.swift",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/automated-eval/macos_bench/swift/BenchLabInterrupts.swift",
+   "sha256": "a9cacae5ae2a928e090f3c8fe25670f9f5b949b9fc029844ad6e880c0ea58b71"
+  },
+  {
+   "path": "swift/BenchLabModes.swift",
+   "url": "https://raw.githubusercontent.com/trycua/cua/22a67eacd15dc71811e330ed88951dd615bb395d/libs/cua-driver-bench/automated-eval/macos_bench/swift/BenchLabModes.swift",
+   "sha256": "90f79b1f93f6aecfd295111d3134f0b597590212a8299e83d33912a55f452f2d"
+  }
+ ]
+}

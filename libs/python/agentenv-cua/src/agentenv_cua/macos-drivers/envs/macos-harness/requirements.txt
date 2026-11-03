@@ -1,0 +1,5 @@
+# The driver's venv in the VM. macos-harness is pinned to the 0.2.1 PyPI release (wheel sha256 f8e3251c3c00ec20263e91df7fcc61c2a14d7defe28adaf0259f3376d373c127,
+# MIT, github.com/browser-use/macos-harness tag v0.2.1); pyobjc-framework-Quartz is the neutral computer_* helper's.
+agentenv-framework-protocol[computer]==0.1.440
+macos-harness==0.2.1
+pyobjc-framework-Quartz>=12.0

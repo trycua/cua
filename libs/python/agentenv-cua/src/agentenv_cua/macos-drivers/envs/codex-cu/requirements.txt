@@ -1,0 +1,4 @@
+# The driver's venv in the VM. The ChatGPT app itself (26.930.51102, zip sha256 in driver.py) is installed by the
+# image's provisioning; pyobjc-framework-Quartz is the neutral computer_* helper's.
+agentenv-framework-protocol[computer]==0.1.440
+pyobjc-framework-Quartz>=12.0

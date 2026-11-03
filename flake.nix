@@ -61,6 +61,12 @@
             sourceSubdir = "cua-driver/rust";
           };
 
+          rustUnit = import ./nix/cua-driver/tests/rust-unit.nix {
+            inherit pkgs craneLib;
+            src = rustTestSrc;
+            sourceSubdir = "cua-driver/rust";
+          };
+
           cuaCompositorPackage = pkgs.callPackage ./nix/cua-driver/compositor { };
 
           # nixpkgs builds the AT-SPI launcher for NixOS's system profile.
@@ -174,11 +180,8 @@
           checks = {
             cua-compositor-build = cuaCompositorPackage;
             cua-driver-build = cuaDriverPackage;
-            cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
-              inherit pkgs craneLib;
-              src = rustTestSrc;
-              sourceSubdir = "cua-driver/rust";
-            };
+            cua-driver-linux-rust-unit = rustUnit.check;
+            cua-driver-linux-rust-unit-archive = rustUnit.archive;
             cua-driver-policy-yaml = import ./nix/cua-driver/tests/policy-yaml.nix {
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
@@ -187,6 +190,11 @@
               inherit pkgs;
               cuaDriver = cuaDriverPackage;
             };
+          };
+
+          apps.cua-rust-unit-run = {
+            type = "app";
+            program = "${rustUnit.runner}/bin/cua-rust-unit-run";
           };
 
           devShells.cua-driver-wayland-e2e = waylandE2eShell [ ];

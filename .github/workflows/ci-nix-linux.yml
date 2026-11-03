@@ -71,8 +71,6 @@ jobs:
         include:
           - name: compositor build
             attributes: cua-compositor-build
-          - name: Rust unit tests
-            attributes: cua-driver-linux-rust-unit
           # Both policy VMs boot the cua-driver package derivation. Building
           # them in the same job as the package compiles the workspace once
           # and reuses it from the local store, instead of once per job.
@@ -113,3 +111,76 @@ jobs:
             targets+=(".#checks.x86_64-linux.${attribute}")
           done
           nix build "${targets[@]}" --no-link --print-build-logs --show-trace
+
+  # The Rust unit tests run as cargo-nextest partitions. One job compiles every
+  # test binary (reusing the cached dependency derivation) and packs them into
+  # an archive; the partition jobs below only run that archive, so they compile
+  # nothing and start from a bare runner.
+  rust-unit-archive:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    name: Nix / Rust unit test archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-Rust unit tests-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-Rust unit tests-
+      - name: Build the test archive
+        run: |
+          nix build ".#checks.x86_64-linux.cua-driver-linux-rust-unit-archive" \
+            --out-link archive --print-build-logs --show-trace
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-unit-archive
+          path: archive/rust-unit.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  rust-unit-partition:
+    needs: rust-unit-archive
+    name: Nix / Rust unit tests ${{ matrix.partition }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            experimental-features = nix-command flakes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rust-unit-archive
+          path: archive
+      - name: Run partition ${{ matrix.partition }} of 3
+        run: |
+          nix run .#cua-rust-unit-run -- "$PWD/archive/rust-unit.tar.zst" "count:${{ matrix.partition }}/3"
+
+  # One stable check name for the whole Rust unit lane, however it is split.
+  rust-unit:
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: [rust-unit-archive, rust-unit-partition]
+    name: Nix / Rust unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every partition to pass
+        env:
+          RESULTS: ${{ needs.rust-unit-archive.result }} ${{ needs.rust-unit-partition.result }}
+        run: |
+          echo "archive and partitions: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done

@@ -4,12 +4,13 @@
 # must remain display-independent, while this check validates the Rust source
 # and testkit in Nix's reproducible build environment.
 #
-# Built with crane in two derivations. `cargoArtifacts` compiles only the
+# Built with crane in three derivations. `cargoArtifacts` compiles only the
 # third-party dependencies from a dummy source tree that holds nothing but
 # Cargo.toml and Cargo.lock files, so its store path changes only when a
-# manifest or the lockfile changes. The test derivation then reuses those
-# artifacts and compiles just the workspace crates, so a source edit no longer
-# rebuilds every dependency.
+# manifest or the lockfile changes. The archive derivation then reuses those
+# artifacts, compiles just the workspace crates and packs every test binary
+# into a cargo-nextest archive. Partition runs execute that archive without
+# compiling, so CI fans the tests out over several jobs.
 {
   pkgs,
   craneLib,
@@ -75,30 +76,83 @@ let
       doCheck = false;
     }
   );
-in
-craneLib.mkCargoDerivation (
-  commonArgs
-  // {
-    inherit cargoArtifacts;
-    pnameSuffix = "";
-    doInstallCargoArtifacts = false;
-    doCheck = false;
-
-    # Transport tests launch an isolated D-Bus session instead of using the host bus.
-    nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
-      pkgs.dbus
-      pkgs.xorg.xorgserver
-    ];
+  testEnv = {
     CUA_TEST_PYTHON = "${pkgs.python3}/bin/python3";
     CUA_TEST_PYTHON_DYNAMIC_LINKER = pkgs.stdenv.cc.bintools.dynamicLinker;
     CUA_TEST_GLIBC_STATIC_LIB = "${pkgs.glibc.static}/lib";
-    preBuild = ''
-      export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
-    '';
+  };
 
-    # Focus unit tests launch private Xvfb servers. The ignored desktop
-    # matrix is run by the manual Linux e2e workflow and is not hidden in Nix.
-    buildPhaseCargoCommand = "cargo test ${cargoArgs}";
-    installPhaseCommand = "touch $out";
-  }
-)
+  # Build every test binary once and pack them into a cargo-nextest archive.
+  # CI builds this in one job and fans the archive out to partition jobs.
+  archive = craneLib.mkCargoDerivation (
+    commonArgs
+    // testEnv
+    // {
+      inherit cargoArtifacts;
+      pnameSuffix = "-archive";
+      doInstallCargoArtifacts = false;
+      doCheck = false;
+      nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ pkgs.cargo-nextest ];
+      preBuild = ''
+        export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
+      '';
+      buildPhaseCargoCommand = ''
+        mkdir -p $out
+        cargo nextest archive ${cargoArgs} --archive-file $out/rust-unit.tar.zst
+      '';
+      installPhaseCommand = "true";
+    }
+  );
+
+  # Runs one partition of the archived tests. Usable inside the Nix sandbox
+  # (the full check below) and on a bare runner (`nix run`) that holds only
+  # the archive file, so partition jobs never compile anything.
+  runner = pkgs.writeShellApplication {
+    name = "cua-rust-unit-run";
+    runtimeInputs =
+      with pkgs;
+      [
+        cargo
+        rustc
+        cargo-nextest
+        dbus
+        xorg.xorgserver
+        python3
+        coreutils
+      ]
+      ++ commonArgs.buildInputs;
+    text = ''
+      # usage: cua-rust-unit-run ARCHIVE [PARTITION, e.g. count:1/3]
+      archive=$1
+      partition=''${2:-count:1/1}
+      work=$(mktemp -d)
+      trap 'rm -rf "$work"' EXIT
+      cp -r ${src} "$work/src"
+      chmod -R u+w "$work/src"
+      export HOME=$work/home
+      mkdir -p "$HOME"
+      export CUA_TEST_PYTHON=${testEnv.CUA_TEST_PYTHON}
+      export CUA_TEST_PYTHON_DYNAMIC_LINKER=${testEnv.CUA_TEST_PYTHON_DYNAMIC_LINKER}
+      export CUA_TEST_GLIBC_STATIC_LIB=${testEnv.CUA_TEST_GLIBC_STATIC_LIB}
+      CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
+      export CUA_TEST_PYTHON_READ_ROOTS
+      # Focus unit tests launch private Xvfb servers. The ignored desktop
+      # matrix is run by the manual Linux e2e workflow and is not hidden here.
+      cargo nextest run \
+        --archive-file "$archive" \
+        --extract-to "$work/extract" \
+        --workspace-remap "$work/src/${manifestDir}" \
+        --partition "$partition" \
+        --no-fail-fast
+    '';
+  };
+
+  # The whole suite in the sandbox: `nix flake check` and local runs.
+  check = pkgs.runCommand "cua-driver-rust-unit-tests" { } ''
+    ${runner}/bin/cua-rust-unit-run ${archive}/rust-unit.tar.zst count:1/1
+    touch $out
+  '';
+in
+{
+  inherit archive runner check;
+}

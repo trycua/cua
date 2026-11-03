@@ -49,8 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # buf breaking compares against the merge base with the base branch.
+          # buf breaking compares against the merge base with the base branch,
+          # so it needs history; it does not need every file's contents up front.
           fetch-depth: 0
+          filter: blob:none
       - name: Install buf
         uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:

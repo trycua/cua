@@ -991,6 +991,100 @@ impl VmmLocal {
         &self.qemu
     }
 
+    /// Every instance Cua made on this machine, in every local runtime,
+    /// for [`crate::space_orphans`]: QEMU VMs and microVMs in their own
+    /// state directories, containers with Cua's label, Apple
+    /// Containerization containers Cua created, and macOS VMs Cua recorded
+    /// as its own (`vmm/lume/owned`, never any other VM Lume has). Bases,
+    /// checkpoints and warm-pool members are left out. Never installs,
+    /// boots or starts a runtime to answer: one that is down runs nothing.
+    /// Any runtime that is up but does not answer fails the whole listing,
+    /// so a partial view never looks like "nothing there".
+    #[cfg(feature = "spaces")]
+    pub async fn cua_instances(
+        &self,
+    ) -> std::result::Result<Vec<crate::space_orphans::Found>, String> {
+        let mut out = Vec::new();
+        let mut add = |kind: BackendKind,
+                       list: std::result::Result<Vec<cua_vmm::InstanceSummary>, VmmError>|
+         -> std::result::Result<(), String> {
+            let rows = list.map_err(|e| format!("{}: {e}", kind.as_str()))?;
+            out.extend(
+                rows.into_iter()
+                    .filter(|s| !cua_vmm::is_pool_member(&s.name))
+                    .map(|s| crate::space_orphans::Found {
+                        name: s.name,
+                        runtime: kind.as_str().to_string(),
+                    }),
+            );
+            Ok(())
+        };
+        if let Some(rt) = self.container_if_up().await {
+            add(BackendKind::Container, rt.list().await)?;
+        }
+        add(BackendKind::Qemu, self.qemu.instances())?;
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            let kind = if cfg!(target_os = "macos") {
+                BackendKind::Vz
+            } else {
+                BackendKind::Firecracker
+            };
+            add(kind, self.microvm.list().await)?;
+        }
+        if cfg!(target_os = "macos") {
+            add(BackendKind::Containerization, self.apple.list().await)?;
+            let owned = cua_vmm::lume::OwnedVms::default();
+            let ours: std::collections::HashSet<String> = owned
+                .list()
+                .into_iter()
+                .filter(|v| v.kind == cua_vmm::lume::OwnedKind::Instance)
+                .map(|v| v.name)
+                .collect();
+            // Asked only when Cua recorded a macOS VM of its own: listing
+            // starts `lume serve`.
+            if !ours.is_empty() {
+                let listed = self.lume.list().await.map(|rows| {
+                    rows.into_iter()
+                        .filter(|r| ours.contains(&r.name))
+                        .collect::<Vec<_>>()
+                });
+                add(BackendKind::Lume, listed)?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Deletes `name` on the runtime `runtime` (a [`BackendKind`] word, as
+    /// [`VmmLocal::cua_instances`] reports it) only: never another
+    /// runtime's instance of the same name.
+    pub async fn delete_on(&self, runtime: &str, name: &str) -> std::result::Result<(), String> {
+        let kind = [
+            BackendKind::Container,
+            BackendKind::Qemu,
+            BackendKind::Vz,
+            BackendKind::Firecracker,
+            BackendKind::Containerization,
+            BackendKind::Lume,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == runtime)
+        .ok_or_else(|| format!("unknown runtime {runtime}"))?;
+        let rt = match kind {
+            // Never boot the built-in Linux runtime to delete: it was up
+            // when the container was listed.
+            BackendKind::Container => self
+                .container_if_up()
+                .await
+                .map(|r| r as Arc<dyn VmmRuntime>)
+                .ok_or_else(|| "the container engine is not running".to_string())?,
+            k => self.runtime(k).await.map_err(|e| e.to_string())?,
+        };
+        match rt.delete(name).await {
+            Ok(()) | Err(VmmError::NotFound(_)) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     async fn runtime(
         &self,
         kind: BackendKind,

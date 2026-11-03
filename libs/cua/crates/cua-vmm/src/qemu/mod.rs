@@ -1754,6 +1754,21 @@ impl QemuRuntime {
         Ok(())
     }
 
+    /// The bootable instances under this runtime's root: [`Runtime::list`]
+    /// without the bases and checkpoints it also keeps there.
+    pub fn instances(&self) -> Result<Vec<InstanceSummary>> {
+        Ok(self
+            .all_states()?
+            .iter()
+            .filter(|st| st.kind == EntryKind::Instance)
+            .map(|st| InstanceSummary {
+                name: st.name.clone(),
+                backend: BackendKind::Qemu,
+                status: Self::status_of(st),
+            })
+            .collect())
+    }
+
     fn all_states(&self) -> Result<Vec<QemuState>> {
         let Ok(rd) = std::fs::read_dir(&self.cfg.root) else {
             return Ok(vec![]);

@@ -694,6 +694,18 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.shutdown.subscribe(),
         )));
     }
+    // VMs and containers failed Space creates left, holding this
+    // machine's memory and vCPUs against every later create.
+    #[cfg(feature = "spaces")]
+    if std::env::var(crate::space_orphans::ENV_SWEEP).as_deref() != Ok("0")
+        && let Ok(vmm) = shared.runtime.vmm().cloned()
+    {
+        tasks.push(tokio::spawn(crate::space_orphans::sweep_loop(
+            crate::cua_home(),
+            vmm,
+            shared.shutdown.subscribe(),
+        )));
+    }
     // The built-in Linux runtime VM holds the memory its Spaces used until
     // it stops: stop it once idle, also when this daemon started after the
     // last Space was gone.

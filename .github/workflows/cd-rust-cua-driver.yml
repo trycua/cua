@@ -520,7 +520,7 @@ jobs:
           - os: blacksmith-4vcpu-windows-2025
             release_arch: x86_64
             node_arch: x64
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-11-arm
             release_arch: arm64
             node_arch: arm64
     steps:

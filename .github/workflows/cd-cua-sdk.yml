@@ -151,7 +151,7 @@ jobs:
           - { label: darwin-arm64, runner: blacksmith-6vcpu-macos-26, target: aarch64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
           - { label: darwin-x64, runner: blacksmith-6vcpu-macos-26, target: x86_64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
           - { label: win32-x64-msvc, runner: blacksmith-4vcpu-windows-2025, target: x86_64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
-          - { label: win32-arm64-msvc, runner: blacksmith-4vcpu-windows-2025, target: aarch64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
+          - { label: win32-arm64-msvc, runner: windows-11-arm, target: aarch64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
     defaults:
       run:
         shell: bash
@@ -371,7 +371,7 @@ jobs:
           - { platform: darwin, arch: arm64, runner: blacksmith-6vcpu-macos-26, native: darwin-arm64, lib: libcua_sdk.dylib }
           - { platform: darwin, arch: x86_64, runner: blacksmith-6vcpu-macos-15, native: darwin-x64, lib: libcua_sdk.dylib }
           - { platform: windows, arch: x86_64, runner: blacksmith-4vcpu-windows-2025, native: win32-x64-msvc, lib: cua_sdk.dll }
-          - { platform: windows, arch: arm64, runner: blacksmith-4vcpu-windows-2025, native: win32-arm64-msvc, lib: cua_sdk.dll }
+          - { platform: windows, arch: arm64, runner: windows-11-arm, native: win32-arm64-msvc, lib: cua_sdk.dll }
     defaults:
       run:
         shell: bash

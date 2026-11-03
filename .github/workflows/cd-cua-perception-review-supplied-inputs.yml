@@ -172,7 +172,7 @@ jobs:
             driver: cua-driver.exe
           # Match the production Driver build and hosted desktop E2E image.
           # The macOS 15 image cannot use the ephemeral self-signed review key.
-          - runner: blacksmith-6vcpu-macos-26
+          - runner: macos-26
             target: aarch64-apple-darwin
             platform: macos
             input_artifact: cua-perception-input-macos-aarch64

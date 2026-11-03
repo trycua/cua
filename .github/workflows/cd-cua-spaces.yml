@@ -2039,7 +2039,7 @@ jobs:
       && (needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')
       && (needs.electron-plan.outputs.build != 'true' || needs.electron-mac.result == 'success')
       && (needs.electron-plan.outputs.publish_electron != 'true' || needs.electron-publish.result == 'success')
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 60
     defaults:
       run:

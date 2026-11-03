@@ -272,7 +272,7 @@ jobs:
   register-lume:
     if: inputs.mode == 'lume'
     name: Register direct Lume certification
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: authorized-live-jev-use-demo
     timeout-minutes: 10
     env:

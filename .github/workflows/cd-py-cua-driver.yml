@@ -139,13 +139,13 @@ jobs:
           - os: blacksmith-4vcpu-ubuntu-2404
             platform: linux
             arch: x86_64
-          - os: blacksmith-4vcpu-ubuntu-2404-arm
+          - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
           - os: blacksmith-4vcpu-windows-2025
             platform: windows
             arch: x86_64
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-11-arm
             platform: windows
             arch: arm64
     steps:

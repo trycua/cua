@@ -52,7 +52,7 @@ env:
 jobs:
   smoke:
     name: S1 chooser smoke with pinned weights (CPU, text + multimodal)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     # Hosted runners vary: with AVX512-BF16 this takes about 40 minutes; without
     # it the cold and warm multimodal decisions alone passed 85 minutes.
     timeout-minutes: 150
@@ -251,7 +251,7 @@ jobs:
     # verifies the effect, and stale captures are refused. It runs here, not
     # in e2e-rust-linux.yml, because it needs the 9.5 GB of pinned weights.
     name: Linux X11 / S1 + OmniParser capture-loop row
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ github.sha }}

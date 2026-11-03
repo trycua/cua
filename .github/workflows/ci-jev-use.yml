@@ -346,7 +346,7 @@ jobs:
   # Linux-only.
   released-driver-macos:
     name: macOS released Driver mock E2E
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 45
     env:
       CUA_DRIVER_BIN: /Applications/CuaDriver.app/Contents/MacOS/cua-driver
@@ -462,7 +462,7 @@ jobs:
   # the harness's own state file as the independent oracle.
   native-appkit-macos:
     name: macOS native AppKit mock E2E
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 45
     env:
       CUA_DRIVER_BIN: /Applications/CuaDriver.app/Contents/MacOS/cua-driver
@@ -1021,7 +1021,7 @@ jobs:
   # would put the venv's python3 first on PATH).
   native-gtk3-linux:
     name: Linux native GTK3 mock E2E
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CUA_DRIVER_BIN: /home/runner/.local/bin/cua-driver

@@ -20,6 +20,8 @@
 }:
 
 let
+  # Fixed location for sources and build output of the archived tests.
+  nextestRoot = "/tmp/cua-nextest";
   manifestDir = if sourceSubdir == null then "." else sourceSubdir;
   rustSrc = if sourceSubdir == null then src else "${src}/${sourceSubdir}";
   pythonClosure = pkgs.closureInfo {
@@ -42,6 +44,10 @@ let
     version = (pkgs.lib.importTOML "${rustSrc}/Cargo.toml").workspace.package.version;
     inherit src;
     strictDeps = true;
+    # Tests bake env!("CARGO_BIN_EXE_*") and env!("CARGO_MANIFEST_DIR") into
+    # the binaries as absolute paths. Build and run in the same fixed
+    # directory so the archived binaries find them wherever they run.
+    CARGO_TARGET_DIR = "${nextestRoot}/target";
     # Test binaries here are never debugged; skipping debuginfo cuts compile
     # and link time. Dependencies and workspace share the setting so the
     # dependency artifacts stay reusable.
@@ -97,7 +103,10 @@ let
         export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
       '';
       buildPhaseCargoCommand = ''
-        mkdir -p $out
+        mkdir -p $out ${nextestRoot}/src
+        cp -r "$PWD/." ${nextestRoot}/src
+        chmod -R u+w ${nextestRoot}/src
+        cd ${nextestRoot}/src
         cargo nextest archive ${cargoArgs} --archive-file $out/rust-unit.tar.zst
       '';
       installPhaseCommand = "true";
@@ -125,12 +134,14 @@ let
       # usage: cua-rust-unit-run ARCHIVE [PARTITION, e.g. count:1/3]
       archive=$1
       partition=''${2:-count:1/1}
-      work=$(mktemp -d)
-      trap 'rm -rf "$work"' EXIT
-      cp -r ${src} "$work/src"
-      chmod -R u+w "$work/src"
-      export HOME=$work/home
-      mkdir -p "$HOME" "$work/extract"
+      root=${nextestRoot}
+      rm -rf "$root"
+      mkdir -p "$root/src" "$root/home"
+      trap 'rm -rf "$root"' EXIT
+      cp -r ${src}/. "$root/src"
+      chmod -R u+w "$root/src"
+      export HOME=$root/home
+      cd "$root/src/${manifestDir}"
       export CUA_TEST_PYTHON=${testEnv.CUA_TEST_PYTHON}
       export CUA_TEST_PYTHON_DYNAMIC_LINKER=${testEnv.CUA_TEST_PYTHON_DYNAMIC_LINKER}
       export CUA_TEST_GLIBC_STATIC_LIB=${testEnv.CUA_TEST_GLIBC_STATIC_LIB}
@@ -140,8 +151,8 @@ let
       # matrix is run by the manual Linux e2e workflow and is not hidden here.
       cargo nextest run \
         --archive-file "$archive" \
-        --extract-to "$work/extract" \
-        --workspace-remap "$work/src/${manifestDir}" \
+        --extract-to "$root" \
+        --extract-overwrite \
         --partition "$partition" \
         --no-fail-fast
     '';

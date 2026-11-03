@@ -4,6 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -11,6 +12,7 @@
       self,
       nixpkgs,
       flake-utils,
+      crane,
       ...
     }:
     flake-utils.lib.eachSystem
@@ -22,6 +24,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          craneLib = crane.mkLib pkgs;
 
           # cua-driver builds inside libs/: its crates reach the shared
           # cua-telemetry crate in the libs/cua workspace (which inherits that
@@ -172,7 +175,7 @@
             cua-compositor-build = cuaCompositorPackage;
             cua-driver-build = cuaDriverPackage;
             cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
-              inherit pkgs;
+              inherit pkgs craneLib;
               src = rustTestSrc;
               sourceSubdir = "cua-driver/rust";
             };

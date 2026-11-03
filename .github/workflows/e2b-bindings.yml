@@ -64,9 +64,13 @@ jobs:
           workspaces: libs/cua
           shared-key: cua-sdk-swift
           size: 8G
-      - name: Release dylib, test fixtures, Swift suite
-        run: |
-          cargo build --locked --release -p cua-sdk
-          scripts/build-test-fixtures.sh
-          node scripts/stage-uniffi-library.mjs --only=swift
-          swift/scripts/test.sh
+      - name: Release cua-sdk dylib
+        run: cargo build --locked --release -p cua-sdk
+      - name: Test fixtures
+        run: scripts/build-test-fixtures.sh
+      - name: Stage the UniFFI library
+        run: node scripts/stage-uniffi-library.mjs --only=swift
+      - name: Swift build (tests included)
+        run: swift/scripts/test.sh --build-only
+      - name: Swift tests
+        run: swift/scripts/test.sh --skip-build --parallel

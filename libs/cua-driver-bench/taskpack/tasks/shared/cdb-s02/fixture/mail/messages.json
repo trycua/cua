@@ -1,0 +1,20 @@
+{
+  "messages": [
+    {
+      "id": "CM-204",
+      "from": "Mira Sol",
+      "sent_at": "2026-10-13T15:05:00-05:00",
+      "subject": "Tentative Lighthouse session grid — revision 3",
+      "labels": ["lighthouse", "planning"],
+      "body": "Please treat the attached Lighthouse grid as tentative revision 3 for Wednesday, October 14 in America/Chicago. Aster kickoff is 09:00–09:30 in Juniper. Boreal review is 10:00–11:00 in Sable. Cinder decision is 11:30–12:00 in Juniper. Dune handoff is 14:30–15:00 in Sable. The workbook is our shared schedule record. Check Signal Quay before confirming anything because the program lead may publish a later revision."
+    },
+    {
+      "id": "CM-199",
+      "from": "Facilities Robot",
+      "sent_at": "2026-10-12T08:30:00-05:00",
+      "subject": "Atrium plant service",
+      "labels": ["facilities"],
+      "body": "The atrium planters will be serviced Thursday morning. No Lighthouse rooms are affected."
+    }
+  ]
+}

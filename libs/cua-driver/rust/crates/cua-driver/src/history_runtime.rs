@@ -109,7 +109,7 @@ fn set_preview_admitted_preference_at(path: &Path, admitted: bool) -> anyhow::Re
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
     }
     let temporary = root.join("admission.json.tmp");
     if temporary.exists() {
@@ -184,7 +184,7 @@ pub(crate) fn verify_history_cli_executable_path(path: &Path) -> anyhow::Result<
         if !is_exact_packaged_helper(path, &expected) {
             anyhow::bail!("history control peer is not the exact installed Cua Driver helper");
         }
-        return verify_installed_app_for_history();
+        verify_installed_app_for_history()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -422,16 +422,22 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
+    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(home).join("computer-history");
+    }
+    default_history_root()
+}
+
+fn default_history_root() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        return home
-            .join("Library")
+        home.join("Library")
             .join("Application Support")
             .join(crate::bundle::state_namespace())
-            .join("computer-history");
+            .join("computer-history")
     }
     #[cfg(target_os = "linux")]
     {
@@ -444,9 +450,8 @@ pub fn history_root() -> PathBuf {
                     .map(|home| home.join(".local/state"))
             })
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        return root
-            .join(crate::bundle::state_namespace())
-            .join("computer-history");
+        root.join(crate::bundle::state_namespace())
+            .join("computer-history")
     }
     #[cfg(target_os = "windows")]
     {
@@ -503,7 +508,7 @@ mod tests {
 
     #[test]
     fn default_root_is_namespace_specific() {
-        let root = history_root();
+        let root = default_history_root();
         assert!(root.ends_with(format!(
             "{}/computer-history",
             crate::bundle::state_namespace()

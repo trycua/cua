@@ -4,7 +4,9 @@ Local staging directory for cua-driver test fixture applications.
 
 Build scripts under `../tests/fixtures/build/` write `harness-<name>/`
 directories here. The staged outputs are intentionally git-ignored; rebuild
-them from source instead of committing binaries.
+them from source instead of committing binaries. Keep this README and the
+`.gitignore`: the Linux and macOS build scripts `cd` into this directory and
+fail when a fresh checkout lacks it.
 
 Common outputs:
 

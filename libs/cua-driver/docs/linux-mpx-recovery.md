@@ -43,7 +43,7 @@ TigerVNC do not support the needed device hotplug path.
 
 ```sh
 cargo build --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
-python3 libs/cua-driver/tests/linux-mpx-recovery.py \
+python3 scripts/ci/linux/run-mpx-recovery-e2e.py \
   --driver libs/cua-driver/rust/target/debug/cua-driver \
   --output /tmp/mpx-recovery-evidence \
   --source-sha "$(git rev-parse HEAD)"

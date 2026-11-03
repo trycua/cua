@@ -23,6 +23,10 @@ struct RunVMRequest: Codable {
     /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
     /// always starting a VNC server.
     let vnc: String?
+    /// Guest ports to publish on host loopback ports over vsock (the VM
+    /// gets a virtio socket device; the guest needs Cua's vsock agent).
+    /// `get` reports the host ports under `forwards` once the agent answers.
+    var forwards: [UInt16]? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -104,6 +108,10 @@ struct PullRequest: Codable {
     }
 }
 
+struct PullCancelRequest: Codable {
+    let name: String
+}
+
 struct CreateVMRequest: Codable {
     let name: String
     let os: String
@@ -163,6 +171,13 @@ struct CloneRequest: Codable {
     let newName: String
     let sourceLocation: String?
     let destLocation: String?
+    /// Clone the source's saved machine state too (`POST /lume/vms/:name/suspend`).
+    let withSavedState: Bool?
+}
+
+struct RenameVMRequest: Codable {
+    let newName: String
+    let storage: String?
 }
 
 struct SetupVMRequest: Codable {

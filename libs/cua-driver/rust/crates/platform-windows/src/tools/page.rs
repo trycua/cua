@@ -190,6 +190,8 @@ impl PageBackend for WindowsPageBackend {
                 return JSON.stringify({{\
                     vx: r.left + r.width/2,\
                     vy: r.top  + r.height/2,\
+                    vw: r.width,\
+                    vh: r.height,\
                     sx: window.screenX + (window.outerWidth - window.innerWidth)/2,\
                     sy: window.screenY + (window.outerHeight - window.innerHeight),\
                     dpr: window.devicePixelRatio || 1\
@@ -261,6 +263,18 @@ impl PageBackend for WindowsPageBackend {
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;
+        // Element box in the same space as the click point; optional, so a
+        // probe without vw/vh just glides without a target rect.
+        let extent = |key: &str| {
+            parsed
+                .get(key)
+                .and_then(|v| v.as_f64())
+                .filter(|f| f.is_finite() && *f >= 0.0)
+        };
+        let target_rect = extent("vw").zip(extent("vh")).map(|(vw, vh)| {
+            let (w, h) = (vw * dpr, vh * dpr);
+            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
+        });
 
         // Step 2 — drive the cursor overlay. Pin above the browser's root
         // HWND so the overlay sits at z+1 of the page, glide, click-pulse.
@@ -282,7 +296,13 @@ impl PageBackend for WindowsPageBackend {
         // caller `session`, so this drives the seeded `"default"` cursor rather
         // than a per-session one. Threading session through the trait is a
         // separate cross-platform change (tracked as a follow-up).
-        crate::overlay::animate_cursor_to("default".to_owned(), screen_x, screen_y).await;
+        crate::overlay::animate_cursor_to_target(
+            "default".to_owned(),
+            screen_x,
+            screen_y,
+            target_rect,
+        )
+        .await;
         crate::overlay::send_command_default(cursor_overlay::OverlayCommand::ClickPulse {
             x: screen_x,
             y: screen_y,

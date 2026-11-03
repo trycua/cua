@@ -53,14 +53,14 @@ if ($ChocoExe) {
     Write-Host "Chocolatey not available; skipping Git install"
 }
 
-# Cua Computer Server Setup
-Write-Host "Setting up Cua Computer Server..."
-$cuaServerSetupScript = Join-Path $scriptFolder -ChildPath "setup-cua-server.ps1"
-if (Test-Path $cuaServerSetupScript) {
-    & $cuaServerSetupScript
-    Write-Host "Cua Computer Server setup completed."
+# cua-spacesd Setup
+Write-Host "Setting up cua-spacesd..."
+$spacesdSetupScript = Join-Path $scriptFolder -ChildPath "setup-spacesd.ps1"
+if (Test-Path $spacesdSetupScript) {
+    & $spacesdSetupScript
+    Write-Host "cua-spacesd setup completed."
 } else {
-    Write-Host "ERROR: setup-cua-server.ps1 not found at $cuaServerSetupScript"
+    Write-Host "ERROR: setup-spacesd.ps1 not found at $spacesdSetupScript"
 }
 
 # Register on-logon task

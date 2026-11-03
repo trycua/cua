@@ -1,0 +1,8 @@
+{
+  "agents.routine.title": "Título",
+  "agents.routine.prompt": "Instrucción",
+  "agents.routine.schedule": "Programación",
+  "agents.routine.minutes": "Minutos",
+  "agents.routine.time": "Hora",
+  "agents.routine.day": "Día"
+}

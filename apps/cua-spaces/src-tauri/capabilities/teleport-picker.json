@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "teleport-picker",
+  "description": "Centered hand-off window picker: core IPC so the picker can read its target, list open windows, capture per-window preview thumbnails, read the teleport manifest and run the consented push, and receive re-target events.",
+  "windows": [
+    "teleport-picker"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

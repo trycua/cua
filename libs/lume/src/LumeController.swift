@@ -22,35 +22,159 @@ final class SharedVM {
     func removeVM(name: String) {
         runningVMs.removeValue(forKey: name)
     }
+
+    /// A VM other than `name` this process runs with MAC address `mac`.
+    func runningName(withMAC mac: String, except name: String) -> String? {
+        runningVMs.first { $0.key != name && $0.value.config.macAddress?.lowercased() == mac.lowercased() }?.key
+    }
+
+    /// Removes the entry for `name` only while it still holds `vm`, so a run
+    /// that ends never drops a later run's entry.
+    func removeVM(name: String, ifSame vm: VM) {
+        if runningVMs[name] === vm {
+            runningVMs.removeValue(forKey: name)
+        }
+    }
+
+    /// The cached VM for `name` while its guest still runs in this process.
+    /// An entry for a guest that already stopped is dropped.
+    func liveVM(name: String) -> VM? {
+        guard let vm = runningVMs[name] else { return nil }
+        guard vm.isRunActive else {
+            runningVMs.removeValue(forKey: name)
+            return nil
+        }
+        return vm
+    }
+
+    /// Drops cached VMs whose guest no longer runs in this process, such as a
+    /// guest that shut itself down.
+    func removeStoppedVMs() {
+        runningVMs = runningVMs.filter { $0.value.isRunActive }
+    }
 }
 
 // MARK: - Pull Progress Tracker
 
-/// Tracks async pull progress keyed by VM name. Shared singleton used by
-/// handlePullStart (writer) and handleGetVM (reader) across the same process.
+/// Tracks async pulls keyed by VM name: their byte progress (read by
+/// `GET /lume/vms/:name`), their errors, and the task running each async pull
+/// so `POST /lume/pull/cancel` can stop it.
+///
+/// Every pull gets a token from `begin`; progress and the final outcome are
+/// only applied while that token is the name's current pull, so a late
+/// progress update can never bring back a finished or cancelled entry.
 actor PullProgressTracker {
     static let shared = PullProgressTracker()
 
-    private var progress: [String: Double] = [:]
+    enum Outcome: Sendable {
+        case completed
+        case failed(String)
+        case cancelled
+    }
+
+    enum CancelOutcome: Sendable, Equatable {
+        /// No cancellable pull runs for the name.
+        case notFound
+        /// The pull task ended; its partial files are gone.
+        case cancelled
+        /// The pull task did not end within the timeout.
+        case timedOut
+    }
+
+    private struct ActivePull {
+        let token: UUID
+        let cancellable: Bool
+        var progress: PullProgress
+        var task: Task<Void, Never>?
+        var cancelRequested = false
+    }
+
+    private var active: [String: ActivePull] = [:]
     private var errors: [String: String] = [:]
+    private var waiters: [UUID: [UUID: CheckedContinuation<Bool, Never>]] = [:]
 
-    func setProgress(_ value: Double, for name: String) {
-        progress[name] = value
+    init() {}
+
+    /// Starts tracking a pull for `name` and returns its token. A cancellable
+    /// pull is one whose task is handed over with `attach`.
+    func begin(name: String, cancellable: Bool) -> UUID {
+        let token = UUID()
+        active[name] = ActivePull(token: token, cancellable: cancellable, progress: .zero)
         errors.removeValue(forKey: name)
+        return token
     }
 
-    func setError(_ message: String, for name: String) {
-        errors[name] = message
-        progress.removeValue(forKey: name)
+    /// The token of the cancellable pull running for `name`, if any.
+    func activeCancellableToken(for name: String) -> UUID? {
+        guard let entry = active[name], entry.cancellable else { return nil }
+        return entry.token
     }
 
-    func complete(for name: String) {
-        progress.removeValue(forKey: name)
-        errors.removeValue(forKey: name)
+    /// Hands over the task running the pull `token`. If a cancel already
+    /// arrived, the task is cancelled right away.
+    func attach(_ task: Task<Void, Never>, name: String, token: UUID) {
+        guard var entry = active[name], entry.token == token else { return }
+        entry.task = task
+        active[name] = entry
+        if entry.cancelRequested { task.cancel() }
+    }
+
+    func setProgress(_ value: PullProgress, for name: String, token: UUID) {
+        guard var entry = active[name], entry.token == token, !entry.cancelRequested else { return }
+        entry.progress = value
+        active[name] = entry
+    }
+
+    /// Records how the pull `token` ended and wakes up anyone waiting on it.
+    /// A pull that was asked to cancel leaves no entry and no error behind.
+    func finish(name: String, token: UUID, outcome: Outcome) {
+        if let entry = active[name], entry.token == token {
+            active.removeValue(forKey: name)
+            if case .failed(let message) = outcome, !entry.cancelRequested {
+                errors[name] = message
+            } else {
+                errors.removeValue(forKey: name)
+            }
+        }
+        if let pending = waiters.removeValue(forKey: token) {
+            for continuation in pending.values { continuation.resume(returning: true) }
+        }
+    }
+
+    /// Cancels the async pull running for `name` and waits up to `timeout`
+    /// seconds for its task to end (the task cleans up before it ends).
+    func cancel(name: String, timeout: TimeInterval = 30) async -> CancelOutcome {
+        guard var entry = active[name], entry.cancellable else { return .notFound }
+        let token = entry.token
+        entry.cancelRequested = true
+        active[name] = entry
+        entry.task?.cancel()
+
+        let waiterId = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            await self?.expireWaiter(token: token, waiterId: waiterId)
+        }
+        let ended = await withCheckedContinuation { continuation in
+            waiters[token, default: [:]][waiterId] = continuation
+        }
+        timer.cancel()
+        return ended ? .cancelled : .timedOut
+    }
+
+    private func expireWaiter(token: UUID, waiterId: UUID) {
+        if let continuation = waiters[token]?.removeValue(forKey: waiterId) {
+            continuation.resume(returning: false)
+        }
+    }
+
+    func getPullProgress(for name: String) -> PullProgress? {
+        guard let entry = active[name], !entry.cancelRequested else { return nil }
+        return entry.progress
     }
 
     func getProgress(for name: String) -> Double? {
-        return progress[name]
+        getPullProgress(for: name)?.percent
     }
 
     func getError(for name: String) -> String? {
@@ -58,7 +182,7 @@ actor PullProgressTracker {
     }
 
     func isPulling(_ name: String) -> Bool {
-        return progress[name] != nil
+        return active[name] != nil
     }
 }
 
@@ -86,6 +210,15 @@ final class LumeController {
     }
 
     // MARK: - Public VM Management Methods
+
+    /// The VMs whose guests are running, across all storage locations unless
+    /// `storage` names one. Cache entries for guests that already stopped are
+    /// dropped first, so a guest that shut itself down is not counted as running.
+    @MainActor
+    public func runningVMs(storage: String? = nil) throws -> [VMDetails] {
+        SharedVM.shared.removeStoppedVMs()
+        return try list(storage: storage).filter { $0.status == "running" }
+    }
 
     /// Lists all virtual machines in the system
     /// Uses a lightweight path that reads config directly without instantiating full VM objects
@@ -208,7 +341,7 @@ final class LumeController {
         }
 
         // Check if VM is running via SharedVM cache (same-process fast path)
-        let runningVM = SharedVM.shared.getVM(name: vmName)
+        let runningVM = SharedVM.shared.liveVM(name: vmName)
         var isRunning = runningVM != nil
 
         // Get VNC URL and IP address only if running
@@ -320,9 +453,17 @@ final class LumeController {
         vmDir.hasResizeMarker() ? .resizeInProgress(name) : .vmRunning(name)
     }
 
+    /// Clones a stopped VM (APFS copy-on-write). The clone gets a new MAC
+    /// address and machine identifier, unless `withSavedState` asks for the
+    /// source's saved machine state too: a state restores only into the
+    /// configuration it was saved from, so such a clone keeps both, and its
+    /// first run resumes the saved guest. Two clones of one state share an
+    /// address, so a run whose address a running VM already has boots
+    /// instead (`runVM`).
     @MainActor
     public func clone(
-        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
+        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil,
+        withSavedState: Bool = false
     ) throws {
         let normalizedName = normalizeVMName(name: name)
         let normalizedNewName = normalizeVMName(name: newName)
@@ -361,9 +502,14 @@ final class LumeController {
                 try? destinationGuard.close()
             }
 
-            // Get the source VM and check if it's running
-            let sourceVM = try get(name: normalizedName, storage: sourceLocation)
-            if sourceVM.details.status == "running" {
+            // Check the source is not running: this process runs it, or
+            // its session proves another one does. Not by its MAC address:
+            // a clone with a saved state shares its source's address, so a
+            // stopped clone would look running while its source runs.
+            if getVMDetailsLightweight(
+                vmDir: sourceVmDir, locationName: actualSourceLocation ?? "home")?.status
+                == "running"
+            {
                 Logger.error("Cannot clone a running VM", metadata: ["source": normalizedName])
                 throw VMError.alreadyRunning(normalizedName)
             }
@@ -383,12 +529,23 @@ final class LumeController {
             }
 
             // Clone the VM directory (uses APFS clonefile for disk.img)
+            if withSavedState && !sourceVmDir.hasSavedState() {
+                throw VMError.internalError(
+                    "VM '\(normalizedName)' has no saved state to clone (suspend it first)")
+            }
             try home.cloneVMDirectory(
                 from: normalizedName,
                 to: normalizedNewName,
                 sourceLocation: sourceLocation,
-                destLocation: destLocation
+                destLocation: destLocation,
+                includeSavedState: withSavedState
             )
+            if withSavedState {
+                Logger.info(
+                    "VM cloned with its saved state",
+                    metadata: ["source": normalizedName, "destination": normalizedNewName])
+                return
+            }
 
             // Update MAC address in the cloned VM to ensure uniqueness
             let clonedVM = try get(name: normalizedNewName, storage: destLocation)
@@ -945,7 +1102,7 @@ final class LumeController {
             }
 
             // Stop VM if it's running
-            if SharedVM.shared.getVM(name: normalizedName) != nil {
+            if SharedVM.shared.liveVM(name: normalizedName) != nil {
                 try await stopVM(name: normalizedName)
             }
 
@@ -959,6 +1116,10 @@ final class LumeController {
             try validateNoPendingResize(vmDir, name: normalizedName)
             
             try vmDir.delete()
+            // The guard lives next to the VM directory; unlink it while
+            // still holding the exclusive lock so a deleted VM leaves no
+            // empty `.<name>.resize.guard` behind.
+            vmDir.removeResizeGuard()
             
             Logger.info("VM deleted successfully", metadata: ["name": normalizedName])
             
@@ -970,6 +1131,46 @@ final class LumeController {
 
     // MARK: - VM Operations
 
+    /// Resolve a `--machine-identifier` value to the raw identifier bytes.
+    /// `random`/`new` generates a fresh one; anything else is taken as the
+    /// base64 representation of an existing identifier (as emitted by
+    /// `lume get --format json`), so a caller can pin several VMs to one
+    /// machine identity. Pure, so the parsing is unit-testable.
+    nonisolated static func parseMachineIdentifier(_ value: String) throws -> Data {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.lowercased() == "random" || trimmed.lowercased() == "new" {
+            return VZMacMachineIdentifier().dataRepresentation
+        }
+        guard let data = Data(base64Encoded: trimmed), !data.isEmpty else {
+            throw ValidationError(
+                "Invalid --machine-identifier '\(value)'. Expected 'random' or a base64 machine identifier (see `lume get <vm> --format json`)."
+            )
+        }
+        // Reject bytes Virtualization.framework won't accept, so a bad value
+        // fails here rather than at the next boot.
+        guard VZMacMachineIdentifier(dataRepresentation: data) != nil else {
+            throw ValidationError(
+                "Invalid --machine-identifier '\(value)': not a valid machine identifier."
+            )
+        }
+        return data
+    }
+
+    /// Resolve a `--mac-address` value. `random` generates a fresh
+    /// locally-administered address; anything else must be a valid MAC. Pure.
+    nonisolated static func parseMacAddress(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.lowercased() == "random" || trimmed.lowercased() == "new" {
+            return VZMACAddress.randomLocallyAdministered().string
+        }
+        guard VZMACAddress(string: trimmed) != nil else {
+            throw ValidationError(
+                "Invalid --mac-address '\(value)'. Expected 'random' or an address like aa:bb:cc:dd:ee:ff."
+            )
+        }
+        return trimmed
+    }
+
     @MainActor
     public func updateSettings(
         name: String,
@@ -977,6 +1178,8 @@ final class LumeController {
         memory: UInt64? = nil,
         diskSize: UInt64? = nil,
         display: String? = nil,
+        machineIdentifier: String? = nil,
+        macAddress: String? = nil,
         storage: String? = nil,
         noBackup: Bool = false,
         keepBackup: Bool = false,
@@ -998,6 +1201,8 @@ final class LumeController {
                 "memory": memory.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
                 "disk_size": diskSize.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
                 "display": display ?? "unchanged",
+                "machine_identifier": machineIdentifier ?? "unchanged",
+                "mac_address": macAddress ?? "unchanged",
             ])
         do {
             // Find the actual location of the VM
@@ -1022,6 +1227,12 @@ final class LumeController {
             if let display = display {
                 try vm.setDisplay(display)
             }
+            if let machineIdentifier = machineIdentifier {
+                try vm.setMachineIdentifier(Self.parseMachineIdentifier(machineIdentifier))
+            }
+            if let macAddress = macAddress {
+                try vm.setMacAddress(Self.parseMacAddress(macAddress))
+            }
 
             Logger.info("VM settings updated successfully", metadata: ["name": normalizedName])
         } catch {
@@ -1032,9 +1243,15 @@ final class LumeController {
     }
 
     @MainActor
-    public func stopVM(name: String, storage: String? = nil) async throws {
+    public func stopVM(
+        name: String,
+        storage: String? = nil,
+        force: Bool = false,
+        timeout: TimeInterval = VM.defaultStopTimeout
+    ) async throws {
         let normalizedName = normalizeVMName(name: name)
-        Logger.info("Stopping VM", metadata: ["name": normalizedName])
+        Logger.info(
+            "Stopping VM", metadata: ["name": normalizedName, "force": "\(force)"])
 
         do {
             // Find the actual location of the VM
@@ -1047,13 +1264,13 @@ final class LumeController {
 
             // Try to get VM from cache first
             let vm: VM
-            if let cachedVM = SharedVM.shared.getVM(name: normalizedName) {
+            if let cachedVM = SharedVM.shared.liveVM(name: normalizedName) {
                 vm = cachedVM
             } else {
                 vm = try get(name: normalizedName, storage: actualLocation)
             }
 
-            try await vm.stop()
+            try await vm.stop(force: force, timeout: timeout)
             // Remove VM from cache after stopping
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.info("VM stopped successfully", metadata: ["name": normalizedName])
@@ -1063,6 +1280,52 @@ final class LumeController {
             Logger.error("Failed to stop VM", metadata: ["error": error.localizedDescription])
             throw error
         }
+    }
+
+    /// Renames VM `name` to `newName`, running or not. A running VM must be
+    /// one this process runs (the guest keeps running; only its directory
+    /// moves); one another process runs (a detached `lume run`) is refused.
+    @MainActor
+    public func renameVM(name: String, newName: String, storage: String? = nil) throws {
+        let from = normalizeVMName(name: name)
+        let to = normalizeVMName(name: newName)
+        guard !to.isEmpty, !to.contains("/"), to != ".", to != "..", !to.hasPrefix(".") else {
+            throw ValidationError("Invalid VM name: \(newName)")
+        }
+        let location = try validateVMExists(from, storage: storage)
+        let source = try home.getVMDirectory(from, storage: location)
+        try validateNotProvisioning(source, name: from)
+        let destination = try home.getVMDirectory(to, storage: location)
+        if destination.exists() {
+            throw HomeError.directoryAlreadyExists(path: destination.dir.path)
+        }
+        let hosted = SharedVM.shared.getVM(name: from)
+        if hosted == nil,
+            getVMDetailsLightweight(vmDir: source, locationName: location ?? "home")?.status
+                == "running"
+        {
+            throw VMError.internalError(
+                "VM '\(from)' runs in another process; stop it before renaming it")
+        }
+        try FileManager.default.moveItem(at: source.dir.url, to: destination.dir.url)
+        if let vm = hosted {
+            vm.relocate(to: destination)
+            SharedVM.shared.removeVM(name: from)
+            SharedVM.shared.setVM(name: to, vm: vm)
+        }
+        Logger.info("VM renamed", metadata: ["from": from, "to": to])
+    }
+
+    /// Saves the state of VM `name`, which this process runs, and stops it:
+    /// its next run resumes where it was (`VM.suspend`).
+    @MainActor
+    public func suspendVM(name: String) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        guard let vm = SharedVM.shared.getVM(name: normalizedName) else {
+            throw VMError.notRunning(normalizedName)
+        }
+        try await vm.suspend()
+        SharedVM.shared.removeVM(name: normalizedName)
     }
 
     @MainActor
@@ -1085,6 +1348,7 @@ final class LumeController {
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
+        forwards: [UInt16] = [],
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
@@ -1211,6 +1475,18 @@ final class LumeController {
             let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
             vm.telemetryTransport = telemetryTransport
 
+            // A saved state restores with the MAC address it was saved with:
+            // when a running VM already has it (another clone of the same
+            // state, or the VM a checkpoint was taken from), boot this one as
+            // a new machine instead of putting two guests on one address.
+            if vmDir.hasSavedState(), let mac = vm.config.macAddress,
+                let other = SharedVM.shared.runningName(withMAC: mac, except: normalizedName)
+            {
+                Logger.info(
+                    "The saved state's MAC address is in use; booting with a new identity",
+                    metadata: ["name": normalizedName, "running": other])
+                try vm.dropSavedStateForNewIdentity()
+            }
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
                 displayMode: effectiveDisplayMode,
@@ -1223,8 +1499,12 @@ final class LumeController {
                 additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode,
                 clipboard: clipboard,
-                vncPolicy: vncPolicy)
-            Logger.info("VM started successfully", metadata: ["name": normalizedName])
+                vncPolicy: vncPolicy,
+                forwards: forwards)
+            // `run` returns once the guest has stopped, including when it shut
+            // itself down, so the VM no longer runs in this process.
+            SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)
+            Logger.info("VM run ended", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.error("Failed to run VM", metadata: ["error": error.localizedDescription])
@@ -1260,7 +1540,7 @@ final class LumeController {
         username: String? = nil,
         password: String? = nil,
         force: Bool = false,
-        progressHandler: (@Sendable (Double) -> Void)? = nil
+        progressHandler: PullProgressHandler? = nil
     ) async throws {
         do {
             // Split the image to get name and tag
@@ -1294,26 +1574,29 @@ final class LumeController {
                 force: force
             )
 
-            let imageRegistry = try RegistryFactory.createRegistry(
-                registry: registry, organization: organization,
-                username: username, password: password)
-            let _ = try await imageRegistry.pull(
-                image: image,
-                name: vmName,
-                locationName: storage,
-                force: force,
-                progressHandler: progressHandler)
+            let targetDir = try? pullTargetDirectory(name: vmName, storage: storage)
+            try await Self.removingNewVMDirectoryOnCancel(targetDir) {
+                let imageRegistry = try RegistryFactory.createRegistry(
+                    registry: registry, organization: organization,
+                    username: username, password: password)
+                let _ = try await imageRegistry.pull(
+                    image: image,
+                    name: vmName,
+                    locationName: storage,
+                    force: force,
+                    progressHandler: progressHandler)
 
-            Logger.debug(
-                "Setting new VM mac address",
-                metadata: [
-                    "vm_name": vmName,
-                    "location": storage ?? "home",
-                ])
+                Logger.debug(
+                    "Setting new VM mac address",
+                    metadata: [
+                        "vm_name": vmName,
+                        "location": storage ?? "home",
+                    ])
 
-            // Update MAC address in the cloned VM to ensure uniqueness
-            let vm = try get(name: vmName, storage: storage)
-            try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
+                // Update MAC address in the cloned VM to ensure uniqueness
+                let vm = try self.get(name: vmName, storage: storage)
+                try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
+            }
 
             Logger.debug(
                 "Image pulled successfully",
@@ -1750,6 +2033,46 @@ final class LumeController {
             }
         default:
             break
+        }
+    }
+
+    /// The directory a pull of `name` into `storage` ends up in.
+    private func pullTargetDirectory(name: String, storage: String?) throws -> VMDirectory {
+        if let storage, storage.contains("/") || storage.contains("\\") {
+            return try home.getVMDirectoryFromPath(name, storagePath: storage)
+        }
+        return try home.getVMDirectory(name, storage: storage)
+    }
+
+    /// Runs a pull and, if the task is cancelled, removes the VM directory the
+    /// pull created. A directory that existed before the pull is never removed.
+    /// A cancel that arrives after the pull finished still removes what it made,
+    /// so a cancelled pull never leaves a VM behind.
+    @MainActor
+    static func removingNewVMDirectoryOnCancel(
+        _ vmDir: VMDirectory?,
+        _ body: @MainActor () async throws -> Void
+    ) async throws {
+        let existedBefore = vmDir.map { FileManager.default.fileExists(atPath: $0.dir.path) } ?? true
+        func removeIfNew() {
+            guard !existedBefore, let vmDir,
+                FileManager.default.fileExists(atPath: vmDir.dir.path)
+            else { return }
+            Logger.info("Removing the VM directory of a cancelled pull", metadata: ["path": vmDir.dir.path])
+            try? FileManager.default.removeItem(atPath: vmDir.dir.path)
+        }
+        do {
+            try await body()
+        } catch {
+            if Task.isCancelled || error is CancellationError {
+                removeIfNew()
+                throw CancellationError()
+            }
+            throw error
+        }
+        if Task.isCancelled {
+            removeIfNew()
+            throw CancellationError()
         }
     }
 

@@ -155,7 +155,7 @@ try {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $preflightOutput = @(& cargo test -p cua-driver --test e2e_environment_preflight_test -- `
+        $preflightOutput = @(& cargo test -p cua-driver-e2e --test e2e_environment_preflight_test -- `
             --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1) | `
             ForEach-Object {
                 if ($_ -is [System.Management.Automation.ErrorRecord]) {
@@ -177,12 +177,10 @@ if ($preflightExit -ne 0) {
     throw "Windows E2E environment preflight failed"
 }
 
-function Invoke-CargoTest {
-    param([string]$Name, [string[]]$Arguments)
-    Write-Host "[RUN] $Name" -ForegroundColor Yellow
+function Invoke-CargoTestAttempt {
+    param([string[]]$Arguments, [string]$LogPath)
     Push-Location $rustRoot
     try {
-        $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
@@ -197,12 +195,52 @@ function Invoke-CargoTest {
         } finally {
             $ErrorActionPreference = $previousPreference
         }
-        $output | Tee-Object -FilePath $logPath
-        if ($exitCode -ne 0) {
-            $script:FailureCount++
-        }
+        $output | Tee-Object -FilePath $LogPath | Out-Host
+        return $exitCode
     } finally {
         Pop-Location
+    }
+}
+
+# With CUA_E2E_RETRY_ONCE=1 a failed case is rerun exactly once. A pass on the
+# rerun is "flaky": it is recorded in flaky-cases.jsonl and does not fail the
+# gate. Two failures are a real failure. Mirrors scripts/ci/lib/e2e-retry-once.sh.
+function Invoke-CargoTest {
+    param([string]$Name, [string[]]$Arguments)
+    Write-Host "[RUN] $Name" -ForegroundColor Yellow
+    $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
+    $retry = $env:CUA_E2E_RETRY_ONCE -eq "1"
+    if ($retry) {
+        $resultsLines = @(Get-Content $resultsPath).Count
+        $caseLines = @(Get-Content $casesPath).Count
+        $beforeDirs = @(Get-ChildItem -Path $recordingRoot -Directory | ForEach-Object { $_.FullName })
+    }
+    $exitCode = Invoke-CargoTestAttempt -Arguments $Arguments -LogPath $logPath
+    if ($exitCode -ne 0 -and $retry) {
+        Write-Host "[RETRY] $Name failed (exit $exitCode); rerunning once" -ForegroundColor Yellow
+        $quarantine = Join-Path $artifactDir ("retried-attempts\" + ($Name -replace '[^A-Za-z0-9_.-]', '-'))
+        New-Item -ItemType Directory -Force (Join-Path $quarantine "recordings") | Out-Null
+        Copy-Item $logPath (Join-Path $quarantine "attempt1.log")
+        $resultRows = @(Get-Content $resultsPath)
+        $caseRows = @(Get-Content $casesPath)
+        $resultRows | Select-Object -Skip $resultsLines | Set-Content (Join-Path $quarantine "results.jsonl")
+        $caseRows | Select-Object -Skip $caseLines | Set-Content (Join-Path $quarantine "cases.jsonl")
+        Set-Content -Path $resultsPath -Value ($resultRows | Select-Object -First $resultsLines)
+        Set-Content -Path $casesPath -Value ($caseRows | Select-Object -First $caseLines)
+        Get-ChildItem -Path $recordingRoot -Directory | Where-Object { $beforeDirs -notcontains $_.FullName } |
+            ForEach-Object { Move-Item $_.FullName (Join-Path $quarantine "recordings") }
+        $secondExit = Invoke-CargoTestAttempt -Arguments $Arguments -LogPath $logPath
+        if ($secondExit -eq 0) {
+            Write-Host "[FLAKY] $Name failed once (exit $exitCode) then passed; not failing the gate"
+            $record = [ordered]@{ case = $Name; platform = "windows"; first_attempt_exit = $exitCode; second_attempt = "passed" }
+            Add-Content -Path (Join-Path $artifactDir "flaky-cases.jsonl") -Value ($record | ConvertTo-Json -Compress)
+            return
+        }
+        Write-Host "[FAIL] $Name failed twice (exit $exitCode, then $secondExit); real failure"
+        $exitCode = $secondExit
+    }
+    if ($exitCode -ne 0) {
+        $script:FailureCount++
     }
 }
 
@@ -297,7 +335,7 @@ function Invoke-ComputerHistoryGate {
     }
 
     Invoke-CargoTest "computer-history-encrypted-lifecycle" @(
-        "test", "-p", "cua-driver", "--test", "computer_history_cross_platform_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "computer_history_cross_platform_test", "--",
         "--ignored", "--exact", "encrypted_history_survives_restart_and_cryptographically_purges",
         "--nocapture", "--test-threads=1"
     )
@@ -385,12 +423,12 @@ if ($suite -in @("shared", "all")) {
         "--test-threads=1"
     )
     Invoke-CargoTest "shared behavior matrix" @(
-        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
         "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "embedded browser routes" @(
-        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "embedded_browser_routes_are_exact_or_refused",
         "--nocapture", "--test-threads=1"
     )
@@ -399,41 +437,47 @@ if ($suite -in @("shared", "all")) {
 if ($suite -in @("native", "all")) {
     Invoke-CargoTest "Windows installed-app discovery deadline" @(
         "test", "-p", "cua-driver", "--test", "protocol_tools_call_test", "--",
-        "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
+        "--ignored", "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Agent cursor showcase" @(
-        "test", "-p", "cua-driver", "--test", "agent_cursor_showcase_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_showcase_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows native harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "WinUI3 harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_winui3_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_winui3_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows web harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_web_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_web_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows minimized launch" @(
-        "test", "-p", "cua-driver", "--test", "launch_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "launch_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows agent cursor" @(
-        "test", "-p", "cua-driver", "--test", "agent_cursor_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }
 
 if ($suite -in @("capture", "all")) {
     Invoke-CargoTest "capture contract" @(
-        "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "capture_contract_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows desktop scope" @(
-        "test", "-p", "cua-driver", "--test", "desktop_scope_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "desktop_scope_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
+    # Includes the published-catalog row: it downloads the pinned
+    # cua-perception release and needs a Python with Tk (py -3 or python).
+    Invoke-CargoTest "perception capture loop" @(
+        "test", "-p", "cua-driver-e2e", "--test", "perception_capture_loop_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }

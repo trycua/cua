@@ -1,0 +1,14 @@
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
+
+# Processes cargo starts here (tests, `cargo run`) never send telemetry:
+# usage telemetry is off, and even when a test turns it on, sends to any
+# non-loopback endpoint are refused (cua-telemetry's no-network guard).
+# Release binaries are unaffected: cargo does not bake these in.
+[env]
+CUA_TELEMETRY = "0"
+CUA_TELEMETRY_FORBID_NETWORK = "1"
+CUA_TELEMETRY_SYNTHETIC = "1"

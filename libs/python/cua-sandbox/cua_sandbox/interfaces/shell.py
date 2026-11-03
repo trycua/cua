@@ -49,7 +49,7 @@ class Shell:
                 stderr=result.get("stderr", ""),
                 returncode=rc if rc is not None else 0,
             )
-        # LocalTransport returns cua_auto.shell.CommandResult directly
+        # Some transports return a result object instead of a dict.
         return CommandResult(
             stdout=getattr(result, "stdout", ""),
             stderr=getattr(result, "stderr", ""),

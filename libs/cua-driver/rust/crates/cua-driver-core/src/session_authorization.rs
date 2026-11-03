@@ -123,10 +123,6 @@ impl SessionModeCeiling {
             && (mode != PermissionMode::Unrestricted || self.unrestricted_acknowledged)
     }
 
-    pub fn delegation_enabled(&self) -> bool {
-        self.delegation_enabled
-    }
-
     pub fn allowed_mode_names(&self) -> Vec<&'static str> {
         let mut modes = [
             PermissionMode::Standard,
@@ -218,22 +214,14 @@ impl EffectiveAuthorizationContext {
         self.source
     }
 
-    pub fn bounded_manifest(&self) -> Option<&SessionManifest> {
-        self.capability_manifest.as_deref()
-    }
-
     pub fn capability_manifest(&self) -> Option<&SessionManifest> {
         self.capability_manifest.as_deref()
     }
 
-    pub fn bounded_manifest_sha256(&self) -> Option<&str> {
+    pub fn capability_manifest_sha256(&self) -> Option<&str> {
         self.capability_manifest
             .as_deref()
             .map(SessionManifest::sha256)
-    }
-
-    pub fn capability_manifest_sha256(&self) -> Option<&str> {
-        self.bounded_manifest_sha256()
     }
 
     pub fn public_session(&self) -> Option<&str> {
@@ -335,11 +323,6 @@ impl EffectiveAuthorizationContext {
         }
         Ok(())
     }
-
-    /// Compatibility alias for callers that commit a fully admitted dispatch.
-    pub fn authorize_dispatch(&self) -> Result<(), String> {
-        self.commit_authorized_dispatch()
-    }
 }
 
 pub struct DelegatedSessionRequest {
@@ -438,9 +421,6 @@ pub enum SessionAuthorizationError {
     InvalidTtl,
     #[error("bounded mode requires an immutable capability manifest")]
     MissingBoundedManifest,
-    #[deprecated(note = "capability manifests are now valid in every permission profile")]
-    #[error("the capability manifest is unexpected")]
-    UnexpectedBoundedManifest,
     #[error("the capability manifest is invalid for the selected permission mode")]
     InvalidManifest,
 }
@@ -516,6 +496,17 @@ impl SessionAuthorizationRegistry {
 
     pub fn ceiling(&self) -> &SessionModeCeiling {
         &self.ceiling
+    }
+
+    /// The runtime-private key dispatch through this registry's contexts
+    /// gives `public_session` (see
+    /// [`EffectiveAuthorizationContext::runtime_session_key`]).
+    #[doc(hidden)]
+    pub fn runtime_session_key(&self, public_session: &str) -> String {
+        format!(
+            "__cua_runtime_{}:{public_session}",
+            self.daemon_generation.0.simple()
+        )
     }
 
     pub fn legacy_context(&self) -> Result<Arc<EffectiveAuthorizationContext>, String> {
@@ -784,9 +775,10 @@ impl SessionAuthorizationRegistry {
     }
 }
 
-static CONFIGURED_REGISTRY: OnceLock<
-    Mutex<Option<Result<Arc<SessionAuthorizationRegistry>, String>>>,
-> = OnceLock::new();
+/// The process registry, or the configuration error that prevented it.
+type ConfiguredRegistry = Result<Arc<SessionAuthorizationRegistry>, String>;
+
+static CONFIGURED_REGISTRY: OnceLock<Mutex<Option<ConfiguredRegistry>>> = OnceLock::new();
 
 pub fn configured_registry() -> Result<Arc<SessionAuthorizationRegistry>, String> {
     CONFIGURED_REGISTRY
@@ -1109,7 +1101,7 @@ mod tests {
             .unwrap();
         std::thread::sleep(Duration::from_millis(3));
         assert!(context.is_expired());
-        assert!(context.authorize_dispatch().is_err());
+        assert!(context.commit_authorized_dispatch().is_err());
         assert_eq!(
             registry.status_json()["delegated_session_counts"]["standard"],
             0
@@ -1274,7 +1266,7 @@ mod tests {
             .unwrap();
 
         assert!(registry.revoke_connection(&connection));
-        assert!(context.authorize_dispatch().is_err());
+        assert!(context.commit_authorized_dispatch().is_err());
         assert!(context.is_expired());
     }
 
@@ -1302,8 +1294,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(registry.revoke_all(), 2);
-        assert!(context_a.authorize_dispatch().is_err());
-        assert!(context_b.authorize_dispatch().is_err());
+        assert!(context_a.commit_authorized_dispatch().is_err());
+        assert!(context_b.commit_authorized_dispatch().is_err());
         assert_eq!(registry.revoke_all(), 0);
     }
 

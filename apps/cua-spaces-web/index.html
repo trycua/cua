@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/cua_logo_black_new.svg" />
+    <title>Cua Spaces</title>
+    <script>
+      // Apply the saved theme before first paint so the window never flashes
+      // the wrong background. Mirrors src/lib/theme.ts; keep the key in sync.
+      (() => {
+        const KEY = "cua-spaces:theme";
+        let pref = "system";
+        try {
+          const stored = localStorage.getItem(KEY);
+          if (stored === "light" || stored === "dark" || stored === "system") pref = stored;
+        } catch {}
+        const dark =
+          pref === "dark" ||
+          (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        const root = document.documentElement;
+        root.classList.toggle("dark", dark);
+        root.style.colorScheme = dark ? "dark" : "light";
+        root.style.backgroundColor = dark ? "#16181c" : "#f7f8fa";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

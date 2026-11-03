@@ -170,9 +170,48 @@ pub fn reexec_disclaimed_if_needed() {
 #[cfg(not(target_os = "macos"))]
 pub fn reexec_disclaimed_if_needed() {}
 
+/// The startup warning for a daemon running outside CuaDriver.app, or `None`
+/// when it is embedded or bundled (CUA-1777).
+#[cfg(target_os = "macos")]
+fn unbundled_warning(embedded: bool, inside_bundle: bool) -> Option<&'static str> {
+    if embedded || inside_bundle {
+        return None;
+    }
+    Some(
+        "warning: running unbundled (outside CuaDriver.app). The daemon is its own responsible \
+         process, so macOS gives it no valid WindowServer connection: background (no-raise) \
+         focus steps fail with status 1002 and background actions will be refused. Run the \
+         app-bundle daemon instead: `cua-driver permissions grant`.",
+    )
+}
+
+/// Print the unbundled warning once at daemon startup.
+#[cfg(target_os = "macos")]
+pub fn warn_if_unbundled() {
+    if let Some(message) = unbundled_warning(
+        cua_driver_core::embedded_mode(),
+        crate::bundle::is_executable_inside_cuadriver_app(),
+    ) {
+        eprintln!("cua-driver: {message}");
+        tracing::warn!("{message}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn warn_if_unbundled() {}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbundled_daemon_gets_a_startup_warning_and_bundled_or_embedded_does_not() {
+        let message = unbundled_warning(false, false).expect("warns when unbundled");
+        assert!(message.contains("cua-driver permissions grant"));
+        assert!(!message.contains("-a CuaDriver"));
+        assert!(unbundled_warning(false, true).is_none());
+        assert!(unbundled_warning(true, false).is_none());
+    }
 
     #[test]
     fn embedded_mode_skips_disclaim_reexec() {

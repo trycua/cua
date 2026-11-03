@@ -1,0 +1,139 @@
+{
+  "name": "openkoalabots",
+  "version": 2,
+  "description": "The shared behaviour of every openkoalabots implementation, run headlessly. Placeholders: {nonce} (8 random hex chars per run), {marker} (openkoalabots-<nonce>), {path}, {importRoot}.",
+  "model": {
+    "comment": "The routine and group steps run real agent turns (the claude-code harness over ACP, installed in the Space by cua-spacesd) against a scripted model: cua-mock-llm, whose `mock:` directive in a prompt fixes the reply. No step calls a real model. Runners pass agent_start baseUrl=$urlEnv, model=name and envFromHost=[keyVar]; run.sh sets both variables in the docker lane. Without $urlEnv the steps skip.",
+    "urlEnv": "OPENKOALABOTS_SCENARIO_MODEL_URL",
+    "keyVar": "ANTHROPIC_API_KEY",
+    "name": "claude-mock-1"
+  },
+  "steps": [
+    {
+      "id": "space",
+      "op": "space.open",
+      "comment": "fixture/docker: spaces.add(url, token) after a capabilities handshake; cloud: spaces.create({image, on: \"cloud\"}). Every runner uses a temp Spaces registry, never ~/.cua.",
+      "modes": { "fixture": "add", "docker": "add", "cloud": "create" },
+      "name": "openkoalabot-example-scenario-{nonce}",
+      "timeoutMs": 300000
+    },
+    {
+      "id": "stream",
+      "op": "stream.desktop",
+      "requires": "desktop_stream",
+      "maxFps": 5,
+      "maxDimension": 800,
+      "minFrames": 1,
+      "firstFrameKeyframe": true,
+      "keyframeRequest": true,
+      "pollMs": 100,
+      "maxPolls": 300
+    },
+    {
+      "id": "agent",
+      "op": "agent.thread",
+      "agent": "claude-code",
+      "fakeCli": { "source": "fixtures/fake-claude.sh", "guestPath": "~/.local/bin/claude" },
+      "turns": [
+        { "prompt": "open koala {nonce}", "expectOutput": "fake claude did: open koala {nonce}" },
+        { "message": "and again {nonce}", "expectOutput": "fake claude continued: and again {nonce}" }
+      ],
+      "tail": 40,
+      "pollMs": 200,
+      "maxPolls": 300
+    },
+    {
+      "id": "file",
+      "op": "file.send",
+      "generate": {
+        "name": "openkoalabots-{nonce}.bin",
+        "bytes": 1048576,
+        "prng": "xorshift64: x ^= x<<13; x ^= x>>7; x ^= x<<17; byte = x & 0xff (u64, wrapping)",
+        "seed": "0x9E3779B97F4A7C15"
+      },
+      "sha256": "c7f83242f7967cc3ff4cacc879c31c6fde4596b95b1820a9c061e83df73d0d6f",
+      "subdir": "openkoalabot-example-scenario",
+      "guestSha256Command": "(sha256sum '{path}' 2>/dev/null || shasum -a 256 '{path}') | cut -d' ' -f1",
+      "cleanupCommand": "rm -f '{path}'"
+    },
+    {
+      "id": "teleport",
+      "op": "teleport.app",
+      "app": "firefox",
+      "scope": "full",
+      "profile": "fixtures/firefox-profile.json",
+      "comment": "The approver approves the manifest's defaults and acknowledges sensitive items: this is a generated profile, and consent is still modelled as an explicit callback.",
+      "verifyCommand": "grep -rl --include=prefs.js '{marker}' {importRoot}/.mozilla {importRoot}/snap \"{importRoot}/Library/Application Support/Firefox\" 2>/dev/null | sort",
+      "expectContains": "prefs.js"
+    },
+    {
+      "id": "presence",
+      "op": "presence.pair",
+      "requires": "presence",
+      "comment": "Two independent SDK runtimes (separate temp registries) join the same Space. The operator folds every event into the SDK's presence roster: after cursor_moved it shows Koala (agent) at the cursor; after left, Koala is gone. Koala joins with the SDK agent identity (its stable color). With takeKoalaColor the operator first requests Koala's stable color, so the server must assign Koala another: the color the app gives Koala's avatar (the roster's color for its id) must equal the color of Koala's cursor on the roster and differ from the stable color. A mismatch fails.",
+      "clients": [
+        { "id": "openkoalabots-operator-{nonce}", "displayName": "Operator", "agent": false },
+        { "id": "openkoalabots-koala-{nonce}", "displayName": "Koala", "agent": true }
+      ],
+      "cursor": { "x": 0.25, "y": 0.75 },
+      "expectEvents": ["joined", "cursor_moved", "left"],
+      "timeoutMs": 20000,
+      "maxEvents": 50,
+      "roster": true,
+      "takeKoalaColor": true
+    },
+    {
+      "id": "routine",
+      "op": "routine.schedule",
+      "needs": "model",
+      "comment": "The app's routine store (the SDK's RoutineStore, in a temp file) and its live runner. A routine created createdAgoMs ago on an everyMinutes schedule is not due notDueAtMs after creation; the real scheduler loop then fires it exactly once, starting the Bot's agent run; the run's prompt starts with expectPrompt and its output contains expectOutput; another tick fires nothing (no backlog); a store reloaded from the file has lastRunID and nothing due. The run is stopped.",
+      "agent": "claude-code",
+      "bot": { "id": "openkoalabots-routine-{nonce}", "name": "Koala" },
+      "routine": {
+        "title": "Check-in {nonce}",
+        "prompt": "Post a status line. mock: say routine-ok-{nonce}",
+        "schedule": { "kind": "everyMinutes", "minutes": 1 }
+      },
+      "createdAgoMs": 61000,
+      "notDueAtMs": 30000,
+      "schedulerIntervalMs": 250,
+      "expectPrompt": "[routine] Check-in {nonce}: ",
+      "expectOutput": "routine-ok-{nonce}",
+      "pollMs": 1000,
+      "maxPolls": 600
+    },
+    {
+      "id": "group",
+      "op": "group.chat",
+      "needs": "model",
+      "comment": "The app's group store (the SDK's GroupChatStore) and its live messenger. Groups of rejectSizes Bots are refused (tooFewBots, tooManyBots); a group of the two bots is created; one message is delivered to both (each hired for the group, each framed with the other's name); collecting replies attributes a line containing expectReply to each Bot, and collecting again adds nothing. Both runs are stopped.",
+      "agent": "claude-code",
+      "bots": [
+        { "id": "openkoalabots-ada-{nonce}", "name": "Ada" },
+        { "id": "openkoalabots-bo-{nonce}", "name": "Bo" }
+      ],
+      "title": "Standup {nonce}",
+      "message": "Status, please. mock: say group-ok-{nonce}",
+      "expectReply": "group-ok-{nonce}",
+      "rejectSizes": [1, 7],
+      "pollMs": 1000,
+      "maxPolls": 600
+    },
+    {
+      "id": "delete",
+      "op": "space.delete",
+      "always": true,
+      "comment": "Runs even when an earlier step failed. A Space added by address is only removed from the registry; a created cloud Space is deleted."
+    }
+  ],
+  "result": {
+    "comment": "Every runner writes this shape to --out.",
+    "shape": {
+      "impl": "swift | tauri | ts",
+      "lane": "fixture | docker | cloud",
+      "ok": "bool (every step pass or skip)",
+      "totalMs": "int",
+      "steps": [{ "id": "string", "status": "pass | fail | skip", "ms": "int", "detail": "string" }]
+    }
+  }
+}

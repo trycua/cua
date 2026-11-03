@@ -9,12 +9,35 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_app_smoke import GroundingUnavailable, create_documents
-from production_app_smoke_test import CALC, INKSCAPE, INKSCAPE_SELECTED, changed_ods
+from proof_fixtures import CALC, INKSCAPE, INKSCAPE_SELECTED, changed_ods
 from production_policy_proof import (
     CASES, DENIALS, MANAGED_ENV, SMOKE_STEPS, check_refusal, documents_for_case,
     expected_refusal, run, snapshot, start_client, validate_plan, verify_evidence,
 )
+
+
+# cua-driver-core: policy.rs:391 via authorize_policy_layers ("{name} policy: ...") and
+# AuthorizationError::Denied; consent.rs:101 around session_manifest.rs:309.
+OUTSIDE_MANIFEST = {'code': 'bounded_resource_outside_manifest',
+                    'message': 'protected resource is outside the capability manifest: '
+                               'desktop pid 20 window 200 is outside the capability manifest'}
+REFUSALS = {
+    ('managed_deny', 'calc'): {'code': 'permission_denied',
+                               'message': "Permission denied: managed policy: tool 'type_text' is explicitly denied"},
+    ('managed_deny', 'inkscape'): {'code': 'permission_denied',
+                                   'message': "Permission denied: managed policy: tool 'hotkey' is explicitly denied"},
+    **{(case, app): OUTSIDE_MANIFEST for case in ('resource_wrong_pid', 'resource_wrong_window')
+       for app in ('calc', 'inkscape')},
+}
+
+
+def refusal(candidate):
+    expected = dict(REFUSALS[candidate['case'], candidate['app']])
+    target = candidate['target']
+    expected['message'] = expected['message'].replace('pid 20 window 200', f"pid {target['pid']} window {target['window_id']}")
+    return expected
 
 
 def plan(case='resource_wrong_window', app='calc', mode='unrestricted'):
@@ -53,7 +76,7 @@ def evidence(candidate):
                                   ('keyboard_key', 0), ('agent_action_end', 0)]:
                 events.append([len(events) + 1, len(events), kind, 100, 100, 1, pressed])
         response = ({'isError': True, 'structuredContent': {
-            'status': 'refused', 'refusal': expected_refusal(candidate)}} if denied else
+            'status': 'refused', 'refusal': refusal(candidate)}} if denied else
             {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
                                    'delivery': {'mode': 'background'}}})
         result['actions'].append({'stage': stage, 'tool': tool, 'phase': 'deny' if denied else 'control',
@@ -109,12 +132,18 @@ class PolicyTests(unittest.TestCase):
                             self.assertIsNone(manifest)
                             self.assertIsNone(managed)
                             continue
-                        target = manifest['resources']['desktop']['windows'][0]
-                        self.assertEqual(target['pid'], 21 if case == 'resource_wrong_pid' else 20)
-                        self.assertEqual(target['window_id'], 201 if case == 'resource_wrong_window' else 200)
-                        self.assertEqual('deny' in (managed or {}), case == 'managed_deny')
-                        self.assertEqual(manifest['version'], 3)
-                        self.assertTrue(manifest['expires_after'] and manifest['idle_timeout'])
+                        # Literal reviewed documents; the evidence fixture above builds its own copy.
+                        tools = ['get_window_state', 'type_text', 'press_key', 'hotkey']
+                        window = {'pid': 21 if case == 'resource_wrong_pid' else 20,
+                                  'window_id': 201 if case == 'resource_wrong_window' else 200}
+                        self.assertEqual(manifest, {'version': 3, 'expires_after': '5m', 'idle_timeout': '2m',
+                                                    'allow': {'tools': tools},
+                                                    'resources': {'desktop': {'windows': [window]}}})
+                        if case == 'managed_deny':
+                            denied = 'type_text' if app == 'calc' else 'hotkey'
+                            self.assertEqual(managed, {'allow': {'tools': tools}, 'deny': {'tools': [denied]}})
+                        else:
+                            self.assertEqual(managed, {'allow': {'tools': tools}} if case == 'managed_allow' else None)
 
     def test_plan_rejects_scope_escape_and_non_synthetic_document(self):
         mutations = [lambda p: p.update(disposable=False), lambda p: p.update(case='arbitrary'),
@@ -132,24 +161,28 @@ class PolicyTests(unittest.TestCase):
                 validate_plan(candidate)
 
     def test_source_exact_envelope_and_admission_boundary(self):
-        for case in DENIALS:
-            expected = expected_refusal(plan(case))
+        for (case, app), expected in REFUSALS.items():
+            with self.subTest(case=case, app=app):
+                self.assertEqual(expected_refusal(plan(case, app)), expected)
             core = {'isError': True, 'structuredContent': {'status': 'refused', 'refusal': expected}}
-            check_refusal(core, expected)
-            invalid = [dict(core, isError=False),
-                dict(core, structuredContent={'effect': 'refused', 'reason': expected['code']}),
-                dict(core, structuredContent={**core['structuredContent'], 'delivery': {'mode': 'background'}}),
-                dict(core, structuredContent={'status': 'refused', 'refusal': {**expected, 'code': 'lane_busy'}}),
-                dict(core, content=[{'type': 'text', 'text': 'Permission denied'}])]
-            for result in invalid:
-                with self.subTest(case=case, result=result), self.assertRaises(AssertionError):
+            self.assertEqual(check_refusal(core, expected),
+                             'core-admission' if expected['code'] == 'permission_denied' else 'core-resource-admission')
+            invalid = [(dict(core, isError=False), 'must be an MCP error'),
+                (dict(core, structuredContent={'effect': 'refused', 'reason': expected['code']}), 'common policy refusal'),
+                (dict(core, structuredContent={**core['structuredContent'], 'delivery': {'mode': 'background'}}),
+                 'common policy refusal'),
+                (dict(core, structuredContent={'status': 'refused', 'refusal': {**expected, 'code': 'lane_busy'}}),
+                 'common policy refusal'),
+                (dict(core, content=[{'type': 'text', 'text': 'Permission denied'}]), 'conflicting refusal text')]
+            for result, error in invalid:
+                with self.subTest(case=case, app=app, result=result), self.assertRaisesRegex(AssertionError, error):
                     check_refusal(result, expected)
-        expected = expected_refusal(plan('managed_deny'))
+        expected = REFUSALS['managed_deny', 'calc']
         flat = {'isError': True, 'structuredContent': {'code': 'permission_denied'},
                 'content': [{'type': 'text', 'text': expected['message']}]}
         self.assertEqual(check_refusal(flat, expected), 'mcp-tool-admission')
         flat['content'][0]['text'] = expected['message'].replace('managed', 'user')
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(AssertionError, 'wrong MCP permission refusal'):
             check_refusal(flat, expected)
 
     def test_policy_injection_is_process_local_restored_and_never_overwrites_host_ceiling(self):
@@ -179,8 +212,12 @@ class PolicyTests(unittest.TestCase):
 
 class OracleTests(unittest.TestCase):
     def test_only_inkscape_snapshots_bound_visited_nodes_and_keep_images_and_depth(self):
-        for app in ('calc', 'inkscape'):
-            for stage in SMOKE_STEPS[app]:
+        # Inkscape select/move grounding needs the full tree before input; later reads are bounded.
+        bounded = {('inkscape', 'select', False), ('inkscape', 'move', False),
+                   ('inkscape', 'save', True), ('inkscape', 'save', False)}
+        for app, stages in (('calc', ('insert', 'commit', 'save')), ('inkscape', ('select', 'move', 'save'))):
+            self.assertEqual(tuple(SMOKE_STEPS[app]), stages)
+            for stage in stages:
                 for before in (True, False):
                     with self.subTest(app=app, stage=stage, before=before):
                         candidate = plan(app=app)
@@ -190,7 +227,7 @@ class OracleTests(unittest.TestCase):
                             {'structuredContent': {'windows': [candidate['target']]}}, expected]
                         self.assertEqual(snapshot(client, candidate, stage=stage, before=before), expected)
                         arguments = {**candidate['target'], 'session': 'policy-proof'}
-                        if app == 'inkscape' and not (stage in ('select', 'move') and before):
+                        if (app, stage, before) in bounded:
                             arguments['max_elements'] = 2500
                         client.tool.assert_called_with('get_window_state', arguments)
 
@@ -285,6 +322,29 @@ class OracleTests(unittest.TestCase):
             report = json.loads((args.evidence / 'result.json').read_text())
             self.assertEqual(report['result'], 'failed')
             self.assertIn('source differs', report['error']['message'])
+
+
+    def test_inkscape_only_profile_is_accepted_and_selects_profile_provenance(self):
+        candidate = {**plan(app='inkscape'), 'app_profile': 'inkscape-only'}
+        validate_plan(candidate)
+        for profile, app, message in (('inkscape-only', 'calc', 'outside the selected app profile'),
+                                      ('bogus', 'inkscape', 'unknown app qualification profile'),
+                                      (['inkscape-only'], 'inkscape', 'unknown app qualification profile')):
+            with self.subTest(profile=profile, app=app), self.assertRaisesRegex(AssertionError, message):
+                validate_plan({**plan(app=app), 'app_profile': profile})
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=True):
+            directory = Path(temporary)
+            path = directory / 'plan.json'
+            path.write_text(json.dumps(candidate))
+            args = SimpleNamespace(plan=path, evidence=directory / 'evidence')
+            with patch('production_policy_proof.provenance',
+                       side_effect=AssertionError('profile provenance reached')) as provenance, \
+                    patch('production_policy_proof.DirectMCP') as spawn:
+                self.assertEqual(run(args), 1)
+                provenance.assert_called_once_with(args, app_profile='inkscape-only')
+                spawn.assert_not_called()
+            report = json.loads((args.evidence / 'result.json').read_text())
+            self.assertIn('profile provenance reached', report['error']['message'])
 
 
 class OrchestrationTests(unittest.TestCase):
@@ -402,9 +462,9 @@ class OrchestrationTests(unittest.TestCase):
                                  [('observer', 'list_windows'), (observer, 'get_window_state')])
 
     def test_inkscape_missing_grounding_stops_before_dispatch_without_retry(self):
+        # Missing selection before Right is owned by the next test.
         for missing, expected_actions in ((('observer', 'select'), []),
-                (('control', 'select'), [('denied', 'hotkey')]),
-                (('control', 'move'), [('denied', 'hotkey'), ('control', 'hotkey')])):
+                (('control', 'select'), [('denied', 'hotkey')])):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
                 status, report, calls, clients = self.exercise(
                     Path(temporary), app='inkscape', missing_grounding=missing)

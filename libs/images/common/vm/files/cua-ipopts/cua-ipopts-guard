@@ -1,0 +1,45 @@
+#!/bin/sh
+# Load or remove the CVE-2026-98432 interim guard (see cua-ipopts.nft).
+#   cua-ipopts-guard start | stop | status
+# nft is the normal path. iptables (xt_u32) is the fallback for an image that
+# has no nft (the upstream OSWorld disk). Only the cua_ipopts table / the
+# CUA_IPOPTS chain is ever touched.
+set -eu
+RULES="${CUA_IPOPTS_RULES:-/etc/cua-image/cua-ipopts.nft}"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+start() {
+    if have nft; then
+        nft -f "$RULES"
+    elif have iptables; then
+        iptables -w -t raw -N CUA_IPOPTS 2>/dev/null || iptables -w -t raw -F CUA_IPOPTS
+        iptables -w -t raw -A CUA_IPOPTS -p igmp -j RETURN
+        # IHL (low nibble of byte 0) between 6 and 15 means IP options.
+        iptables -w -t raw -A CUA_IPOPTS -m u32 --u32 "0>>24&0xF=6:15" -j DROP
+        iptables -w -t raw -C PREROUTING -j CUA_IPOPTS 2>/dev/null \
+            || iptables -w -t raw -I PREROUTING 1 -j CUA_IPOPTS
+    else
+        echo "cua-ipopts-guard: neither nft nor iptables found" >&2
+        exit 1
+    fi
+}
+
+stop() {
+    if have nft; then nft delete table ip cua_ipopts 2>/dev/null || true; fi
+    if have iptables; then
+        while iptables -w -t raw -D PREROUTING -j CUA_IPOPTS 2>/dev/null; do :; done
+        iptables -w -t raw -F CUA_IPOPTS 2>/dev/null || true
+        iptables -w -t raw -X CUA_IPOPTS 2>/dev/null || true
+    fi
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    status)
+        if have nft && nft list table ip cua_ipopts 2>/dev/null; then exit 0; fi
+        if have iptables && iptables -w -t raw -S CUA_IPOPTS 2>/dev/null; then exit 0; fi
+        echo "cua-ipopts-guard: not loaded" >&2; exit 1 ;;
+    *) echo "usage: $0 start|stop|status" >&2; exit 2 ;;
+esac

@@ -114,6 +114,9 @@ int main() {
                   std::string::npos &&
               json_text.find(R"("enabled":[])") != std::string::npos,
           "disabled plugin status cannot advertise mutation or transport readiness");
+    check(json_text.find("keyboard_layout_independent") == std::string::npos &&
+              json_text.find("foreground_numlock_compatible") == std::string::npos,
+          "discovery-only status cannot advertise input keyboard behavior");
     check(Event::bus()->m_events.config.reloaded.active_count() == 1,
           "plugin owns one config-reload listener while loaded");
     pluginExit();

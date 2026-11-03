@@ -24,6 +24,11 @@ concurrency:
   group: nightly-lume
   cancel-in-progress: false
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   plan:
     uses: ./.github/workflows/nightly-component-plan.yml
@@ -68,6 +73,9 @@ jobs:
             cd release-upload
             shasum -a 256 * | sort > checksums.txt
           )
+
+      - name: Fetch the attribution base tag read-only
+        run: .github/scripts/ensure_upstream_tag.sh "${{ needs.plan.outputs.attribution_base_tag }}"
 
       - name: Collect PR-first attribution and render nightly body
         env:

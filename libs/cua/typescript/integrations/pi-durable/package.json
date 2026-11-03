@@ -1,0 +1,61 @@
+{
+  "name": "@trycua/pi-durable",
+  "version": "0.1.0",
+  "description": "Cua Spaces as the execution environment of Pi Durable: idempotent, fenced commands and checkpoints that keep the sandbox consistent with the conversation log across crashes",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git",
+    "directory": "libs/cua/typescript/integrations/pi-durable"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:crash": "npm run build && node test/crash/run.mjs",
+    "test:fork": "npm run build && node test/crash/fork.mjs",
+    "test:crash:checkpoint": "npm run build && CRASH_MODE=checkpoint node test/crash/run.mjs",
+    "test:crash:transactional": "npm run build && CRASH_MODE=transactional node test/crash/run.mjs",
+    "test:crash:auto": "npm run build && CRASH_MODE=auto node test/crash/run.mjs",
+    "test:crash:stale": "npm run build && CRASH_MODE=stale node test/crash/run.mjs",
+    "test:crash:redrive": "npm run build && CRASH_MODE=redrive node test/crash/run.mjs",
+    "test:crash:acp": "npm run build && CRASH_MODE=acp node test/crash/run.mjs",
+    "test:crash:ci": "npm run build && node test/crash/ci.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/chord": "^1.0.4",
+    "@earendil-works/pi-durable": "^1.0.4",
+    "@earendil-works/pi-env": "^1.0.4",
+    "@trycua/cua": ">=0.4.1"
+  },
+  "peerDependenciesMeta": {
+    "@trycua/cua": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/chord": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-env": "1.0.4",
+    "@trycua/cua": "file:../..",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

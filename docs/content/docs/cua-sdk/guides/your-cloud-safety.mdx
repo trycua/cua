@@ -1,0 +1,265 @@
+---
+title: Least privilege in your cloud
+description: The least-privilege access to give the identity Cua connects as, and what Cua keeps when a machine does not come online.
+---
+
+Details for [Use your own cloud](/cua-sdk/guides/your-cloud) and
+[Your cloud resources and costs](/cua-sdk/guides/your-cloud#what-cua-creates).
+
+## Least-privilege access
+Cua creates no IAM users, roles or keys, so it acts as whatever identity you
+connect (with `--oidc`, the `cua-spaces` role your own CloudFormation stack
+creates). Connect a dedicated one with only the access below instead of an
+administrator. Everything Cua creates carries the tag `cua-managed=true`, and
+the policy lets it create only tagged resources and stop, start, terminate or
+delete only tagged ones, so it cannot touch anything else in the account.
+`cua cloud test` checks the create calls as dry runs and names this page when
+AWS refuses them.
+
+### AWS
+
+Create a customer managed policy from this JSON (not an inline policy: it is
+longer than the 2048 characters AWS allows inline for a user) and attach it
+to a dedicated IAM user or role, then connect with that identity's profile
+(`cua cloud connect aws --profile <name>`):
+
+```json skip="third-party-cli"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CuaIdentityAndRead",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:DescribeImages",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypeOfferings",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CuaResolvePublicImageParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": "arn:aws:ssm:*::parameter/aws/service/*"
+    },
+    {
+      "Sid": "CuaLaunchTaggedInstancesAndVolumes",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:*:*:instance/*",
+        "arn:aws:ec2:*:*:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaLaunchInstancesWithIMDSv2Only",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringNotEquals": {
+          "ec2:MetadataHttpTokens": "required"
+        }
+      }
+    },
+    {
+      "Sid": "CuaLaunchUsesExistingNetworkAndImages",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:*::image/*",
+        "arn:aws:ec2:*:*:subnet/*",
+        "arn:aws:ec2:*:*:network-interface/*",
+        "arn:aws:ec2:*:*:security-group/*"
+      ]
+    },
+    {
+      "Sid": "CuaCreateTaggedSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaCreateSecurityGroupsInAVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:*:*:vpc/*"
+    },
+    {
+      "Sid": "CuaTagOnlyWhatItCreates",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:*:*:instance/*",
+        "arn:aws:ec2:*:*:volume/*",
+        "arn:aws:ec2:*:*:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "RunInstances",
+            "CreateSecurityGroup"
+          ],
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnInstances",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:GetConsoleOutput"
+      ],
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DeleteSecurityGroup"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    }
+  ]
+}
+```
+
+Why it is shaped this way:
+
+- **Reads cannot be scoped.** `Describe*` calls and `sts:GetCallerIdentity`
+  do not support resource-level permissions in AWS, so they allow `*`. They
+  change nothing.
+- **Creates require the tag.** `ec2:RunInstances` for instances and volumes
+  and `ec2:CreateSecurityGroup` require the request to carry
+  `cua-managed=true` (`aws:RequestTag`). `ec2:CreateTags` is allowed only as
+  part of those two creates (`ec2:CreateAction`), so Cua cannot re-tag an
+  existing resource to claim it.
+- **Changes require the tag on the resource.** Start, stop, terminate, read
+  the console, authorize ingress and delete a security group all check
+  `aws:ResourceTag/cua-managed`.
+- **A launch references things it does not own.** The image, subnet, network
+  interface and security group of a launch are separate resources in the
+  `RunInstances` call and cannot carry the request tag, so they are their own
+  statement. Cua only ever adds a rule to a security group it created, and
+  the dry run in `cua cloud test` runs before that group exists.
+- **IMDSv2 only.** A second statement denies launching an instance without
+  `HttpTokens=required`, which is how Cua always launches.
+- **Image lookup.** `ssm:GetParameters` on `/aws/service/*` resolves the
+  public image names (Deep Learning and others) AWS publishes.
+- **No `iam:*`.** The policy cannot create or pass a role, so a Cua instance
+  never has an instance profile.
+
+To narrow it further, add a `StringEquals` condition on `aws:RequestedRegion`
+to every statement that has a condition.
+
+#### Linked without a key (`--oidc`)
+
+The `cua-spaces` CloudFormation stack you create for
+[a link without a key](/cua-sdk/guides/your-cloud#link-aws-without-a-key) gives
+its role exactly this policy, plus `ce:GetCostAndUsage` (read-only, for the
+spend Cua shows). A test keeps the stack's policy identical to the JSON above.
+The role trusts only tokens from your Cua account's issuer
+(`https://oidc.cua.ai/a/<account>`) with the audience `sts.amazonaws.com` and
+the subject `account:<account>`, so another Cua account's tokens are refused.
+Each session lasts at most 15 minutes and is named
+`cua-<device>-<agent or user>-<purpose>`, which CloudTrail shows. No AWS key
+is stored anywhere. Disconnecting stops new tokens at once, and deleting the
+stack removes the trust.
+
+### Google Cloud
+
+Create a custom role with these Compute Engine permissions and grant it to
+the account or service account you connect, on the project:
+
+```text skip="third-party-cli"
+compute.instances.create
+compute.instances.delete
+compute.instances.get
+compute.instances.list
+compute.instances.start
+compute.instances.stop
+compute.instances.setMetadata
+compute.instances.setLabels
+compute.instances.getSerialPortOutput
+compute.disks.create
+compute.networks.create
+compute.networks.get
+compute.networks.delete
+compute.subnetworks.use
+compute.subnetworks.useExternalIp
+```
+
+`cua cloud test gcp` checks all of them with `testIamPermissions` and lists
+the ones that are missing. The same list is in `gcp.rs`
+(`PERMISSIONS`), and a test keeps this page equal to it.
+
+#### Linked without a key (Google Cloud `--oidc`)
+
+The trust script `cua-trust.sh` creates the custom role `cuaSpaces` with
+exactly this list (a test keeps the script equal to it) and binds it to the
+identities of your Cua account only:
+`principalSet://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/attribute.account/account:<account>`.
+The pool's provider trusts only your Cua account's issuer, with its own name
+as the audience and the condition `assertion.sub=='account:<account>'`.
+Compute Engine labels cannot be used in IAM conditions, so the binding has
+no condition. Each access token lasts at most an hour, is cached until 2
+minutes before it expires, and is never written to disk. No Google key or
+service account is created.
+
+### Azure
+
+Azure is linked only through Cua's sign-in. The `cua-spaces.json` template
+gives the `cua-spaces` managed identity two built-in roles, on the
+connection's resource group only:
+
+| Role | Id |
+|---|---|
+| Virtual Machine Contributor | `9980e02c-c2be-4d73-94e8-173b1dc7cf3c` |
+| Network Contributor | `4d97b98b-1d4f-4787-a291-c67834d212e7` |
+
+Nothing outside that resource group is reachable. The identity's federated
+credential accepts only tokens from your Cua account's issuer with the subject
+`account:<account>` and the audience `api://AzureADTokenExchange`.
+`cua cloud test azure` reads the group's permissions and lists any action Cua
+needs that they do not allow, then validates a machine deployment without
+creating it. To remove the trust, delete the `cua-spaces` identity.
+
+### When a machine does not come online
+
+A create that fails to boot reads the machine's console (AWS
+`GetConsoleOutput`, Google Cloud serial port 1) before it deletes the
+machine, keeps the last 200 lines without anything that looks like a token,
+secret or key in `~/.cua/cloud/boot-logs/<id>.log` (mode 0600), and prints the
+path and the last ten lines in the error. The read has 20 seconds and never
+blocks the cleanup.
+
+How Cua cleans up, disconnects and logs what it does: [Cleanup, disconnect and audit in your cloud](/cua-sdk/guides/your-cloud-cleanup).

@@ -60,15 +60,6 @@ pub fn user_home_subdirectory() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
-pub fn uia_executable_name() -> &'static str {
-    if is_local_installation() {
-        "cua-driver-uia-local.exe"
-    } else {
-        "cua-driver-uia.exe"
-    }
-}
-
-#[cfg(target_os = "windows")]
 pub fn autostart_task_name() -> &'static str {
     if is_local_installation() {
         "cua-driver-local-serve"
@@ -85,6 +76,7 @@ pub fn app_name() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub fn app_bundle_path() -> String {
     format!("/Applications/{}.app", app_name())
 }

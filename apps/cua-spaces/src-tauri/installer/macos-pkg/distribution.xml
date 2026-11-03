@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- productbuild distribution for the Cua Spaces MDM package
+     (apps/cua-spaces/scripts/build-pkg.sh fills in __VERSION__ and __MIN_OS__). -->
+<installer-gui-script minSpecVersion="2">
+    <title>Cua Spaces</title>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64" rootVolumeOnly="true"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <allowed-os-versions>
+        <os-version min="__MIN_OS__"/>
+    </allowed-os-versions>
+    <choices-outline>
+        <line choice="com.trycua.spaces.app"/>
+    </choices-outline>
+    <choice id="com.trycua.spaces.app" title="Cua Spaces and the cua CLI" visible="false">
+        <pkg-ref id="com.trycua.spaces.app"/>
+    </choice>
+    <pkg-ref id="com.trycua.spaces.app" version="__VERSION__" onConclusion="none">cua-spaces-component.pkg</pkg-ref>
+</installer-gui-script>

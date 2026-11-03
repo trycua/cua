@@ -1,7 +1,6 @@
 import tomllib
 from pathlib import Path
 
-
 DATASETS_DIR = Path(__file__).resolve().parents[2] / "datasets"
 
 

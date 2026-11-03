@@ -8,8 +8,9 @@
 //!
 //! A focus check followed by global input therefore has an unavoidable TOCTOU
 //! race. Until Cua has a KWin input API that binds each mutation to the target
-//! token/window, this module intentionally refuses raw target-addressed input.
-//! Window discovery remains available; input authorization does not.
+//! token/window, [`available`] reports no target-bound input and the shared
+//! delivery policy refuses raw target-addressed input. Window discovery
+//! remains available; input authorization does not.
 
 use std::collections::HashSet;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -27,7 +28,6 @@ const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 pub const PROTOCOL_VERSION: u32 = 1;
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);
-const GEOMETRY_DELTA_PX: i32 = 64;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KwinWindow {
@@ -43,25 +43,6 @@ pub struct KwinWindow {
     pub minimized: bool,
     pub stacking: usize,
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CorrelationError {
-    NoMatch,
-    Ambiguous,
-    WrongActiveTarget,
-}
-
-impl std::fmt::Display for CorrelationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoMatch => f.write_str("no exact KWin window matches the AT-SPI target"),
-            Self::Ambiguous => f.write_str("multiple KWin windows match the AT-SPI target"),
-            Self::WrongActiveTarget => f.write_str("KWin reports a different active target"),
-        }
-    }
-}
-
-impl std::error::Error for CorrelationError {}
 
 /// Whether KWin currently offers a target-bound raw-input capability that can
 /// safely authorize portal/libei foreground mutations.
@@ -104,70 +85,6 @@ pub fn trusted_window_for_id(pid: u32, token: u64) -> Option<KwinWindow> {
         .find(|window| window.pid == pid && window.token == token)
 }
 
-pub fn correlate_atspi_window(
-    atspi: &WindowInfo,
-    windows: &[KwinWindow],
-) -> Result<KwinWindow, CorrelationError> {
-    let pid = atspi.pid.ok_or(CorrelationError::NoMatch)?;
-    let matches: Vec<_> = windows
-        .iter()
-        .filter(|window| window.pid == pid && !window.minimized)
-        .filter(|window| geometry_matches(atspi, window))
-        .cloned()
-        .collect();
-    match matches.as_slice() {
-        [window] => Ok(window.clone()),
-        [] => Err(CorrelationError::NoMatch),
-        _ => Err(CorrelationError::Ambiguous),
-    }
-}
-
-pub fn require_active_target(windows: &[KwinWindow], token: u64) -> Result<(), CorrelationError> {
-    windows
-        .iter()
-        .find(|window| window.active)
-        .filter(|window| window.token == token)
-        .map(|_| ())
-        .ok_or(CorrelationError::WrongActiveTarget)
-}
-
-/// Refuse a focus-bound KWin foreground transaction.
-///
-/// `body` is deliberately never invoked. The current helper can identify an
-/// exact KWin window, but its D-Bus API is read-only; even a separate activation
-/// step would not bind a later libei event to that target. More pre-dispatch
-/// focus checks therefore cannot make the operation target-safe.
-pub fn with_focused_window<T>(
-    pid: u32,
-    token: u64,
-    _body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    anyhow::bail!(
-        "foreground_unavailable: KWin target pid={pid} token={token} is verified, but only \
-         focus-bound portal/libei input is available; refusing raw input until a target-bound \
-         KWin input path is implemented"
-    )
-}
-
-fn geometry_matches(atspi: &WindowInfo, kwin: &KwinWindow) -> bool {
-    let right = atspi
-        .x
-        .saturating_add(atspi.width.min(i32::MAX as u32) as i32);
-    let bottom = atspi
-        .y
-        .saturating_add(atspi.height.min(i32::MAX as u32) as i32);
-    let kwin_right = kwin
-        .x
-        .saturating_add(kwin.width.min(i32::MAX as u32) as i32);
-    let kwin_bottom = kwin
-        .y
-        .saturating_add(kwin.height.min(i32::MAX as u32) as i32);
-    (atspi.x - kwin.x).abs() <= GEOMETRY_DELTA_PX
-        && (atspi.y - kwin.y).abs() <= GEOMETRY_DELTA_PX
-        && (right - kwin_right).abs() <= GEOMETRY_DELTA_PX
-        && (bottom - kwin_bottom).abs() <= GEOMETRY_DELTA_PX
-}
-
 fn helper_owner() -> Option<String> {
     let owner_raw = dbus_call("GetNameOwner", &[DEST.to_owned()]);
     let owner = parse_quoted_string(&owner_raw?)?;
@@ -179,13 +96,13 @@ fn helper_owner() -> Option<String> {
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
     );
     let uid_raw = gdbus_call_to(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
     );
     let pid = parse_first_u32(&pid_raw?)?;
     let uid = parse_first_u32(&uid_raw?)?;
@@ -356,7 +273,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
         stdout.read_to_end(&mut bytes).ok()?;
         String::from_utf8(bytes).ok()
     });
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return reader.join().ok().flatten(),
@@ -367,7 +284,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
                 let _ = reader.join();
                 return None;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => crate::interaction::pause(Duration::from_millis(10)),
         }
     }
 }
@@ -418,25 +335,5 @@ fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
                     .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
         }
         None => true,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn raw_input_capability_is_fail_closed() {
-        assert!(!available());
-
-        let called = std::cell::Cell::new(false);
-        let error = with_focused_window(42, 7, || {
-            called.set(true);
-            Ok(())
-        })
-        .expect_err("focus-bound KWin input must refuse");
-
-        assert!(!called.get());
-        assert!(error.to_string().contains("target-bound KWin input path"));
     }
 }

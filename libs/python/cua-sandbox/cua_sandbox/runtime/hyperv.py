@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-import httpx
+from cua_sandbox._paths import cua_home
 from cua_sandbox.builder.windows_unattend import (
     create_unattend_iso,
     download_windows_iso,
@@ -32,7 +32,7 @@ from cua_sandbox.runtime.images import DEFAULT_API_PORT
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path.home() / ".cua" / "cua-sandbox" / "hyperv"
+CACHE_DIR = cua_home() / "cua-sandbox" / "hyperv"
 
 
 def _has_hyperv() -> bool:
@@ -286,7 +286,7 @@ class HyperVRuntime(Runtime):
 
             from cua_sandbox.builder.executor import LayerExecutor
 
-            executor = LayerExecutor(f"http://{ip}:{self.api_port}")
+            executor = LayerExecutor(f"http://{ip}:{self.api_port}", os_type="windows")
             await executor.execute_layers(list(image._layers))
 
             logger.info("User layers applied, shutting down build VM...")
@@ -349,22 +349,21 @@ class HyperVRuntime(Runtime):
             logger.info(f"Deleted session disk: {session_disk}")
 
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
-        url = f"http://{info.host}:{info.api_port}/status"
+        """Daemon-agnostic readiness: the VM is running and has an address.
+
+        ``start()`` already waited for the guest IP; the guest agent port is
+        a real TCP endpoint on the Hyper-V switch, so wait until it accepts a
+        connection (any daemon listening there), bounded by *timeout*.
+        """
         deadline = asyncio.get_event_loop().time() + timeout
-        async with httpx.AsyncClient(timeout=5) as client:
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        logger.info(f"Hyper-V VM {info.name} computer-server is ready")
-                        return True
-                except (
-                    httpx.ConnectError,
-                    httpx.ReadTimeout,
-                    httpx.RemoteProtocolError,
-                    httpx.ConnectTimeout,
-                    httpx.ReadError,
-                ):
-                    pass
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                _reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(info.host, info.api_port), timeout=5
+                )
+                writer.close()
+                logger.info(f"Hyper-V VM {info.name} is ready")
+                return True
+            except (OSError, asyncio.TimeoutError):
                 await asyncio.sleep(3)
-        raise TimeoutError(f"Hyper-V VM {info.name} computer-server not ready after {timeout}s")
+        raise TimeoutError(f"Hyper-V VM {info.name} not reachable after {timeout}s")

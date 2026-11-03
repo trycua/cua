@@ -1,0 +1,21 @@
+[package]
+name = "cua-media-client"
+description = "Transport-independent RCDP client state and request builder"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-media-protocol = { path = "../cua-media-protocol" }
+# Wire v2 binary framing (video packets, RAU2 audio packets).
+cua-media-transport = { path = "../cua-media-transport" }
+cua-media-codec = { path = "../cua-media-codec", default-features = false, features = ["openh264", "opus"], optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+# Client-side decoding: H.264 to BGRA (VideoToolbox / OpenH264) and RAU2
+# audio to PCM (Opus / PCM) through cua-media-codec.
+media-decode = ["dep:cua-media-codec", "dep:serde_json"]

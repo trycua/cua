@@ -27,7 +27,7 @@ extension Server {
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
         // Check if an async pull is in progress for this VM name
-        let pullProgress = await PullProgressTracker.shared.getProgress(for: name)
+        let pullProgress = await PullProgressTracker.shared.getPullProgress(for: name)
         let pullError = await PullProgressTracker.shared.getError(for: name)
 
         if let errorMsg = pullError {
@@ -37,16 +37,7 @@ extension Server {
 
         if let progress = pullProgress {
             // Pull in progress — return a synthetic "pulling" status without hitting disk
-            let responseBody: [String: AnyEncodable] = [
-                "name": AnyEncodable(name),
-                "status": AnyEncodable("pulling"),
-                "downloadProgress": AnyEncodable(progress),
-            ]
-            return try HTTPResponse(
-                statusCode: .ok,
-                headers: ["Content-Type": "application/json"],
-                body: JSONEncoder().encode(responseBody)
-            )
+            return try Self.pullingResponse(name: name, progress: progress)
         }
 
         do {
@@ -56,6 +47,76 @@ extension Server {
             return try HTTPResponse.json(details)
         } catch {
             return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    /// The synthetic `GET /lume/vms/:name` body while an async pull runs:
+    /// `downloadProgress` is the percent (0 to 100) older clients read;
+    /// `downloadedBytes`, `totalBytes` and `bytesPerSecond` give byte detail.
+    nonisolated static func pullingResponse(name: String, progress: PullProgress) throws
+        -> HTTPResponse
+    {
+        let responseBody: [String: AnyEncodable] = [
+            "name": AnyEncodable(name),
+            "status": AnyEncodable("pulling"),
+            "downloadProgress": AnyEncodable(progress.percent),
+            "downloadedBytes": AnyEncodable(progress.downloadedBytes),
+            "totalBytes": AnyEncodable(progress.totalBytes),
+            "bytesPerSecond": AnyEncodable(progress.bytesPerSecond),
+        ]
+        return try HTTPResponse(
+            statusCode: .ok,
+            headers: ["Content-Type": "application/json"],
+            body: JSONEncoder().encode(responseBody)
+        )
+    }
+
+    /// `POST /lume/pull/cancel` with `{"name": "<vm>"}`: cancels the async pull
+    /// started by `/lume/pull/start` for that name and waits (up to
+    /// `pullCancelTimeout` seconds) until it stopped and cleaned up. 200 once it
+    /// ended, 404 when no async pull runs for the name, 500 if it did not stop
+    /// in time.
+    func handlePullCancel(_ body: Data?, timeout: TimeInterval = 30) async throws -> HTTPResponse {
+        guard let body = body,
+            let request = try? JSONDecoder().decode(PullCancelRequest.self, from: body),
+            !request.name.isEmpty
+        else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
+            )
+        }
+
+        let outcome = await PullProgressTracker.shared.cancel(name: request.name, timeout: timeout)
+        switch outcome {
+        case .notFound:
+            return HTTPResponse(
+                statusCode: .notFound,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(
+                    APIError(message: "no pull in progress for \(request.name)"))
+            )
+        case .cancelled:
+            Logger.info("Async pull cancelled", metadata: ["name": request.name])
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": "Pull cancelled",
+                    "name": request.name,
+                ])
+            )
+        case .timedOut:
+            return HTTPResponse(
+                statusCode: .internalServerError,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(
+                    APIError(
+                        message:
+                            "the pull for \(request.name) did not stop within \(Int(timeout)) seconds"
+                    ))
+            )
         }
     }
 
@@ -71,15 +132,34 @@ extension Server {
         }
 
         let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
-            "image_name": imageName
+            "image": TelemetryClient.imageId(
+                request.image, registry: request.registry, organization: request.organization)
         ])
 
         let vmName = request.name ?? imageName
-        await PullProgressTracker.shared.setProgress(0.0, for: vmName)
+        let tracker = PullProgressTracker.shared
+
+        // A second start for a name that is already pulling joins that pull
+        // instead of racing a duplicate download into the same VM directory.
+        if await tracker.activeCancellableToken(for: vmName) != nil {
+            return HTTPResponse(
+                statusCode: .accepted,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": AnyEncodable("Pull already in progress"),
+                    "name": AnyEncodable(vmName),
+                    "image": AnyEncodable(request.image),
+                ])
+            )
+        }
+
+        let token = await tracker.begin(name: vmName, cancellable: true)
         let pullStartedAt = Date()
 
-        Task.detached { @MainActor @Sendable in
+        let task = Task.detached { @MainActor @Sendable in
+            let outcome: PullProgressTracker.Outcome
             do {
                 let vmController = LumeController()
                 try await vmController.pullImage(
@@ -88,31 +168,36 @@ extension Server {
                     registry: request.registry,
                     organization: request.organization,
                     storage: request.storage,
-                    progressHandler: { pct in
-                        Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                    progressHandler: { progress in
+                        Task { await tracker.setProgress(progress, for: vmName, token: token) }
                     }
                 )
-                await PullProgressTracker.shared.complete(for: vmName)
+                outcome = .completed
                 Logger.info("Async pull completed", metadata: ["name": vmName])
-                TelemetryClient.shared.recordOperationCompleted(
-                    operation: "pull_start",
-                    transport: .http,
-                    success: true,
-                    errorClass: .none,
-                    elapsed: Date().timeIntervalSince(pullStartedAt)
-                )
             } catch {
-                await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
-                Logger.error("Async pull failed", metadata: ["name": vmName, "error": error.localizedDescription])
-                TelemetryClient.shared.recordOperationCompleted(
-                    operation: "pull_start",
-                    transport: .http,
-                    success: false,
-                    errorClass: .operationError,
-                    elapsed: Date().timeIntervalSince(pullStartedAt)
-                )
+                if Task.isCancelled || error is CancellationError {
+                    outcome = .cancelled
+                    Logger.info("Async pull stopped by cancel", metadata: ["name": vmName])
+                } else {
+                    outcome = .failed(error.localizedDescription)
+                    Logger.error(
+                        "Async pull failed",
+                        metadata: ["name": vmName, "error": error.localizedDescription])
+                }
             }
+            let succeeded: Bool
+            if case .completed = outcome { succeeded = true } else { succeeded = false }
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: "pull_start",
+                transport: .http,
+                success: succeeded,
+                errorClass: succeeded ? .none : .operationError,
+                elapsed: Date().timeIntervalSince(pullStartedAt)
+            )
+            // Last step: a waiting cancel returns once this ran, after cleanup.
+            await tracker.finish(name: vmName, token: token, outcome: outcome)
         }
+        await tracker.attach(task, name: vmName, token: token)
 
         return HTTPResponse(
             statusCode: .accepted,
@@ -225,7 +310,8 @@ extension Server {
                 name: request.name,
                 newName: request.newName,
                 sourceLocation: request.sourceLocation,
-                destLocation: request.destLocation
+                destLocation: request.destLocation,
+                withSavedState: request.withSavedState ?? false
             )
 
             return HTTPResponse(
@@ -291,19 +377,67 @@ extension Server {
         }
     }
 
-    func handleStopVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+    /// Renames a VM, running or not (`{"newName": "..."}`).
+    func handleRenameVM(name: String, body: Data?) async throws -> HTTPResponse {
+        guard let body, let request = try? JSONDecoder().decode(RenameVMRequest.self, from: body)
+        else {
+            return .badRequest(message: "Invalid request body")
+        }
+        do {
+            try LumeController().renameVM(
+                name: name, newName: request.newName, storage: request.storage)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": "VM renamed", "name": request.newName,
+                ])
+            )
+        } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    /// Saves a running VM's state and stops it; its next run resumes it.
+    func handleSuspendVM(name: String) async throws -> HTTPResponse {
+        do {
+            try await LumeController().suspendVM(name: name)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(["message": "VM suspended", "name": name])
+            )
+        } catch {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription))
+            )
+        }
+    }
+
+    func handleStopVM(
+        name: String,
+        storage: String? = nil,
+        force: Bool = false,
+        timeout: TimeInterval = VM.defaultStopTimeout
+    ) async throws -> HTTPResponse {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMStop)
 
         Logger.info(
-            "Stopping VM", metadata: ["name": name, "storage": String(describing: storage)])
+            "Stopping VM",
+            metadata: [
+                "name": name, "storage": String(describing: storage), "force": "\(force)",
+            ])
 
         do {
             Logger.info("Creating VM controller", metadata: ["name": name])
             let vmController = LumeController()
 
             Logger.info("Calling stopVM on controller", metadata: ["name": name])
-            try await vmController.stopVM(name: name, storage: storage)
+            try await vmController.stopVM(
+                name: name, storage: storage, force: force, timeout: timeout)
 
             Logger.info(
                 "VM stopped, waiting 5 seconds for locks to clear", metadata: ["name": name])
@@ -465,6 +599,24 @@ extension Server {
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
 
+            // Virtualization.framework runs at most two macOS guests per host
+            // and fails a third start only after the async start was accepted,
+            // so refuse it up front. Linux guests are not limited.
+            let controller = LumeController()
+            if let target = try? controller.getDetails(name: name, storage: request.storage),
+                let capacityError = Self.macOSGuestCapacityError(
+                    targetOS: target.os,
+                    runningMacOSGuests: Self.runningMacOSGuestCount(
+                        try controller.runningVMs(), excluding: target.name)
+                )
+            {
+                return HTTPResponse(
+                    statusCode: .conflict,
+                    headers: ["Content-Type": "application/json"],
+                    body: try JSONEncoder().encode(APIError(message: capacityError))
+                )
+            }
+
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
@@ -477,7 +629,8 @@ extension Server {
                 nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false,
-                vncPolicy: vncPolicy
+                vncPolicy: vncPolicy,
+                forwards: request.forwards ?? []
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -537,15 +690,15 @@ extension Server {
             )
         }
 
-        // Record telemetry - strip version tag from image name for privacy
-        let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
-            "image_name": imageName
+            "image": TelemetryClient.imageId(
+                request.image, registry: request.registry, organization: request.organization)
         ])
 
+        let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+        let token = await PullProgressTracker.shared.begin(name: vmName, cancellable: false)
         do {
-            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
-            await PullProgressTracker.shared.setProgress(0.0, for: vmName)
             let vmController = LumeController()
             try await vmController.pullImage(
                 image: request.image,
@@ -553,11 +706,14 @@ extension Server {
                 registry: request.registry,
                 organization: request.organization,
                 storage: request.storage,
-                progressHandler: { pct in
-                    Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                progressHandler: { progress in
+                    Task {
+                        await PullProgressTracker.shared.setProgress(
+                            progress, for: vmName, token: token)
+                    }
                 }
             )
-            await PullProgressTracker.shared.complete(for: vmName)
+            await PullProgressTracker.shared.finish(name: vmName, token: token, outcome: .completed)
 
             return HTTPResponse(
                 statusCode: .ok,
@@ -569,8 +725,8 @@ extension Server {
                 ])
             )
         } catch {
-            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
-            await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
+            await PullProgressTracker.shared.finish(
+                name: vmName, token: token, outcome: .failed(error.localizedDescription))
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
@@ -855,45 +1011,13 @@ extension Server {
 
     func handleGetLogs(type: String?, lines: Int?) async throws -> HTTPResponse {
         do {
-            let logType = type?.lowercased() ?? "all"
-            let infoPath = "/tmp/lume_daemon.log"
-            let errorPath = "/tmp/lume_daemon.error.log"
-
-            let fileManager = FileManager.default
-            var response: [String: String] = [:]
-
-            // Function to read log files
-            func readLogFile(path: String) -> String? {
-                guard fileManager.fileExists(atPath: path) else {
-                    return nil
-                }
-
-                do {
-                    let content = try String(contentsOfFile: path, encoding: .utf8)
-
-                    // If lines parameter is provided, return only the specified number of lines from the end
-                    if let lineCount = lines {
-                        let allLines = content.components(separatedBy: .newlines)
-                        let startIndex = max(0, allLines.count - lineCount)
-                        let lastLines = Array(allLines[startIndex...])
-                        return lastLines.joined(separator: "\n")
-                    }
-
-                    return content
-                } catch {
-                    return "Error reading log file: \(error.localizedDescription)"
-                }
-            }
-
-            // Get logs based on requested type
-            if logType == "info" || logType == "all" {
-                response["info"] = readLogFile(path: infoPath) ?? "Info log file not found"
-            }
-
-            if logType == "error" || logType == "all" {
-                response["error"] = readLogFile(path: errorPath) ?? "Error log file not found"
-            }
-
+            let channel = LumeChannel.current
+            let response = DaemonLogs.response(
+                type: type,
+                lines: lines,
+                infoPath: channel.lumeDaemonLogPath(),
+                errorPath: channel.lumeDaemonErrorLogPath()
+            )
             return try .json(response)
         } catch {
             return .badRequest(message: error.localizedDescription)
@@ -905,8 +1029,11 @@ extension Server {
     /// Response structure for host status endpoint
     struct HostStatusResponse: Codable {
         let status: String
+        /// Running VMs, macOS and Linux.
         let vmCount: Int
+        /// The most macOS guests the host runs at once.
         let maxVMs: Int
+        /// macOS guests that can still start.
         let availableSlots: Int
         let version: String
 
@@ -924,19 +1051,17 @@ extension Server {
         do {
             let vmController = LumeController()
 
-            // Get all VMs across all storage locations
-            let vms = try vmController.list(storage: nil)
-
-            // Count running VMs (Apple policy: max 2 VMs per host)
-            let runningVMs = vms.filter { $0.status == "running" }
-            let maxVMs = 2  // Apple Virtualization Framework limit
+            // Running VMs across all storage locations. Only macOS guests
+            // take one of the host's slots (Virtualization.framework limit).
+            let runningVMs = try vmController.runningVMs()
+            let maxVMs = Self.maxRunningMacOSGuests
 
             let response = HostStatusResponse(
                 status: "healthy",
                 vmCount: runningVMs.count,
                 maxVMs: maxVMs,
-                availableSlots: max(0, maxVMs - runningVMs.count),
-                version: "1.0.0"  // Could be derived from build info
+                availableSlots: max(0, maxVMs - Self.runningMacOSGuestCount(runningVMs)),
+                version: Lume.Version.current
             )
 
             return try .json(response)
@@ -948,6 +1073,30 @@ extension Server {
 
     // MARK: - Private Helper Methods
 
+    /// Virtualization.framework runs at most two macOS guests per host at a
+    /// time. Linux guests do not count toward this limit.
+    static let maxRunningMacOSGuests = 2
+
+    static func isMacOSGuest(_ os: String) -> Bool {
+        os.lowercased() == "macos"
+    }
+
+    /// The running macOS guests in `vms`, leaving out the VM named `excluding`.
+    static func runningMacOSGuestCount(_ vms: [VMDetails], excluding name: String? = nil) -> Int {
+        vms.filter { $0.status == "running" && isMacOSGuest($0.os) && $0.name != name }.count
+    }
+
+    /// Why a VM with `targetOS` may not start while `runningMacOSGuests` macOS
+    /// guests run, or nil when it may.
+    static func macOSGuestCapacityError(
+        targetOS: String,
+        runningMacOSGuests: Int,
+        maxGuests: Int = maxRunningMacOSGuests
+    ) -> String? {
+        guard isMacOSGuest(targetOS), runningMacOSGuests >= maxGuests else { return nil }
+        return "VM start rejected: host limit of \(maxGuests) running macOS guests reached"
+    }
+
     nonisolated private func startVM(
         name: String,
         noDisplay: Bool,
@@ -958,7 +1107,8 @@ extension Server {
         nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled,
+        forwards: [UInt16] = []
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -994,9 +1144,10 @@ extension Server {
                     networkMode: networkMode,
                     clipboard: clipboard,
                     vncPolicy: vncPolicy,
+                    forwards: forwards,
                     telemetryTransport: .http
                 )
-                Logger.info("VM started successfully in background task", metadata: ["name": name])
+                Logger.info("VM run ended in background task", metadata: ["name": name])
             } catch {
                 Logger.error(
                     "Failed to start VM in background task",

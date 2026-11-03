@@ -283,6 +283,16 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_cursortrajectory": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_cursortrajectory": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_clone_driveractivityobserver": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -383,6 +393,21 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_func_cursor_click_effects": {
+      args: [FfiType.RustBuffer, FfiType.Float64, FfiType.Float64, FfiType.Float64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings": {
       args: [],
       ret: FfiType.Void,
@@ -390,6 +415,16 @@ const DEFINITIONS = {
     },
     "uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_plan_cursor_move": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_plan_cursor_spec": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
@@ -593,6 +628,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_press_key": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -758,6 +798,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -802,6 +847,56 @@ const DEFINITIONS = {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t": {
+      args: [FfiType.Handle],
+      ret: FfiType.Float64,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration": {
+      args: [FfiType.Handle],
+      ret: FfiType.Float64,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame": {
+      args: [FfiType.Handle, FfiType.Float64, FfiType.Int8],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger": {
+      args: [FfiType.Handle],
+      ret: FfiType.Float64,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at": {
+      args: [FfiType.Handle, FfiType.Float64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_target": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known": {
+      args: [FfiType.Handle],
+      ret: FfiType.Int8,
+      hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_method_driveractivityobserver_on_activity": {
       args: [FfiType.Handle, FfiType.RustBuffer],
@@ -933,12 +1028,37 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_func_cursor_click_effects": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_plan_cursor_move": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1143,6 +1263,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key": {
       args: [],
       ret: FfiType.UInt16,
@@ -1308,6 +1433,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key": {
       args: [],
       ret: FfiType.UInt16,
@@ -1349,6 +1479,56 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1668,6 +1848,8 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_free_cuadriver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_cuadriversession(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_cuadriversession(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_cursortrajectory(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_cursortrajectory(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_driveractivityobserver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_driveractivityobserver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_driverauthorizationhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1688,8 +1870,13 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_func_create_remote_trusted_session(driver: bigint, options: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_func_create_trusted_session(driver: bigint, options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_func_cursor_click_effects(effects: Uint8Array, age: number, x: number, y: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_func_cursor_motion_spec_for_style(style: Uint8Array, params: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_func_default_cursor_motion_params(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel(transport: bigint, authenticatedPrincipal: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_func_plan_cursor_move(params: Uint8Array, request: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_func_plan_cursor_spec(spec: Uint8Array, request: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(socketPath: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind(socketPath: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1730,6 +1917,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_list_windows(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_metadata(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1763,6 +1951,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_list_sessions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_list_windows(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1772,6 +1961,16 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_start_session(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_type_text(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_verify_state(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_arrival_t(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_duration(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_effect_frame(uniffiSelf: bigint, t: number, blend: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_effects(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_linger(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_sample_at(uniffiSelf: bigint, t: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_samples(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_snap_t(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_target(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_cursortrajectory_target_known(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_driver_sdk_fn_method_driveractivityobserver_on_activity(uniffiSelf: bigint, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_driverservicetransport_send(uniffiSelf: bigint, request: Uint8Array): bigint;
@@ -1798,8 +1997,13 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_func_create_remote_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_create_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
+    uniffi_cua_driver_sdk_checksum_func_cursor_click_effects(): number;
+    uniffi_cua_driver_sdk_checksum_func_cursor_motion_spec_for_style(): number;
+    uniffi_cua_driver_sdk_checksum_func_default_cursor_motion_params(): number;
     uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
     uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel(): number;
+    uniffi_cua_driver_sdk_checksum_func_plan_cursor_move(): number;
+    uniffi_cua_driver_sdk_checksum_func_plan_cursor_spec(): number;
     uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind(): number;
@@ -1840,6 +2044,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_list_windows(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll(): number;
@@ -1873,6 +2078,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_sessions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled(): number;
@@ -1882,6 +2088,16 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_start_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_type_text(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_arrival_t(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_duration(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effect_frame(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_effects(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_linger(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_sample_at(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_samples(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_snap_t(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target(): number;
+    uniffi_cua_driver_sdk_checksum_method_cursortrajectory_target_known(): number;
     uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity(): number;
     uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize(): number;
     uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send(): number;

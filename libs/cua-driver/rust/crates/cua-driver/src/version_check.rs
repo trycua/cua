@@ -1,9 +1,10 @@
 //! Startup "new version available" banner.
 //!
-//! On the interactive entry points (`mcp`, `serve`, `doctor`) we check the
-//! GitHub releases API for a newer `cua-driver-rs-v*` tag, cache the answer
-//! on disk for ~20 hours, and print a small two-line banner to **stderr**
-//! if a strictly-newer release exists and the user hasn't dismissed it.
+//! On the interactive entry points (`mcp`, `serve`, `doctor`) we resolve the
+//! latest release (see [`crate::release_source`]: the installer's own version
+//! pin first, GitHub's REST API only as a fallback), cache the answer on disk
+//! for an hour, and print a small two-line banner to **stderr** if a
+//! strictly-newer release exists and the user hasn't dismissed it.
 //!
 //! Design constraints:
 //!
@@ -16,9 +17,12 @@
 //!   refusal-to-write-cache — everything is `tracing::debug!` only. Never
 //!   pollute the user's stderr with "couldn't check for updates" noise;
 //!   the next launch just retries.
-//! - **Cache-first.** A 20-hour-old cache short-circuits the network call
-//!   entirely. This bounds outbound requests to roughly one per machine
-//!   per day even on a hot reload loop.
+//! - **Cache-first, but never stale.** A cache younger than an hour
+//!   short-circuits the network call, which bounds outbound requests on a hot
+//!   reload loop. A cached answer is ignored when it was written by a
+//!   different build (the binary was replaced since), or when it is older than
+//!   the running version. Failed lookups are remembered for a few minutes so
+//!   the background banner does not retry on every launch.
 //! - **Opt-out at three layers.** Env var `CUA_DRIVER_RS_UPDATE_CHECK=false`
 //!   (single invocation), persisted config `update_check_enabled = false`
 //!   in `~/.cua-driver/config.json` (permanent), and an automatic skip when
@@ -49,25 +53,20 @@ const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 /// else (including unset) leaves it on.
 const ENV_UPDATE_CHECK: &str = "CUA_DRIVER_RS_UPDATE_CHECK";
 
-/// Refresh threshold for the on-disk cache. A fresh cache short-circuits
-/// the network call so we hit the GitHub API at most ~1× per machine per
-/// day even when the daemon restarts repeatedly.
-const CACHE_REFRESH_SECONDS: u64 = 20 * 60 * 60; // 20 hours
+/// Refresh threshold for a cached *result*. Short enough that a release
+/// published today is visible within the hour; long enough to bound outbound
+/// requests when the daemon restarts repeatedly.
+const CACHE_REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
-/// HTTP timeout for the releases API fetch. Kept tight so the background
-/// task can't linger past the daemon's normal startup window.
-const HTTP_TIMEOUT_SECONDS: u64 = 4;
+/// How long the background banner waits after a failed lookup before trying
+/// again. Explicit `check-update` / `update` calls ignore this.
+const ERROR_BACKOFF_SECONDS: u64 = 5 * 60;
 
 /// Tag-name prefix used by the Rust-port releases on the trycua/cua repo.
 /// Releases tagged with anything else (e.g. the Swift port's
 /// `cua-driver-v*`) are filtered out so we never recommend the wrong binary.
 pub const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
 pub const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v";
-
-/// GitHub releases API endpoint. Paginates newest-first; 40 entries is
-/// plenty of headroom past the most recent stable release even when
-/// pre-releases are sprinkled in between.
-const RELEASES_URL: &str = "https://api.github.com/repos/trycua/cua/releases?per_page=40";
 
 // ── Public API ───────────────────────────────────────────────────────────
 
@@ -94,7 +93,12 @@ pub fn maybe_announce_update() {
     let current = env!("CARGO_PKG_VERSION").to_owned();
 
     let task = move || {
-        run_check_and_announce(&current, fetch_latest_version, std::io::stderr(), true);
+        run_check_and_announce(
+            &current,
+            || fetch_latest_version().map_err(|e| e.to_string()),
+            std::io::stderr(),
+            true,
+        );
     };
 
     if tokio::runtime::Handle::try_current().is_ok() {
@@ -186,8 +190,8 @@ fn install_one_liner() -> String {
 ///
 /// Drives the same fetch + cache primitives the launch-time banner uses,
 /// so the two paths never disagree on which tag is "latest". Respects the
-/// 20-hour `CACHE_REFRESH_SECONDS` unless `no_cache=true`, which forces a
-/// fresh GitHub round-trip (and rewrites the cache on success).
+/// 1-hour `CACHE_REFRESH_SECONDS` unless `no_cache=true`, which forces a
+/// fresh lookup (and rewrites the cache on success).
 ///
 /// Never panics, never returns an error type — fetch failures land in
 /// `UpdateState.error` with a non-empty `current_version` so consumers
@@ -239,17 +243,10 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
     };
 
     let cached = read_cache().unwrap_or_default();
-    let cache_fresh = cached
-        .last_checked_unix
-        .map(|t| now.saturating_sub(t) < CACHE_REFRESH_SECONDS)
-        .unwrap_or(false);
 
     // Honour the cache unless caller explicitly asked us to bypass it.
     // Mirrors `npm outdated --no-cache` / `brew update --force` semantics.
-    let cache_channel_matches =
-        cached.channel.as_deref().unwrap_or("stable") == selected_channel.as_str();
-    let use_cache =
-        !no_cache && cache_fresh && cache_channel_matches && cached.latest_version.is_some();
+    let use_cache = !no_cache && cache_is_usable(&cached, now, &current, selected_channel);
 
     let (latest, cache_hit, fetch_error) = if use_cache {
         (cached.latest_version.clone(), true, None)
@@ -257,32 +254,23 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
         match fetch_latest_version_for(selected_channel) {
             Ok(v) => {
                 // Persist on success so the next launch can reuse the answer.
-                let new_cache = VersionCache {
-                    last_checked_unix: Some(now),
-                    last_checked_at: Some(checked_at.clone()),
-                    latest_version: Some(v.clone()),
-                    channel: Some(selected_channel.as_str().to_owned()),
-                    dismissed_versions: cached.dismissed_versions.clone(),
-                };
-                if let Err(e) = write_cache(&new_cache) {
-                    tracing::debug!(target: "cua_driver::version_check",
-                                    "failed to write cache: {e}");
-                }
+                persist_result(&cached, now, &current, selected_channel, &v);
                 (Some(v), false, None)
             }
             Err(e) => {
-                // Network failure — fall back to whatever the cache holds
-                // (better a slightly-stale answer than nothing). The error
-                // surfaces only when no cache is available.
                 tracing::debug!(target: "cua_driver::version_check",
                                 "fetch failed: {e}");
+                persist_error(&cached, now);
+                // Fall back to a cached answer we still trust (same build and
+                // channel, not behind the running version) — better a slightly
+                // old answer than none. The error surfaces only otherwise.
                 match cached
                     .latest_version
                     .clone()
-                    .filter(|_| cache_channel_matches)
+                    .filter(|_| cache_is_trustworthy(&cached, &current, selected_channel))
                 {
                     Some(v) => (Some(v), true, None),
-                    None => (None, false, Some(e)),
+                    None => (None, false, Some(e.to_string())),
                 }
             }
         }
@@ -321,27 +309,102 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
     }
 }
 
-/// Mark `version` as dismissed so the banner stops nagging the user about
-/// this specific release. They will see the next banner the moment a
-/// strictly-newer tag ships.
+// ── Cache policy ─────────────────────────────────────────────────────────
+
+/// The cache may be consulted for this build and channel at all.
 ///
-/// Idempotent. Failures (no HOME, IO error) are logged via
-/// `tracing::debug!` and silently dropped — dismissal is a UX nicety, not
-/// a correctness boundary.
-///
-/// Exposed publicly so a future interactive prompt (TUI, GUI helper) can
-/// wire it in without re-implementing the persistence layer. No call site
-/// in the current binary — the banner today is informational only.
-#[allow(dead_code)]
-pub fn dismiss_version(version: &str) {
-    let mut cache = read_cache().unwrap_or_default();
-    if !cache.dismissed_versions.iter().any(|v| v == version) {
-        cache.dismissed_versions.push(version.to_owned());
-    }
+/// Rejects an answer that cannot be right: it names another channel, it was
+/// written by a different build (the binary was replaced since, so "latest"
+/// has likely moved), or it is older than the running version.
+fn cache_is_trustworthy(
+    cached: &VersionCache,
+    current: &str,
+    channel: crate::release_channel::ReleaseChannel,
+) -> bool {
+    let Some(latest) = cached.latest_version.as_deref() else {
+        return false;
+    };
+    let channel_matches = cached.channel.as_deref().unwrap_or("stable") == channel.as_str();
+    let same_build = cached.checked_by_version.as_deref() == Some(current);
+    let behind_installed = crate::release_channel::ReleaseChannel::from_version(current)
+        == Some(channel)
+        && is_newer(current, latest);
+    channel_matches && same_build && !behind_installed
+}
+
+/// The cache is trustworthy *and* young enough to skip the lookup.
+fn cache_is_usable(
+    cached: &VersionCache,
+    now: u64,
+    current: &str,
+    channel: crate::release_channel::ReleaseChannel,
+) -> bool {
+    let fresh = cached
+        .last_checked_unix
+        .map(|t| t <= now && now - t < CACHE_REFRESH_SECONDS)
+        .unwrap_or(false);
+    fresh && cache_is_trustworthy(cached, current, channel)
+}
+
+/// Record a successful lookup, keeping the user's dismissals.
+fn persist_result(
+    previous: &VersionCache,
+    now: u64,
+    current: &str,
+    channel: crate::release_channel::ReleaseChannel,
+    latest: &str,
+) {
+    let cache = VersionCache {
+        last_checked_unix: Some(now),
+        last_checked_at: Some(iso8601(now)),
+        latest_version: Some(latest.to_owned()),
+        channel: Some(channel.as_str().to_owned()),
+        checked_by_version: Some(current.to_owned()),
+        last_error_unix: None,
+        dismissed_versions: previous.dismissed_versions.clone(),
+    };
     if let Err(e) = write_cache(&cache) {
-        tracing::debug!(target: "cua_driver::version_check",
-                        "failed to persist dismissal: {e}");
+        tracing::debug!(target: "cua_driver::version_check", "failed to write cache: {e}");
     }
+}
+
+/// Record a failed lookup without disturbing the last good result.
+fn persist_error(previous: &VersionCache, now: u64) {
+    let cache = VersionCache {
+        last_error_unix: Some(now),
+        ..previous.clone()
+    };
+    if let Err(e) = write_cache(&cache) {
+        tracing::debug!(target: "cua_driver::version_check", "failed to write cache: {e}");
+    }
+}
+
+/// Drop the cached result (keeping dismissals) so the next check looks again.
+///
+/// Called after a successful install: the answer that was true before the
+/// install says nothing about what is latest now.
+pub(crate) fn invalidate_cache() {
+    let Some(previous) = read_cache() else { return };
+    let cache = VersionCache {
+        dismissed_versions: previous.dismissed_versions,
+        ..Default::default()
+    };
+    if let Err(e) = write_cache(&cache) {
+        tracing::debug!(target: "cua_driver::version_check", "failed to invalidate cache: {e}");
+    }
+}
+
+/// Record the result of an explicit `cua-driver update` lookup so the cache
+/// reflects what the user was just told.
+pub(crate) fn record_latest(channel: crate::release_channel::ReleaseChannel, latest: &str) {
+    let previous = read_cache().unwrap_or_default();
+    persist_result(
+        &previous,
+        unix_now(),
+        env!("CARGO_PKG_VERSION"),
+        channel,
+        latest,
+    );
 }
 
 // ── Core logic (testable seam) ───────────────────────────────────────────
@@ -384,61 +447,43 @@ fn run_check_and_announce_with_ownership<F, W>(
         return;
     };
 
-    // Decide whether the cache is still fresh enough to skip the network.
+    // Decide whether the cache is still good enough to skip the network.
     let cached = read_cache().unwrap_or_default();
-    let cache_channel_matches =
-        cached.channel.as_deref().unwrap_or("stable") == selected_channel.as_str();
-    let needs_refresh = cached
-        .last_checked_unix
-        .map(|t| now.saturating_sub(t) >= CACHE_REFRESH_SECONDS)
-        .unwrap_or(true)
-        || !cache_channel_matches;
+    let trusted = cache_is_trustworthy(&cached, current, selected_channel);
+    let needs_refresh = !cache_is_usable(&cached, now, current, selected_channel);
+    let backing_off = cached
+        .last_error_unix
+        .map(|t| t <= now && now - t < ERROR_BACKOFF_SECONDS)
+        .unwrap_or(false);
 
-    let (latest, cache_hit) = if needs_refresh {
+    let (latest, cache_hit) = if needs_refresh && !backing_off {
         match fetch() {
             Ok(v) => {
                 // Persist on success so the next launch re-uses the answer.
-                let new_cache = VersionCache {
-                    last_checked_unix: Some(now),
-                    last_checked_at: Some(iso8601(now)),
-                    latest_version: Some(v.clone()),
-                    channel: Some(selected_channel.as_str().to_owned()),
-                    dismissed_versions: cached.dismissed_versions.clone(),
-                };
-                if let Err(e) = write_cache(&new_cache) {
-                    tracing::debug!(target: "cua_driver::version_check",
-                                    "failed to write cache: {e}");
-                }
+                persist_result(&cached, now, current, selected_channel, &v);
                 (v, false)
             }
             Err(e) => {
                 tracing::debug!(target: "cua_driver::version_check",
                                 "fetch failed: {e}");
-                // Fall back to the cached value if any — better an old
+                persist_error(&cached, now);
+                // Fall back to a trusted cached value if any — better an old
                 // banner than none on a brief network blip.
-                match cached
-                    .latest_version
-                    .clone()
-                    .filter(|_| cache_channel_matches)
-                {
+                match cached.latest_version.clone().filter(|_| trusted) {
                     Some(v) => (v, true),
                     None => return,
                 }
             }
         }
     } else {
-        match cached
-            .latest_version
-            .clone()
-            .filter(|_| cache_channel_matches)
-        {
+        match cached.latest_version.clone().filter(|_| trusted) {
             Some(v) => (v, true),
             None => return,
         }
     };
 
-    // Re-read dismissals: dismiss_version may have run between our cache
-    // load and now (e.g. on a separately-spawned task in the same process).
+    // Re-read dismissals: another writer may have updated the cache between
+    // our load and now.
     let dismissed = read_cache()
         .map(|c| c.dismissed_versions)
         .unwrap_or(cached.dismissed_versions);
@@ -592,6 +637,14 @@ pub(crate) struct VersionCache {
     pub latest_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// Version of the cua-driver build that wrote `latest_version`. A cache
+    /// written by another build is not trusted: the binary was replaced since
+    /// (an install or update), which is exactly when "latest" has moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_by_version: Option<String>,
+    /// When the last lookup failed. Lets the background banner back off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_unix: Option<u64>,
     #[serde(default)]
     pub dismissed_versions: Vec<String>,
 }
@@ -683,64 +736,57 @@ fn migrate_legacy_cache() {
 
 // ── HTTP fetch (shared with the `update` subcommand) ─────────────────────
 
-/// Fetch the highest `cua-driver-rs-v*` release tag from GitHub.
+/// Resolve the latest release for the saved channel.
 ///
-/// Uses `ureq` (already a dep via telemetry) so we don't shell out to
-/// `curl` from a background task and stay cross-platform. Filters out:
+/// Delegates to [`crate::release_source::resolve_latest`]: for stable, the
+/// version pinned in the installer (the source `install.sh` itself uses),
+/// then the GitHub releases API (with `GH_TOKEN` / `GITHUB_TOKEN` when set),
+/// then the releases feed. Tags that don't start with the channel's prefix
+/// (Swift port, lume, SDK releases) and drafts are ignored; stable accepts
+/// only plain `x.y.z`.
 ///
-/// - tags that don't start with `cua-driver-rs-v` (Swift port releases)
-/// - draft releases (`"draft": true`)
-///
-/// Pre-releases (`"prerelease": true`) are NOT filtered — cua-driver-rs
-/// is pre-1.0 and the CD pipeline marks every release `prerelease=true`
-/// by convention. Stripping them out left the check finding zero
-/// candidates.
-///
-/// Returns the bare version string (e.g. `"0.1.4"`) on success, or a
-/// human-readable error string on failure. The caller is expected to
-/// downgrade errors to `tracing::debug!`.
-pub fn fetch_latest_version() -> Result<String, String> {
-    let channel = crate::release_channel::selected()?;
+/// Returns the bare version string (e.g. `"0.1.4"`) on success. The error
+/// distinguishes a GitHub API rate limit from a real network failure.
+pub fn fetch_latest_version() -> Result<String, crate::release_source::FetchError> {
+    let channel =
+        crate::release_channel::selected().map_err(crate::release_source::FetchError::Other)?;
     fetch_latest_version_for(channel)
 }
 
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
-) -> Result<String, String> {
+) -> Result<String, crate::release_source::FetchError> {
     if crate::updater::is_pacman_managed() {
-        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+        return Err(crate::release_source::FetchError::Other(
+            crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned(),
+        ));
     }
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
-        .build()
-        .new_agent();
-
-    let response = agent
-        .get(RELEASES_URL)
-        .header("Accept", "application/vnd.github+json")
-        .header(
-            "User-Agent",
-            concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
-
-    let body: serde_json::Value = response
-        .into_body()
-        .read_json()
-        .map_err(|e| format!("JSON parse error: {e}"))?;
-
-    pick_latest_release(&body, channel)
-        .ok_or_else(|| format!("no matching {}* release in response", tag_prefix(channel)))
+    crate::release_source::resolve_latest(
+        &crate::release_source::UreqClient::new(),
+        &crate::release_source::Endpoints::default(),
+        channel,
+        crate::release_source::token_from_env().as_deref(),
+    )
 }
 
 /// Pull the highest non-draft `cua-driver-rs-v*` tag out of the parsed
 /// releases response. Split out so unit tests can feed in canned JSON
 /// without hitting the network. Pre-release flag is intentionally
 /// ignored — see `fetch_latest_version` doc-comment.
+#[cfg(test)]
 pub(crate) fn pick_latest_release(
     body: &serde_json::Value,
     channel: crate::release_channel::ReleaseChannel,
+) -> Option<String> {
+    pick_latest_release_excluding(body, channel, &[])
+}
+
+/// [`pick_latest_release`] that also skips withdrawn versions (bare, e.g.
+/// `"0.28.3"`), as the installer does.
+pub(crate) fn pick_latest_release_excluding(
+    body: &serde_json::Value,
+    channel: crate::release_channel::ReleaseChannel,
+    withdrawn: &[String],
 ) -> Option<String> {
     let releases = body.as_array()?;
     let mut versions: Vec<semver::Version> = releases
@@ -752,6 +798,9 @@ pub(crate) fn pick_latest_release(
                 return None;
             }
             let version = semver::Version::parse(bare).ok()?;
+            if withdrawn.iter().any(|w| w == bare) {
+                return None;
+            }
             match channel {
                 crate::release_channel::ReleaseChannel::Stable
                     if !version.pre.is_empty() || !version.build.is_empty() =>
@@ -772,7 +821,7 @@ pub(crate) fn pick_latest_release(
     versions.last().map(|v| v.to_string())
 }
 
-fn tag_prefix(channel: crate::release_channel::ReleaseChannel) -> &'static str {
+pub(crate) fn tag_prefix(channel: crate::release_channel::ReleaseChannel) -> &'static str {
     match channel {
         crate::release_channel::ReleaseChannel::Stable => RELEASE_TAG_PREFIX,
         crate::release_channel::ReleaseChannel::Nightly => NIGHTLY_RELEASE_TAG_PREFIX,
@@ -791,7 +840,7 @@ fn is_canonical_nightly(version: &semver::Version) -> bool {
 
 // ── Time helpers ─────────────────────────────────────────────────────────
 
-fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -801,7 +850,7 @@ fn unix_now() -> u64 {
 /// Render a unix timestamp as `YYYY-MM-DDTHH:MM:SSZ`. Mirrors the
 /// telemetry module's formatter so the on-disk cache file stays
 /// human-readable without dragging in `chrono`.
-fn iso8601(unix_secs: u64) -> String {
+pub(crate) fn iso8601(unix_secs: u64) -> String {
     let (year, month, day, hour, minute, second) = civil_from_unix(unix_secs);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
@@ -829,6 +878,11 @@ fn civil_from_unix(unix_secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
+/// All env-mutating tests serialise on this lock — `std::env::set_var`
+/// is process-global, parallel tests would race.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,7 +890,7 @@ mod tests {
 
     #[test]
     fn pacman_managed_check_ignores_upstream_cache_and_channel() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             write_cache(&VersionCache {
                 latest_version: Some("999.0.0".into()),
@@ -878,9 +932,7 @@ mod tests {
         assert!(banner.is_empty());
     }
 
-    /// All env-mutating tests serialise on this lock — `std::env::set_var`
-    /// is process-global, parallel tests would race.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use super::ENV_LOCK;
 
     /// Redirect `HOME` / `USERPROFILE` to a fresh temp dir for the body
     /// of `f`, then restore. Ensures the cache file lives in an isolated
@@ -1000,13 +1052,15 @@ mod tests {
 
     #[test]
     fn cache_round_trips_through_tempdir() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             let original = VersionCache {
                 last_checked_unix: Some(1_700_000_000),
                 last_checked_at: Some("2023-11-14T22:13:20Z".into()),
                 latest_version: Some("0.1.4".into()),
                 channel: Some("stable".into()),
+                checked_by_version: Some("0.1.3".into()),
+                last_error_unix: None,
                 dismissed_versions: vec!["0.1.3".into()],
             };
             write_cache(&original).expect("write_cache");
@@ -1019,7 +1073,7 @@ mod tests {
 
     #[test]
     fn cache_lands_in_the_canonical_home() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             write_cache(&VersionCache::default()).expect("write_cache");
             assert!(home
@@ -1034,7 +1088,7 @@ mod tests {
 
     #[test]
     fn legacy_cache_is_migrated_and_its_home_removed() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&legacy_home).unwrap();
@@ -1057,7 +1111,7 @@ mod tests {
 
     #[test]
     fn migration_leaves_a_legacy_home_that_still_holds_other_files() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&legacy_home).unwrap();
@@ -1075,7 +1129,7 @@ mod tests {
 
     #[test]
     fn failed_migration_preserves_the_legacy_cache() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             let legacy_cache = legacy_home.join(CACHE_FILE_NAME);
@@ -1098,46 +1152,21 @@ mod tests {
         });
     }
 
-    #[test]
-    fn dismissed_versions_persist_across_writes() {
-        let _g = ENV_LOCK.lock().unwrap();
-        with_isolated_home(|_| {
-            // First dismissal.
-            dismiss_version("0.1.4");
-            let after_first = read_cache().expect("cache after first");
-            assert_eq!(after_first.dismissed_versions, vec!["0.1.4".to_owned()]);
-
-            // Second dismissal of a different version appends, doesn't replace.
-            dismiss_version("0.1.5");
-            let after_second = read_cache().expect("cache after second");
-            assert_eq!(
-                after_second.dismissed_versions,
-                vec!["0.1.4".to_owned(), "0.1.5".to_owned()],
-            );
-
-            // Re-dismissing an already-dismissed version is idempotent.
-            dismiss_version("0.1.4");
-            let after_dup = read_cache().expect("cache after dup");
-            assert_eq!(
-                after_dup.dismissed_versions,
-                vec!["0.1.4".to_owned(), "0.1.5".to_owned()],
-            );
-        });
-    }
-
-    // ── 20h refresh threshold ───────────────────────────────────────────
+    // ── 1h refresh threshold ────────────────────────────────────────────
 
     #[test]
     fn cache_older_than_threshold_triggers_refresh() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
-            // Seed the cache 21 hours in the past.
+            // Seed the cache 2 hours in the past.
             let now = unix_now();
             let stale = VersionCache {
-                last_checked_unix: Some(now.saturating_sub(21 * 60 * 60)),
-                last_checked_at: Some(iso8601(now.saturating_sub(21 * 60 * 60))),
+                last_checked_unix: Some(now.saturating_sub(2 * 60 * 60)),
+                last_checked_at: Some(iso8601(now.saturating_sub(2 * 60 * 60))),
                 latest_version: Some("0.1.3".into()), // stale data
                 channel: Some("stable".into()),
+                checked_by_version: Some("0.1.3".into()),
+                last_error_unix: None,
                 dismissed_versions: vec![],
             };
             write_cache(&stale).unwrap();
@@ -1167,15 +1196,17 @@ mod tests {
 
     #[test]
     fn cache_younger_than_threshold_skips_network() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
-            // Seed the cache 1 hour in the past with a known-newer version.
+            // Seed the cache 30 minutes in the past with a known-newer version.
             let now = unix_now();
             let fresh = VersionCache {
-                last_checked_unix: Some(now.saturating_sub(60 * 60)),
-                last_checked_at: Some(iso8601(now.saturating_sub(60 * 60))),
+                last_checked_unix: Some(now.saturating_sub(30 * 60)),
+                last_checked_at: Some(iso8601(now.saturating_sub(30 * 60))),
                 latest_version: Some("0.1.4".into()),
                 channel: Some("stable".into()),
+                checked_by_version: Some("0.1.3".into()),
+                last_error_unix: None,
                 dismissed_versions: vec![],
             };
             write_cache(&fresh).unwrap();
@@ -1205,7 +1236,7 @@ mod tests {
 
     #[test]
     fn dismissed_latest_suppresses_banner() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             // Cache is fresh and reports a newer version, but the user
             // dismissed exactly that version — banner must stay silent.
@@ -1215,6 +1246,8 @@ mod tests {
                 last_checked_at: Some(iso8601(now)),
                 latest_version: Some("0.1.4".into()),
                 channel: Some("stable".into()),
+                checked_by_version: Some("0.1.3".into()),
+                last_error_unix: None,
                 dismissed_versions: vec!["0.1.4".into()],
             };
             write_cache(&cache).unwrap();
@@ -1225,11 +1258,187 @@ mod tests {
         });
     }
 
+    // ── Stale-cache invalidation ────────────────────────────────────────
+
+    fn seeded(now: u64, age: u64, latest: &str, built_by: Option<&str>) -> VersionCache {
+        VersionCache {
+            last_checked_unix: Some(now - age),
+            last_checked_at: Some(iso8601(now - age)),
+            latest_version: Some(latest.into()),
+            channel: Some("stable".into()),
+            checked_by_version: built_by.map(Into::into),
+            last_error_unix: None,
+            dismissed_versions: vec![],
+        }
+    }
+
+    #[test]
+    fn result_cache_is_usable_only_when_young_and_from_this_build() {
+        use crate::release_channel::ReleaseChannel::Stable;
+        let now = 1_800_000_000;
+        // Young, same build: usable.
+        assert!(cache_is_usable(
+            &seeded(now, 60, "0.34.0", Some("0.33.0")),
+            now,
+            "0.33.0",
+            Stable
+        ));
+        // Older than the 1h TTL: refresh (the 20h cache of #4755 is gone).
+        assert!(!cache_is_usable(
+            &seeded(now, 2 * 3600, "0.34.0", Some("0.33.0")),
+            now,
+            "0.33.0",
+            Stable
+        ));
+        // Written by another build, e.g. before an install replaced the binary.
+        assert!(!cache_is_usable(
+            &seeded(now, 60, "0.33.4", Some("0.33.0")),
+            now,
+            "0.34.0",
+            Stable
+        ));
+        // Legacy cache with no build recorded.
+        assert!(!cache_is_usable(
+            &seeded(now, 60, "0.33.4", None),
+            now,
+            "0.33.4",
+            Stable
+        ));
+        // Clearly stale: "latest" is older than the running version.
+        assert!(!cache_is_usable(
+            &seeded(now, 60, "0.33.4", Some("0.34.0")),
+            now,
+            "0.34.0",
+            Stable
+        ));
+        // Clock skew: a timestamp from the future is not fresh.
+        let mut future = seeded(now, 0, "0.34.0", Some("0.33.0"));
+        future.last_checked_unix = Some(now + 3600);
+        assert!(!cache_is_usable(&future, now, "0.33.0", Stable));
+        // Wrong channel.
+        assert!(!cache_is_usable(
+            &seeded(now, 60, "0.34.0", Some("0.33.0")),
+            now,
+            "0.33.0",
+            crate::release_channel::ReleaseChannel::Nightly
+        ));
+    }
+
+    #[test]
+    fn stale_cache_from_older_build_is_replaced_not_announced() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_isolated_home(|_| {
+            // The #4755 shape: a young cache saying 0.33.4, written by the
+            // 0.33.4 build, read by the 0.34.0 build that replaced it.
+            let now = unix_now();
+            write_cache(&seeded(now, 600, "0.33.4", Some("0.33.4"))).unwrap();
+            let fetches = std::sync::atomic::AtomicUsize::new(0);
+            let mut buf: Vec<u8> = Vec::new();
+            run_check_and_announce(
+                "0.34.0",
+                || {
+                    fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok("0.34.0".into())
+                },
+                &mut buf,
+                false,
+            );
+            assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let refreshed = read_cache().unwrap();
+            assert_eq!(refreshed.latest_version.as_deref(), Some("0.34.0"));
+            assert_eq!(refreshed.checked_by_version.as_deref(), Some("0.34.0"));
+        });
+    }
+
+    #[test]
+    fn failed_lookup_backs_off_but_never_serves_an_untrusted_result() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_isolated_home(|_| {
+            let now = unix_now();
+            let fetches = std::sync::atomic::AtomicUsize::new(0);
+            let failing = || {
+                fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err("rate limited".to_owned())
+            };
+            let count = || fetches.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Cache from another build: the lookup is attempted, fails, and the
+            // untrusted 0.33.4 is not shown as a fallback.
+            write_cache(&seeded(now, 2 * 3600, "0.99.0", Some("0.33.4"))).unwrap();
+            let mut buf: Vec<u8> = Vec::new();
+            run_check_and_announce("0.33.0", failing, &mut buf, false);
+            assert_eq!(count(), 1);
+            assert!(buf.is_empty(), "untrusted result must not be announced");
+
+            // Same build, expired result: lookup fails, the trusted result is
+            // still shown, and the failure is recorded.
+            write_cache(&seeded(now, 2 * 3600, "0.34.0", Some("0.33.0"))).unwrap();
+            let mut buf: Vec<u8> = Vec::new();
+            run_check_and_announce("0.33.0", failing, &mut buf, false);
+            assert_eq!(count(), 2);
+            assert!(String::from_utf8(buf)
+                .unwrap()
+                .contains("v0.34.0 is available"));
+            let after = read_cache().unwrap();
+            assert!(after.last_error_unix.is_some());
+            assert_eq!(
+                after.latest_version.as_deref(),
+                Some("0.34.0"),
+                "last good result kept"
+            );
+
+            // Within the backoff window the lookup is not retried.
+            let mut buf: Vec<u8> = Vec::new();
+            run_check_and_announce("0.33.0", failing, &mut buf, false);
+            assert_eq!(count(), 2, "backoff");
+            assert!(String::from_utf8(buf)
+                .unwrap()
+                .contains("v0.34.0 is available"));
+        });
+    }
+
+    #[test]
+    fn invalidate_cache_drops_the_result_and_keeps_dismissals() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_isolated_home(|_| {
+            let now = unix_now();
+            let mut cache = seeded(now, 60, "0.33.4", Some("0.33.4"));
+            cache.dismissed_versions = vec!["0.33.4".into()];
+            write_cache(&cache).unwrap();
+            invalidate_cache();
+            let after = read_cache().unwrap();
+            assert!(after.latest_version.is_none());
+            assert!(after.last_checked_unix.is_none());
+            assert!(after.checked_by_version.is_none());
+            assert_eq!(after.dismissed_versions, vec!["0.33.4".to_owned()]);
+            assert!(!cache_is_usable(
+                &after,
+                now,
+                "0.33.4",
+                crate::release_channel::ReleaseChannel::Stable
+            ));
+        });
+    }
+
+    #[test]
+    fn pick_latest_release_excluding_skips_withdrawn_versions() {
+        let body = serde_json::json!([
+            {"tag_name": "cua-driver-rs-v0.30.0", "draft": false},
+            {"tag_name": "cua-driver-rs-v0.29.0", "draft": false},
+        ]);
+        let latest = pick_latest_release_excluding(
+            &body,
+            crate::release_channel::ReleaseChannel::Stable,
+            &["0.30.0".to_owned()],
+        );
+        assert_eq!(latest.as_deref(), Some("0.29.0"));
+    }
+
     // ── Opt-out paths ───────────────────────────────────────────────────
 
     #[test]
     fn env_opt_out_short_circuits_enabled_check() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
 
         unsafe {
@@ -1268,7 +1477,7 @@ mod tests {
 
     #[test]
     fn config_flag_disables_check() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
         unsafe {
             std::env::remove_var(ENV_UPDATE_CHECK);
@@ -1305,7 +1514,7 @@ mod tests {
 
     #[test]
     fn config_flag_true_or_missing_leaves_check_on() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
         unsafe {
             std::env::remove_var(ENV_UPDATE_CHECK);

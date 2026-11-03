@@ -98,13 +98,18 @@ fn main() {
         }
         environment_record = Some(record);
     }
-    let summary = validate_catalog(
+    let summary = match validate_catalog(
         &declarations,
         &results,
         artifact_root.as_deref(),
         require_video,
-    )
-    .unwrap_or_else(|errors| panic!("invalid E2E report:\n{}", errors.join("\n")));
+    ) {
+        Ok(summary) => summary,
+        Err(errors) => {
+            eprintln!("invalid E2E report:\n{}", errors.join("\n"));
+            std::process::exit(1);
+        }
+    };
     let markdown = summary.markdown_with_declarations_source_and_environment(
         &declarations,
         &results,

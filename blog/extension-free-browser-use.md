@@ -83,7 +83,7 @@ The recommended route launches a driver-owned isolated profile. It never copies 
 
 Attaching an existing signed-in Chrome or Edge profile is more sensitive. A standalone runtime needs an explicit launch grant such as `--grant existing-profile`, or an embedding application must authorize the exact resource through its host callback. An agent cannot promote its own permission mode while it is running.
 
-For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended path. A reviewed manifest can allow an existing profile while restricting tools, apps, origins, and files. For example:
+For unattended work, [bounded mode](https://cua.ai/docs/cua-driver/guides/write-a-bounded-manifest) is the recommended path. A reviewed manifest can allow an existing profile while restricting tools, apps, origins, and files. For example:
 
 ```yaml
 version: 3
@@ -118,7 +118,7 @@ resources:
 
 Start it with `cua-driver serve --permission-mode bounded --capability-manifest ./cua-capability-manifest.yaml --approve-capability-manifest`. The example uses Chrome's macOS bundle id; Windows and Linux use its canonical absolute executable path. Generic desktop input is deliberately omitted because it could bypass the origin restriction.
 
-Users who explicitly accept the risk can choose [unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) with `cua-driver serve --dangerously-bypass-approvals`. That bypasses Cua approval checks after launch-time acknowledgement, so it should not be the default for a personal browser.
+Users who explicitly accept the risk can choose [unrestricted mode](https://cua.ai/docs/cua-driver/concepts/permission-modes) with `cua-driver serve --dangerously-bypass-approvals`. That bypasses Cua approval checks after launch-time acknowledgement, so it should not be the default for a personal browser.
 
 Cua Driver adds no confirmation modal or persistent banner. The launch policy is the authorization boundary, and the browser may show its own debugging consent. No extension does not mean no consent. It means setup and authority are explicit and inspectable.
 
@@ -176,7 +176,7 @@ cua-driver skills install
 
 On macOS, grant Accessibility and Screen Recording to the signed Cua Driver app with `cua-driver permissions grant`.
 
-For the complete setup and contracts, read [Drive a Web Page](https://cua.ai/docs/how-to-guides/driver/drive-a-web-page), [Browser Targeting and Background Delivery](https://cua.ai/docs/concepts/browser-targeting-and-background-delivery), and [Browser Profile Attachment](https://cua.ai/docs/reference/cua-driver/browser-profile-attachment).
+For the complete setup and contracts, read [Drive a Web Page](https://cua.ai/docs/cua-driver/guides/drive-a-web-page), [Browser Targeting and Background Delivery](https://cua.ai/docs/cua-driver/concepts/browser-targeting-and-background-delivery), and [Browser Profile Attachment](https://cua.ai/docs/cua-driver/concepts/browser-profile-attachment).
 
 The boundary is the product: an exact route acts, and an unproven route refuses. Agents can use the browser without being trapped inside it, return to the operating system when needed, and leave evidence of what happened.
 

@@ -384,7 +384,13 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
 
     try:
         ready = False
-        for _ in range(120):
+        # Under Memcheck the server starts 10 to 20 times slower than native
+        # and a connection refused returns at once, so the old 120 tries of
+        # 0.5 s gave it only 60 s. Wait against a deadline instead, scalable
+        # for a slower runner.
+        startup_timeout = float(os.environ.get("CUA_VALGRIND_STARTUP_TIMEOUT", "240"))
+        startup_deadline = time.monotonic() + startup_timeout
+        while time.monotonic() < startup_deadline:
             if process.poll() is not None:
                 raise RunnerFailure("cua-driver server exited before readiness")
             try:
@@ -403,7 +409,9 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
                 break
             time.sleep(0.5)
         if not ready:
-            raise RunnerFailure("cua-driver server did not become ready within 60 seconds")
+            raise RunnerFailure(
+                f"cua-driver server did not become ready within {startup_timeout:g} seconds"
+            )
 
         readiness = load_json(artifact_dir / "readiness.json")
         expect(

@@ -8,6 +8,7 @@
 //! typed inputs/results and versioned declarations used by the live runtime
 //! and to generate experimental client SDKs.
 
+use schemars::{generate::SchemaSettings, transform::RecursiveTransform, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,16 +22,37 @@ mod inputs;
 mod outputs;
 mod session;
 mod verification;
+mod visual;
 mod windows;
 pub use windows::*;
 
+pub(crate) fn schema_settings() -> SchemaSettings {
+    SchemaSettings::draft2020_12()
+        .with(|settings| {
+            settings.meta_schema = None;
+            settings.inline_subschemas = true;
+        })
+        .with_transform(RecursiveTransform(drop_schemars_numeric_format))
+}
+
+fn drop_schemars_numeric_format(schema: &mut Schema) {
+    if matches!(
+        schema.get("format").and_then(Value::as_str),
+        Some("uint32" | "uint64" | "double")
+    ) {
+        schema.remove("format");
+    }
+}
+
+pub use cursor::CursorEffectSetting;
 pub use cursor::{
-    classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
-    CursorSemantics, CursorTarget, CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionEffects,
+    CursorMotionEffectsOutput, CursorMotionStyle, CursorMotionTiming, CursorPlayback,
+    CursorReducedMotion, CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,
-    ClipboardReadInput, ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput,
+    ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
+    ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
     EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
     GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
     InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
@@ -40,11 +62,12 @@ pub use inputs::{
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
-    refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation,
-    ActionEscalationReason, ActionEscalationTarget, ActionEvidence, ActionEvidenceKind,
-    ActionResult, ActionResultValidationError, ActionRoute, ClipboardReadOutput,
-    ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput, CursorPositionOutput,
-    CursorThemeOutput, CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
+    refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionError,
+    ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
+    ActionEvidenceKind, ActionNextCall, ActionResult, ActionResultValidationError, ActionRoute,
+    AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
+    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
+    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
     GetAgentCursorStateOutput, ListSessionsOutput, ScreenSizeOutput, SessionClientKindOutput,
     SessionLifecycleState, SessionOutput, SessionStateOutput, SessionTransportOutput,
     SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
@@ -54,6 +77,13 @@ pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
     UnknownReason, VerificationStatus, VerifyStateInput, VerifyStateOutput, WindowPredicate,
     VERIFY_STATE_DEFAULT_TIMEOUT_MS,
+};
+pub use visual::{
+    ParseVisualRegionsInput, ParseVisualRegionsOptions, ParseVisualRegionsOutput,
+    VisualActionCoordinateSpace, VisualCaptureProvenance, VisualCaptureSource,
+    VisualContractValidationError, VisualParseError, VisualParseErrorCode, VisualParseTiming,
+    VisualParseWarning, VisualParserMetadata, VisualRegion, VisualRegionBounds, VisualRegionKind,
+    VisualScreenshotReference, VISUAL_REGIONS_SCHEMA,
 };
 
 /// Shape version for the MCP `tools/list` result emitted by cua-driver.
@@ -170,6 +200,10 @@ pub struct ToolContract {
     /// advertises this as `outputSchema`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success_output_schema: Option<Value>,
+    /// Stable tool-specific structured error payload, when the tool exposes
+    /// one in addition to the shared transport refusal envelope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_output_schema: Option<Value>,
     /// Runtime-only validator bound to the same Rust output type that produced
     /// `success_output_schema`; omitted from the generated manifest.
     #[serde(skip, default = "default_output_validator")]
@@ -190,11 +224,23 @@ pub struct ContractManifest {
     pub tools: Vec<ToolContract>,
 }
 
+/// The published contract. Built once per process: every schema in it comes
+/// from compiled Rust types, so rebuilding it can only repeat the same work.
 pub fn manifest() -> ContractManifest {
+    cached_manifest().clone()
+}
+
+fn cached_manifest() -> &'static ContractManifest {
+    static MANIFEST: OnceLock<ContractManifest> = OnceLock::new();
+    MANIFEST.get_or_init(build_manifest)
+}
+
+fn build_manifest() -> ContractManifest {
     let mut tools = session::contracts();
     tools.extend(desktop::contracts());
     tools.extend(cursor_tools::contracts());
     tools.extend(verification::contracts());
+    tools.extend(visual::contracts());
     tools.sort_by(|left, right| left.name.cmp(&right.name));
     ContractManifest {
         generated_notice: "Generated by cua-contract-gen; do not edit by hand.".into(),
@@ -209,7 +255,14 @@ pub fn manifest() -> ContractManifest {
 }
 
 pub fn tool_contract(name: &str) -> Option<ToolContract> {
-    manifest().tools.into_iter().find(|tool| tool.name == name)
+    cached_tool_contract(name).cloned()
+}
+
+fn cached_tool_contract(name: &str) -> Option<&'static ToolContract> {
+    cached_manifest()
+        .tools
+        .iter()
+        .find(|tool| tool.name == name)
 }
 
 #[derive(Debug)]
@@ -223,9 +276,10 @@ struct ToolIndexEntry {
 fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
     static INDEX: OnceLock<BTreeMap<String, ToolIndexEntry>> = OnceLock::new();
     INDEX.get_or_init(|| {
-        manifest()
+        cached_manifest()
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|tool| {
                 let input_fields = tool
                     .input_schema
@@ -267,7 +321,7 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// MCP tool. Runtime-only tools can define a narrow shared schema here without
 /// committing every generated SDK to their broader platform-specific shape.
 pub fn tool_success_output_schema(name: &str) -> Option<Value> {
-    tool_contract(name).and_then(|contract| contract.success_output_schema)
+    cached_tool_contract(name).and_then(|contract| contract.success_output_schema.clone())
 }
 
 /// The `outputSchema` one tool advertises on `tools/list`, or `None` when it
@@ -280,7 +334,12 @@ pub fn tool_success_output_schema(name: &str) -> Option<Value> {
 /// schema.
 pub fn advertised_tool_output_schema(name: &str) -> Option<Value> {
     let success = if is_action_result_tool(name) {
-        Some(<ActionResult as ToolOutput>::output_schema())
+        static ACTION_RESULT_SCHEMA: OnceLock<Value> = OnceLock::new();
+        Some(
+            ACTION_RESULT_SCHEMA
+                .get_or_init(<ActionResult as ToolOutput>::output_schema)
+                .clone(),
+        )
     } else {
         tool_success_output_schema(name)
     };
@@ -319,6 +378,79 @@ pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct NumericFormatFixture;
+
+    impl schemars::JsonSchema for NumericFormatFixture {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "NumericFormatFixture".into()
+        }
+
+        fn json_schema(_: &mut schemars::SchemaGenerator) -> Schema {
+            schemars::json_schema!({
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "format": "uint32"},
+                    "frame": {"type": "integer", "format": "uint64"},
+                    "ratio": {"type": "number", "format": "double"},
+                    "created_at": {"type": "string", "format": "date-time"},
+                    "format": {"type": "string"},
+                    "annotation": {
+                        "const": {"format": "uint32"},
+                        "default": {"format": "uint64"},
+                        "examples": [{"format": "double"}]
+                    }
+                },
+                "required": ["format"]
+            })
+        }
+    }
+
+    impl ToolInput for NumericFormatFixture {
+        const TOOL_NAME: &'static str = "numeric_format_fixture";
+    }
+
+    impl ToolOutput for NumericFormatFixture {}
+
+    #[test]
+    fn input_and_output_schemas_drop_only_schemars_numeric_formats() {
+        // `input_schema` panics on this fixture's object `const`. The format
+        // stripper runs in `schema_settings` before that rewrite.
+        let schemas = [
+            serde_json::to_value(
+                schema_settings()
+                    .into_generator()
+                    .into_root_schema_for::<NumericFormatFixture>(),
+            )
+            .expect("schema"),
+            <NumericFormatFixture as ToolOutput>::output_schema(),
+        ];
+
+        for schema in schemas {
+            for property in ["count", "frame", "ratio"] {
+                assert!(schema["properties"][property].get("format").is_none());
+            }
+            assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+            assert_eq!(
+                schema["properties"]["format"],
+                serde_json::json!({"type": "string"})
+            );
+            assert_eq!(schema["required"], serde_json::json!(["format"]));
+            assert_eq!(
+                schema["properties"]["annotation"]["const"],
+                serde_json::json!({"format": "uint32"})
+            );
+            assert_eq!(
+                schema["properties"]["annotation"]["default"],
+                serde_json::json!({"format": "uint64"})
+            );
+            assert_eq!(
+                schema["properties"]["annotation"]["examples"],
+                serde_json::json!([{"format": "double"}])
+            );
+        }
+    }
 
     #[test]
     fn manifest_is_sorted_and_versioned() {
@@ -395,8 +527,15 @@ mod tests {
         );
         assert_eq!(
             contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
-                ["properties"]["exists"]["enum"],
-            serde_json::json!([true])
+                ["properties"]["exists"]["type"],
+            serde_json::json!("boolean")
+        );
+        assert!(
+            contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
+                ["properties"]["exists"]
+                .get("enum")
+                .is_none(),
+            "verify_state element.exists should not specify enum (must remain plain boolean for Gemini function-calling compatibility)"
         );
     }
 
@@ -437,6 +576,10 @@ mod tests {
             .join(" ");
         assert!(description.starts_with(MULTI_CALL_SESSION_DESCRIPTION));
         assert!(description.contains("never selects capture modality or authorization"));
+
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("prefer a short public session label"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("repeat it on every call that accepts it"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("implicit lifecycle session"));
     }
 
     #[test]
@@ -446,6 +589,22 @@ mod tests {
             assert!(
                 tool.success_output_schema.is_some(),
                 "{} has no success output schema",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_mode_capability_matches_the_typed_input_schema() {
+        for tool in manifest().tools {
+            assert_eq!(
+                tool.input_schema
+                    .pointer("/properties/delivery_mode")
+                    .is_some(),
+                tool.capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode"),
+                "{} typed contract delivery_mode schema/capability mismatch",
                 tool.name
             );
         }

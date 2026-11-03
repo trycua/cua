@@ -5,9 +5,9 @@ disabled unless the trusted launcher sets `CUA_DRIVER_ENVELOPE_HTTP_PORT` to a
 nonzero port. It binds only to `127.0.0.1` and fails startup if binding fails.
 No non-loopback binding option is provided.
 
-This is an implementation contract, not a released Fleet setup guide. A later
-image/service change must connect the loopback endpoint to Fleet's existing
-authorized private named-service route. Do not expose this endpoint directly:
+This is an implementation contract, not a released setup guide. A later
+image/service change must connect the loopback endpoint to an existing
+authorized private service route. Do not expose this endpoint directly:
 it does not authenticate callers. IDs and generations are lifecycle markers,
 not credentials. The carrier introduces no bearer token or pairing scheme.
 
@@ -49,8 +49,8 @@ The SDK treats compatibility-call and trusted-session manifests separately;
 this carrier neither inherits the former nor exposes the latter. This is a
 carrier limitation, not a change to the SDK's per-session manifest contract.
 Managed and user policies remain binding.
-This option does not authorize public exposure, alter Fleet authorization,
-or change existing computer-server sessions.
+This option does not authorize public exposure, alter service authorization,
+or change existing cua-spacesd sessions.
 
 `capabilities` contains `minimum_envelope_version`, `maximum_envelope_version`,
 and `supports_cancellation`. This carrier supports envelope version 1 and
@@ -71,7 +71,7 @@ returned canonical Driver root already owns one bound session.
 Close is idempotent and retains the closed request ledger until idle removal.
 Idle reaping skips active exchanges. Shutdown cancels the listener and its
 connection tasks and closes owned sessions. It does not shut down the shared
-Driver runtime or computer-server, release a Fleet claim, or delete a pool.
+Driver runtime or cua-spacesd, or release the guest it runs in.
 
 ## Verification boundary
 
@@ -83,6 +83,6 @@ exchange load, and oversized responses. Run them from `libs/cua-driver/rust`:
 cargo test -p cua-driver --bin cua-driver driver_service_http --locked
 ```
 
-These tests do not establish guest network isolation, Fleet authorization,
+These tests do not establish guest network isolation, service authorization,
 image packaging, real desktop effects, or compatibility with a released Python
 client. Those remain explicit integration and qualification gates.

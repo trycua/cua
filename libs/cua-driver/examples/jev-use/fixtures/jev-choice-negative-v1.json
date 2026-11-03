@@ -1,0 +1,30 @@
+{
+  "schema": "cua.jev_choice_request_v1",
+  "goal": "Choose exactly one candidate by applying its condition to the supplied state. The host alone authorizes any selected action.",
+  "capture_id": "synthetic-negative-1",
+  "regions": [
+    {
+      "id": "save",
+      "kind": "text",
+      "bounds": {"x": 10, "y": 10, "width": 80, "height": 30},
+      "text": "Save",
+      "confidence": 0.98,
+      "interactive": true
+    }
+  ],
+  "history": [],
+  "candidates": [
+    {
+      "id": "region:save",
+      "description": "Select only if exactly one supplied region has id=save, kind=text, exact_text=\"Send\", confidence=0.98, and it is the sole exact Send match at or above 0.80."
+    },
+    {
+      "id": "reobserve",
+      "description": "Select only when no action candidate condition matches and no regions are supplied. Do not act; request one fresh bounded observation."
+    },
+    {
+      "id": "abstain",
+      "description": "Select only when no action candidate condition matches and one or more regions are supplied. Do not act; stop."
+    }
+  ]
+}

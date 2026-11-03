@@ -53,6 +53,7 @@ pub struct SdkAdapter {
     runtime_prefix: String,
     runtime_scope: String,
     _session_end_hook: cua_driver_core::session::SessionEndHookRegistration,
+    _session_revive_hook: cua_driver_core::session::SessionReviveHookRegistration,
     session_lifecycle: tokio::sync::Mutex<()>,
 }
 
@@ -120,6 +121,16 @@ impl SdkAdapter {
                 sessions.scopes.entry(public.to_owned()).or_default();
                 sessions.mark_ended(public);
             });
+        // Core also revives an idle-reclaimed unnamed session on its next
+        // call, not only through start_session, so follow every revival.
+        let revive_sessions = public_sessions.clone();
+        let revive_prefix = runtime_prefix.clone();
+        let session_revive_hook =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session| {
+                if let Some(public) = session.strip_prefix(&revive_prefix) {
+                    revive_sessions.lock().unwrap().ended.remove(public);
+                }
+            });
         Ok(Arc::new(Self {
             driver,
             tools_list,
@@ -127,6 +138,7 @@ impl SdkAdapter {
             runtime_prefix,
             runtime_scope,
             _session_end_hook: session_end_hook,
+            _session_revive_hook: session_revive_hook,
             session_lifecycle: tokio::sync::Mutex::new(()),
         }))
     }
@@ -140,16 +152,8 @@ impl SdkAdapter {
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || self
-                .tools_list
-                .get("tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-                })
+        cua_driver_core::tool::renamed_tool(name).is_some()
+            || self.driver.local_is_known_tool(name).unwrap_or(false)
     }
 
     pub fn describe(&self, name: &str) -> Option<Value> {
@@ -260,12 +264,21 @@ impl SdkAdapter {
         Ok(value)
     }
 
+    /// Whether the legacy socket must refuse a call on this ended session.
+    /// An unnamed transport session reclaimed by the idle sweep is not
+    /// refused: core recreates it on the call.
     pub fn is_session_ended(&self, session: &str) -> bool {
-        self.public_sessions
+        if !self
+            .public_sessions
             .lock()
             .unwrap()
             .ended
             .contains_key(session)
+        {
+            return false;
+        }
+        let internal = format!("{}{session}", self.runtime_prefix);
+        !cua_driver_core::session::recreates_on_next_call(&internal, &internal)
     }
 
     pub fn mark_all_sessions_ended(&self) {
@@ -281,6 +294,9 @@ impl SdkAdapter {
         cua_driver_core::session::suspend_runtime_scope(&self.runtime_scope);
         let count = cua_driver_core::session::revoke_sessions_with_prefix(&self.runtime_prefix);
         self.mark_all_sessions_ended();
+        // Revoking everything must not leave an already-approved browser
+        // socket parked for a later session.
+        cua_driver_core::browser::cdp_ws::close_parked_browser_sockets().await;
         count
     }
 
@@ -442,6 +458,10 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
 impl ToolProvider for SdkAdapter {
     fn tools_list(&self) -> Value {
         self.tools_list()
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        SdkAdapter::is_known_tool(self, name)
     }
 
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {

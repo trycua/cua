@@ -1,0 +1,86 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "  ⎿  /plan to preview",
+        "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+        "",
+        "  ────────────────────────────────────────────────────────────────────────────────────────────────",
+        "   Ready to code?",
+        "",
+        "   Here is Claude's plan:",
+        "  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌���╌╌╌╌╌╌╌",
+        "   Add divide to calc.py",
+        "",
+        "   Context",
+        "",
+        "   calc.py currently holds two plain arithmetic helpers, add and subtract. The user wants",
+        "   division available alongside them. The file has no docstrings, no type hints, and no tests —",
+        "   the new function should match that style exactly.",
+        "",
+        "   Change",
+        "",
+        "   File: /private/tmp/cua-cast-sandbox/calc.py",
+        "",
+        "   Append, after subtract:",
+        "",
+        "   def divide(a, b):",
+        "       if b == 0:                                                                                 ↓",
+        "  ────────────────────────────────────────────────────────────────────────────────────────────────"
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 25
+      },
+      "type" : "rawText"
+    },
+    {
+      "options" : [
+        {
+          "key" : "1",
+          "label" : "Yes, and use auto mode"
+        },
+        {
+          "key" : "2",
+          "label" : "Yes, manually approve edits"
+        },
+        {
+          "key" : "3",
+          "label" : "Tell Claude what to change"
+        }
+      ],
+      "prompt" : "Claude has written up a plan and is ready to execute. Would you like to proceed?",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 26,
+        "lastRow" : 30
+      },
+      "selectedIndex" : 0,
+      "type" : "question"
+    },
+    {
+      "lines" : [
+        "        shift+tab to approve with this feedback",
+        "",
+        "   ctrl+g to edit in Vim · ~/.claude/plans/add-a-divide-function-stateful-hare.md"
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 31,
+        "lastRow" : 33
+      },
+      "type" : "rawText"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 17.725999999999999,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

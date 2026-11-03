@@ -1,23 +1,21 @@
-//! Transport axis: `set_config` visibility across the CLI vs MCP transports.
+//! Transport axis: CLI `set_config` visibility across daemon-backed shell
+//! processes.
 //!
-//! This is the one behavior that only shows up when a test covers BOTH
-//! transports, so it lives on the shared testkit `Driver` abstraction:
-//!
-//!   - **CLI** (`CliDriver`) starts a fresh shell process for each call, but all
-//!     calls go through one test-owned daemon.
-//!   - **MCP** (`McpDriver`) is one long-lived proxy connection to its own
-//!     test-owned daemon.
+//! `CliDriver` starts a fresh shell process for each call, but all calls go
+//! through one test-owned daemon, so a `set_config` in one process must be
+//! visible to the next. MCP in-session visibility is owned by
+//! `protocol_tools_call_test::get_config_and_check_permissions`.
 //!
 //! Uses `max_image_dimension` as the persisted key. `capture_mode` /
 //! `capture_scope` are NO LONGER settings (`capture_scope` is per-session), so
 //! `max_image_dimension` is the remaining
 //! disk-persisted config field and the right probe for this transport behavior.
 //!
-//! Both tests are `#[ignore]`: they mutate the real on-disk config, so they
-//! save the prior value and restore it. Run explicitly:
+//! The test is `#[ignore]`: an anonymous CLI `set_config` mutates the real
+//! on-disk config, so it saves the prior value and restores it. Run explicitly:
 //!   cargo test -p cua-driver --test transport_config_persistence_test -- --ignored --nocapture
 
-use cua_driver_testkit::{CliDriver, Driver, McpDriver};
+use cua_driver_testkit::{CliDriver, Driver};
 
 const KEY: &str = "max_image_dimension";
 /// A distinctive probe value unlikely to be the current setting.
@@ -59,43 +57,6 @@ fn cli_set_config_visible_across_daemon_backed_invocations() {
     // Restore.
     if let Some(orig) = original {
         let _ = cli.call(
-            "set_config",
-            serde_json::json!({ "key": KEY, "value": orig }),
-        );
-    }
-}
-
-/// MCP: a `set_config` is visible to a later call on the SAME long-lived driver
-/// (session scope). Restores the prior value before dropping the connection.
-#[test]
-#[ignore]
-fn mcp_set_config_visible_within_session() {
-    let Some(mut driver) = McpDriver::spawn() else {
-        return;
-    };
-
-    let original = config_max_dim(
-        driver
-            .call("get_config", serde_json::json!({}))
-            .structured(),
-    );
-
-    let set = driver.call(
-        "set_config",
-        serde_json::json!({ "key": KEY, "value": PROBE }),
-    );
-    assert!(!set.is_error(), "MCP set_config errored: {}", set.text());
-
-    let after = driver.call("get_config", serde_json::json!({}));
-    assert_eq!(
-        config_max_dim(after.structured()),
-        Some(PROBE),
-        "MCP set_config not visible within the same session: {}",
-        after.text()
-    );
-
-    if let Some(orig) = original {
-        let _ = driver.call(
             "set_config",
             serde_json::json!({ "key": KEY, "value": orig }),
         );

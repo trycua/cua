@@ -38,6 +38,8 @@ pub mod elf;
 pub mod error;
 pub mod exec;
 pub mod experiments;
+#[cfg(any(feature = "lume", feature = "containerization"))]
+pub mod fetch;
 pub mod filetable;
 pub mod gpu;
 pub mod host;

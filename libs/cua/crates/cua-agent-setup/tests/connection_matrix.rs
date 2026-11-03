@@ -994,3 +994,101 @@ fn status_is_cached_briefly_and_refresh_asks_again() {
 
 #[allow(dead_code)]
 fn _paths(_: &Path) {}
+
+/// Everything under the fake home outside the Cua home, as path to bytes.
+fn outside_cua_home(w: &World) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(dir: &Path, skip: &Path, out: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.starts_with(skip) {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, skip, out);
+            } else {
+                out.insert(p.clone(), std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut out = Default::default();
+    walk(&w.home, &w.env.cua_home(), &mut out);
+    out
+}
+
+#[test]
+fn a_sign_in_only_connect_changes_nothing_outside_the_cua_home_and_never_prints_the_token() {
+    let w = World::new();
+    w.install("claude-code", "2.1.299");
+    w.sign_in("claude-code");
+    let before = outside_cua_home(&w);
+    assert!(
+        before
+            .keys()
+            .any(|p| p.ends_with(".claude/.credentials.json"))
+    );
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts::SIGN_IN_ONLY,
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let sign_in = r[0].sign_in.as_ref().unwrap();
+    assert!(sign_in.imported.is_some(), "{r:?}");
+    // No skills, no MCP entry, nothing created or changed in the agent's own files or anywhere else.
+    assert!(r[0].outcomes.is_empty(), "{:?}", r[0].outcomes);
+    assert_eq!(
+        outside_cua_home(&w),
+        before,
+        "a file outside the Cua home was created or changed"
+    );
+    assert!(!w.home.join(".claude/skills").exists());
+    // The access token is kept, the refresh token never, and neither is in anything the connect says.
+    assert_eq!(w.vault.value("claude-code").as_deref(), Some(CLAUDE_ACCESS));
+    let said = format!("{r:?}{}", serde_json::to_string(&r).unwrap());
+    assert!(
+        !said.contains(CLAUDE_ACCESS)
+            && !said.contains("sk-ant-oat")
+            && !said.contains(CLAUDE_REFRESH),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_sign_in_only_connect_never_runs_claude_code_to_refresh_an_expired_sign_in() {
+    let w = World::new();
+    // A claude that leaves a mark when it is run to refresh itself (`-p`).
+    w.script(
+        "claude",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) echo 2.1.299 ;;\n  -p) echo run > \"$HOME/claude-was-run\" ;;\n  auth) echo '{\"authMethod\":\"claude.ai\"}' ;;\nesac\nexit 0\n",
+    );
+    w.sign_in("claude-code");
+    w.write(
+        ".claude/.credentials.json",
+        &claude_credentials(CLAUDE_ACCESS, 1_000),
+    );
+    let before = outside_cua_home(&w);
+    let mut env = w.env.clone();
+    env.run_agent_clis = true;
+    let r = AgentSetup::new(env)
+        .connect(
+            &["claude-code".into()],
+            &w.server(),
+            ConnectParts::SIGN_IN_ONLY,
+            Some(&w.vault),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    let s = r[0].sign_in.as_ref().unwrap();
+    assert!(s.imported.is_none() && s.refused.is_some(), "{r:?}");
+    assert!(
+        !w.home.join("claude-was-run").exists(),
+        "Claude Code was run"
+    );
+    assert_eq!(outside_cua_home(&w), before);
+    assert!(w.vault.value("claude-code").is_none());
+}

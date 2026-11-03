@@ -120,6 +120,26 @@ codex mcp add cua -- cua daemon mcp
 `cua daemon mcp` starts `cua daemon` if it is not running, so every agent on
 this computer shares the same Spaces, sandboxes and streams.
 
+### Only the sign-in
+
+Sometimes you want the Claude sign-in for the Spaces and nothing else, for
+example for a demo, or for a home Space that runs Claude Code and must not touch
+how Claude Code on your Mac is set up. Add `--sign-in-only`:
+
+```bash
+cua connect setup --sign-in-only
+```
+
+It does what **Use my sign-in** does and no more. It adds no Cua skills and no
+Cua server to Claude Code, so `~/.claude.json` and `~/.claude/skills` are not
+changed, and it never starts Claude Code to refresh its sign-in: a sign-in that
+has run out is refused with a plain sentence, and you open Claude Code once and
+try again. It keeps the access token only, in Keyvault on this Mac, and never
+prints it. The only things it writes are inside the Cua folder. On a Mac, macOS
+asks once whether Cua may read the Keychain item "Claude Code-credentials":
+that question is yours to answer, and Cua has no way around it. Undo it with
+`cua connect remove --sign-in`.
+
 ## Check that it works
 
 1. If your agent was already running, start a new session. Agents load their

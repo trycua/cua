@@ -62,11 +62,23 @@ pub const APP_UNREACHABLE_GRACE: Duration = Duration::from_secs(120);
 /// The grace this process gets ([`UNREACHABLE_GRACE`],
 /// [`APP_UNREACHABLE_GRACE`]).
 pub fn unreachable_grace() -> Duration {
-    grace_for(std::env::current_exe().ok().as_deref())
+    grace_for(
+        std::env::current_exe().ok().as_deref(),
+        crate::screen::unattended(),
+    )
 }
 
-fn grace_for(exe: Option<&std::path::Path>) -> Duration {
-    if cfg!(target_os = "macos") && exe.and_then(app_bundle).is_some() {
+/// The grace on a Mac nobody is at: no prompt can be answered, so waiting
+/// longer only delays the message that says what to do.
+pub const UNATTENDED_GRACE: Duration = Duration::from_secs(5);
+
+fn grace_for(
+    exe: Option<&std::path::Path>,
+    unattended: Option<crate::screen::Unattended>,
+) -> Duration {
+    if cfg!(target_os = "macos") && unattended.is_some() {
+        UNATTENDED_GRACE
+    } else if cfg!(target_os = "macos") && exe.and_then(app_bundle).is_some() {
         APP_UNREACHABLE_GRACE
     } else {
         UNREACHABLE_GRACE
@@ -300,7 +312,7 @@ pub fn local_network_error(kind: IssueKind, addr: &str, error: &dyn std::fmt::Di
             .filter(|a| a.bundle)
             .map(|a| (a.name, a.path))
     });
-    unreachable_error_named(addr, error, bundle)
+    unreachable_error_named(addr, error, bundle, crate::screen::unattended())
 }
 
 #[cfg(test)]
@@ -309,15 +321,22 @@ fn unreachable_error_for(
     error: &dyn std::fmt::Display,
     exe: Option<&std::path::Path>,
 ) -> VmmError {
-    unreachable_error_named(addr, error, exe.and_then(app_bundle))
+    unreachable_error_named(addr, error, exe.and_then(app_bundle), None)
 }
 
 fn unreachable_error_named(
     addr: &str,
     error: &dyn std::fmt::Display,
     bundle: Option<(String, std::path::PathBuf)>,
+    unattended: Option<crate::screen::Unattended>,
 ) -> VmmError {
     if cfg!(target_os = "macos") {
+        if let Some(why) = unattended {
+            return VmmError::Missing {
+                what: "Local Network access".into(),
+                hint: unattended_hint(addr, error, why),
+            };
+        }
         // macOS asks once per boot, on this Mac's own screen, the first time
         // the app reaches the local network, and lists the app under Local
         // Network only after it has asked. Someone using this Mac from
@@ -339,6 +358,7 @@ fn unreachable_error_named(
                  listed, quit and reopen it on this Mac (macOS asks again). Then try again"
             ),
         };
+        let hint = format!("{hint}. {NO_SCREEN_FIX}");
         VmmError::Missing {
             what: "Local Network access".into(),
             hint,
@@ -352,6 +372,34 @@ fn unreachable_error_named(
             ),
         }
     }
+}
+
+/// What to do on a Mac nobody sits at (a Mac used over SSH or from another
+/// computer): Apple's documented setting (TN3179) lets the VM network
+/// through with no prompt. It applies to every app on the Mac and needs a
+/// restart.
+pub const NO_SCREEN_FIX: &str = "If nobody sits at this Mac, run these three commands on it \
+    instead (they let every app on this Mac reach its virtual computers, and the Mac restarts): \
+    sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses \
+    -array 192.168.64.0/24 ; sudo defaults write com.apple.network.local-network \
+    AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24 ; sudo shutdown -r now";
+
+fn unattended_hint(
+    addr: &str,
+    error: &dyn std::fmt::Display,
+    why: crate::screen::Unattended,
+) -> String {
+    format!(
+        "cua cannot reach the VM at {addr} ({error}). macOS only asks to allow this on the \
+         Mac's own screen, and {}, so nobody can click Allow. Either unlock or sign in at this \
+         Mac and try again, or set it up once with no screen: run these three commands on this \
+         Mac (they let every app on it reach its virtual computers, and the Mac restarts): \
+         sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses \
+         -array 192.168.64.0/24 ; sudo defaults write com.apple.network.local-network \
+         AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24 ; sudo shutdown -r now. Then \
+         try again",
+        why.reason()
+    )
 }
 
 /// The `.app` bundle `exe` runs from: its name (without `.app`) and path.
@@ -608,12 +656,60 @@ mod tests {
         } else {
             UNREACHABLE_GRACE
         };
-        assert_eq!(grace_for(Some(app)), want);
+        assert_eq!(grace_for(Some(app), None), want);
         assert_eq!(
-            grace_for(Some(std::path::Path::new("/usr/local/bin/cua"))),
+            grace_for(Some(std::path::Path::new("/usr/local/bin/cua")), None),
             UNREACHABLE_GRACE
         );
-        assert_eq!(grace_for(None), UNREACHABLE_GRACE);
+        assert_eq!(grace_for(None, None), UNREACHABLE_GRACE);
+    }
+
+    #[test]
+    fn a_mac_nobody_is_at_gives_up_fast_and_names_the_no_screen_fix() {
+        use crate::screen::Unattended;
+        let app = std::path::Path::new("/Applications/Cua Spaces.app/Contents/MacOS/cua");
+        let e = std::io::Error::from(std::io::ErrorKind::HostUnreachable);
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                grace_for(Some(app), Some(Unattended::Locked)),
+                UNATTENDED_GRACE
+            );
+            let err = unreachable_error_named(
+                "192.168.64.2:3211",
+                &e,
+                None,
+                Some(Unattended::NobodySignedIn),
+            );
+            let text = err.to_string();
+            assert!(
+                text.starts_with("Local Network access is not available: cua cannot reach"),
+                "{text}"
+            );
+            assert!(
+                text.contains("nobody is signed in at this Mac's screen"),
+                "{text}"
+            );
+            assert!(
+                text.contains("AllowedEthernetLocalNetworkAddresses"),
+                "{text}"
+            );
+            assert!(text.contains("192.168.64.0/24") && text.contains("shutdown -r now"));
+            assert!(!text.contains('\u{2014}'), "{text}");
+            // With someone at the screen the on-screen steps lead, and the
+            // no-screen fix follows for a Mac used from elsewhere.
+            let at_screen =
+                unreachable_error_named("192.168.64.2:3211", &e, None, None).to_string();
+            assert!(at_screen.contains("click Allow"), "{at_screen}");
+            assert!(
+                at_screen.contains("If nobody sits at this Mac"),
+                "{at_screen}"
+            );
+        } else {
+            assert_eq!(
+                grace_for(Some(app), Some(Unattended::Locked)),
+                UNREACHABLE_GRACE
+            );
+        }
     }
 
     #[test]

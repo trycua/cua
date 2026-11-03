@@ -54,7 +54,10 @@ def test_fork_many_streams_each_fork_then_the_summary(tmp_path):
         batch = await c.sandboxes().fork_many(
             "no-such-checkpoint",
             3,
-            cua.ForkManyOptions(on="local", group_size=2, name_prefix="py"),
+            # Counted small, so this machine has room for all three whatever
+            # its memory (a CI runner's, or Windows' unmeasured default of
+            # 4 GiB); the test is about the events, not about capacity.
+            cua.ForkManyOptions(on="local", group_size=2, name_prefix="py", memory_mb=64),
         )
         events = []
         while (e := await batch.next()) is not None:

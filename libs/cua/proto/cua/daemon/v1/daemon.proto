@@ -77,6 +77,11 @@ enum DaemonErrorReason {
   // `CUA_VM_VCPU_OVERCOMMIT`) or the machine is low on memory. Nothing was
   // started; the message says which limit, by how much, and what to do.
   DAEMON_ERROR_REASON_HOST_CAPACITY = 25;
+  // Signed in, but not allowed: the relay refused the call for this
+  // account (for example renaming a Space shared with you; only its owner
+  // can). Unlike UNAUTHENTICATED, signing in again does not help. Older
+  // daemons answered these as UNAUTHENTICATED.
+  DAEMON_ERROR_REASON_PERMISSION_DENIED = 26;
   // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the Fleet
   // API failure, a named pool's template mismatch, claim secrets that never
   // arrived, Fleet's admission refusal and the cloud credit refusal. Their

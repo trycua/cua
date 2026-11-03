@@ -13,6 +13,39 @@
 //! install of `container` runs them the backend refuses to start rather
 //! than putting Spaces into, or stopping, a user's own setup.
 //!
+//! **Images** are pulled the way every runtime pulls them: through the
+//! shared puller ([`ContainerizationConfig::resolver`], cua-image), which
+//! holds the host's registry credentials (the daemon's
+//! `CUA_REGISTRY_USERNAME` and `CUA_REGISTRY_PASSWORD`, `GITHUB_TOKEN` for
+//! ghcr.io, `docker login`, a Space's own `registry_auth`), mirrors and the
+//! layer cache the other runtimes share. The layers are packed unchanged
+//! into an OCI archive and handed to `container image load`, unless the
+//! store already holds the variant the registry serves. `container image
+//! pull` cannot do this: it can only use a login in the user's keychain
+//! (which cua never writes to), it refuses a private package's anonymous
+//! token exchange, and it pulled the 0.5 GB slim image in 178 s where the
+//! shared puller needed about 125 s on the same link (5.9 MB/s). Without a
+//! resolver `container` pulls by itself.
+//!
+//! **First start.** Apple's package (about 20 s) and, on the services' first
+//! start, its guest kernel (about 140 s) download before an image could
+//! begin, so the layers come down meanwhile (a prefetch through the same
+//! puller, joined before the container is made): a cold start of the slim
+//! image took 245 s instead of 253 to 307 s on a link that is the limit,
+//! and every later start is under 3 s.
+//!
+//! **Guest DNS.** Guests get the host's own resolvers (then public ones)
+//! with `--dns` ([`cli::guest_dns`]). The resolver `container` configures,
+//! the vmnet gateway, answers every AAAA query with the truncated bit set
+//! and serves no TCP, so `getaddrinfo` failed for every program that asks
+//! for both address families (curl, node, git, pip: a guest could not
+//! download its coding app) while `getent hosts` worked.
+//!
+//! **Network policy.** None can be enforced: the guests sit on vmnet,
+//! which only pf can filter and pf needs root, and Apple's runtime helper
+//! attaches no other network device. A Space with an egress policy or no
+//! network is refused here.
+//!
 //! The environment (the Spaces token among it) goes in through an env file,
 //! never the command line; the host reaches the guest's ports at its own
 //! address on the vmnet network (as for a Lume VM: `container`'s loopback
@@ -77,14 +110,14 @@ use tokio::sync::Mutex;
 use crate::error::{Result, VmmError};
 use crate::exec::{ExecChunk, ExecOutput, ExecRequest, GuestExec};
 use crate::host;
-use crate::runtime::Runtime;
+use crate::runtime::{RootfsResolver, Runtime};
 use crate::types::*;
 
 pub use cli::{ContainerInfo, Services};
 pub use install::ContainerizationReport;
 
 /// Configuration for [`ContainerizationRuntime`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ContainerizationConfig {
     /// State root (default `~/.cua/vmm/containerization`).
     pub root: PathBuf,
@@ -96,6 +129,23 @@ pub struct ContainerizationConfig {
     pub auto_install: bool,
     /// How long `stop` lets the guest shut down before it is killed.
     pub graceful_stop: Duration,
+    /// Pulls OCI images the way every other runtime does (implemented by
+    /// `cua-image`: the host's registry credentials, mirrors and the shared
+    /// layer cache), and hands them to `container` as an archive to load.
+    /// Without one `container` pulls by itself, anonymously.
+    pub resolver: Option<Arc<dyn RootfsResolver>>,
+}
+
+impl std::fmt::Debug for ContainerizationConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContainerizationConfig")
+            .field("root", &self.root)
+            .field("bin", &self.bin)
+            .field("auto_install", &self.auto_install)
+            .field("graceful_stop", &self.graceful_stop)
+            .field("resolver", &self.resolver.as_ref().map(|_| "set"))
+            .finish()
+    }
 }
 
 impl Default for ContainerizationConfig {
@@ -107,6 +157,7 @@ impl Default for ContainerizationConfig {
                 .map(PathBuf::from),
             auto_install: true,
             graceful_stop: Duration::from_secs(5),
+            resolver: None,
         }
     }
 }
@@ -151,11 +202,23 @@ impl ContainerizationRuntime {
     }
 
     /// The `container` binary, if there is one.
+    ///
+    /// With `runtime.microvm = system`, Apple's `container` already on this
+    /// Mac (`runtime.microvm_path`, else the one on `PATH`), never cua's
+    /// own copy.
     pub fn bin(&self) -> Option<PathBuf> {
         match &self.cfg.bin {
             Some(b) => Some(b.clone()),
+            None if Self::uses_installed() => {
+                crate::kinds::system_bin(crate::kinds::RuntimeKind::Microvm)
+            }
             None => install::installed_bin(&self.cfg.root),
         }
+    }
+
+    /// MicroVMs are set to what is already installed (nothing is downloaded).
+    fn uses_installed() -> bool {
+        crate::kinds::source(crate::kinds::RuntimeKind::Microvm) == crate::kinds::KindSource::System
     }
 
     fn lock_for(&self, name: &str) -> Arc<Mutex<()>> {
@@ -248,14 +311,28 @@ impl ContainerizationRuntime {
             if let Some(why) = install::unsupported_reason() {
                 return Err(VmmError::other(why));
             }
-            if install::installed_bin(&self.cfg.root).is_none() {
+            if Self::uses_installed() {
+                if self.bin().is_none() {
+                    return Err(VmmError::missing(
+                        "Apple container",
+                        "MicroVMs are set to use what is already installed, and Apple's container \
+                         is not installed on this Mac (Settings, Advanced, or \
+                         `cua config set runtime.microvm auto`)",
+                    ));
+                }
+            } else if install::installed_bin(&self.cfg.root).is_none() {
                 if !self.cfg.auto_install {
                     return Err(VmmError::missing(
                         "Apple container",
                         "run `cua runtime setup containerization` to install it",
                     ));
                 }
+                let t = std::time::Instant::now();
                 install::install(&self.cfg.root).await?;
+                tracing::info!(
+                    ms = t.elapsed().as_millis() as u64,
+                    "Apple container downloaded and expanded"
+                );
             }
         }
         let ours = |app_root: &str| cli::same_dir(app_root, &self.app_root().to_string_lossy());
@@ -277,7 +354,12 @@ impl ContainerizationRuntime {
                     "--timeout".into(),
                     "60".into(),
                 ];
+                let t = std::time::Instant::now();
                 self.cli(&args, Duration::from_secs(600)).await?;
+                tracing::info!(
+                    ms = t.elapsed().as_millis() as u64,
+                    "Apple container services started (the first start downloads its guest kernel)"
+                );
                 // `system start` reports success when launchd refuses its
                 // service because another install holds the name: check.
                 match self.services().await? {
@@ -330,6 +412,13 @@ impl ContainerizationRuntime {
         self.aliases()
             .remove(name)
             .unwrap_or_else(|| name.to_string())
+    }
+
+    /// The directory holding Space `name`'s container under this backend's
+    /// application root (`<root>/data/containers/<id>`: its own root file
+    /// system and state; the image it came from is stored apart).
+    pub fn container_dir(&self, name: &str) -> PathBuf {
+        self.app_root().join("containers").join(self.id_of(name))
     }
 
     /// The Space name container `id` goes by.
@@ -475,15 +564,7 @@ impl ContainerizationRuntime {
         }
         // The image's own command, user and working directory: pulled, then
         // read back from the image store.
-        let budget = spec.ready_timeout.max(Duration::from_secs(600));
-        let mut pull: Vec<String> = ["image", "pull", "--progress", "none"]
-            .map(String::from)
-            .into();
-        if let Some(arch) = spec.arch {
-            pull.extend(["--arch".into(), arch.oci().into()]);
-        }
-        pull.push(image.into());
-        self.cli(&pull, budget).await?;
+        self.ensure_image(spec, image).await?;
         let out = self
             .cli(&["image".into(), "inspect".into(), image.into()], QUICK)
             .await?;
@@ -501,6 +582,132 @@ impl ContainerizationRuntime {
         Ok((dir, wrapped))
     }
 
+    /// Makes `image` present in `container`'s image store, pulled the way
+    /// every runtime pulls: through the resolver ([`ContainerizationConfig::resolver`]),
+    /// which holds the host's registry credentials, mirrors and the shared
+    /// layer cache, then loaded as an archive. `container pull` itself can
+    /// only use a login kept in the user's keychain (which cua never writes
+    /// to) and refuses a private package's anonymous token exchange, and it
+    /// pulled about half as fast as the shared puller on the same link.
+    /// Without a resolver (tests) or when it cannot serve the image,
+    /// `container` pulls it itself, anonymously.
+    async fn ensure_image(&self, spec: &StartSpec, image: &str) -> Result<()> {
+        let budget = spec.ready_timeout.max(Duration::from_secs(600));
+        let mut through_cua: Option<VmmError> = None;
+        if let Some(resolver) = &self.cfg.resolver {
+            let lock = self.lock_for(&format!("image:{image}"));
+            let _g = lock.lock().await;
+            match self
+                .load_image(resolver.as_ref(), spec, image, budget)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                // `container` cannot use a credential it was handed, so
+                // another pull would only hide the reason.
+                Err(e) if spec.registry_auth.is_some() => return Err(e),
+                Err(e) => {
+                    tracing::warn!(image, error = %e, "could not pull through cua; `container` pulls it");
+                    through_cua = Some(e);
+                }
+            }
+        }
+        let mut pull: Vec<String> = ["image", "pull", "--progress", "none"]
+            .map(String::from)
+            .into();
+        if let Some(arch) = spec.arch {
+            pull.extend(["--arch".into(), arch.oci().into()]);
+        }
+        pull.push(image.into());
+        match self.cli(&pull, budget).await {
+            Ok(_) => Ok(()),
+            Err(VmmError::Command { stderr, .. }) if cli::auth_refused(&stderr) => {
+                Err(sign_in_hint(image, through_cua))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Pulls `image` through `resolver` and loads it into `container`'s
+    /// store, unless the variant the registry serves now is there already.
+    async fn load_image(
+        &self,
+        resolver: &dyn RootfsResolver,
+        spec: &StartSpec,
+        image: &str,
+        budget: Duration,
+    ) -> Result<()> {
+        let arch = spec.effective_arch();
+        let creds = spec.registry_auth.as_ref();
+        // A digest names one image for good: if the store has it, the
+        // registry need not be asked (three requests, 0.7 s on every start).
+        if image.contains("@sha256:") && self.image_present(image).await {
+            return Ok(());
+        }
+        // The layers go to the shared cache; the digest says which variant
+        // the registry serves now.
+        let t = std::time::Instant::now();
+        let layers = resolver.resolve_rootfs(image, arch, creds).await?;
+        let pulled = t.elapsed();
+        if self.image_has(image, &layers.digest).await {
+            return Ok(());
+        }
+        let dir = self.cfg.root.join("run");
+        std::fs::create_dir_all(&dir)?;
+        let archive = dir.join(format!("image-{}.tar", cli::short_hash(image)));
+        let t = std::time::Instant::now();
+        let loaded: Result<String> = async {
+            let digest = resolver
+                .pull_oci_archive(image, arch, creds, &archive)
+                .await?;
+            let args: Vec<String> = vec![
+                "image".into(),
+                "load".into(),
+                "--input".into(),
+                archive.display().to_string(),
+            ];
+            let packed = t.elapsed();
+            let t = std::time::Instant::now();
+            self.cli(&args, budget).await?;
+            tracing::info!(
+                image,
+                pull_ms = pulled.as_millis() as u64,
+                pack_ms = packed.as_millis() as u64,
+                load_ms = t.elapsed().as_millis() as u64,
+                "image pulled through cua and loaded into Apple's store"
+            );
+            Ok(digest)
+        }
+        .await;
+        let _ = std::fs::remove_file(&archive);
+        let digest = loaded?;
+        if !self.image_has(image, &digest).await {
+            return Err(VmmError::other(format!(
+                "`container` loaded {image} but does not list it"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether the store holds `image` at all.
+    async fn image_present(&self, image: &str) -> bool {
+        let args = ["image".to_string(), "inspect".into(), image.into()];
+        self.cli(&args, QUICK).await.is_ok()
+    }
+
+    /// Whether the store holds `image` with a variant of manifest `digest`.
+    async fn image_has(&self, image: &str, digest: &str) -> bool {
+        let args = ["image".to_string(), "inspect".into(), image.into()];
+        self.cli(&args, QUICK)
+            .await
+            .is_ok_and(|out| cli::image_has_variant(&out, digest))
+    }
+
+    /// The nameservers for a guest ([`cli::guest_dns`]).
+    fn guest_dns(&self) -> Vec<String> {
+        let conf = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+        cli::guest_dns(std::env::var("CUA_GUEST_DNS").ok().as_deref(), &conf)
+    }
+
     /// Creates and starts the container for `spec`.
     async fn create(&self, spec: &StartSpec, image: &str) -> Result<()> {
         let injected;
@@ -510,7 +717,14 @@ impl ContainerizationRuntime {
                 injected = wrapped;
                 (&injected, Some(dir))
             }
-            None => (spec, None),
+            None => {
+                // `container run` would pull a missing image anonymously;
+                // the shared puller holds the credentials.
+                if self.cfg.resolver.is_some() {
+                    self.ensure_image(spec, image).await?;
+                }
+                (spec, None)
+            }
         };
         let mut labels = BTreeMap::from([
             (
@@ -549,6 +763,7 @@ impl ContainerizationRuntime {
             env_file.as_deref().and_then(Path::to_str),
             &labels,
             inject_dir.as_deref().and_then(Path::to_str),
+            &self.guest_dns(),
         );
         let budget = spec.ready_timeout.max(Duration::from_secs(600));
         let r = self.cli(&args, budget).await;
@@ -556,6 +771,12 @@ impl ContainerizationRuntime {
             let _ = std::fs::remove_file(p);
         }
         if let Err(e) = r {
+            let e = match e {
+                VmmError::Command { stderr, .. } if cli::auth_refused(&stderr) => {
+                    sign_in_hint(image, None)
+                }
+                other => other,
+            };
             // A half-made container would hold the name.
             let _ = self
                 .cli(
@@ -567,6 +788,20 @@ impl ContainerizationRuntime {
         }
         Ok(())
     }
+}
+
+/// What a person can do when `image` needs a registry sign-in: the reason
+/// the shared puller gave when it was asked first (the registry's own words),
+/// else how to give Cua the credential.
+fn sign_in_hint(image: &str, through_cua: Option<VmmError>) -> VmmError {
+    VmmError::other(match through_cua {
+        Some(e) => e.to_string(),
+        None => format!(
+            "{image} is private or needs a registry sign-in. Cua pulls with the credentials \
+             it holds (CUA_REGISTRY_USERNAME and CUA_REGISTRY_PASSWORD in the daemon's \
+             environment, `docker login`, or GITHUB_TOKEN for ghcr.io)"
+        ),
+    })
 }
 
 fn other_install(app_root: &str) -> VmmError {
@@ -593,8 +828,27 @@ impl Runtime for ContainerizationRuntime {
     async fn start(&self, spec: &StartSpec) -> Result<Instance> {
         reject_sidecars(BackendKind::Containerization, spec)?;
         crate::types::reject_mounts(BackendKind::Containerization, spec)?;
-        reject_restricted_network(BackendKind::Containerization, spec)?;
-        crate::egress::check(BackendKind::Containerization, &spec.egress)?;
+        // Apple's Containerization can't protect a Space's network: under the
+        // secure default only No protection starts it (anything else is
+        // refused in plain words); as before under the old one.
+        match crate::network::gate(
+            BackendKind::Containerization,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )? {
+            Some(crate::network::NetworkPlan::Open { .. }) => {}
+            Some(_) => {
+                return Err(VmmError::Other(
+                    "Apple's Containerization can't protect your network yet. Use the standard \
+                     microVM (the default) or choose No protection."
+                        .into(),
+                ));
+            }
+            None => {
+                reject_restricted_network(BackendKind::Containerization, spec)?;
+                crate::egress::check(BackendKind::Containerization, &spec.egress)?;
+            }
+        }
         reject_gpu(BackendKind::Containerization, spec, &[])?;
         if spec.os != GuestOs::Linux {
             return Err(VmmError::Unsupported {
@@ -608,19 +862,41 @@ impl Runtime for ContainerizationRuntime {
                 op: "a disk size (the image's filesystem grows as needed)",
             });
         }
-        if spec.registry_auth.is_some() {
-            return Err(VmmError::Unsupported {
-                backend: "containerization",
-                op: "registry credentials (microVM Spaces pull public images)",
-            });
-        }
         if !cli::valid_name(&spec.name) {
             return Err(VmmError::invalid(format!(
                 "{:?} is not a valid microVM name (letters, digits, '_', '.', '-', at most 63)",
                 spec.name
             )));
         }
+        // The first start downloads and starts Apple's container (about
+        // 20 s for its package, then about 140 s for the guest kernel its
+        // services fetch on their first start) before the image could
+        // begin: the image's layers come down meanwhile through the shared
+        // puller, which needs none of that. Joined before the container is
+        // made, so nothing downloads twice.
+        let prefetch = match (&spec.image, &self.cfg.resolver) {
+            (ImageSource::Oci { reference }, Some(resolver))
+                if !self.ready.load(Ordering::SeqCst) =>
+            {
+                let (resolver, reference) = (resolver.clone(), reference.clone());
+                let (arch, creds) = (spec.effective_arch(), spec.registry_auth.clone());
+                // One download of an image at a time (the same lock as
+                // [`Self::ensure_image`]): two starts of the same image must
+                // not write one blob file together.
+                let lock = self.lock_for(&format!("image:{reference}"));
+                Some(tokio::spawn(async move {
+                    let _g = lock.lock().await;
+                    let _ = resolver
+                        .resolve_rootfs(&reference, arch, creds.as_ref())
+                        .await;
+                }))
+            }
+            _ => None,
+        };
         self.ensure_ready().await?;
+        if let Some(prefetch) = prefetch {
+            let _ = prefetch.await;
+        }
         let lock = self.lock_for(&spec.name);
         let _g = lock.lock().await;
         match self.inspect(&spec.name).await {

@@ -204,7 +204,10 @@ async fn create(
                     format!("Anyone with the link can open it, for {}.", ends(&s))
                 }
             };
-            eprintln!("{note} Stop it with: cua share stop {}", s.id);
+            eprintln!(
+                "{}",
+                crate::util::hint(&format!("{note} Stop it with: cua share stop {}", s.id))
+            );
         }
     }
     Ok(0)
@@ -221,7 +224,10 @@ async fn ls(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         return Ok(0);
     }
     if shares.is_empty() {
-        eprintln!("Nothing is shared. Share something with: cua share 3000");
+        eprintln!(
+            "{}",
+            crate::util::hint("Nothing is shared. Share something with: cua share 3000")
+        );
         return Ok(0);
     }
     line(

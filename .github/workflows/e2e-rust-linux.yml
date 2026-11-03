@@ -1,6 +1,11 @@
 name: "E2E: Rust Linux interactive"
 
 on:
+  pull_request:
+    paths:
+      - .cursor/skills/verify-cua-driver/**
+      - libs/cua-driver/**
+      - .github/workflows/e2e-rust-linux.yml
   # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
   # inputs in sync with workflow_dispatch; only `inputs.*` is read below.
   workflow_call:
@@ -36,6 +41,7 @@ on:
           - native
           - capture
           - installer
+          - verify
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
         required: false
@@ -83,6 +89,53 @@ jobs:
             exit 2
           fi
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
+
+  verify-skill:
+    if: inputs.lane == '' || inputs.lane == 'verify'
+    name: "Linux / verification skill proof"
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_RETRY_ONCE: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: Test evidence checker and workflow offline
+        run: timeout 60 python3 -m unittest discover -s .github/scripts/tests -p test_e2e_rust_linux_workflow.py
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-shared
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && 'npm' || '' }}
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
+      - name: Install GUI and Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
+      - name: Verify real Electron background clicks
+        run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
+      - name: Upload verification evidence after cleanup
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: verify-cua-driver-evidence
+          path: artifacts/cua-driver/verify/run-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
   shared:
     if: inputs.lane == 'all' || inputs.lane == 'shared'
@@ -301,7 +354,7 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always()
+    if: always() && inputs.lane != '' && inputs.lane != 'verify'
     needs: [source, shared, native, capture, installer]
     name: "Linux / matrix summary"
     runs-on: ubuntu-latest

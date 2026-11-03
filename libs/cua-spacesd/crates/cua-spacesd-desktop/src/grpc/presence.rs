@@ -26,7 +26,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+
+// Tokio's clock, so tests can run the hub on paused (virtual) time. Outside
+// a paused runtime it is the system monotonic clock.
+use tokio::time::Instant;
 
 use cua_proto::env::v1::{
     join_response, presence_service_server::PresenceService, CursorBatch, CursorMoved,
@@ -1407,14 +1411,18 @@ mod tests {
     /// A 30 Hz sender reaches others about every cursor interval (50 ms),
     /// not every other tick: a move that was not due is sent as soon as its
     /// interval passes.
-    #[tokio::test]
+    ///
+    /// Runs on tokio's paused clock, so the gaps are exact and do not depend
+    /// on how loaded the host is: the flusher and the test advance together
+    /// in virtual time.
+    #[tokio::test(start_paused = true)]
     async fn a_30_hz_sender_is_relayed_at_the_cursor_interval() {
         let hub = PresenceHub::new();
         let (alice, _, _a) = hub.join(principal("alice", ""));
         let (_, _, mut rx) = hub.join(principal("bob", ""));
         let mut arrivals = Vec::new();
         let started = Instant::now();
-        let mut next = tokio::time::Instant::now();
+        let mut next = Instant::now();
         for step in 0..45 {
             hub.update_cursor(&alice.participant_id, at(f64::from(step) / 100.0, 0.5));
             next += Duration::from_millis(33);
@@ -1429,28 +1437,13 @@ mod tests {
         assert!(gaps.len() >= 20, "{} moves", arrivals.len());
         let mean = gaps.iter().sum::<Duration>() / gaps.len() as u32;
         // A due move waits at most one flusher step (a fifth of the
-        // interval, or the host's timer granularity when that is coarser:
-        // about 15.6 ms on Windows) past the interval. Whole-tick flushing
-        // waited up to a whole interval (a ~67 ms mean on a 1 ms timer).
-        let step = (CURSOR_INTERVAL / 5).max(timer_granularity().await);
-        let bound = CURSOR_INTERVAL + step + Duration::from_millis(2);
+        // interval) past the interval. Whole-tick flushing waited up to a
+        // whole interval (a ~67 ms mean).
+        let bound = CURSOR_INTERVAL + CURSOR_INTERVAL / 5;
         assert!(
             mean < bound,
             "mean gap {mean:?}, bound {bound:?} (was ~67 ms with whole-tick flushing)"
         );
-    }
-
-    /// How long this host actually sleeps for a 1 ms timer (the median of a
-    /// few tries): about 1 ms on Linux and macOS, about 15.6 ms on Windows.
-    async fn timer_granularity() -> Duration {
-        let mut samples = Vec::new();
-        for _ in 0..9 {
-            let t = Instant::now();
-            tokio::time::sleep(Duration::from_millis(1)).await;
-            samples.push(t.elapsed());
-        }
-        samples.sort();
-        samples[samples.len() / 2]
     }
 
     fn flusher_running(hub: &PresenceHub) -> bool {

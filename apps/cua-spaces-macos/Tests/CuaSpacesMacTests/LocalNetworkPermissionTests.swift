@@ -18,6 +18,23 @@ struct LocalNetworkPermissionTests {
         #expect(LiveLocalNetworkPermission.subnetHost(ip: ip, mask: 0xFFFF_FFFF) == nil)
     }
 
+    @Test func theProbeAimsAtTheDefaultGateway() {
+        let table = """
+        Routing tables
+
+        Internet:
+        Destination        Gateway            Flags               Netif Expire
+        default            192.168.1.254      UGScg                 en1
+        default            link#24            UCSIg               utun4
+        10.200.1.190/32    link#24            UCS                 utun4
+        """
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: table) == "192.168.1.254")
+        // A VPN's tunnel or a link route is no local network.
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "default  10.0.0.1  UGScg  utun3") == nil)
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "default  link#6  UCSg  en0") == nil)
+        #expect(LiveLocalNetworkPermission.defaultGateway(inRoutes: "") == nil)
+    }
+
     /// A probe that answers from a script.
     final class FakeProbe: LocalNetworkProbing, @unchecked Sendable {
         var answers: [AppLocalNetworkAccess]
@@ -155,5 +172,59 @@ struct LocalNetworkPermissionTests {
     @Test func insufficientDiskCaseNameIsTheMirrorLabel() {
         let error = CuaError.InsufficientDisk(message: "need 52 GB")
         #expect(Mirror(reflecting: error).children.first?.label == "InsufficientDisk")
+    }
+}
+
+/// When this Mac starts providing Spaces (setup, the switch), the app asks
+/// for Local Network access then, on this Mac, so macOS Spaces your other
+/// devices create here connect. Never for a Mac that already provided them.
+@MainActor
+@Suite("Local Network access when providing Spaces")
+struct LocalNetworkWhenProvidingTests {
+    func model(_ host: FixtureHost, probe: LocalNetworkPermissionTests.FakeProbe,
+               shown: LocalNetworkPermissionTests.Shown) -> AppModel {
+        let m = ViewModelTests().makeModel(host: host)
+        m.localNetworkGate = LocalNetworkPermissionTests().gate(probe, shown: shown)
+        return m
+    }
+
+    func request(_ provide: Bool?) -> AppHostSetupRequest {
+        AppHostSetupRequest(mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil,
+                            profile: "desktop", shareDesktop: nil, provideSpaces: provide)
+    }
+
+    @Test func aNewSetupThatProvidesSpacesAsksOnThisMac() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let m = model(host, probe: probe, shown: shown)
+        try await m.host.setUp(request(nil), on: host)
+        #expect(host.current.provideSpaces, "a new setup provides Spaces")
+        await m.hostingLocalNetworkCheck?.value
+        #expect(shown.steps.map(\.kind) == [.explain])
+        #expect(probe.connects == 2, "macOS asked from this app's own process")
+
+        // Set up again: it already provided Spaces, so nothing is asked.
+        m.hostingLocalNetworkCheck = nil
+        try await m.host.setUp(request(nil), on: host)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.count == 1)
+    }
+
+    @Test func aSetupThatDoesNotProvideSpacesAsksNothing() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let m = model(host, probe: .init([.blocked]), shown: shown)
+        try await m.host.setUp(request(false), on: host)
+        #expect(!host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil)
+
+        // Turned on with the switch later: asked then; a refusal changes
+        // nothing else (the switch stays on, no failure shows).
+        await m.host.run(.provideSpaces)
+        #expect(host.current.provideSpaces)
+        await m.hostingLocalNetworkCheck?.value
+        #expect(shown.steps.first?.kind == .explain)
+        #expect(m.host.actionFailure == nil)
     }
 }

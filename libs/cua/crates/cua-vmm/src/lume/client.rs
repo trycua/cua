@@ -1,4 +1,5 @@
-//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`).
+//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`, Local's
+//! `http://127.0.0.1:7787`).
 //!
 //! Routes mirror `libs/lume/src/Server/Server.swift`.
 
@@ -54,6 +55,15 @@ pub struct VmDetails {
     /// saved states; older ones never report it).
     #[serde(default)]
     pub saved_state: bool,
+    /// The running VM forwards host loopback ports to its guest over vsock
+    /// (a run with [`RunVm::forwards`] on a Lume that supports it).
+    #[serde(default)]
+    pub vsock: bool,
+    /// Guest port to host loopback port, once the guest's vsock agent
+    /// answers ([`RunVm::forwards`]); empty before that, and on a Lume or a
+    /// guest without the agent.
+    #[serde(default)]
+    pub forwards: std::collections::BTreeMap<u16, u16>,
 }
 
 impl VmDetails {
@@ -62,6 +72,18 @@ impl VmDetails {
         self.ip_address
             .as_deref()
             .filter(|ip| !ip.is_empty() && *ip != "unknown" && !ip.starts_with("0.0.0.0"))
+    }
+
+    /// The host loopback port for each of `ports` over vsock, when every
+    /// one of them is forwarded and the guest agent answers.
+    pub fn vsock_ports(&self, ports: &[u16]) -> Option<std::collections::BTreeMap<u16, u16>> {
+        if ports.is_empty() || self.forwards.is_empty() {
+            return None;
+        }
+        ports
+            .iter()
+            .map(|p| self.forwards.get(p).map(|h| (*p, *h)))
+            .collect()
     }
 }
 
@@ -140,6 +162,11 @@ pub struct RunVm {
     pub storage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_path: Option<String>,
+    /// Guest ports Lume publishes on host loopback ports over a virtio
+    /// socket device (reported back in [`VmDetails::forwards`]). A Lume
+    /// without the option ignores it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Serialize)]

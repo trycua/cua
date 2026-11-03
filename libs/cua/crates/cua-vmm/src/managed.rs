@@ -200,27 +200,24 @@ impl LinuxSource {
     /// The setting now: the environment, else the config file, else auto.
     /// Read on every use, so a change in Settings applies at once.
     pub fn current() -> Self {
-        if let Some(s) = std::env::var(SETTING_ENV)
-            .ok()
-            .and_then(|v| Self::parse(&v))
-        {
-            return s;
-        }
-        Self::from_config(&host::cua_home().join("config.toml"))
+        Self::of(crate::kinds::source(crate::kinds::RuntimeKind::Container))
     }
 
-    /// `[runtime] linux = "..."` in `path` (auto when absent or unreadable).
+    /// `[runtime] container` (or the older `linux`) in `path` (auto when
+    /// absent or unreadable).
     pub fn from_config(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
-            .and_then(|d| {
-                d.get("runtime")?
-                    .get("linux")?
-                    .as_str()
-                    .and_then(Self::parse)
-            })
-            .unwrap_or_default()
+        Self::of(crate::kinds::source_in(
+            crate::kinds::RuntimeKind::Container,
+            path,
+        ))
+    }
+
+    fn of(s: crate::kinds::KindSource) -> Self {
+        match s {
+            crate::kinds::KindSource::Auto => Self::Auto,
+            crate::kinds::KindSource::Builtin => Self::Builtin,
+            crate::kinds::KindSource::System => Self::System,
+        }
     }
 
     /// Whether the built-in runtime may be used (and downloaded).
@@ -791,6 +788,13 @@ pub async fn ensure() -> Result<String> {
             "the built-in Linux runtime runs on macOS; install Docker",
         ));
     }
+    // Its VM would never start here: say so now, not after a minute of
+    // retries ending in "exit status 1".
+    if host::mac_virtualization_supported() == Some(false) {
+        return Err(VmmError::other(
+            cua_create_failure::preflight::MAC_UNSUPPORTED,
+        ));
+    }
     check_path_length()?;
     let started = std::time::Instant::now();
     let fresh = !exists();
@@ -1204,9 +1208,34 @@ async fn ensure_disk(dl: &mut Downloads) -> Result<PathBuf> {
         "https://ghcr.io/v2/{DISK_REPOSITORY}/blobs/sha256:{}",
         pin.sha256
     );
-    let token = ghcr_token().await?;
-    download(Pin { url: "", ..pin }, Some((&url, &token)), &path, dl).await?;
-    Ok(path)
+    // A registry token is short-lived: on a slow connection it can run out
+    // mid-download, and the download carries on from the same place with a new one.
+    for attempt in 1..=3 {
+        let token = ghcr_token().await?;
+        let r = crate::fetch::fetch(
+            &crate::fetch::Fetch {
+                url: &url,
+                bearer: Some(&token),
+                size: Some(pin.size),
+                sha256: pin.sha256,
+            },
+            &path,
+            &crate::fetch::Policy::default(),
+            &mut |n| dl.add(n),
+        )
+        .await;
+        match r {
+            Ok(()) => return Ok(path),
+            Err(crate::fetch::FetchError::Unauthorized) if attempt < 3 => continue,
+            Err(crate::fetch::FetchError::Failed(e)) => {
+                return Err(VmmError::other(format!(
+                    "download the built-in Linux runtime: {e}"
+                )));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("the loop returns on its last try")
 }
 
 /// A pull token for [`DISK_REPOSITORY`]: anonymous, or with the
@@ -1246,8 +1275,9 @@ fn http() -> Result<reqwest::Client> {
         .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))
 }
 
-/// Streams a pinned file to `to` (via `<to>.partial`), checking its size
-/// and SHA-256 before it is renamed into place.
+/// Downloads a pinned file to `to` (via `<to>.partial`), resuming from what
+/// is there and retrying a lost connection ([`crate::fetch`]); its size and
+/// SHA-256 are checked before it is renamed into place.
 #[cfg(feature = "lume")]
 async fn download(
     pin: Pin,
@@ -1255,52 +1285,28 @@ async fn download(
     to: &Path,
     dl: &mut Downloads,
 ) -> Result<()> {
-    use sha2::{Digest, Sha256};
-    use tokio::io::AsyncWriteExt as _;
     let (url, token) = match bearer {
         Some((u, t)) => (u, Some(t)),
         None => (pin.url, None),
     };
-    let mut req = http()?.get(url);
-    if let Some(t) = token {
-        req = req.bearer_auth(t);
-    }
-    let mut res = req
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))?;
-    let partial = to.with_extension("partial");
-    let mut file = tokio::fs::File::create(&partial).await?;
-    let mut hash = Sha256::new();
-    let mut got = 0u64;
-    while let Some(chunk) = res
-        .chunk()
-        .await
-        .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))?
-    {
-        got += chunk.len() as u64;
-        if got > pin.size {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(VmmError::other(
-                "a built-in Linux runtime download is larger than its pin",
-            ));
+    crate::fetch::fetch(
+        &crate::fetch::Fetch {
+            url,
+            bearer: token,
+            size: Some(pin.size),
+            sha256: pin.sha256,
+        },
+        to,
+        &crate::fetch::Policy::default(),
+        &mut |n| dl.add(n),
+    )
+    .await
+    .map_err(|e| match e {
+        crate::fetch::FetchError::Failed(e) => {
+            VmmError::other(format!("download the built-in Linux runtime: {e}"))
         }
-        hash.update(&chunk);
-        file.write_all(&chunk).await?;
-        dl.add(chunk.len() as u64);
-    }
-    file.flush().await?;
-    drop(file);
-    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != pin.sha256 || got != pin.size {
-        let _ = tokio::fs::remove_file(&partial).await;
-        return Err(VmmError::other(format!(
-            "a built-in Linux runtime download did not match its checksum (got {digest}); try again"
-        )));
-    }
-    tokio::fs::rename(&partial, to).await?;
-    Ok(())
+        e => e.into(),
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -1727,6 +1733,15 @@ mod engine_impl {
         ) -> Result<crate::egress::Enforcement> {
             let _busy = self.busy();
             self.engine().await?.set_egress(name, policy).await
+        }
+
+        async fn set_network(
+            &self,
+            name: &str,
+            settings: &crate::network::NetworkSettings,
+        ) -> Result<crate::network::Applied> {
+            let _busy = self.busy();
+            self.engine().await?.set_network(name, settings).await
         }
 
         async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {

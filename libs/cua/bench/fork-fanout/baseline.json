@@ -47,6 +47,26 @@
         }
       }
     },
+    "linux-kvm-gha-forkable-2cpu": {
+      "source": "GitHub-hosted ubuntu-24.04 for private repositories (2 vCPU, 7.8 GB, nested KVM), QEMU from apt, run.sh MEMORY_MB=1024 DIRTY_MB=200 FORKABLE=1, CUA_VM_VCPU_OVERCOMMIT=10, published slim disk; measured run 2026-10-24 (wave of 8 forks of 2 vCPUs on 2 CPUs)",
+      "factor": 2.0,
+      "forkable": true,
+      "checkpoint_ms": 7372,
+      "waves": {
+        "4": {
+          "fork_ms_p50": 11689,
+          "fork_ms_p95": 13967,
+          "wall_s": 13.97,
+          "private_mb_per_fork": 100
+        },
+        "8": {
+          "fork_ms_p50": 22810,
+          "fork_ms_p95": 23674,
+          "wall_s": 23.67,
+          "private_mb_per_fork": 107
+        }
+      }
+    },
     "linux-kvm-gha-loaded-stream": {
       "source": "GitHub-hosted ubuntu-24.04 (4 vCPU, nested KVM), QEMU from apt, run.sh MEMORY_MB=1024 DIRTY_MB=200, PR #74 run 39363060790, 2026-10-20, published slim disk, FORKABLE=0",
       "factor": 2.0,

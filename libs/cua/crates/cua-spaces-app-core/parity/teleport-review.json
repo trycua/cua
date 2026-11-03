@@ -50,7 +50,7 @@
   ],
   "spaces": [
     { "id": "local:aurora", "name": "Aurora", "os": "linux", "status": "running", "detail": "This Mac", "lastUsedAt": 1799999990000, "scene": "linux-terminal", "provider": "local", "sdk": { "features": ["desktop_stream"], "spacesdVersion": "0.4.0", "reachable": true } },
-    { "id": "cloud:builder", "name": "Builder", "os": "linux", "status": "suspended", "detail": "Unreachable", "lastUsedAt": 1799990000000, "scene": "linux-terminal", "provider": "cloud", "sdk": { "features": [], "spacesdVersion": "0.4.0", "reachable": false } },
+    { "id": "direct:builder", "name": "Builder", "os": "linux", "status": "suspended", "detail": "Unreachable", "lastUsedAt": 1799990000000, "scene": "linux-terminal", "provider": "direct", "sdk": { "features": [], "spacesdVersion": "0.4.0", "reachable": false } },
     { "id": "this-mac", "name": "This machine", "os": "macos", "status": "local", "detail": "Set up for access", "lastUsedAt": 1800000000000, "scene": "mac-desktop" }
   ],
   "notch": [

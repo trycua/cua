@@ -207,6 +207,8 @@ public final class ElasticModel {
         let reader = readLedger
         let text = await Task.detached { reader() }.value
         events = ElasticEvent.recent(ledger: text ?? "", limit: Self.eventLimit)
+        // Throttle from when the read finished: a slow read must not make the next one due at once.
+        readAt = Date()
     }
 
     /// `cloud_hosts` as it came.

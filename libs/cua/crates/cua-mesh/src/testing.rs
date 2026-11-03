@@ -48,6 +48,14 @@ struct State {
     /// Account mode: machines also peer with each other (one account's
     /// hosts, as `cua-relay` does).
     machine_peering: AtomicBool,
+    /// Every welcomed node is closed at once with this WebSocket close.
+    close_after_welcome: Mutex<Option<(u16, String)>>,
+    /// Nodes welcomed since start.
+    welcomes: AtomicU64,
+    /// The account credential (`x-cua-relay-authorization`) each client node
+    /// key was first seen with: a key belongs to one owner for life, as in
+    /// `cua-relay`.
+    key_owners: Mutex<HashMap<PublicKey, String>>,
 }
 
 /// See the module docs.
@@ -187,6 +195,19 @@ impl FakeCoordinator {
         push_netmaps(&self.state, self.mode);
     }
 
+    /// Closes every node right after it is welcomed, with `code` and
+    /// `reason` (`None`: stops doing so), as the relay does when it drops
+    /// a session for a reason of its own.
+    pub fn close_after_welcome(&self, close: Option<(u16, &str)>) {
+        *self.state.close_after_welcome.lock().expect("close") =
+            close.map(|(c, r)| (c, r.to_owned()));
+    }
+
+    /// Nodes welcomed since start.
+    pub fn welcomes(&self) -> u64 {
+        self.state.welcomes.load(Ordering::SeqCst)
+    }
+
     /// Nodes connected right now.
     pub fn connected(&self) -> usize {
         self.state.conns.lock().expect("conns").len()
@@ -310,12 +331,18 @@ fn may_relay(state: &State, mode: Mode, a: &PublicKey, b: &PublicKey) -> bool {
 #[allow(clippy::result_large_err)]
 async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
     let mut machine_id = None::<String>;
+    let mut account = None::<String>;
     let denied = state.denied.lock().expect("denied").clone();
     let mesh_off = state.mesh_off.load(Ordering::SeqCst);
     let ws = tokio_tungstenite::accept_hdr_async(tcp, |req: &Request, resp: Response| {
         machine_id = req
             .headers()
             .get(proto::MACHINE_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        account = req
+            .headers()
+            .get("x-cua-relay-authorization")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let refused = denied.iter().any(|(k, v)| {
@@ -388,6 +415,27 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
             .await;
         return;
     }
+    let owned_by_another = match &account {
+        Some(owner) if kind == NodeKind::Client => {
+            let mut owners = state.key_owners.lock().expect("owners");
+            owners.entry(node_key).or_insert_with(|| owner.clone()) != owner
+        }
+        _ => false,
+    };
+    {
+        if owned_by_another {
+            let _ = sink
+                .send(WsMessage::Text(
+                    serde_json::to_string(&ServerMsg::Error {
+                        message: crate::coord::KEY_OWNED_BY_ANOTHER.into(),
+                    })
+                    .expect("json")
+                    .into(),
+                ))
+                .await;
+            return;
+        }
+    }
     let info = PeerInfo {
         node_key,
         disco_key,
@@ -418,6 +466,19 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
         .await
         .is_err()
     {
+        return;
+    }
+    state.welcomes.fetch_add(1, Ordering::SeqCst);
+    let close = state.close_after_welcome.lock().expect("close").clone();
+    if let Some((code, reason)) = close {
+        let _ = sink
+            .send(WsMessage::Close(Some(
+                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                    code: code.into(),
+                    reason: reason.into(),
+                },
+            )))
+            .await;
         return;
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<WsMessage>();

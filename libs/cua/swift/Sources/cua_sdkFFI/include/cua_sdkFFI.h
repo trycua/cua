@@ -278,6 +278,13 @@ typedef void (*UniffiCallbackInterfaceSpaceCreateListenerMethod0)(uint64_t, Rust
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_SPACES_LIST_LISTENER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_SPACES_LIST_LISTENER_METHOD0
+typedef void (*UniffiCallbackInterfaceSpacesListListenerMethod0)(uint64_t, uint64_t, void* _Nonnull,
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_TELEPORT_APPROVER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_TELEPORT_APPROVER_METHOD0
 typedef void (*UniffiCallbackInterfaceTeleportApproverMethod0)(uint64_t, RustBuffer, RustBuffer* _Nonnull,
@@ -329,6 +336,15 @@ typedef struct UniffiVTableCallbackInterfaceSpaceCreateListener {
 } UniffiVTableCallbackInterfaceSpaceCreateListener;
 
 #endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_SPACES_LIST_LISTENER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_SPACES_LIST_LISTENER
+typedef struct UniffiVTableCallbackInterfaceSpacesListListener {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceSpacesListListenerMethod0 _Nonnull onChanged;
+} UniffiVTableCallbackInterfaceSpacesListListener;
+
+#endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_TELEPORT_APPROVER
 #define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_TELEPORT_APPROVER
 typedef struct UniffiVTableCallbackInterfaceTeleportApprover {
@@ -362,9 +378,39 @@ void uniffi_cua_sdk_fn_free_agentsetup(uint64_t handle, RustCallStatus *_Nonnull
 uint64_t uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(uint64_t ptr, RustBuffer agents, RustBuffer server
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_connect_json(uint64_t ptr, RustBuffer agents, RustBuffer server, int8_t skills, int8_t mcp, int8_t sign_in
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON
+RustBuffer uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(uint64_t ptr, RustBuffer expected, int8_t refresh, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DETECT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DETECT
 RustBuffer uniffi_cua_sdk_fn_method_agentsetup_detect(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(uint64_t ptr, RustBuffer agent
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_wait_json(uint64_t ptr, RustBuffer id
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_disconnect_json(uint64_t ptr, RustBuffer agents, int8_t sign_in
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_disconnect_parts_json(uint64_t ptr, RustBuffer agents, int8_t skills, int8_t mcp, int8_t sign_in
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_INSTALL_SKILLS
@@ -936,6 +982,16 @@ uint64_t uniffi_cua_sdk_fn_method_local_pull_image(uint64_t ptr, RustBuffer refe
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_PUSH_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_PUSH_IMAGE
 uint64_t uniffi_cua_sdk_fn_method_local_push_image(uint64_t ptr, RustBuffer reference, RustBuffer destination
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_check_path(uint64_t ptr, RustBuffer kind, RustBuffer path
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_RUNTIME_KINDS
+uint64_t uniffi_cua_sdk_fn_method_local_runtime_kinds(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_LOCAL_SETUP
@@ -1723,6 +1779,11 @@ uint64_t uniffi_cua_sdk_fn_method_space_checkpoint(uint64_t ptr, RustBuffer chec
 uint64_t uniffi_cua_sdk_fn_method_space_close_stream(uint64_t ptr, RustBuffer media_session_id
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_DELETE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_DELETE_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_space_delete_service(uint64_t ptr, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_DISPLAYS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_DISPLAYS
 uint64_t uniffi_cua_sdk_fn_method_space_displays(uint64_t ptr
@@ -1768,6 +1829,11 @@ RustBuffer uniffi_cua_sdk_fn_method_space_info(uint64_t ptr, RustCallStatus *_No
 uint64_t uniffi_cua_sdk_fn_method_space_join_presence(uint64_t ptr, RustBuffer identity, RustBuffer timeout_ms
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_KEPT_SERVICES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_KEPT_SERVICES
+uint64_t uniffi_cua_sdk_fn_method_space_kept_services(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_LIST_TOOLS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_LIST_TOOLS
 uint64_t uniffi_cua_sdk_fn_method_space_list_tools(uint64_t ptr, RustBuffer service
@@ -1778,9 +1844,19 @@ uint64_t uniffi_cua_sdk_fn_method_space_list_tools(uint64_t ptr, RustBuffer serv
 uint64_t uniffi_cua_sdk_fn_method_space_open_stream(uint64_t ptr, RustBuffer options
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_PUT_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_PUT_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_space_put_service(uint64_t ptr, RustBuffer def
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_REQUEST_SITE_LOGIN
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_REQUEST_SITE_LOGIN
 uint64_t uniffi_cua_sdk_fn_method_space_request_site_login(uint64_t ptr, RustBuffer url, RustBuffer options
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_RESTART_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_RESTART_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_space_restart_service(uint64_t ptr, RustBuffer name
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_ROUTE
@@ -1796,6 +1872,11 @@ uint64_t uniffi_cua_sdk_fn_method_space_screenshot(uint64_t ptr, RustBuffer opti
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SEND_FILE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SEND_FILE
 uint64_t uniffi_cua_sdk_fn_method_space_send_file(uint64_t ptr, RustBuffer local_path, RustBuffer options
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SERVICE_LOGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SERVICE_LOGS
+uint64_t uniffi_cua_sdk_fn_method_space_service_logs(uint64_t ptr, RustBuffer name, RustBuffer tail_bytes
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SERVICES
@@ -1828,9 +1909,19 @@ uint64_t uniffi_cua_sdk_fn_method_space_spacesd(uint64_t ptr, RustCallStatus *_N
 uint64_t uniffi_cua_sdk_fn_method_space_start_hotspot(uint64_t ptr, RustBuffer set_system_proxy, RustBuffer bypass
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_START_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_START_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_space_start_service(uint64_t ptr, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_STOP_HOTSPOT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_STOP_HOTSPOT
 uint64_t uniffi_cua_sdk_fn_method_space_stop_hotspot(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_STOP_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_STOP_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_space_stop_service(uint64_t ptr, RustBuffer name
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_STREAM_SESSION
@@ -2018,6 +2109,11 @@ uint64_t uniffi_cua_sdk_fn_clone_spaces(uint64_t handle, RustCallStatus *_Nonnul
 void uniffi_cua_sdk_fn_free_spaces(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_APPROVE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_APPROVE
+uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_approve(uint64_t ptr, RustBuffer provider, int8_t deny
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_AUDIT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_AUDIT
 uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_audit(uint64_t ptr, RustBuffer limit
@@ -2025,7 +2121,12 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_audit(uint64_t ptr, RustBuffer li
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_CONNECT
-uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_connect(uint64_t ptr, RustBuffer target, int8_t make_default, RustBuffer ttl_hours
+uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_connect(uint64_t ptr, RustBuffer target, int8_t make_default, RustBuffer ttl_hours, RustBuffer options
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_COST
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_COST
+uint64_t uniffi_cua_sdk_fn_method_spaces_cloud_cost(uint64_t ptr, RustBuffer by, RustBuffer since, RustBuffer provider
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLOUD_DISCONNECT
@@ -2178,6 +2279,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(uint64_t ptr, RustB
 uint64_t uniffi_cua_sdk_fn_method_spaces_routines(uint64_t ptr, RustBuffer agent
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ACK_NETWORK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ACK_NETWORK_NOTICE
+uint64_t uniffi_cua_sdk_fn_method_spaces_ack_network_notice(uint64_t ptr, RustBuffer space
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ADD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ADD
 uint64_t uniffi_cua_sdk_fn_method_spaces_add(uint64_t ptr, RustBuffer url, RustBuffer token, RustBuffer name
@@ -2223,6 +2329,16 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_create_with_progress(uint64_t ptr, Rust
 uint64_t uniffi_cua_sdk_fn_method_spaces_delete(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_MANY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_MANY
+uint64_t uniffi_cua_sdk_fn_method_spaces_delete_many(uint64_t ptr, RustBuffer ids
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_TREE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_TREE
+uint64_t uniffi_cua_sdk_fn_method_spaces_delete_tree(uint64_t ptr, RustBuffer space, int8_t keep_children
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_VOLUME
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_VOLUME
 uint64_t uniffi_cua_sdk_fn_method_spaces_delete_volume(uint64_t ptr, RustBuffer name, int8_t force
@@ -2243,9 +2359,19 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_gpu_support(uint64_t ptr, RustBuffer on
 uint64_t uniffi_cua_sdk_fn_method_spaces_hosts(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LEAVE_MANY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LEAVE_MANY
+uint64_t uniffi_cua_sdk_fn_method_spaces_leave_many(uint64_t ptr, RustBuffer ids
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST
 uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_KNOWN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_KNOWN
+uint64_t uniffi_cua_sdk_fn_method_spaces_list_known(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_TOOLS_JSON
@@ -2256,6 +2382,16 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
 uint64_t uniffi_cua_sdk_fn_method_spaces_machine_health(uint64_t ptr, RustBuffer machine
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NETWORK
+uint64_t uniffi_cua_sdk_fn_method_spaces_network(uint64_t ptr, RustBuffer space
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ORPHANS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_ORPHANS
+uint64_t uniffi_cua_sdk_fn_method_spaces_orphans(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
@@ -2273,6 +2409,16 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_relay_unregister(uint64_t ptr, RustBuff
 uint64_t uniffi_cua_sdk_fn_method_spaces_remove(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RENAME
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RENAME
+uint64_t uniffi_cua_sdk_fn_method_spaces_rename(uint64_t ptr, RustBuffer space, RustBuffer name
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESIZE
+uint64_t uniffi_cua_sdk_fn_method_spaces_resize(uint64_t ptr, RustBuffer space, RustBuffer cpus, RustBuffer memory_mb, RustBuffer disk_gb
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOLVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOLVE
 uint64_t uniffi_cua_sdk_fn_method_spaces_resolve(uint64_t ptr, RustBuffer space
@@ -2283,6 +2429,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_resolve(uint64_t ptr, RustBuffer space
 uint64_t uniffi_cua_sdk_fn_method_spaces_resources(uint64_t ptr, int8_t visible
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_CHILDREN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_CHILDREN
+uint64_t uniffi_cua_sdk_fn_method_spaces_set_children(uint64_t ptr, RustBuffer space, int8_t enabled
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_EGRESS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_EGRESS
 uint64_t uniffi_cua_sdk_fn_method_spaces_set_egress(uint64_t ptr, RustBuffer space, RustBuffer policy
@@ -2291,6 +2442,16 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_set_egress(uint64_t ptr, RustBuffer spa
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_LIFETIME
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_LIFETIME
 uint64_t uniffi_cua_sdk_fn_method_spaces_set_lifetime(uint64_t ptr, RustBuffer space, uint64_t seconds, RustBuffer on_expire
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_NETWORK
+uint64_t uniffi_cua_sdk_fn_method_spaces_set_network(uint64_t ptr, RustBuffer space, RustBuffer settings, int8_t widen, int8_t tree
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_TREE_BUDGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_TREE_BUDGET
+uint64_t uniffi_cua_sdk_fn_method_spaces_set_tree_budget(uint64_t ptr, RustBuffer space, RustBuffer limits
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SPACE
@@ -2306,6 +2467,16 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_start(uint64_t ptr, RustBuffer space
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_STOP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_STOP
 uint64_t uniffi_cua_sdk_fn_method_spaces_stop(uint64_t ptr, RustBuffer space
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SUSPEND
+uint64_t uniffi_cua_sdk_fn_method_spaces_suspend(uint64_t ptr, RustBuffer space
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_TREE_BUDGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_TREE_BUDGET
+uint64_t uniffi_cua_sdk_fn_method_spaces_tree_budget(uint64_t ptr, RustBuffer space
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_APPROVE
@@ -2438,6 +2609,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_volume_write(uint64_t ptr, RustBuffer p
 uint64_t uniffi_cua_sdk_fn_method_spaces_volumes(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_LIST
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_LIST
+uint64_t uniffi_cua_sdk_fn_method_spaces_watch_list(uint64_t ptr, uint64_t listener, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_RESOURCES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_WATCH_RESOURCES
 uint64_t uniffi_cua_sdk_fn_method_spaces_watch_resources(uint64_t ptr, int8_t visible, uint64_t listener, RustCallStatus *_Nonnull out_status
@@ -2461,6 +2637,41 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_builds(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_BUILD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_DELETE_BUILD
 uint64_t uniffi_cua_sdk_fn_method_spaces_delete_build(uint64_t ptr, RustBuffer build
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACESLISTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACESLISTLISTENER
+uint64_t uniffi_cua_sdk_fn_clone_spaceslistlistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_SPACESLISTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_SPACESLISTLISTENER
+void uniffi_cua_sdk_fn_free_spaceslistlistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_INIT_CALLBACK_VTABLE_SPACESLISTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_INIT_CALLBACK_VTABLE_SPACESLISTLISTENER
+void uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(const UniffiVTableCallbackInterfaceSpacesListListener* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESLISTLISTENER_ON_CHANGED
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESLISTLISTENER_ON_CHANGED
+void uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(uint64_t ptr, uint64_t generation, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACESLISTWATCH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_SPACESLISTWATCH
+uint64_t uniffi_cua_sdk_fn_clone_spaceslistwatch(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_SPACESLISTWATCH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_SPACESLISTWATCH
+void uniffi_cua_sdk_fn_free_spaceslistwatch(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESLISTWATCH_STOP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESLISTWATCH_STOP
+void uniffi_cua_sdk_fn_method_spaceslistwatch_stop(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_TELEPORTAPPROVER
@@ -2864,6 +3075,11 @@ RustBuffer uniffi_cua_sdk_fn_func_cua_sdk_version(RustCallStatus *_Nonnull out_s
 RustBuffer uniffi_cua_sdk_fn_func_error_doc_url(RustBuffer variant, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_THREAD_VIEW_OF
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_THREAD_VIEW_OF
+RustBuffer uniffi_cua_sdk_fn_func_thread_view_of(RustBuffer entry_json, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_AGENT_EVENT_CATEGORY
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_AGENT_EVENT_CATEGORY
 RustBuffer uniffi_cua_sdk_fn_func_agent_event_category(RustBuffer kind, RustCallStatus *_Nonnull out_status
@@ -2916,6 +3132,18 @@ RustBuffer uniffi_cua_sdk_fn_func_config_unset(RustBuffer key, RustCallStatus *_
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_LOCATIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_LOCATIONS
 RustBuffer uniffi_cua_sdk_fn_func_locations(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_CLEAR
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_clear(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_REPO_CACHE_STATUS
+RustBuffer uniffi_cua_sdk_fn_func_repo_cache_status(RustCallStatus *_Nonnull out_status
 
 );
 #endif
@@ -3413,6 +3641,12 @@ uint16_t uniffi_cua_sdk_checksum_func_error_doc_url(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_THREAD_VIEW_OF
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_THREAD_VIEW_OF
+uint16_t uniffi_cua_sdk_checksum_func_thread_view_of(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_AGENT_EVENT_CATEGORY
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_AGENT_EVENT_CATEGORY
 uint16_t uniffi_cua_sdk_checksum_func_agent_event_category(void
@@ -3470,6 +3704,18 @@ uint16_t uniffi_cua_sdk_checksum_func_config_unset(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 uint16_t uniffi_cua_sdk_checksum_func_locations(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_CLEAR
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_clear(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_REPO_CACHE_STATUS
+uint16_t uniffi_cua_sdk_checksum_func_repo_cache_status(void
 
 );
 #endif
@@ -3725,9 +3971,45 @@ uint16_t uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_CONNECT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_CONNECT_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_connect_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DETECT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DETECT
 uint16_t uniffi_cua_sdk_checksum_method_agentsetup_detect(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_START_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_start_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DEVICE_SIGN_IN_WAIT_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_device_sign_in_wait_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_disconnect_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_DISCONNECT_PARTS_JSON
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_disconnect_parts_json(void
 
 );
 #endif
@@ -4256,6 +4538,18 @@ uint16_t uniffi_cua_sdk_checksum_method_local_pull_image(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_PUSH_IMAGE
 uint16_t uniffi_cua_sdk_checksum_method_local_push_image(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_CHECK_PATH
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_check_path(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_LOCAL_RUNTIME_KINDS
+uint16_t uniffi_cua_sdk_checksum_method_local_runtime_kinds(void
 
 );
 #endif
@@ -5009,6 +5303,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_close_stream(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_DELETE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_DELETE_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_space_delete_service(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_DISPLAYS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_DISPLAYS
 uint16_t uniffi_cua_sdk_checksum_method_space_displays(void
@@ -5063,6 +5363,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_join_presence(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_KEPT_SERVICES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_KEPT_SERVICES
+uint16_t uniffi_cua_sdk_checksum_method_space_kept_services(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_LIST_TOOLS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_LIST_TOOLS
 uint16_t uniffi_cua_sdk_checksum_method_space_list_tools(void
@@ -5075,9 +5381,21 @@ uint16_t uniffi_cua_sdk_checksum_method_space_open_stream(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_PUT_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_PUT_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_space_put_service(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_REQUEST_SITE_LOGIN
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_REQUEST_SITE_LOGIN
 uint16_t uniffi_cua_sdk_checksum_method_space_request_site_login(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_RESTART_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_RESTART_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_space_restart_service(void
 
 );
 #endif
@@ -5096,6 +5414,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_screenshot(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SEND_FILE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SEND_FILE
 uint16_t uniffi_cua_sdk_checksum_method_space_send_file(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SERVICE_LOGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SERVICE_LOGS
+uint16_t uniffi_cua_sdk_checksum_method_space_service_logs(void
 
 );
 #endif
@@ -5135,9 +5459,21 @@ uint16_t uniffi_cua_sdk_checksum_method_space_start_hotspot(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_START_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_START_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_space_start_service(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_STOP_HOTSPOT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_STOP_HOTSPOT
 uint16_t uniffi_cua_sdk_checksum_method_space_stop_hotspot(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_STOP_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_STOP_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_space_stop_service(void
 
 );
 #endif
@@ -5309,6 +5645,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spacestreamsession_stats(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_APPROVE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_APPROVE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_cloud_approve(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_AUDIT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_AUDIT
 uint16_t uniffi_cua_sdk_checksum_method_spaces_cloud_audit(void
@@ -5318,6 +5660,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_cloud_audit(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_CONNECT
 uint16_t uniffi_cua_sdk_checksum_method_spaces_cloud_connect(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_COST
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLOUD_COST
+uint16_t uniffi_cua_sdk_checksum_method_spaces_cloud_cost(void
 
 );
 #endif
@@ -5501,6 +5849,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_routines(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ACK_NETWORK_NOTICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ACK_NETWORK_NOTICE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_ack_network_notice(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ADD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ADD
 uint16_t uniffi_cua_sdk_checksum_method_spaces_add(void
@@ -5555,6 +5909,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_delete(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_MANY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_MANY
+uint16_t uniffi_cua_sdk_checksum_method_spaces_delete_many(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_TREE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_TREE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_delete_tree(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_VOLUME
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_VOLUME
 uint16_t uniffi_cua_sdk_checksum_method_spaces_delete_volume(void
@@ -5579,9 +5945,21 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_hosts(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LEAVE_MANY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LEAVE_MANY
+uint16_t uniffi_cua_sdk_checksum_method_spaces_leave_many(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_KNOWN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_KNOWN
+uint16_t uniffi_cua_sdk_checksum_method_spaces_list_known(void
 
 );
 #endif
@@ -5594,6 +5972,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_list_tools_json(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
 uint16_t uniffi_cua_sdk_checksum_method_spaces_machine_health(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NETWORK
+uint16_t uniffi_cua_sdk_checksum_method_spaces_network(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ORPHANS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_ORPHANS
+uint16_t uniffi_cua_sdk_checksum_method_spaces_orphans(void
 
 );
 #endif
@@ -5615,6 +6005,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_remove(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RENAME
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RENAME
+uint16_t uniffi_cua_sdk_checksum_method_spaces_rename(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESIZE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_resize(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOLVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOLVE
 uint16_t uniffi_cua_sdk_checksum_method_spaces_resolve(void
@@ -5627,6 +6029,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_resources(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_CHILDREN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_CHILDREN
+uint16_t uniffi_cua_sdk_checksum_method_spaces_set_children(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_EGRESS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_EGRESS
 uint16_t uniffi_cua_sdk_checksum_method_spaces_set_egress(void
@@ -5636,6 +6044,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_set_egress(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_LIFETIME
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_LIFETIME
 uint16_t uniffi_cua_sdk_checksum_method_spaces_set_lifetime(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_NETWORK
+uint16_t uniffi_cua_sdk_checksum_method_spaces_set_network(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_TREE_BUDGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_TREE_BUDGET
+uint16_t uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(void
 
 );
 #endif
@@ -5654,6 +6074,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_start(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 uint16_t uniffi_cua_sdk_checksum_method_spaces_stop(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SUSPEND
+uint16_t uniffi_cua_sdk_checksum_method_spaces_suspend(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_TREE_BUDGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_TREE_BUDGET
+uint16_t uniffi_cua_sdk_checksum_method_spaces_tree_budget(void
 
 );
 #endif
@@ -5813,6 +6245,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_volumes(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_LIST
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_LIST
+uint16_t uniffi_cua_sdk_checksum_method_spaces_watch_list(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_RESOURCES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_WATCH_RESOURCES
 uint16_t uniffi_cua_sdk_checksum_method_spaces_watch_resources(void
@@ -5840,6 +6278,18 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_builds(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_BUILD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_DELETE_BUILD
 uint16_t uniffi_cua_sdk_checksum_method_spaces_delete_build(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACESLISTLISTENER_ON_CHANGED
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACESLISTLISTENER_ON_CHANGED
+uint16_t uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACESLISTWATCH_STOP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACESLISTWATCH_STOP
+uint16_t uniffi_cua_sdk_checksum_method_spaceslistwatch_stop(void
 
 );
 #endif

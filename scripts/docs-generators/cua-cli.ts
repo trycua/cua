@@ -95,10 +95,16 @@ export interface CuaDumpDocs {
 export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'spaces-and-computers',
-    title: 'Spaces, computers and teams',
+    title: 'Spaces',
+    summary: 'Your Spaces, what they can reach, and keeping commands running in them',
+    commands: ['spaces', 'network'],
+  },
+  {
+    slug: 'computers-and-teams',
+    title: 'Computers and teams',
     summary:
-      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+      'Your computers, unattended access on this computer, teams, sharing, your remote use this month, and a cua-spacesd by URL',
+    commands: ['machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -127,21 +133,28 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'agents',
     title: 'Agents, MCP and skills',
-    summary: 'Run coding agents in a sandbox, set up your AI agents, the stdio MCP server, and recorded skills',
-    commands: ['agent', 'agents', 'mcp', 'skills'],
+    summary: 'Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'thread', 'join', 'connect', 'connections', 'agents', 'mcp', 'skills'],
   },
   {
     slug: 'account-and-setup',
     title: 'Account and setup',
     summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
-    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry', 'experiments'],
   },
   {
     slug: 'pool',
     title: 'Your pool',
     summary:
-      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --no-desktop --provide-spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
+      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --share spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
     commands: ['computers', 'run', 'jobs', 'compat'],
+  },
+  {
+    slug: 'bench',
+    title: 'Benchmarks',
+    summary:
+      'Spaces performance benchmarks: list them, run one in Spaces of its own (result.json and samples.csv in the bench-result v1 format), and check a run against a committed baseline',
+    commands: ['bench'],
   },
 ];
 
@@ -223,6 +236,11 @@ function mcpCategories(spaces: SpacesLinks): McpCategory[] {
       intro: 'Share tools are `cua share` for agents: use them for any link to something you ran, never localhost. `share` opens the link once to check it loads. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
     },
     { slug: 'skills', title: 'Skills tools', summary: 'List, read, record and delete skills (recorded demonstrations)' },
+    {
+      slug: 'connect',
+      title: 'Connect tools',
+      summary: 'Whether each AI agent on this computer is connected to Cua, as `cua connect status` shows it',
+    },
     {
       slug: 'runs',
       title: 'Run tools',

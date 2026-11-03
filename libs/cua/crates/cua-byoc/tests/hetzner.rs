@@ -9,279 +9,16 @@
 //! token is saved only when the checks pass, and that 429s are retried.
 #![cfg(feature = "hetzner")]
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::{Method, StatusCode};
-use axum::response::{IntoResponse, Response};
 use cua_byoc::api::{CloudApi, Target};
 use cua_byoc::hetzner::{Hetzner, TokenStore};
 use cua_byoc::model::{self, Connection, ProvisionSpec, Resource};
-use serde_json::{Value, json};
+use serde_json::json;
 
-#[derive(Default)]
-struct Fake {
-    servers: BTreeMap<u64, Value>,
-    firewalls: BTreeMap<u64, Value>,
-    next: u64,
-    calls: Vec<String>,
-    tokens: Vec<String>,
-    read_only: bool,
-    bad_token: bool,
-    /// Answer the next call with 429.
-    throttle: u32,
-    /// Types that answer "resource unavailable" on create.
-    sold_out: Vec<String>,
-    creates: Vec<Value>,
-}
-
-type S = Arc<Mutex<Fake>>;
-
-fn types() -> Value {
-    // (name, arch, cpu_type, cores, mem GiB, hourly, deprecated, locations available now)
-    #[allow(clippy::type_complexity)]
-    let rows: [(&str, &str, &str, u64, f64, &str, bool, &[&str]); 8] = [
-        (
-            "cpx22",
-            "x86",
-            "shared",
-            2,
-            4.0,
-            "0.0368",
-            false,
-            &["fsn1", "hel1"],
-        ),
-        (
-            "cx23",
-            "x86",
-            "shared",
-            2,
-            4.0,
-            "0.0104",
-            false,
-            &["fsn1", "hel1"],
-        ),
-        ("cx22", "x86", "shared", 2, 4.0, "0.0088", true, &["fsn1"]),
-        (
-            "cx33",
-            "x86",
-            "shared",
-            4,
-            8.0,
-            "0.0160",
-            false,
-            &["fsn1", "hel1"],
-        ),
-        (
-            "ccx13",
-            "x86",
-            "dedicated",
-            2,
-            8.0,
-            "0.0809",
-            false,
-            &["fsn1"],
-        ),
-        (
-            "cax11",
-            "arm",
-            "shared",
-            2,
-            4.0,
-            "0.0112",
-            false,
-            &["fsn1", "hel1"],
-        ),
-        ("cax21", "arm", "shared", 4, 8.0, "0.0200", false, &[]),
-        ("cx43", "x86", "shared", 8, 16.0, "0.0296", false, &["fsn1"]),
-    ];
-    let t: Vec<Value> = rows
-        .iter()
-        .map(|(name, arch, cpu, cores, mem, price, dep, avail)| {
-            let locations: Vec<Value> = ["fsn1", "hel1"]
-                .iter()
-                .map(|l| json!({"name": l, "available": avail.contains(l), "deprecation": null}))
-                .collect();
-            json!({"name": name, "architecture": arch, "cpu_type": cpu, "cores": cores,
-               "memory": mem, "disk": 40, "deprecated": dep,
-               "prices": [{"location": "fsn1", "price_hourly": {"gross": price}},
-                          {"location": "hel1", "price_hourly": {"gross": price}}],
-               "locations": locations})
-        })
-        .collect();
-    json!({"server_types": t})
-}
-
-fn selector_matches(sel: &str, labels: &Value) -> bool {
-    sel.split(',').filter(|kv| !kv.is_empty()).all(|kv| {
-        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        labels[k] == v
-    })
-}
-
-fn query(q: &str, key: &str) -> Option<String> {
-    q.split('&')
-        .filter_map(|p| p.split_once('='))
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| v.replace("%3D", "=").replace("%2C", ","))
-}
-
-async fn handle(
-    State(s): State<S>,
-    method: Method,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    body: Bytes,
-) -> Response {
-    let path = uri.path().to_string();
-    let q = uri.query().unwrap_or("").to_string();
-    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let mut f = s.lock().unwrap();
-    f.tokens.push(
-        headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string(),
-    );
-    f.calls.push(format!("{method} {path}"));
-    let ok = |v: Value| (StatusCode::OK, axum::Json(v)).into_response();
-    let err = |c: StatusCode, code: &str, m: &str| {
-        (
-            c,
-            axum::Json(json!({"error": {"code": code, "message": m}})),
-        )
-            .into_response()
-    };
-    if f.throttle > 0 {
-        f.throttle -= 1;
-        let mut r = err(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limit_exceeded",
-            "slow down",
-        );
-        r.headers_mut()
-            .insert("ratelimit-reset", "1".parse().unwrap());
-        return r;
-    }
-    if f.bad_token {
-        return err(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "unable to authenticate",
-        );
-    }
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let sel = query(&q, "label_selector").unwrap_or_default();
-    match (method.as_str(), parts.as_slice()) {
-        ("GET", ["v1", "locations"]) => {
-            ok(json!({"locations": [{"name": "fsn1"}, {"name": "hel1"}]}))
-        }
-        ("GET", ["v1", "server_types"]) => ok(types()),
-        ("GET", ["v1", "images"]) => ok(json!({"images": [{"name": "docker-ce"}]})),
-        ("GET", ["v1", "servers"]) => {
-            let items: Vec<Value> = f
-                .servers
-                .values()
-                .filter(|v| selector_matches(&sel, &v["labels"]))
-                .cloned()
-                .collect();
-            // Like the real API, one unlabelled row comes back anyway when
-            // there is no selector (proves the client checks labels itself).
-            ok(
-                json!({"servers": items, "meta": {"pagination": {"total_entries": f.servers.len(), "next_page": null}}}),
-            )
-        }
-        ("POST", ["v1", "servers"]) => {
-            if f.read_only {
-                return err(
-                    StatusCode::FORBIDDEN,
-                    "forbidden",
-                    "insufficient permissions",
-                );
-            }
-            if body["name"].is_null() {
-                return err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "invalid_input",
-                    "invalid input",
-                );
-            }
-            let ty = body["server_type"].as_str().unwrap_or("").to_string();
-            f.creates.push(body.clone());
-            if f.sold_out.contains(&ty) {
-                return err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "resource_unavailable",
-                    "error during placement: resource unavailable",
-                );
-            }
-            f.next += 1;
-            let id = 1000 + f.next;
-            let server = json!({"id": id, "name": body["name"], "status": "initializing",
-                "created": "2026-10-21T05:00:00+00:00", "labels": body["labels"],
-                "server_type": {"name": ty}, "location": {"name": body["location"]},
-                "public_net": {"ipv4": {"ip": format!("203.0.113.{}", id % 250)}}});
-            f.servers.insert(id, server.clone());
-            ok(json!({"server": server, "root_password": "never-read"}))
-        }
-        ("GET", ["v1", "servers", id]) => match f.servers.get_mut(&id.parse().unwrap()) {
-            Some(v) => {
-                if v["status"] == "initializing" {
-                    v["status"] = json!("running");
-                }
-                ok(json!({"server": v.clone()}))
-            }
-            None => err(StatusCode::NOT_FOUND, "not_found", "server not found"),
-        },
-        ("DELETE", ["v1", "servers", id]) => {
-            f.servers.remove(&id.parse().unwrap());
-            ok(json!({"action": {}}))
-        }
-        ("POST", ["v1", "servers", id, "actions", verb]) => {
-            match f.servers.get_mut(&id.parse().unwrap()) {
-                Some(v) => {
-                    v["status"] = json!(if *verb == "poweron" { "running" } else { "off" });
-                    ok(json!({"action": {}}))
-                }
-                None => err(StatusCode::NOT_FOUND, "not_found", "server not found"),
-            }
-        }
-        ("GET", ["v1", "firewalls"]) => {
-            let name = query(&q, "name");
-            let items: Vec<Value> = f
-                .firewalls
-                .values()
-                .filter(|v| name.as_deref().is_none_or(|n| v["name"] == n))
-                .filter(|v| selector_matches(&sel, &v["labels"]))
-                .cloned()
-                .collect();
-            ok(json!({"firewalls": items, "meta": {"pagination": {"next_page": null}}}))
-        }
-        ("POST", ["v1", "firewalls"]) => {
-            f.next += 1;
-            let id = 5000 + f.next;
-            let fw = json!({"id": id, "name": body["name"], "labels": body["labels"], "rules": body["rules"]});
-            f.firewalls.insert(id, fw.clone());
-            ok(json!({"firewall": fw}))
-        }
-        ("GET", ["v1", "firewalls", id]) => match f.firewalls.get(&id.parse().unwrap()) {
-            Some(v) => ok(json!({"firewall": v.clone()})),
-            None => err(StatusCode::NOT_FOUND, "not_found", "firewall not found"),
-        },
-        ("DELETE", ["v1", "firewalls", id]) => {
-            f.firewalls.remove(&id.parse().unwrap());
-            ok(json!({}))
-        }
-        _ => err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            &format!("fake: no route {method} {path}"),
-        ),
-    }
-}
+#[path = "support/fake_hetzner.rs"]
+mod fake_hetzner;
+use fake_hetzner::{S, handle};
 
 #[derive(Default)]
 struct MemStore(Mutex<Option<String>>);
@@ -763,4 +500,470 @@ fn rand_u16() -> u16 {
         .unwrap()
         .subsec_nanos()
         % 65536) as u16
+}
+
+// ---- the token sealed to the account's devices ---------------------------
+
+#[cfg(feature = "federation")]
+mod sealed_support;
+
+#[cfg(feature = "federation")]
+mod sealed {
+    use super::sealed_support::{FakeIssuer, FakePool, FakeSealer};
+    use super::*;
+    use cua_byoc::Clouds;
+    use cua_byoc::federation::IssuerClient;
+    use cua_byoc::sealed::{PoolSealer, token_aad};
+    use cua_sandbox_core::byoc::{CloudManager, ConnectRequest};
+
+    const TOKEN: &str = "hcloud-SEALED-token-0123456789";
+
+    async fn serve() -> (String, S) {
+        let s: S = Arc::default();
+        let app = axum::Router::new().fallback(handle).with_state(s.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/v1"), s)
+    }
+
+    /// One device of the account: its own home, token store and pool keys,
+    /// the same Hetzner project and issuer.
+    struct Device {
+        _home: tempfile::TempDir,
+        clouds: Clouds,
+        api: Arc<Hetzner>,
+        store: Arc<MemStore>,
+    }
+
+    fn device(url: &str, issuer: &Arc<FakeIssuer>, sealer: Option<Arc<FakeSealer>>) -> Device {
+        let home = tempfile::tempdir().unwrap();
+        let store = Arc::new(MemStore::default());
+        let api = Arc::new(
+            Hetzner::with_endpoint(url, store.clone(), None)
+                .with_poll(std::time::Duration::from_millis(10)),
+        );
+        let mut clouds = Clouds::new(
+            home.path(),
+            vec![api.clone() as Arc<dyn CloudApi>],
+            Arc::new(cua_byoc::Store::new(home.path())),
+        )
+        .with_issuer(issuer.clone() as Arc<dyn IssuerClient>);
+        if let Some(s) = sealer {
+            clouds = clouds.with_sealer(s as Arc<dyn PoolSealer>);
+        }
+        Device {
+            _home: home,
+            clouds,
+            api,
+            store,
+        }
+    }
+
+    fn ask(token: Option<&str>, auth: Option<&str>) -> ConnectRequest {
+        ConnectRequest {
+            target: Target {
+                provider: "hetzner".into(),
+                region: Some("fsn1".into()),
+                token: token.map(Into::into),
+                ..Default::default()
+            },
+            auth: auth.map(Into::into),
+            budget_usd_month: Some(50.0),
+            max_size: Some("4x8".into()),
+            ..Default::default()
+        }
+    }
+
+    fn bearers(s: &S) -> Vec<String> {
+        std::mem::take(&mut s.lock().unwrap().tokens)
+    }
+
+    #[tokio::test]
+    async fn the_token_is_sealed_to_the_devices_and_used_from_memory_only() {
+        let (url, s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+        let pool = FakePool::new();
+        let laptop = device(&url, &issuer, Some(pool.join("laptop")));
+
+        let c = laptop
+            .clouds
+            .connect_with(&ask(Some(TOKEN), None))
+            .await
+            .unwrap();
+        assert_eq!(c.provider.status, "connected", "{:?}", c.next);
+        assert_eq!(c.provider.auth, "sealed");
+        assert_eq!(c.provider.holders, vec!["laptop".to_string()]);
+        assert_eq!(c.provider.budget_usd_month, Some(50.0));
+        assert_eq!(c.provider.max_size, "4x8");
+        // The checks ran with the token given, before anything was stored.
+        assert!(bearers(&s).iter().all(|b| *b == format!("Bearer {TOKEN}")));
+
+        // Nothing readable is kept: not in this device's token store, not
+        // in its state, not on the issuer.
+        assert!(laptop.store.0.lock().unwrap().is_none());
+        let server = issuer.only("hetzner");
+        assert_eq!(server.auth, "sealed");
+        assert_eq!(server.identifiers["project"], "default");
+        let blob = server.sealed_token.clone().unwrap();
+        assert_eq!(blob.generation, 1);
+        let needle = TOKEN.as_bytes();
+        assert!(!blob.ciphertext.windows(needle.len()).any(|w| w == needle));
+        // Every file under the home: the link names the connection only.
+        let files = read_all(laptop._home.path());
+        assert!(!files.contains(TOKEN), "{files}");
+        assert!(files.contains(&server.id), "{files}");
+
+        // A machine is made with the token opened in memory.
+        let conn = laptop
+            .clouds
+            .store()
+            .connection("hetzner")
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(conn.auth, cua_byoc::Auth::Sealed { ref conn_id } if *conn_id == server.id)
+        );
+        laptop
+            .api
+            .provision(&conn, &spec("cua-hetzner-seal", "owner1"))
+            .await
+            .unwrap();
+        let used = bearers(&s);
+        assert!(!used.is_empty());
+        assert!(
+            used.iter().all(|b| *b == format!("Bearer {TOKEN}")),
+            "{used:?}"
+        );
+        assert_eq!(
+            laptop.api.detect().source,
+            "the account's token, sealed to your devices"
+        );
+
+        // No tool output, Debug or status carries it.
+        let status = laptop.clouds.status(Some("hetzner")).await.unwrap();
+        let p = &status.providers[0];
+        assert_eq!(
+            (p.auth.as_str(), p.holders.clone()),
+            ("sealed", vec!["laptop".to_string()])
+        );
+        for out in [
+            serde_json::to_string(&status).unwrap(),
+            serde_json::to_string(&c).unwrap(),
+            format!("{c:?}"),
+            format!("{:?}", laptop.clouds.sealed_tokens()),
+            format!("{:?}", issuer.conns.lock().unwrap()),
+            format!("{:?}", laptop.clouds.audit(100).await.unwrap()),
+        ] {
+            assert!(!out.contains(TOKEN), "{out}");
+        }
+    }
+
+    fn read_all(dir: &std::path::Path) -> String {
+        let mut out = String::new();
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.push_str(&read_all(&p));
+            } else if let Ok(t) = std::fs::read_to_string(&p) {
+                out.push_str(&t);
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn another_device_opens_it_and_a_revoked_one_cannot_once_it_is_resealed() {
+        let (url, s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+        let pool = FakePool::new();
+        let laptop = device(&url, &issuer, Some(pool.join("laptop")));
+        laptop
+            .clouds
+            .connect_with(&ask(Some(TOKEN), None))
+            .await
+            .unwrap();
+
+        // The desktop links the account's connection with no token of its
+        // own: it opens the sealed one and checks it.
+        let desktop_keys = pool.join("desktop");
+        let desktop = device(&url, &issuer, Some(desktop_keys.clone()));
+        let c = desktop
+            .clouds
+            .connect_with(&ask(None, Some("sealed")))
+            .await
+            .unwrap();
+        assert_eq!(c.provider.status, "connected", "{:?}", c.next);
+        assert!(desktop.store.0.lock().unwrap().is_none());
+        bearers(&s);
+        let conn = desktop
+            .clouds
+            .store()
+            .connection("hetzner")
+            .unwrap()
+            .unwrap();
+        assert!(desktop.api.test(&conn).await.ok());
+        assert!(bearers(&s).iter().all(|b| *b == format!("Bearer {TOKEN}")));
+        let mut holders = c.provider.holders.clone();
+        holders.sort();
+        assert_eq!(holders, ["desktop", "laptop"]);
+
+        // The desktop is revoked: the pool moves to generation 2, and the
+        // laptop's next call re-seals the token under it (compare-and-swap
+        // on generation 1).
+        pool.revoke("desktop");
+        let laptop2 = device(&url, &issuer, Some(pool.join("laptop")));
+        // (the same device, a new process: nothing in memory)
+        let conn = laptop
+            .clouds
+            .store()
+            .connection("hetzner")
+            .unwrap()
+            .unwrap();
+        laptop2.clouds.store().connect(conn.clone()).unwrap();
+        assert!(laptop2.api.test(&conn).await.ok());
+        let server = issuer.only("hetzner");
+        assert_eq!(server.sealed_token.as_ref().unwrap().generation, 2);
+        assert!(
+            issuer
+                .changes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(w, a)| w == "seal 2" && a.is_none()),
+            "re-sealed by the device itself, not an agent"
+        );
+
+        // The revoked desktop, in a new process, cannot open it.
+        let revoked = device(&url, &issuer, Some(desktop_keys.clone()));
+        let dconn = desktop
+            .clouds
+            .store()
+            .connection("hetzner")
+            .unwrap()
+            .unwrap();
+        revoked.clouds.store().connect(dconn.clone()).unwrap();
+        bearers(&s);
+        let t = revoked.api.test(&dconn).await;
+        assert!(!t.ok());
+        assert!(
+            t.checks[0].detail.contains("sealed token"),
+            "{:?}",
+            t.checks
+        );
+        assert!(bearers(&s).is_empty(), "no call reached Hetzner");
+        let blob = server.sealed_token.clone().unwrap();
+        assert!(
+            desktop_keys
+                .open(&blob, &token_aad(&server.account, &server.id, "hetzner", 2))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blob_only_opens_for_its_own_account_connection_and_cloud() {
+        let (url, _s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+        let pool = FakePool::new();
+        let keys = pool.join("laptop");
+        let laptop = device(&url, &issuer, Some(keys.clone()));
+        laptop
+            .clouds
+            .connect_with(&ask(Some(TOKEN), None))
+            .await
+            .unwrap();
+        let server = issuer.only("hetzner");
+        let blob = server.sealed_token.clone().unwrap();
+        let ok = token_aad(&server.account, &server.id, "hetzner", 1);
+        assert_eq!(
+            keys.open(&blob, &ok).await.unwrap().as_slice(),
+            TOKEN.as_bytes()
+        );
+        for aad in [
+            token_aad("zzzzzzzzzzzz", &server.id, "hetzner", 1),
+            token_aad(&server.account, "conn_other", "hetzner", 1),
+            token_aad(&server.account, &server.id, "modal", 1),
+            token_aad(&server.account, &server.id, "hetzner", 2),
+        ] {
+            assert!(keys.open(&blob, &aad).await.is_err());
+        }
+        // The same ciphertext moved onto another connection of the account
+        // does not open there.
+        let mut moved = server.clone();
+        moved.id = "conn_9".into();
+        moved.identifiers.insert("project".into(), "other".into());
+        issuer.conns.lock().unwrap().push(moved.clone());
+        let e = laptop
+            .clouds
+            .sealed_tokens()
+            .open_server(&moved)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("does not open"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_swap_from_a_stale_read_conflicts() {
+        let (url, _s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+        let pool = FakePool::new();
+        let laptop = device(&url, &issuer, Some(pool.join("laptop")));
+        laptop
+            .clouds
+            .connect_with(&ask(Some(TOKEN), None))
+            .await
+            .unwrap();
+        let read = issuer.only("hetzner");
+        let tokens = laptop.clouds.sealed_tokens();
+        // Another holder swaps first...
+        tokens
+            .put(&read, &cua_byoc::Secret::new("hcloud-new-1"), None)
+            .await
+            .unwrap();
+        // ...so this one, from the same read, is refused and stores nothing.
+        let e = tokens
+            .put(&read, &cua_byoc::Secret::new("hcloud-new-2"), None)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("changed at the same time"), "{e}");
+        let now = issuer.only("hetzner");
+        assert_eq!(
+            tokens.open_server(&now).await.unwrap().expose(),
+            "hcloud-new-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agents_token_waits_for_a_person_and_disconnect_drops_the_blob() {
+        let (url, s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+        let pool = FakePool::new();
+        let laptop = device(&url, &issuer, Some(pool.join("laptop")));
+        let mut req = ask(Some(TOKEN), None);
+        req.agent = Some("researcher".into());
+        let c = laptop.clouds.connect_with(&req).await.unwrap();
+        assert_eq!(c.provider.status, "waiting-for-approval");
+        assert_eq!(c.provider.approval, "connection");
+        // Until a person approves, the token is not used.
+        let conn = laptop
+            .clouds
+            .store()
+            .connection("hetzner")
+            .unwrap()
+            .unwrap();
+        bearers(&s);
+        let t = laptop.api.test(&conn).await;
+        assert!(
+            !t.ok() && t.checks[0].detail.contains("approves"),
+            "{:?}",
+            t.checks
+        );
+        assert!(bearers(&s).is_empty());
+        issuer.approve(&issuer.only("hetzner").id);
+        assert!(laptop.api.test(&conn).await.ok());
+
+        // Disconnect revokes the account's link, which drops the blob.
+        let id = issuer.only("hetzner").id;
+        let d = laptop.clouds.disconnect("hetzner", false).await.unwrap();
+        assert!(d.disconnected);
+        let server = issuer.get(&id);
+        assert_eq!(server.status, "revoked");
+        assert!(server.sealed_token.is_none());
+        assert!(
+            laptop
+                .clouds
+                .store()
+                .connection("hetzner")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_local_token_keeps_working_and_sealed_seals_it() {
+        let (url, s) = serve().await;
+        let issuer = Arc::new(FakeIssuer::default());
+
+        // A cua without pool keys keeps the token on the device (as before).
+        let old = device(&url, &issuer, None);
+        let c = old
+            .clouds
+            .connect_with(&ask(Some("tok-local"), None))
+            .await
+            .unwrap();
+        assert_eq!(
+            (c.provider.status.as_str(), c.provider.auth.as_str()),
+            ("connected", "cli")
+        );
+        assert_eq!(old.store.0.lock().unwrap().as_deref(), Some("tok-local"));
+        assert!(issuer.conns.lock().unwrap().is_empty());
+
+        // With pool keys, --no-sealed (auth cli) does the same; without a
+        // budget the default keeps it local too.
+        let pool = FakePool::new();
+        let d = device(&url, &issuer, Some(pool.join("laptop")));
+        let mut nobudget = ask(Some("tok-local"), None);
+        nobudget.budget_usd_month = None;
+        nobudget.max_size = None;
+        let c = d.clouds.connect_with(&nobudget).await.unwrap();
+        assert_eq!(c.provider.auth, "cli");
+        let c = d
+            .clouds
+            .connect_with(&ask(Some("tok-local"), Some("cli")))
+            .await
+            .unwrap();
+        assert_eq!(c.provider.auth, "cli");
+        assert!(issuer.conns.lock().unwrap().is_empty());
+        // A link made before sealed tokens (no `auth` in the file) reads as
+        // the local token and uses it.
+        let conn = d.clouds.store().connection("hetzner").unwrap().unwrap();
+        assert!(conn.auth.is_cli());
+        bearers(&s);
+        assert!(d.api.test(&conn).await.ok());
+        assert!(bearers(&s).iter().all(|b| b == "Bearer tok-local"));
+
+        // `--sealed` with no token seals the one this device has.
+        let c = d
+            .clouds
+            .connect_with(&ask(None, Some("sealed")))
+            .await
+            .unwrap();
+        assert_eq!(
+            (c.provider.status.as_str(), c.provider.auth.as_str()),
+            ("connected", "sealed")
+        );
+        let server = issuer.only("hetzner");
+        assert_eq!(
+            d.clouds
+                .sealed_tokens()
+                .open_server(&server)
+                .await
+                .unwrap()
+                .expose(),
+            "tok-local"
+        );
+        // Sealed without a budget: the agent is told to ask for one.
+        let pool2 = FakePool::new();
+        let e = device(
+            &url,
+            &Arc::new(FakeIssuer::default()),
+            Some(pool2.join("x")),
+        );
+        let mut r = ask(Some(TOKEN), Some("sealed"));
+        r.budget_usd_month = None;
+        let c = e.clouds.connect_with(&r).await.unwrap();
+        assert_eq!(c.provider.status, "failed");
+        assert!(
+            c.next
+                .as_ref()
+                .unwrap()
+                .run
+                .as_deref()
+                .unwrap()
+                .contains("--budget <USD>"),
+            "{:?}",
+            c.next
+        );
+    }
 }

@@ -149,7 +149,7 @@ async fn a_local_space_reports_what_it_was_given_and_what_it_uses() {
     assert_eq!((u.cpu_count, u.cpu_percent), (4, 12.5));
     assert_eq!(u.load_average_1m, 0.75);
     assert_eq!((u.memory_total, u.memory_limited), (4 * GIB, true));
-    assert_eq!((u.disk_total, u.disk_limited), (32 * GIB, true));
+    assert_eq!((u.disk_total, u.disk_limited), (Some(32 * GIB), true));
     // A fake engine has no disk files to measure: no number, no claim.
     assert_eq!(s.disk_on_host, None);
     // The totals add the running Space up (its power word is empty: it

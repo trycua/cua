@@ -8,7 +8,8 @@ Details for [Use your own cloud](/cua-sdk/guides/your-cloud) and
 
 ## Least-privilege access
 Cua creates no IAM users, roles or keys, so it acts as whatever identity you
-connect. Connect a dedicated one with only the access below instead of an
+connect (with `--oidc`, the `cua-spaces` role your own CloudFormation stack
+creates). Connect a dedicated one with only the access below instead of an
 administrator. Everything Cua creates carries the tag `cua-managed=true`, and
 the policy lets it create only tagged resources and stop, start, terminate or
 delete only tagged ones, so it cannot touch anything else in the account.
@@ -180,6 +181,20 @@ Why it is shaped this way:
 To narrow it further, add a `StringEquals` condition on `aws:RequestedRegion`
 to every statement that has a condition.
 
+#### Linked without a key (`--oidc`)
+
+The `cua-spaces` CloudFormation stack you create for
+[a link without a key](/cua-sdk/guides/your-cloud#link-aws-without-a-key) gives
+its role exactly this policy, plus `ce:GetCostAndUsage` (read-only, for the
+spend Cua shows). A test keeps the stack's policy identical to the JSON above.
+The role trusts only tokens from your Cua account's issuer
+(`https://oidc.cua.ai/a/<account>`) with the audience `sts.amazonaws.com` and
+the subject `account:<account>`, so another Cua account's tokens are refused.
+Each session lasts at most 15 minutes and is named
+`cua-<device>-<agent or user>-<purpose>`, which CloudTrail shows. No AWS key
+is stored anywhere. Disconnecting stops new tokens at once, and deleting the
+stack removes the trust.
+
 ### Google Cloud
 
 Create a custom role with these Compute Engine permissions and grant it to
@@ -206,6 +221,37 @@ compute.subnetworks.useExternalIp
 `cua cloud test gcp` checks all of them with `testIamPermissions` and lists
 the ones that are missing. The same list is in `gcp.rs`
 (`PERMISSIONS`), and a test keeps this page equal to it.
+
+#### Linked without a key (Google Cloud `--oidc`)
+
+The trust script `cua-trust.sh` creates the custom role `cuaSpaces` with
+exactly this list (a test keeps the script equal to it) and binds it to the
+identities of your Cua account only:
+`principalSet://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/attribute.account/account:<account>`.
+The pool's provider trusts only your Cua account's issuer, with its own name
+as the audience and the condition `assertion.sub=='account:<account>'`.
+Compute Engine labels cannot be used in IAM conditions, so the binding has
+no condition. Each access token lasts at most an hour, is cached until 2
+minutes before it expires, and is never written to disk. No Google key or
+service account is created.
+
+### Azure
+
+Azure is linked only through Cua's sign-in. The `cua-spaces.json` template
+gives the `cua-spaces` managed identity two built-in roles, on the
+connection's resource group only:
+
+| Role | Id |
+|---|---|
+| Virtual Machine Contributor | `9980e02c-c2be-4d73-94e8-173b1dc7cf3c` |
+| Network Contributor | `4d97b98b-1d4f-4787-a291-c67834d212e7` |
+
+Nothing outside that resource group is reachable. The identity's federated
+credential accepts only tokens from your Cua account's issuer with the subject
+`account:<account>` and the audience `api://AzureADTokenExchange`.
+`cua cloud test azure` reads the group's permissions and lists any action Cua
+needs that they do not allow, then validates a machine deployment without
+creating it. To remove the trust, delete the `cua-spaces` identity.
 
 ### When a machine does not come online
 

@@ -267,6 +267,17 @@ pub struct StartSpec {
     /// forks apply it again, and [`crate::Runtime::set_egress`] replaces it.
     #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
     pub egress: crate::egress::EgressPolicy,
+    /// The Space's network settings ([`crate::network`]): its preset and
+    /// lists, compiled by the runtime with what only it knows (resolver,
+    /// host aliases, tree). `None`: a caller from before network settings;
+    /// the runtime keeps to `restrict_network` and `egress`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
+    /// The tree the sandbox belongs to (its top-level Space's id): members
+    /// of one tree share a network and reach each other; other trees are
+    /// blocked. `None`: a tree of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
     /// Backend-specific extra arguments (appended to the qemu command line).
@@ -297,6 +308,12 @@ pub struct StartSpec {
     /// by layer.
     #[serde(default)]
     pub pull_layers: Vec<(String, u64)>,
+    /// What pulling the image writes on this host, when the caller knows
+    /// it (the image catalog's download plus unpacked size for this
+    /// platform): a Lume base pull checks the disk for this instead of
+    /// [`crate::disk::LUME_PULL_ESTIMATE`].
+    #[serde(default)]
+    pub pull_bytes: Option<u64>,
     /// Start a warm-pool member: the instance boots to readiness with no
     /// identity of its own. Its Spaces token (`CUA_ENV_TOKEN` in `env`) is
     /// the member's *pool secret*, never shown to anyone; a claim
@@ -470,6 +487,14 @@ pub fn reject_restricted_network(backend: BackendKind, spec: &StartSpec) -> crat
     if !spec.restrict_network {
         return Ok(());
     }
+    // Under the secure default a container's network is cut by its rules
+    // on the engine host (`none` drops everything), its published ports
+    // still answering.
+    if matches!(backend, BackendKind::Container | BackendKind::Managed)
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+    {
+        return Ok(());
+    }
     Err(crate::VmmError::Unsupported {
         backend: backend.as_str(),
         op: match backend {
@@ -608,6 +633,8 @@ impl StartSpec {
             cloud_init_user_data: None,
             restrict_network: false,
             egress: Default::default(),
+            network: None,
+            tree: None,
             labels: BTreeMap::new(),
             extra_args: Vec::new(),
             sidecars: Vec::new(),
@@ -615,6 +642,7 @@ impl StartSpec {
             container_runtime: None,
             gpu: None,
             pull_layers: vec![],
+            pull_bytes: None,
             pool_member: false,
             mounts: Vec::new(),
             forkable: false,
@@ -897,9 +925,14 @@ mod tests {
             assert!(reject_restricted_network(b, &spec).is_ok());
         }
         spec.restrict_network = true;
-        for b in [BackendKind::Container, BackendKind::Lume] {
-            let e = reject_restricted_network(b, &spec).unwrap_err().to_string();
-            assert!(e.contains("network=\"none\""), "{e}");
+        let e = reject_restricted_network(BackendKind::Lume, &spec)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("network=\"none\""), "{e}");
+        // A container cuts it with its engine-host rules under the secure
+        // default (the test process runs with it unless told otherwise).
+        if crate::network::Mode::from_env() == crate::network::Mode::Secure {
+            assert!(reject_restricted_network(BackendKind::Container, &spec).is_ok());
         }
     }
 

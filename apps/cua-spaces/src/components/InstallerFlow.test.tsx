@@ -425,7 +425,7 @@ describe("InstallerFlow", () => {
     click("Turn on remote access");
     // Signed in, no agent yet: honest, with the fix.
     expect(await screen.findByText("Almost done")).toBeInTheDocument();
-    expect(screen.getByText("Your other devices can reach it")).toBeInTheDocument();
+    expect(screen.getByText("Your other machines can reach it")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect an AI agent" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(screen.queryByText("Grant in System Settings")).toBeNull();

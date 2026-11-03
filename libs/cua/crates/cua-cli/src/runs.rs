@@ -18,7 +18,7 @@ use clap::Args;
 use cua_sdk::CuaError;
 use serde_json::{Value, json};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// `cua sb run`.
 #[derive(Args, Debug)]
@@ -237,7 +237,7 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
         if json {
             line(out, json!({"run": run, "jobs": count}).to_string());
         } else {
-            line(
+            hint_line(
                 out,
                 format!(
                     "{run}: {count} job{} submitted (cua sb runs {run})",
@@ -329,7 +329,7 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
             ),
         );
         if ok < u64::from(count) {
-            line(
+            hint_line(
                 out,
                 format!("See what failed: cua sb runs {run} --state failed"),
             );
@@ -446,10 +446,13 @@ fn keys_lines(k: &Value, width: Option<usize>) -> Vec<String> {
         .map(|a| a.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     let mut out = Vec::new();
+    // The command is spelled with this build's CLI name, not rewritten with the
+    // line: the device names in it are the user's.
+    let cli = crate::util::cli();
     match k["waiting"].as_str() {
         Some(_) if !holders.is_empty() => {
             out.push(format!(
-                "Not shared with this device yet. Your pool keys are on: {}; at least one must be online to add a new device (open Cua on one of them), or revoke the ones you no longer have (`cua devices revoke <id>`).",
+                "Not shared with this device yet. Your pool keys are on: {}; at least one must be online to add a new device (open Cua on one of them), or revoke the ones you no longer have (`{cli} devices revoke <id>`).",
                 holders.join(", ")
             ));
         }

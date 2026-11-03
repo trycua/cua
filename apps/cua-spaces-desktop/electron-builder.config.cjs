@@ -154,7 +154,19 @@ module.exports = {
   buildVersion,
   asar: true,
   compression: "normal",
-  files: ["package.json", "dist-electron/**/*", "placeholder/**/*", "!**/*.map"],
+  files: [
+    "package.json",
+    "dist-electron/**/*",
+    "placeholder/**/*",
+    "!**/*.map",
+    // @sentry/electron (crash reporting, src/crash-reporting-main.ts) is a runtime dependency.
+    // Its bundler plugins, with the Sentry CLI and the parser they pull in (~35 MB), run in
+    // builds only: the main process never loads them.
+    "!node_modules/@sentry/bundler-plugins/**",
+    "!node_modules/sentry/**",
+    "!node_modules/oxc-parser/**",
+    "!node_modules/@oxc-parser/**",
+  ],
   extraResources: [
     // The built web UI sits next to the asar, served by the cua-spaces:// handler.
     ...(fs.existsSync(path.join(webDist, "index.html"))

@@ -333,6 +333,38 @@ pub fn error_doc_url(variant: String) -> String {
     }
 }
 
+/// What a person was looking at in a Space as they posted to its thread:
+/// the Space's desktop, or one of its windows. Every thread entry and task
+/// that has one carries it as `view` (`thread_read`, `thread_inbox`, the
+/// entry `thread_post` returns); [`thread_view_of`] reads it. The fields
+/// are `cua.env.v1.ThreadView`'s.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, serde::Deserialize)]
+pub struct ThreadView {
+    /// `desktop` or `window`.
+    pub kind: String,
+    /// The window's app ("Firefox").
+    #[serde(default)]
+    pub app: Option<String>,
+    /// The window's title ("Pull requests").
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The window's id in the Space (what the window tools take).
+    #[serde(default)]
+    pub window_id: Option<String>,
+}
+
+/// The `view` of one thread entry or task, given as JSON (an element of
+/// `thread_read`'s `entries` or `tasks`, or `thread_inbox`'s `tasks`):
+/// none when it has none.
+#[uniffi::export]
+pub fn thread_view_of(entry_json: String) -> Result<Option<ThreadView>, CuaError> {
+    let v: serde_json::Value = serde_json::from_str(&entry_json)?;
+    match v.get("view") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(view) => Ok(Some(serde_json::from_value(view.clone())?)),
+    }
+}
+
 impl From<serde_json::Error> for CuaError {
     fn from(e: serde_json::Error) -> Self {
         CuaError::InvalidArgument(format!("json: {e}"))
@@ -383,5 +415,42 @@ mod version_tests {
             .unwrap_or(include_str!("../../../VERSION").trim());
         assert_eq!(super::cua_sdk_version(), expected);
         assert_ne!(super::cua_sdk_version(), "");
+    }
+}
+
+#[cfg(test)]
+mod thread_view_tests {
+    use super::*;
+
+    #[test]
+    fn a_task_says_which_window_it_was_sent_from() {
+        let task = r#"{"seq": 7, "to": "ada", "text": "review this tab",
+            "view": {"kind": "window", "app": "Firefox", "title": "Pull requests", "window_id": "w42"}}"#;
+        assert_eq!(
+            thread_view_of(task.into()).unwrap(),
+            Some(ThreadView {
+                kind: "window".into(),
+                app: Some("Firefox".into()),
+                title: Some("Pull requests".into()),
+                window_id: Some("w42".into()),
+            })
+        );
+        assert_eq!(thread_view_of(r#"{"seq": 8}"#.into()).unwrap(), None);
+        assert!(thread_view_of("not json".into()).is_err());
+    }
+
+    #[test]
+    fn its_fields_are_the_protos() {
+        // Drift guard: the proto message and this record name the same fields.
+        let p = cua_proto::env::v1::ThreadView {
+            kind: "window".into(),
+            app: "Firefox".into(),
+            title: "Pull requests".into(),
+            window_id: "w42".into(),
+        };
+        let json = serde_json::json!({"view": {"kind": p.kind, "app": p.app, "title": p.title, "window_id": p.window_id}});
+        let v = thread_view_of(json.to_string()).unwrap().unwrap();
+        assert_eq!(v.window_id.as_deref(), Some("w42"));
+        assert_eq!(v.app.as_deref(), Some("Firefox"));
     }
 }

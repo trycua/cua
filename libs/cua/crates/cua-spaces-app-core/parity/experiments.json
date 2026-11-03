@@ -10,16 +10,13 @@
     { "step": "another row changes nothing", "row": "notch", "option": "hide" },
     { "step": "cua volume off", "row": "experiment:cua_volume", "option": "off" },
     { "step": "your cloud on again", "row": "experiment:your_cloud", "option": "on" },
-    { "step": "sharing off", "row": "experiment:sharing", "option": "off" },
-    { "step": "new ui on (use classic ui off)", "row": "experiment:classic_ui", "option": "off" },
-    { "step": "use classic ui on", "row": "experiment:classic_ui", "option": "on" }
+    { "step": "sharing off", "row": "experiment:sharing", "option": "off" }
   ],
   "settings": {
     "identity": "maya@example.com",
     "canSignOut": true,
     "signIn": { "kind": "idle" },
     "menuBar": false,
-    "defaultLocation": "local",
     "telemetry": { "enabled": true },
     "agents": [],
     "loginItem": { "status": "enabled" }
@@ -57,7 +54,6 @@
   },
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker"],
@@ -65,7 +61,6 @@
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,
-    "cloudPricing": null,
     "hosts": [
       { "id": "m-mini", "name": "Mac mini", "via": "relay", "online": true, "os": "macos", "limits": [] }
     ],

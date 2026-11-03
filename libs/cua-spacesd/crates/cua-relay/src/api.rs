@@ -10,6 +10,9 @@
 //! - `GET | PATCH | DELETE /v1/machines/{id}`
 //! - `POST /v1/machines/{id}/stop-sharing` | `start-sharing` (owner or the
 //!   machine itself): cut every client and refuse new ones, or resume.
+//! - `POST /v1/machines/{id}/leave` (anyone it is shared with, never the
+//!   owner): take yourself off it. A direct share is removed from the
+//!   allowlist or viewers; a team machine is hidden from your listing.
 //!
 //! Account callers other than registration need an enrolled client device
 //! (see [`crate::devices`]). A machine token only serves its own machine:
@@ -136,6 +139,7 @@ pub(crate) fn routes() -> Router<Relay> {
         .route("/v1/machines/{id}/stop-sharing", post(stop_sharing))
         .route("/v1/machines/{id}/start-sharing", post(start_sharing))
         .route("/v1/machines/{id}/confirm", post(confirm))
+        .route("/v1/machines/{id}/leave", post(leave))
 }
 
 pub(crate) fn error(status: StatusCode, message: impl Into<String>) -> Response {
@@ -750,6 +754,8 @@ async fn list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
                     }
                 }
             }
+            // A team machine the caller left stays out of their listing.
+            visible.retain(|(r, _, team)| team.is_none() || !r.hidden_from(&who.account));
             visible
                 .into_iter()
                 .map(|(r, role, team)| {
@@ -1034,6 +1040,96 @@ async fn start_sharing(
     headers: HeaderMap,
 ) -> Response {
     set_sharing(relay, id, headers, true).await
+}
+
+/// `POST /v1/machines/{id}/leave` answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveReply {
+    /// The machine left.
+    pub id: String,
+    /// The caller's own entries removed from its allowlist and viewers.
+    pub removed: Vec<String>,
+    /// The team the caller reaches it through: hidden from their listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_team: Option<String>,
+}
+
+/// A person takes themself off a machine shared with them: their own
+/// `allow` and `viewers` entries go; a machine they reach through a team
+/// is hidden from their listing (the team keeps it). Their open streams
+/// are cut. The owner's audit log records `share_left`; the caller's
+/// records `machine_left`. The owner cannot leave (they delete instead),
+/// and a machine token cannot leave on anyone's behalf.
+async fn leave(State(relay): State<Relay>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    let (who, gate) = match account_caller(&relay, &headers).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let caller = Caller::Account(who.clone(), gate);
+    if let Err(r) = caller.require_device() {
+        return r;
+    }
+    let (record, role) = match authorize(&caller, &relay, &id) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if role == Role::Owner {
+        return error(
+            StatusCode::FORBIDDEN,
+            "you own this computer; delete it instead of leaving it",
+        );
+    }
+    let actor = caller.actor();
+    let removed = record.entries_of(&who);
+    let record = if removed.is_empty() {
+        record
+    } else {
+        match relay.directory.remove_shares(&id, &removed) {
+            Ok(Some(r)) => r,
+            Ok(None) => record,
+            Err(e) => return directory_error(e),
+        }
+    };
+    // Still reached through a team: hide it from this member's listing.
+    let hidden_team = relay
+        .machine_role(&record, &who)
+        .and_then(|(_, teams)| teams.into_iter().next());
+    if hidden_team.is_some() {
+        if let Err(e) = relay.directory.hide_for(&id, &who.account) {
+            return directory_error(e);
+        }
+    }
+    let leaver = who.email.clone().unwrap_or_else(|| who.account.clone());
+    tracing::info!(machine = %id, account = %crate::ident::tag(&who.account), team = hidden_team.is_some(), "left a shared machine");
+    relay.devices.audit(
+        &record.owner.id,
+        AuditEvent::new("share_left")
+            .machine(&id)
+            .subject(leaver)
+            .detail(match &hidden_team {
+                Some(team) => format!("{} (left the team machine; {team} keeps it)", record.name),
+                None => record.name.clone(),
+            }),
+    );
+    relay.devices.audit(
+        &who.account,
+        AuditEvent::new("machine_left")
+            .device(actor.as_deref())
+            .machine(&id)
+            .detail(record.name.clone()),
+    );
+    // Removed entries lose their streams and tickets; a team member who
+    // keeps access through the team is cut once so their open view closes.
+    relay.reauthorize(Some(std::slice::from_ref(&id)));
+    if let Some(machine) = relay.machine(&id) {
+        machine.cut_user(&who.user);
+    }
+    let reply = LeaveReply {
+        id,
+        removed,
+        hidden_team,
+    };
+    finish(&relay, &caller, Json(reply).into_response())
 }
 
 /// Records allowlist entries added to or removed from `record` in the

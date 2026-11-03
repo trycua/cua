@@ -14,6 +14,7 @@ use cua_proto::env::v1::{
     filesystem_service_client::FilesystemServiceClient,
     host_snapshots_service_client::HostSnapshotsServiceClient,
     host_spaces_service_client::HostSpacesServiceClient,
+    host_thread_service_client::HostThreadServiceClient,
     presence_service_client::PresenceServiceClient, process_service_client::ProcessServiceClient,
     stream_service_client::StreamServiceClient, system_service_client::SystemServiceClient,
     teleport_service_client::TeleportServiceClient, tunnel_service_client::TunnelServiceClient,
@@ -425,6 +426,9 @@ impl SpacesdClient {
     raw_client!(/// Raw `HostSnapshotsService` client (a host's checkpoints, and
         /// copying them between hosts).
         host_snapshots, HostSnapshotsServiceClient);
+    raw_client!(/// Raw `HostThreadService` client (the threads of the Spaces a
+        /// host provides).
+        host_thread, HostThreadServiceClient);
 
     /// `GetCapabilities`, cached after the first successful call.
     pub async fn capabilities(&self) -> Result<pb::GetCapabilitiesResponse> {

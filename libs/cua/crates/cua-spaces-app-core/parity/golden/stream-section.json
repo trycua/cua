@@ -7,7 +7,7 @@
         "Desktop (1280×800)"
       ],
       "rows": [
-        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture"
+        "desktop desktop | Desktop | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture"
       ],
       "statusText": "Looking for this Space’s windows…"
     },
@@ -20,7 +20,7 @@
         "Quarterly planning notes for the Spaces launch, draft 7 (unsaved changes) - gedit"
       ],
       "rows": [
-        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture",
+        "desktop desktop | Desktop | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture",
         "window w-1 | Mozilla Firefox | - | app Firefox firefox 812 | pip pip.enter: Picture in picture",
         "window w-2 | xterm | - | app xterm xterm 904 | pip pip.exit: Close picture in picture (on)",
         "window w-3 | Quarterly planning notes for the Spaces launch, draft 7 (unsaved changes) - gedit | - | app gedit org.gnome.gedit 0 | pip pip.enter: Picture in picture"
@@ -45,7 +45,7 @@
         "Desktop (1920×1080)"
       ],
       "rows": [
-        "desktop desktop | Desktop (1920×1080) | 1920×1080 | os os-windows | pip pip.enter: Picture in picture"
+        "desktop desktop | Desktop | 1920×1080 | os os-windows | pip pip.enter: Picture in picture"
       ],
       "statusText": "No windows: the Space’s window host is not up."
     },
@@ -55,7 +55,7 @@
         "Desktop (1024×768)"
       ],
       "rows": [
-        "desktop desktop | Desktop (1024×768) | 1024×768 | os os-arch | pip pip.enter: Picture in picture"
+        "desktop desktop | Desktop | 1024×768 | os os-arch | pip pip.enter: Picture in picture"
       ],
       "statusText": "No open windows in this Space yet."
     },
@@ -65,7 +65,7 @@
         "Desktop (1280×800)"
       ],
       "rows": [
-        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-linux | pip pip.enter: Picture in picture"
+        "desktop desktop | Desktop | 1280×800 | os os-linux | pip pip.enter: Picture in picture"
       ],
       "statusText": "No windows match your filter."
     },

@@ -413,18 +413,21 @@ pub async fn doctor() -> DoctorReport {
     let mut lume = LumeReport {
         supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
         binary: lume_binary(),
-        url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+        url: crate::local_network::lume_base(),
         ..Default::default()
     };
     #[cfg(feature = "lume")]
     if lume.supported_host {
         let c = crate::lume::LumeClient::new(lume.url.clone());
         lume.serving = c.reachable().await;
-        if let Some(b) = &lume.binary {
-            lume.version = host::run(b, &["--version"])
-                .await
-                .ok()
-                .map(|s| s.trim().to_string());
+        if lume.binary.is_some() {
+            // Run as Lume runs for this channel: a bare `lume --version`
+            // initialises the pinned Lume's settings and telemetry under
+            // Stable's `~/.config/lume` and `~/.lume`. (For Local this
+            // writes only its own config under its home.)
+            if let Ok(Some(l)) = crate::lume::lume_cmd() {
+                lume.version = crate::lume::version_text(&l).await;
+            }
         }
     }
     // Without any Lume, the built-in one is set up on first use unless the
@@ -708,8 +711,9 @@ pub fn containerization_backend(r: &ContainerizationReport) -> BackendStatus {
 }
 
 /// The microVM backend on a Linux host: ready when KVM, Firecracker, the
-/// guest init and the host tools are there (the kernel downloads on first
-/// use); `cua runtime setup firecracker` installs Firecracker.
+/// guest init and the host tools are there. Firecracker and the kernel
+/// install on the first create (provisionable), as `cua runtime setup
+/// firecracker` does; passt is the host's to install ([`crate::microvm::assets::PASTA_HINT`]).
 #[cfg(feature = "microvm")]
 async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
     if HostOs::current() != HostOs::Linux {
@@ -750,6 +754,8 @@ async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
                     "; guest kernel downloads on first use"
                 }
             )
+        } else if r.pasta.is_none() {
+            crate::microvm::assets::PASTA_HINT.to_string()
         } else {
             "Firecracker microVMs are not set up".into()
         },
@@ -922,7 +928,14 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                         provisioning: l.provisioning,
                     });
                 }
-                Err(VmmError::missing("QEMU", q.missing.join(", ")))
+                Err(VmmError::missing(
+                    "QEMU",
+                    if host.os == HostOs::Windows {
+                        crate::preflight::QEMU_MISSING_WINDOWS.to_string()
+                    } else {
+                        q.missing.join(", ")
+                    },
+                ))
             }
         },
     }
@@ -948,7 +961,7 @@ fn lume_binary() -> Option<PathBuf> {
     }
     #[cfg(not(feature = "lume"))]
     {
-        host::which("lume")
+        host::which(cua_home::channel::CuaChannel::current().lume_bin_name())
     }
 }
 

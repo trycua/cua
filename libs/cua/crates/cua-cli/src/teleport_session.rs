@@ -143,12 +143,17 @@ impl Broker for Unwired {
     }
 }
 
-/// The error when no Keyvault is reachable: install or open the Cua app.
+/// The error when no Keyvault is reachable: install or open the Cua app
+/// (this process's channel's: `cua://`, or `cua-local://` for Local).
 pub fn requires_cua_app() -> BrokerError {
+    requires_cua_app_for(cua_home::channel::CuaChannel::current())
+}
+
+fn requires_cua_app_for(channel: cua_home::channel::CuaChannel) -> BrokerError {
     BrokerError::RequiresCuaApp {
         installed: false,
         install_url: "https://cua.ai/download".into(),
-        open_url: "cua://keyvault".into(),
+        open_url: channel.keyvault_url(),
     }
 }
 
@@ -516,5 +521,15 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.kind(), "requires_cua_app");
         assert!(e.message().contains("https://cua.ai/download"));
+    }
+
+    #[test]
+    fn the_open_link_is_the_channels() {
+        use cua_home::channel::CuaChannel;
+        let message = |c| requires_cua_app_for(c).message();
+        assert!(message(CuaChannel::Stable).contains("open cua://keyvault,"));
+        // Local opens Cua Spaces Local, never the released app.
+        assert!(message(CuaChannel::Local).contains("open cua-local://keyvault,"));
+        assert!(!message(CuaChannel::Local).contains("cua://"));
     }
 }

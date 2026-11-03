@@ -54,11 +54,13 @@ pub mod fs;
 #[cfg(all(feature = "fuse", target_os = "linux"))]
 pub mod fuse;
 pub mod guest;
+pub mod journal;
 pub mod lease;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 pub mod path;
 pub mod remote;
+pub mod replica;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod scan;

@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use common::FakeExec;
 use common::hosts::*;
-use cua_spaces_cluster::coordinator::durable::DurableSpec;
+use cua_spaces_cluster::coordinator::durable::{
+    DurableConnection, DurableSpec, SetupHook, SetupOutcome, SpaceSetup, setup,
+};
 use cua_spaces_cluster::coordinator::sessions::{
     ENV_CONTRACT, ENV_SPACE, SessionSpec, SessionView, sstate,
 };
@@ -308,6 +310,12 @@ async fn a_session_that_keeps_crashing_ends_failed_exhausted_with_a_clear_error(
         v.error
     );
     assert!(v.error.contains("exit 3"), "{}", v.error);
+    // Plain words: the drive, not an internal job number.
+    assert!(
+        v.error.contains("drive 3 of 3: the driver ended") && !v.error.contains("driver job"),
+        "{}",
+        v.error
+    );
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(lab.starts().len(), 3, "no fourth drive");
     assert_eq!(
@@ -573,6 +581,135 @@ async fn a_space_its_host_lost_is_placed_again_before_the_next_drive() {
     );
     assert_ne!(second.env["CUA_SESSION_SPACE_ADDR"], first.space);
     lab.coord.session_stop("work").await.unwrap();
+    lab.stop();
+}
+
+/// A `.cua/setup` stand-in: records each copy it set up and fails the
+/// generations it is told to.
+#[derive(Default)]
+struct FakeSetup {
+    /// (generation, restored, finished at (Unix ms))
+    calls: std::sync::Mutex<Vec<(u32, String, i64)>>,
+    fail: Vec<u32>,
+    takes: Duration,
+}
+
+#[async_trait::async_trait]
+impl SpaceSetup for FakeSetup {
+    async fn setup(&self, space: &DurableConnection) -> SetupOutcome {
+        tokio::time::sleep(self.takes).await;
+        self.calls.lock().unwrap().push((
+            space.generation,
+            space.restored.clone(),
+            cua_cluster::model::now_ms(),
+        ));
+        let ok = !self.fail.contains(&space.generation);
+        SetupOutcome {
+            ok,
+            note: if ok {
+                ".cua/setup finished".into()
+            } else {
+                ".cua/setup failed with exit code 2 (from /home/cua/repo/.cua/setup).\nnpm ERR! missing script".into()
+            },
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn setup_runs_on_creation_and_on_replacement_from_scratch_before_the_next_drive() {
+    let hook = Arc::new(FakeSetup {
+        takes: Duration::from_millis(700),
+        ..Default::default()
+    });
+    let h = hook.clone();
+    let lab = Lab::with(&["a"], move |c| c.space_setup = Some(SetupHook(h))).await;
+    let first = lab
+        .coord
+        .durable_create("shared", DurableSpec::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.generation, first.setup.as_str()),
+        (1, setup::PENDING)
+    );
+    let mut s = driver("1=exit:1;2=hang");
+    s.space = "shared".into();
+    let v = lab.coord.session_start("work", s, 0).await.unwrap();
+    // Nothing is driven while the first copy is set up.
+    assert_eq!((v.epoch, v.state.as_str()), (0, sstate::PENDING), "{v:?}");
+    assert!(v.error.contains(".cua/setup"), "{}", v.error);
+    lab.until("work", "epoch 1 driven after setup", T, |v| v.epoch >= 1)
+        .await;
+    assert_eq!(
+        lab.coord.durable_get("shared").await.unwrap().setup,
+        setup::OK
+    );
+    // The Space is lost; the next copy is set up from scratch, then epoch 2
+    // runs on it.
+    lab.hosts[0].spaces.0.lock().unwrap().spaces.clear();
+    lab.until("work", "epoch 2 running", T, |v| {
+        v.epoch == 2 && v.state == sstate::RUNNING
+    })
+    .await;
+    wait_for("epoch 2 started", T, async || {
+        lab.execs[0]
+            .drivers()
+            .iter()
+            .any(|d| d.epoch() == 2)
+            .then_some(())
+    })
+    .await;
+    let started2 = cua_cluster::model::now_ms();
+    let calls = hook.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(g, r, _)| (*g, r.as_str()))
+            .collect::<Vec<_>>(),
+        [(1, ""), (2, "from-scratch")]
+    );
+    assert!(calls[1].2 <= started2, "setup finished before the drive");
+    let again = lab.coord.durable_get("shared").await.unwrap();
+    assert_eq!(
+        (
+            again.generation,
+            again.restored.as_str(),
+            again.setup.as_str()
+        ),
+        (2, "from-scratch", setup::OK)
+    );
+    lab.coord.session_stop("work").await.unwrap();
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_setup_fails_the_session_and_nothing_is_driven() {
+    let hook = Arc::new(FakeSetup {
+        fail: vec![1],
+        ..Default::default()
+    });
+    let h = hook.clone();
+    let lab = Lab::with(&["a"], move |c| c.space_setup = Some(SetupHook(h))).await;
+    lab.coord
+        .durable_create("shared", DurableSpec::default())
+        .await
+        .unwrap();
+    let mut s = driver("1=hang");
+    s.space = "shared".into();
+    lab.coord.session_start("work", s, 0).await.unwrap();
+    let v = lab
+        .until("work", "failed", T, |v| v.state == sstate::FAILED)
+        .await;
+    assert_eq!(v.reason, "permanent");
+    assert_eq!(
+        v.error,
+        "the .cua/setup of its durable Space shared failed: .cua/setup failed with exit code 2 \
+         (from /home/cua/repo/.cua/setup).\nnpm ERR! missing script"
+    );
+    assert_eq!(lab.starts().len(), 0);
+    let d = lab.coord.durable_get("shared").await.unwrap();
+    assert_eq!(d.setup, setup::FAILED);
+    assert!(d.setup_note.contains("npm ERR!"));
     lab.stop();
 }
 
@@ -980,5 +1117,88 @@ async fn an_unreachable_host_is_not_a_stall() {
         "{:?}",
         v.history
     );
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_driver_that_fits_on_no_machine_says_what_it_waits_for() {
+    let lab = Lab::new(&["a"]).await;
+    let mut spec = driver("1=hang");
+    // The test hosts have 8 CPUs: this driver fits on none of them.
+    spec.cpus = 64.0;
+    spec.memory_mb = 4096;
+    lab.coord.session_start("big", spec, 0).await.unwrap();
+    let v = lab
+        .until("big", "a waiting reason", T, |v| !v.waiting.is_empty())
+        .await;
+    assert_eq!(v.state, sstate::RUNNING);
+    assert!(
+        v.waiting.contains("64 CPUs") && v.waiting.contains("4 GB memory"),
+        "{}",
+        v.waiting
+    );
+    assert_eq!(lab.starts_of(1), 0, "it must not have started");
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_driver_that_fits_has_no_waiting_reason() {
+    let lab = Lab::new(&["a"]).await;
+    lab.coord
+        .session_start("small", driver("1=hang"), 0)
+        .await
+        .unwrap();
+    wait_for("epoch 1 started", T, async || {
+        (lab.starts_of(1) == 1).then_some(())
+    })
+    .await;
+    let v = lab.coord.session_get("small").await.unwrap();
+    assert!(v.waiting.is_empty(), "{}", v.waiting);
+    lab.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_next_drive_starts_on_the_machine_that_ran_the_last_when_it_has_room() {
+    // The journal is in the data folder of the machine that ran the last
+    // drive. Spreading would send the next drive to the idle machine `b`;
+    // the session goes back to `a`.
+    let lab = Lab::new(&["a", "b"]).await;
+    lab.coord
+        .session_start("work", driver("1=crashafter:1500;2=hang"), 0)
+        .await
+        .unwrap();
+    wait_for("epoch 1 started", T, async || {
+        (lab.starts_of(1) == 1).then_some(())
+    })
+    .await;
+    let first = lab.starts()[0].0;
+    // Load the first machine so that, without the preference, the next
+    // drive would go to the other one.
+    let other = 1 - first;
+    let names = ["a", "b"];
+    for (i, host) in [(0, names[other]), (1, names[first]), (2, names[first])] {
+        let mut s = driver("1=hang");
+        s.on = host.into();
+        lab.coord
+            .session_start(&format!("filler{i}"), s, 0)
+            .await
+            .unwrap();
+    }
+    let v = lab
+        .until("work", "epoch 2 running", Duration::from_secs(30), |v| {
+            v.epoch == 2 && v.state == sstate::RUNNING
+        })
+        .await;
+    wait_for("epoch 2 started", T, async || {
+        (lab.starts_of(2) == 1).then_some(())
+    })
+    .await;
+    let second = lab
+        .starts()
+        .iter()
+        .find(|(_, e)| *e == 2)
+        .map(|(i, _)| *i)
+        .unwrap();
+    assert_eq!(second, first, "{v:?}");
     lab.stop();
 }

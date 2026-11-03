@@ -9,7 +9,10 @@
 # DIR holds downloaded release artifacts, flat or in per-artifact
 # subdirectories (gh run download layout):
 #   *.tgz   npm packages; trycua-cua-linux-{x64,arm64}-gnu-* are checked
-#   *.whl   wheels; manylinux x86_64/aarch64 are checked
+#   *.whl   wheels; manylinux x86_64/aarch64 `cua` wheels are checked: the
+#           SDK library finds cua/bin/cua-spacesd-linux-<arch> (its bin/),
+#           and the `cua` command hands it to the `cua-cli` wheel's CLI as
+#           $CUA_SPACESD_STATIC)
 #   *.deb   any deb; checked when it contains a `cua` ELF
 #   cua-cli-*-linux-*.tar.gz, cua-*-linux-*-gnu.tar.gz   install.sh archives
 #   native-linux-*/   extracted native artifacts
@@ -75,6 +78,21 @@ check_dir() {
   echo "ok    $name: ${bin#"$d"/} (static, $arch, $(wc -c <"$bin" | tr -d ' ') bytes)"
 }
 
+# check_wheel NAME DIR ARCH: DIR holds the unpacked `cua` wheel. The static
+# cua-spacesd must sit at cua/bin/, the library's bin/ directory (the CLI
+# comes from the `cua-cli` wheel and is pointed at it).
+check_wheel() {
+  local name="$1" d="$2" arch="$3" bin why
+  CHECKED=$((CHECKED + 1))
+  bin="$d/cua/bin/cua-spacesd-linux-$arch"
+  if [ ! -f "$bin" ]; then fail "$name" "no cua/bin/cua-spacesd-linux-$arch"; return; fi
+  if ! why="$(elf_check "$bin" "$arch")"; then fail "$name" "cua/bin/cua-spacesd-linux-$arch: $why"; return; fi
+  if [ -n "$VERSION" ] && ! grep -aqF "$VERSION" "$bin"; then
+    fail "$name" "cua/bin/cua-spacesd-linux-$arch does not contain version string $VERSION"; return
+  fi
+  echo "ok    $name: cua/bin/cua-spacesd-linux-$arch (static, $arch, $(wc -c <"$bin" | tr -d ' ') bytes)"
+}
+
 arch_of() {
   case "$1" in
     *x64* | *x86_64* | *amd64*) echo x86_64 ;;
@@ -89,10 +107,11 @@ while IFS= read -r f; do
     trycua-cua-linux-*-gnu-*.tgz)
       mkdir -p "$x"; tar -xzf "$f" -C "$x" || { fail "$base" "cannot unpack"; continue; }
       check_dir "npm $base" "$x" "$(arch_of "$base")" ;;
+    cua_cli-*.whl) continue ;;
     *.whl)
       case "$base" in *manylinux*x86_64*) a=x86_64 ;; *manylinux*aarch64*) a=aarch64 ;; *) continue ;; esac
       mkdir -p "$x"; python3 -m zipfile -e "$f" "$x" || { fail "$base" "cannot unpack"; continue; }
-      check_dir "wheel $base" "$x" "$a" ;;
+      check_wheel "wheel $base" "$x" "$a" ;;
     *.deb)
       mkdir -p "$x"
       if command -v dpkg-deb >/dev/null 2>&1; then dpkg-deb -x "$f" "$x" 2>/dev/null

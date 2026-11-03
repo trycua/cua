@@ -9,6 +9,11 @@ Most problems are a Space that won't create, or an agent or computer that won't
 connect. This page covers a failed create in detail and points to the fix for the
 rest.
 
+<Callout type="info">
+  If sign-in, connecting a computer or a download fails for everyone, check
+  [System status](https://status.cua.ai) first. We post outages and updates there.
+</Callout>
+
 ## A Space won't create
 
 When a Space can't be created, Cua Spaces shows **Couldn't create this Space**
@@ -59,7 +64,7 @@ for the full list.
 | This computer can't run virtual machines (`virtualization_unavailable`) | macOS Spaces need an Apple silicon Mac. On Linux and Windows, turn on hardware virtualization in the firmware settings. Or create a Linux container Space instead. |
 | Two macOS VMs already run (`vm_limit`) | Apple allows two macOS VMs at a time on one Mac. Stop or delete one, then try again. |
 | The VM started but never answered (`vm_boot_timeout`, `services_unreachable`) | The first macOS Space unpacks a large image and can run out of time. Try again: the image is already downloaded, so it is much faster. |
-| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. |
+| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. If nobody sits at the Mac (you use it over SSH or from another computer), macOS can't ask: run the three commands in [Add a computer](/spaces/guides/add-a-computer#over-ssh-or-tailscale) once on it. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 
 ### Creating on another computer
@@ -87,6 +92,7 @@ and system versions. Before anything leaves your computer:
 - **Open email** starts a message to Cua support (support@trycua.com) in your
   mail app. Nothing is sent until you press Send there.
 
+Before you email, check [System status](https://status.cua.ai) in case it is a wider outage.
 On any version, you can email support@trycua.com with the reason shown, your
 system, and the Cua Spaces version from **Settings, About**.
 
@@ -104,6 +110,7 @@ system, and the Cua Spaces version from **Settings, About**.
 | On Linux, Share fails at once with "user presence was not confirmed" | [Sharing on Linux](/spaces/guides/share-a-space) in Share a Space: install the latest .deb and use a desktop session with a polkit agent |
 | An error name such as `capability_missing` or `permission_denied` | [Errors](/spaces/reference#errors) in the Spaces reference |
 | You want Cua Spaces gone, or a clean reinstall | [Uninstall Cua Spaces](/spaces/guides/uninstall), then [Install](/spaces/guides/install) |
+| Sign-in, connecting a computer, downloads or billing fail for everyone, or the problem started suddenly | [System status](https://status.cua.ai): we post outages and updates there |
 | Something else | Email support@trycua.com as described above |
 
 ## Next

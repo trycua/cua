@@ -20,6 +20,8 @@ on:
       - "libs/cua/crates/cua-vmm/src/microvm/**"
       - "libs/cua/crates/cua-daemon/src/local.rs"
       - "tests/e2e/local-runtimes/tests/oci_any.rs"
+      - "tests/e2e/local-runtimes/tests/space_jobs.rs"
+      - "libs/cua/crates/cua-spaces/src/space_jobs.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
   push:
     branches: [main]
@@ -60,10 +62,10 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - name: musl toolchain
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
-          key: oci-static-musl
+          shared-key: libs-cua-spacesd-static
       - name: Build
         working-directory: libs/cua-spacesd
         run: cargo build --locked --profile static --target x86_64-unknown-linux-musl -p cua-spacesd --bin cua-spacesd
@@ -95,10 +97,9 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "tests/e2e/local-runtimes -> target"
-          key: oci-any
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cua-spacesd-linux-x86_64
@@ -116,3 +117,14 @@ jobs:
           export CUA_HOME="$RUNNER_TEMP/cua-home"
           mkdir -p "$CUA_HOME"
           cargo test --locked --test oci_any -- --nocapture
+      - name: Background jobs in a Space
+        working-directory: tests/e2e/local-runtimes
+        env:
+          CUA_E2E_SPACE_JOBS: "1"
+          CUA_E2E_OCI_ANY_RUNTIME: runc
+        run: |
+          set -euo pipefail
+          export CUA_SPACESD_STATIC="$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
+          export CUA_HOME="$RUNNER_TEMP/cua-home-jobs"
+          mkdir -p "$CUA_HOME"
+          cargo test --locked --test space_jobs -- --nocapture

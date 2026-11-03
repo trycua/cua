@@ -152,7 +152,7 @@ pub async fn bake(
             .as_ref()
             .map(|v| format!(", a fork came up live in {:.1}s", v.fork_s))
             .unwrap_or_default();
-        format!(
+        crate::util::hint(&format!(
             "Checkpoint '{}' baked in {:.1}s: {ready}compose up {:.1}s, checkpoint {:.1}s{fork}.\n{} containers running:\n  {}\nFork it: cua sb fork {} <name>",
             s.checkpoint,
             s.total_s,
@@ -161,7 +161,7 @@ pub async fn bake(
             s.containers.len(),
             s.containers.join("\n  "),
             s.checkpoint
-        )
+        ))
     });
     Ok(0)
 }

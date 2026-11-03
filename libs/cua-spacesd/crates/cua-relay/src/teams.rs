@@ -1593,6 +1593,7 @@ mod tests {
             host: None,
             confirmed: true,
             meta: BTreeMap::new(),
+            hidden_for: Vec::new(),
         }
     }
 

@@ -71,9 +71,11 @@ describe("SpaceWindowList (the Stream section)", () => {
   it("draws the core's rows: Desktop with the display's resolution, then each window by title", async () => {
     renderList();
     await screen.findByText("Cua Docs");
-    expect(await screen.findByText("Desktop (1280×800)")).toBeInTheDocument();
+    expect(await screen.findByText("Desktop")).toBeInTheDocument();
     const labels = Array.from(document.querySelectorAll(".ssr-label")).map((e) => e.textContent);
-    expect(labels).toEqual(["Desktop (1280×800)", "Cua Docs", "Release notes", "xterm", LONG_TITLE]);
+    expect(labels).toEqual(["Desktop", "Cua Docs", "Release notes", "xterm", LONG_TITLE]);
+    // The resolution shows once, as the Desktop row's detail.
+    expect(Array.from(document.querySelectorAll(".ssr-resolution")).map((e) => e.textContent)).toEqual(["1280×800"]);
     // The screen target is the Desktop row, not a window row.
     expect(screen.queryByText("Cua Driver Local")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
@@ -108,7 +110,7 @@ describe("SpaceWindowList (the Stream section)", () => {
     expect(within(rowOf("xterm")).queryByTestId("ssr-app-icon")).toBeNull();
     expect(within(rowOf("xterm")).queryByRole("img")).toBeNull();
     // The Desktop row carries the Space's OS mark.
-    expect(rowOf("Desktop (1280×800)").querySelector('[data-os-icon="os-ubuntu"]')).not.toBeNull();
+    expect(rowOf("Desktop").querySelector('[data-os-icon="os-ubuntu"]')).not.toBeNull();
   });
 
   it("gives every row a Picture in picture icon button", async () => {
@@ -123,7 +125,7 @@ describe("SpaceWindowList (the Stream section)", () => {
   it("the Desktop row's button pins the desktop", async () => {
     const { onPipDesktop, onPipWindow } = renderList();
     await screen.findByText("Cua Docs");
-    fireEvent.click(within(rowOf("Desktop (1280×800)")).getByRole("button", { name: "Picture in picture" }));
+    fireEvent.click(within(rowOf("Desktop")).getByRole("button", { name: "Picture in picture" }));
     expect(onPipDesktop).toHaveBeenCalledTimes(1);
     expect(onPipWindow).not.toHaveBeenCalled();
   });
@@ -147,7 +149,7 @@ describe("SpaceWindowList (the Stream section)", () => {
       }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent("No windows: the Space’s window host is not up.");
-    expect(screen.getByText("Desktop (1280×800)")).toBeInTheDocument();
+    expect(screen.getByText("Desktop")).toBeInTheDocument();
   });
   it("tracks open picture-in-picture panels: pip.exit and Close while open", async () => {
     let panels: string[] = ["w-2"];
@@ -181,7 +183,7 @@ describe("SpaceWindowList (the Stream section)", () => {
     await waitFor(() => expect(notes).toHaveAccessibleName("Close picture in picture"));
     expect(notes).toHaveAttribute("aria-pressed", "true");
     // Opening the Desktop's: the row flips at once.
-    const desktop = within(rowOf("Desktop (1280×800)")).getByRole("button");
+    const desktop = within(rowOf("Desktop")).getByRole("button");
     fireEvent.click(desktop);
     expect(onPipDesktop).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(desktop).toHaveAccessibleName("Close picture in picture"));

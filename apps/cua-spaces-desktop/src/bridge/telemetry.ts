@@ -7,6 +7,7 @@
 // locked off, drops every signal here.
 import type { Native } from "../native/load";
 import type { AppTelemetrySignal } from "../native/generated/index";
+import { crashReportingAnswer } from "../crash-reporting";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
@@ -92,6 +93,13 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       if (!list.every((w) => typeof w === "string" && WORD.test(w))) return null;
       return new S.ExperimentsOn({ experiments: list as string[] });
     }
+    // A plan limit shown, or its (or an upgrade prompt's) link opened (CUA-1881).
+    case "plan-limit-shown":
+    case "upgrade-link-opened": {
+      const [surface, kind, plan] = [word("surface"), word("kind"), word("plan")];
+      if (!surface || !kind || !plan) return null;
+      return s.type === "plan-limit-shown" ? new S.PlanLimitShown({ surface, kind, plan }) : new S.UpgradeLinkOpened({ surface, kind, plan });
+    }
     default:
       return null;
   }
@@ -130,7 +138,8 @@ export function hostRecorded(raw: unknown): boolean {
 export function leftWelcome(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
   const s = raw as Record<string, unknown>;
-  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  // Welcome being shown (the old `shown`, the funnel's `step_viewed`) is before the notice.
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && (s.action === "shown" || s.action === "step_viewed"));
   return s.type === "step" && s.step === "onboarding_skipped";
 }
 
@@ -152,6 +161,11 @@ export function telemetryMethods({ model }: BridgeContext): Handlers {
     },
     // The one-time linking notice (CUA-1881): the SDK's words and whether
     // it is due. No telemetry (a test host) has none.
+    // The page's own crash reports (apps/cua-spaces-web/src/crash-reporting): allowed only while usage data is on and its notice shown.
+    "crashReporting.config": () => {
+      const status = model.telemetry?.status();
+      return crashReportingAnswer(status?.enabled === true && status.noticeShown !== false);
+    },
     "telemetry.linkNotice": () => model.telemetry?.linkNotice() ?? null,
     "telemetry.acknowledgeLinkNotice": () => {
       model.telemetry?.acknowledgeLinkNotice();

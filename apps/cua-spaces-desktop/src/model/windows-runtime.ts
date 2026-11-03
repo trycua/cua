@@ -83,7 +83,7 @@ export function windowsRuntimeAdvice(facts: WindowsRuntimeFacts, phase: FixPhase
   if (facts.virtualization === "off") {
     return {
       reason:
-        "This PC can't run local Spaces: virtualization is turned off. Turn on Intel VT-x or AMD-V (SVM) in the PC's firmware (BIOS/UEFI) settings, or run Spaces on another computer.",
+        "This PC can't run local Spaces: virtualization is turned off. Turn on Intel VT-x or AMD-V (SVM) in the PC's firmware (BIOS/UEFI) settings, or run Spaces on another machine.",
       fix: null,
     };
   }

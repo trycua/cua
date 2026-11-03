@@ -178,7 +178,7 @@ export const PAGES: PageSpec[] = [
     description:
       'cua.env.v1 HostSpacesService: Spaces a host creates for its owner\'s devices through the relay.',
     intro:
-      'Spaces a machine set up with `cua host setup --provide-spaces` creates for its owner\'s enrolled devices: settings, capacity, create and delete. The host\'s cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).',
+      'Spaces a machine set up with `cua host setup --share both` creates for its owner\'s enrolled devices: settings, capacity, create and delete. The host\'s cua-spacesd forwards each call to its cua daemon. What a host reports for placement is on [Host capacity](/cua-sdk/reference/protocol/env-host-capacity).',
     files: ['cua/env/v1/host.proto'],
   },
   {

@@ -29,7 +29,10 @@ test("forkMany streams each fork, then the summary", async () => {
     .forkMany(
       "no-such-checkpoint",
       3,
-      cua.ForkManyOptions.create({ on: "local", groupSize: 2, namePrefix: "ts" }),
+      // Counted small, so this machine has room for all three whatever its
+      // memory (a CI runner's, or Windows' unmeasured default of 4 GiB); the
+      // test is about the events, not about capacity.
+      cua.ForkManyOptions.create({ on: "local", groupSize: 2, namePrefix: "ts", memoryMb: 64n }),
     )
   const events = []
   for (;;) {

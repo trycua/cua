@@ -18,8 +18,6 @@ export type ImageTier = "slim" | "full" | "xcode" | "docker";
 /** The image list's local engine: `container` (gVisor when installed, else
  * runc), `qemu` or `lume`. */
 export type LocalEngine = "container" | "qemu" | "lume";
-/** The image list's cloud engine. */
-export type CloudEngine = "gvisor" | "kubevirt";
 
 export interface SandboxImage {
   ref: string;
@@ -30,7 +28,6 @@ export interface SandboxImage {
   summary: string;
   spacesd: boolean;
   local: LocalEngine | null;
-  cloud: CloudEngine | null;
   /** `slim`, `full` (the default), `xcode` or `docker`: canonical images only. */
   tier?: ImageTier;
   published: boolean;
@@ -44,7 +41,7 @@ export interface ImageGroup {
 
 /** Where the wizard creates: a location, the user's own cloud, or one of
  * the user's machines that provides Spaces. */
-export type Placement = Location | 'yours' | 'host';
+export type Placement = Location;
 
 /** Every image the pickers show, in file order. */
 export function pickerImages(): SandboxImage[] {

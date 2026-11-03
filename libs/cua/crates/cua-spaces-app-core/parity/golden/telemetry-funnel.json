@@ -656,14 +656,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -690,7 +690,7 @@
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "error",
           "retryAttempt": 0,
           "stalled": false,
@@ -812,14 +812,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -851,7 +851,7 @@
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "ok",
           "retryAttempt": 0,
           "stalled": false,

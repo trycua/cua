@@ -52,6 +52,43 @@ pub fn target_of(c: &Connection) -> Target {
     }
 }
 
+/// A cloud API token in memory: never printed (`Debug` says `redacted`),
+/// never serialized, and wiped when dropped.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(zeroize::Zeroizing<String>);
+
+impl Secret {
+    /// Holds `s`.
+    pub fn new(s: impl Into<String>) -> Self {
+        Secret(zeroize::Zeroizing::new(s.into()))
+    }
+
+    /// The token, to put in a request.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(redacted)")
+    }
+}
+
+/// Where a cloud gets the API token of a connection whose token is sealed
+/// to the account's devices ([`crate::model::Auth::Sealed`]). The clouds
+/// that take a token ask it before their own local sources.
+#[async_trait]
+pub trait SecretSource: Send + Sync + 'static {
+    /// `None`: `provider`'s connection is not sealed (use the local
+    /// token). `Some(Err)`: it is, and could not be opened here (the
+    /// error says why); a local token is then not used in its place.
+    async fn secret(&self, provider: &str) -> Option<Result<Secret>>;
+
+    /// Whether `provider`'s connection is sealed (without opening it).
+    fn sealed(&self, provider: &str) -> bool;
+}
+
 /// The result of [`CloudApi::test`].
 #[derive(Clone, Debug, Default)]
 pub struct Tested {
@@ -121,6 +158,28 @@ pub trait CloudApi: Send + Sync + 'static {
     /// Called on disconnect: removes what [`CloudApi::persist_secret`] saved.
     fn forget_secret(&self) {}
 
+    /// Drops what [`CloudApi::stage_secret`] held without saving it (a
+    /// token that is sealed instead).
+    fn unstage_secret(&self) {}
+
+    /// Whether its API token can be sealed to the account's devices
+    /// ([`crate::model::Auth::Sealed`]: Hetzner, Modal).
+    fn seals(&self) -> bool {
+        false
+    }
+
+    /// The API token a connect would use: `target.token`, else the one
+    /// this device already has (the saved token, the environment's, the
+    /// cloud CLI's). For sealing it ([`CloudApi::seals`]); `None` when
+    /// there is none or the cloud takes no token.
+    fn local_secret(&self, _target: &Target) -> Option<Secret> {
+        None
+    }
+
+    /// Where the tokens of sealed connections come from (set once, by
+    /// [`crate::Clouds`]).
+    fn attach_secrets(&self, _source: std::sync::Arc<dyn SecretSource>) {}
+
     /// What it can run for each image family on `conn`, the machine type
     /// Cua picks and the estimated hourly cost.
     fn kinds(&self, conn: &Connection) -> Vec<CloudKind>;
@@ -180,6 +239,10 @@ pub trait CloudApi: Send + Sync + 'static {
 
 /// How long to wait before retry `n` (1-based) of a rate-limited or
 /// briefly unavailable cloud call: 0.25 s doubling, at most 3 retries.
+#[cfg_attr(
+    not(any(feature = "gcp", feature = "azure", feature = "modal")),
+    allow(dead_code)
+)]
 pub(crate) fn retry_backoff(n: u32) -> Option<std::time::Duration> {
     (n <= 3).then(|| std::time::Duration::from_millis(250 << (n - 1)))
 }
@@ -187,6 +250,10 @@ pub(crate) fn retry_backoff(n: u32) -> Option<std::time::Duration> {
 /// Whether an HTTP answer is worth a retry: 429 and 503 always (the cloud
 /// did not act on the call), 500, 502 and 504 only for reads and deletes
 /// (a create that may have happened is never repeated).
+#[cfg_attr(
+    not(any(feature = "gcp", feature = "azure", feature = "modal")),
+    allow(dead_code)
+)]
 pub(crate) fn retryable_status(status: u16, idempotent: bool) -> bool {
     matches!(status, 429 | 503) || (idempotent && matches!(status, 500 | 502 | 504))
 }

@@ -12,6 +12,10 @@ use serde::Serialize;
 /// Default path of the token file.
 pub const DEFAULT_TOKEN_FILE: &str = "/run/cua/env-token";
 
+/// Default mesh UDP port of the QUIC media listener
+/// ([`cua_mesh::MEDIA_UDP_PORT`]).
+pub const DEFAULT_MESH_UDP_PORT: u16 = cua_mesh::MEDIA_UDP_PORT;
+
 /// Largest `bytes` payload accepted in one chunk message.
 pub const MAX_CHUNK_BYTES: u32 = 4 * 1024 * 1024;
 /// Largest encoded gRPC message accepted or sent.
@@ -65,6 +69,12 @@ pub struct ServerConfig {
     /// UDP port of the direct QUIC media listener (0 = disabled). Reported in
     /// `SideChannels`; the listener itself belongs to the desktop provider.
     pub media_quic_port: u16,
+    /// The mesh UDP port that reaches the QUIC media listener over the
+    /// mesh ([`cua_mesh::MEDIA_UDP_PORT`], 3212 for every build, unless
+    /// `--mesh-udp-port` overrides it). A port of the mesh's own network,
+    /// not of the operating system; clients dial the same number
+    /// (`cua_mesh::MeshConfig::media_udp_port`).
+    pub mesh_udp_port: u16,
     /// Teleport destination root (default `~/Downloads`).
     pub downloads_dir: Option<PathBuf>,
     /// Home directory app-session imports land in (default `$HOME`).
@@ -142,6 +152,7 @@ impl Default for ServerConfig {
             runtime_override: None,
             os_override: None,
             media_quic_port: 0,
+            mesh_udp_port: DEFAULT_MESH_UDP_PORT,
             downloads_dir: None,
             teleport_home: None,
             teleport_ledger_dir: None,

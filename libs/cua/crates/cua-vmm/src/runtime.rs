@@ -208,6 +208,22 @@ pub trait Runtime: Send + Sync {
         let _ = name;
         Ok(Default::default())
     }
+
+    /// Replaces instance `name`'s network settings ([`crate::network`]),
+    /// kept with it from now on (they win over a later start spec's). Says
+    /// whether the running guest is under them now or from its next start.
+    /// Runtimes that keep none refuse.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        let _ = (name, settings);
+        Err(VmmError::Unsupported {
+            backend: self.kind().as_str(),
+            op: "changing network settings (this runtime keeps none: create the Space again)",
+        })
+    }
 }
 
 /// Resolves an OCI reference to a local bootable disk (qcow2). Implemented by
@@ -304,6 +320,31 @@ pub trait RootfsResolver: Send + Sync {
         arch: Arch,
         creds: Option<&crate::RegistryCredentials>,
     ) -> Result<RootfsLayers>;
+
+    /// Pulls `reference` for `arch` the way [`Self::resolve_rootfs`] does (the
+    /// caller's credentials, else the host's own credential chain, through
+    /// the shared layer cache) and writes it to `out` as an OCI image layout
+    /// archive that keeps every blob as the registry served it (so every
+    /// digest holds), named `reference`. Returns the platform manifest's
+    /// digest (`sha256:...`).
+    ///
+    /// A runtime that has its own image store but no way to hold a
+    /// registry credential of Cua's (Apple's `container`: its logins live in
+    /// the user's keychain) loads the archive instead of pulling itself, so
+    /// every runtime pulls with the same credentials, mirrors and cache.
+    async fn pull_oci_archive(
+        &self,
+        reference: &str,
+        arch: Arch,
+        creds: Option<&crate::RegistryCredentials>,
+        out: &std::path::Path,
+    ) -> Result<String> {
+        let _ = (reference, arch, creds, out);
+        Err(crate::VmmError::Unsupported {
+            backend: "image resolver",
+            op: "OCI archives",
+        })
+    }
 }
 
 /// A checkpoint as files, for copying it to another host.

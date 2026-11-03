@@ -22,8 +22,22 @@ use crate::quic::{self, MeshStream, StreamHeader};
 use crate::vnet::VSocket;
 use crate::{Error, Result};
 
-/// The mesh UDP port a machine forwards to its local QUIC media port.
+/// The default mesh UDP port a machine forwards to its local QUIC media
+/// port, and the one a client forward sends media datagrams to.
+///
+/// It is a port of the mesh's own overlay network (an in-process socket of
+/// the node's own mesh address), not a port of the operating system, so two
+/// nodes on one computer never compete for it. A host and the clients that
+/// dial it must agree, so both take it from [`MeshConfig::media_udp_port`].
+/// Every Cua build leaves it at 3212 (guest Spaces and older cua-spacesd
+/// fix it there); the setting is an override for a deployment that must
+/// move it.
 pub const MEDIA_UDP_PORT: u16 = 3212;
+
+/// How long a connection to a peer the map lists online may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// ... and to one it lists offline (only a direct path could carry it).
+const OFFLINE_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// How a node is set up.
 #[derive(Clone)]
@@ -50,6 +64,15 @@ pub struct MeshConfig {
     pub stun: Vec<String>,
     /// Never use direct paths (tests; `CUA_MESH_RELAY_ONLY=1`).
     pub relay_only: bool,
+    /// The mesh UDP port of the peers' QUIC media service: client forwards
+    /// send media datagrams to it, and a machine serves it with
+    /// [`Mesh::serve_udp`] on the same number. Default
+    /// [`MEDIA_UDP_PORT`].
+    pub media_udp_port: u16,
+    /// Divides the wait before reconnecting to the coordinator (tests
+    /// only; leave at 1).
+    #[doc(hidden)]
+    pub reconnect_speedup: u32,
 }
 
 impl std::fmt::Debug for MeshConfig {
@@ -81,6 +104,8 @@ impl MeshConfig {
             approved_path: None,
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
+            media_udp_port: MEDIA_UDP_PORT,
+            reconnect_speedup: 1,
         }
     }
 }
@@ -209,6 +234,48 @@ pub struct PeerStatus {
     pub rx_relay: u64,
     /// Path switches so far.
     pub path_switches: u64,
+    /// `lan`, `direct` or `relay`.
+    pub path_kind: String,
+    /// Why this path, in plain words ("Fastest path: the local network,
+    /// 2 ms").
+    pub why: String,
+}
+
+/// Why traffic to a peer takes `path`, in plain words, and its kind.
+pub fn path_why(
+    path: &crate::engine::Path,
+    rtt_ms: Option<f64>,
+    prefer: crate::engine::Prefer,
+    relay_only: bool,
+) -> (String, String) {
+    use crate::engine::{Path, Prefer, is_lan};
+    let ms = rtt_ms.map(|m| format!(", {m:.0} ms")).unwrap_or_default();
+    match path {
+        Path::Relay if prefer == Prefer::Relay || relay_only => (
+            "relay".into(),
+            "Pinned to the relay (end-to-end encrypted)".into(),
+        ),
+        Path::Relay => (
+            "relay".into(),
+            "No direct path answered yet; the relay carries it (end-to-end encrypted)".into(),
+        ),
+        Path::Direct(a) if is_lan(a) => (
+            "lan".into(),
+            if prefer == Prefer::Lan {
+                format!("Pinned to the local network{ms}")
+            } else {
+                format!("Fastest path: the local network{ms}")
+            },
+        ),
+        Path::Direct(_) => (
+            "direct".into(),
+            if prefer == Prefer::Lan {
+                format!("No local network path answered; direct across the internet{ms}")
+            } else {
+                format!("Fastest path: direct across the internet{ms}")
+            },
+        ),
+    }
 }
 
 /// The node's status.
@@ -228,6 +295,8 @@ pub struct Status {
     pub peers: Vec<PeerStatus>,
     /// Last coordinator error.
     pub last_error: Option<String>,
+    /// The path pin (`auto` unless set).
+    pub prefer: crate::engine::Prefer,
 }
 
 struct Inner {
@@ -236,10 +305,15 @@ struct Inner {
     control: Arc<Control>,
     endpoint: quinn::Endpoint,
     conns: tokio::sync::Mutex<HashMap<PublicKey, quinn::Connection>>,
+    /// One connect at a time per peer (callers to the same peer share it);
+    /// peers never wait on each other's connects.
+    connecting: std::sync::Mutex<HashMap<PublicKey, Arc<tokio::sync::Mutex<()>>>>,
     incoming: tokio::sync::Mutex<mpsc::Receiver<IncomingStream>>,
     stun: Vec<String>,
     shutdown: coord::tokio_util_cancel::Token,
     approved: Option<Arc<Approved>>,
+    /// [`MeshConfig::media_udp_port`].
+    media_udp_port: u16,
     udp_services: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// The peer flows of every [`Mesh::serve_udp`] service.
     udp_flows: Mutex<Vec<UdpFlows>>,
@@ -274,6 +348,10 @@ impl Mesh {
         let engine = Engine::new(identity.clone(), cfg.listen_port, cfg.relay_only)
             .await
             .map_err(|e| Error::Io(format!("udp: {e}")))?;
+        let prefer = crate::engine::Prefer::from_env();
+        if prefer != crate::engine::Prefer::Auto {
+            engine.set_prefer(prefer);
+        }
         let control = Control::new();
         let approved = match cfg.kind {
             NodeKind::Machine => Some(Arc::new(Approved::load(cfg.approved_path.clone()))),
@@ -292,10 +370,12 @@ impl Mesh {
             control: control.clone(),
             endpoint: endpoint.clone(),
             conns: tokio::sync::Mutex::new(HashMap::new()),
+            connecting: std::sync::Mutex::new(HashMap::new()),
             incoming: tokio::sync::Mutex::new(in_rx),
             stun: cfg.stun.clone(),
             shutdown: shutdown.clone(),
             approved: approved.clone(),
+            media_udp_port: cfg.media_udp_port,
             udp_services: Mutex::new(Vec::new()),
             udp_flows: Mutex::new(Vec::new()),
             endpoints: Mutex::new(Vec::new()),
@@ -311,6 +391,8 @@ impl Mesh {
                 pair_verifier: cfg.pair_verifier.clone(),
                 approved,
                 ephemeral: cfg.identity_path.is_none(),
+                reconnect_speedup: cfg.reconnect_speedup.max(1),
+                identity_path: cfg.identity_path.clone(),
             },
             control,
             engine.clone(),
@@ -380,6 +462,12 @@ impl Mesh {
         self.inner.identity.addr()
     }
 
+    /// The mesh UDP port client forwards of this node send media datagrams
+    /// to ([`MeshConfig::media_udp_port`]).
+    pub fn media_udp_port(&self) -> u16 {
+        self.inner.media_udp_port
+    }
+
     /// Current peers.
     pub fn peers(&self) -> Vec<PeerInfo> {
         self.inner
@@ -395,6 +483,12 @@ impl Mesh {
         self.peers()
             .into_iter()
             .find(|p| p.kind == NodeKind::Machine && p.machine_id.as_deref() == Some(machine_id))
+    }
+
+    /// Bumped on every network map (a peer joined, left, or went online or
+    /// offline): a caller that shows peers' state reads it again.
+    pub fn subscribe_peers(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.engine.subscribe_peers()
     }
 
     /// Waits up to `timeout` for machine `machine_id` to be in the map.
@@ -480,6 +574,8 @@ impl Mesh {
     /// Status for displays and measurements.
     pub fn status(&self) -> Status {
         let state = self.inner.control.state.borrow().clone();
+        let prefer = self.inner.engine.prefer();
+        let relay_only = self.inner.engine.relay_only();
         let peers = self
             .inner
             .engine
@@ -488,20 +584,25 @@ impl Mesh {
             .map(|p| {
                 let info = p.info.read().expect("info").clone();
                 use std::sync::atomic::Ordering::Relaxed;
+                let path = p.path();
+                let rtt_ms = p.rtt().map(|d| d.as_secs_f64() * 1000.0);
+                let (path_kind, why) = path_why(&path, rtt_ms, prefer, relay_only);
                 PeerStatus {
                     node_key: info.node_key,
                     name: info.name.clone(),
                     machine_id: info.machine_id.clone(),
                     kind: info.kind,
                     online: info.online,
-                    path: p.path().to_string(),
-                    rtt_ms: p.rtt().map(|d| d.as_secs_f64() * 1000.0),
+                    path: path.to_string(),
+                    rtt_ms,
                     handshake_age_s: p.handshake_age().map(|d| d.as_secs_f64()),
                     tx_direct: p.counters.tx_direct.load(Relaxed),
                     tx_relay: p.counters.tx_relay.load(Relaxed),
                     rx_direct: p.counters.rx_direct.load(Relaxed),
                     rx_relay: p.counters.rx_relay.load(Relaxed),
                     path_switches: p.path_switches(),
+                    path_kind,
+                    why,
                 }
             })
             .collect();
@@ -513,25 +614,75 @@ impl Mesh {
             endpoints: self.inner.control_endpoints(),
             peers,
             last_error: state.last_error,
+            prefer,
         }
     }
 
     async fn connection(&self, peer: &PeerInfo) -> Result<quinn::Connection> {
-        let mut conns = self.inner.conns.lock().await;
-        if let Some(c) = conns.get(&peer.node_key)
-            && c.close_reason().is_none()
-        {
-            return Ok(c.clone());
+        if let Some(c) = self.live_connection(&peer.node_key).await {
+            return Ok(c);
+        }
+        // Per peer: a peer that does not answer holds up only its own
+        // callers, never connections to the others (an offline computer
+        // used to stall every other one for the whole connect timeout).
+        let gate = self
+            .inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .entry(peer.node_key)
+            .or_default()
+            .clone();
+        let _turn = gate.lock().await;
+        if let Some(c) = self.live_connection(&peer.node_key).await {
+            return Ok(c);
         }
         self.inner.engine.want(&peer.node_key);
+        // A peer the map lists offline gets a short try (a direct path may
+        // still carry it), not the full wait.
+        let within = if peer.online {
+            CONNECT_TIMEOUT
+        } else {
+            OFFLINE_CONNECT_TIMEOUT
+        };
         let c = tokio::time::timeout(
-            Duration::from_secs(20),
+            within,
             quic::connect(&self.inner.endpoint, peer.addr(), &peer.quic_pin),
         )
         .await
-        .map_err(|_| Error::Unreachable(format!("{} did not answer on the mesh", peer.name)))??;
-        conns.insert(peer.node_key, c.clone());
+        .map_err(|_| {
+            Error::Unreachable(if peer.online {
+                format!("{} did not answer on the mesh", peer.name)
+            } else {
+                format!("{} is offline", peer.name)
+            })
+        })??;
+        // Refused, or the peer left the map, while connecting: as if the
+        // connection had been open then (`denial_loop`, `prune_loop`).
+        if let Some(reason) = self.denied() {
+            c.close(3u32.into(), b"device refused");
+            return Err(Error::Refused(reason));
+        }
+        if self.inner.engine.peer(&peer.node_key).is_none() {
+            c.close(2u32.into(), b"peer removed");
+            return Err(Error::NotFound(format!("{} left the mesh", peer.name)));
+        }
+        self.inner
+            .conns
+            .lock()
+            .await
+            .insert(peer.node_key, c.clone());
         Ok(c)
+    }
+
+    async fn live_connection(&self, peer: &PublicKey) -> Option<quinn::Connection> {
+        self.inner
+            .conns
+            .lock()
+            .await
+            .get(peer)
+            .filter(|c| c.close_reason().is_none())
+            .cloned()
     }
 
     /// Why this node can no longer use the mesh, while it holds: its
@@ -604,7 +755,8 @@ impl Mesh {
     /// Forwards a loopback port to `service` on `peer`: every TCP
     /// connection to the returned address becomes one mesh stream, and
     /// datagrams to the same port number on UDP go to the peer's
-    /// [`MEDIA_UDP_PORT`]. Dropping the [`Forward`] stops it.
+    /// [`MeshConfig::media_udp_port`] (default [`MEDIA_UDP_PORT`]). Dropping
+    /// the [`Forward`] stops it.
     pub async fn forward(
         &self,
         peer: PublicKey,
@@ -765,6 +917,17 @@ impl Mesh {
     /// Never use direct paths from now on (or again).
     pub fn set_relay_only(&self, on: bool) {
         self.inner.engine.set_relay_only(on);
+    }
+
+    /// Pins the path to every peer ([`crate::engine::Prefer`]); `auto`
+    /// lifts the pin.
+    pub fn set_prefer(&self, prefer: crate::engine::Prefer) {
+        self.inner.engine.set_prefer(prefer);
+    }
+
+    /// The path pin.
+    pub fn prefer(&self) -> crate::engine::Prefer {
+        self.inner.engine.prefer()
     }
 
     /// Stops the node.
@@ -932,6 +1095,11 @@ async fn prune_loop(inner: std::sync::Weak<Inner>, mut rx: tokio::sync::watch::R
             keep
         });
         drop(conns);
+        inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .retain(|k, _| current.contains(k));
         // Connections removed peers opened to us end too (a share revoked,
         // a device removed: cut at once, not at the idle timeout).
         inner.inbound.lock().expect("inbound").retain(|(k, c)| {
@@ -1091,7 +1259,7 @@ async fn udp_client_forward(mesh: Mesh, local: Arc<UdpSocket>, peer: PublicKey) 
             continue;
         };
         mesh.inner.engine.want(&peer);
-        let dst = SocketAddrV6::new(info.addr(), MEDIA_UDP_PORT, 0, 0);
+        let dst = SocketAddrV6::new(info.addr(), mesh.inner.media_udp_port, 0, 0);
         let sock = {
             let mut f = flows.lock().expect("flows");
             f.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(180));

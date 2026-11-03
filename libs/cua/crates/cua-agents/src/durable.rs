@@ -23,6 +23,16 @@
 //! |---|---|
 //! | those the harness asks permission for | the intent is journaled before the approval; a call id is approved once; a repeat of a call with an unknown outcome is refused |
 //! | built-in tools that never ask | the outcome is journaled when the harness reports it; after a crash the call is listed as "may have partially run"; **not** exactly-once (see [`COVERAGE`]) |
+//!
+//! With [`DurableOptions::ship`] the guarantee holds across hosts: the host
+//! that drives the run mirrors the journal to the Cua Volume as immutable
+//! chunks (`cua_volume::journal`), and the runner answers a permission
+//! request only once the intent is on the Volume ([`SHIP_ACK_FILE`]); a
+//! re-drive on another host (or in a re-placed Space) starts from the
+//! journal restored from the Volume ([`DurableOptions::restore`]). The
+//! Volume fence that cuts off a stale host is a compare-and-swap: atomic
+//! across machines on the S3 backend, only between processes of one machine
+//! on the `fs` backend.
 
 use crate::harness::{self, Endpoint};
 use crate::{Error, Result, installables};
@@ -91,8 +101,8 @@ pub struct DurableOptions {
     /// overrides it; the journal itself is the truth.
     pub resume: bool,
     /// Where the journal lives. In a Space: default the run directory. For a
-    /// driver spec: default `~/.cua/durable/<session>`, else empty (the
-    /// runner then uses `$CUA_JOB_DATA/session`).
+    /// driver spec: default empty (the runner then uses
+    /// `$CUA_JOB_DATA/session`, which outlives the driver's Space).
     pub state_dir: Option<String>,
     /// The session's name (for the default state directory and the journal).
     pub session: Option<String>,
@@ -108,6 +118,39 @@ pub struct DurableOptions {
     /// boundary (the runner approves everything). Default true; false trades
     /// the guarantee for fewer round trips.
     pub guard: bool,
+    /// Mirror the journal to the Cua Volume (see [`Ship`]): the host that
+    /// drives the run ships it, and the runner answers a permission request
+    /// only once the host acknowledged the intent on the Volume. `None`:
+    /// the journal stays local.
+    pub ship: Option<Ship>,
+    /// Journal files to put in the state directory before the runner starts
+    /// (file name -> bytes: `events.jsonl`, `tools.jsonl`, `state.json`,
+    /// `epoch`), for a re-drive from a journal restored from the Cua Volume
+    /// on another host or in a re-placed Space. Use a higher `epoch` than the
+    /// restored one and `resume`. Empty: none.
+    pub restore: BTreeMap<String, Vec<u8>>,
+}
+
+/// The ship file the host writes into the state directory once journal
+/// bytes are on the Volume: `{"epoch": E, "end": {"tools.jsonl": N,
+/// "events.jsonl": M}}`.
+pub const SHIP_ACK_FILE: &str = "ship.ack";
+
+/// Journal shipping (the runner's side of `cua_volume::journal`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ship {
+    /// How long the runner waits for the host to acknowledge an intent
+    /// before it refuses the tool call (journaled as a denied outcome, so
+    /// the call never ran and at-most-once holds). Default 30 s.
+    pub ack_timeout_ms: u64,
+}
+
+impl Default for Ship {
+    fn default() -> Self {
+        Ship {
+            ack_timeout_ms: 30_000,
+        }
+    }
 }
 
 impl Default for DurableOptions {
@@ -120,6 +163,8 @@ impl Default for DurableOptions {
             policy: Policy::default(),
             max_agent_restarts: 3,
             guard: true,
+            ship: None,
+            restore: BTreeMap::new(),
         }
     }
 }
@@ -135,6 +180,10 @@ impl DurableOptions {
             "policy": self.policy.as_str(),
             "maxAgentRestarts": self.max_agent_restarts,
             "guard": self.guard,
+            "ship": self.ship.as_ref().map(|s| json!({
+                "ackFile": SHIP_ACK_FILE,
+                "ackTimeoutMs": s.ack_timeout_ms,
+            })),
         })
     }
 }
@@ -292,6 +341,23 @@ pub fn guard_env(h: &harness::Harness) -> Vec<(String, String)> {
     }
 }
 
+/// Install errors that no retry fixes (a missing tool the job Space cannot
+/// add, a checksum or commit that does not match, no build for this CPU): the
+/// driver exits 78 and the session fails at once instead of five drives later.
+/// A failed download or a package manager error stays a plain exit 1 (retried).
+const PERMANENT_INSTALL_ERRORS: &str = "git is not available|commit mismatch|integrity mismatch|sha256 mismatch|not published for|npm is not available";
+
+/// What the driver does when its install step fails (run in `sh`, in the
+/// driver's directory): exit 78 for an error no retry fixes, else exit 1.
+fn install_failure_handler() -> String {
+    format!(
+        "tail -n 20 install.log >&2; \
+         if grep '\"phase\":\"error\"' install.log | tail -n 1 | grep -Eq '{PERMANENT_INSTALL_ERRORS}'; then \
+         echo 'driver: this harness cannot be installed in the job Space; not retrying' >&2; exit 78; fi; \
+         echo 'driver: install failed; see install.log' >&2; exit 1;"
+    )
+}
+
 /// The driver's launcher: installs what the harness needs (idempotent, fast
 /// when present), then runs the durable runner under the session env.
 fn driver_script(ids: &[&str], install: bool) -> Result<String> {
@@ -307,8 +373,9 @@ fn driver_script(ids: &[&str], install: bool) -> Result<String> {
          exec \"$HOME/.cua/bin/node\" ./acp-runner.mjs \"$CUA_RUN_DIR\"\n",
         if install {
             format!(
-                "(\n{}\n) >> install.log 2>&1 || {{ echo 'driver: install failed; see install.log' >&2; tail -n 20 install.log >&2; exit 1; }}\n",
-                installables::script(ids)?
+                "(\n{}\n) >> install.log 2>&1 || {{ {} }}\n",
+                installables::script(ids)?,
+                install_failure_handler()
             )
         } else {
             "export PATH=\"$HOME/.cua/bin:$PATH\"\n".to_string()
@@ -346,11 +413,14 @@ pub fn durable_driver_spec(
     for k in opts.env.keys() {
         crate::runs::valid_env_name(k)?;
     }
-    // Empty: the coordinator leaves CUA_SESSION_STATE_DIR empty and the
-    // runner uses $CUA_JOB_DATA/session.
+    // Empty by default: the coordinator leaves CUA_SESSION_STATE_DIR empty and
+    // the runner uses $CUA_JOB_DATA/session. The job data directory is per run
+    // on each machine and the run id is the same for every drive, so the
+    // journal outlives the driver's Space (a `~/.cua/...` default sat in the
+    // Space's home and died with it: the task restarted from scratch).
     let state_dir = match (&d.state_dir, &d.session) {
         (Some(s), _) => s.clone(),
-        (None, Some(n)) if crate::runs::valid_home_name(n) => format!("~/.cua/durable/{n}"),
+        (None, Some(n)) if crate::runs::valid_home_name(n) => String::new(),
         (None, Some(n)) => {
             return Err(Error::Invalid(format!(
                 "session name {n:?}: use 1-63 of a-z, 0-9, `.`, `_`, `-`"
@@ -374,13 +444,14 @@ pub fn durable_driver_spec(
         }
         e
     });
-    let mut launch = harness::launch_with_home(
+    let mut launch = harness::launch_with_config(
         h,
         endpoint.as_ref(),
         opts.model.as_deref(),
         run_dir,
         &cwd,
         None,
+        opts.hermes_config.as_deref(),
     )?;
     if d.guard {
         launch.env.extend(guard_env(h));
@@ -398,6 +469,9 @@ pub fn durable_driver_spec(
         )));
     }
     let mut env: BTreeMap<String, String> = opts.env.clone();
+    // A copied Codex sign-in is a file for the guest, never agent env (a
+    // durable driver doesn't write it yet).
+    env.remove(crate::runs::CODEX_AUTH_ENV);
     let mut mcp: Vec<Value> = vec![];
     for (i, s) in opts.mcp_servers.iter().enumerate() {
         if let Some(url) = &s.url {
@@ -450,7 +524,7 @@ pub fn durable_driver_spec(
         "exitWhenIdle": true,
         "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
         "authMethod": h.auth_method,
-        "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
+        "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
         "mcpBridge": "~/.cua/bin/mcp-remote",
         "modeKinds": h.mode_kinds,
         "guardModeKinds": guard_mode_kinds(h),
@@ -600,10 +674,10 @@ mod tests {
             "${CUA_MCP_0_0}"
         );
         assert_eq!(run["durable"]["policy"], "ask-model");
-        assert_eq!(run["durable"]["stateDir"], "~/.cua/durable/nightly");
+        assert_eq!(run["durable"]["stateDir"], "");
         assert_eq!(run["exitWhenIdle"], true);
         assert_eq!(run["prompt"], "fix the bug");
-        assert_eq!(spec.state_dir, "~/.cua/durable/nightly");
+        assert_eq!(spec.state_dir, "");
         assert_eq!(spec.label, "claude-code");
     }
 
@@ -669,6 +743,37 @@ mod tests {
     }
 
     #[test]
+    fn a_permanent_install_failure_exits_78_and_a_transient_one_exits_1() {
+        let run = |detail: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("install.log"),
+                format!("{{\"id\":\"hermes\",\"phase\":\"error\",\"detail\":\"{detail}\"}}\n"),
+            )
+            .unwrap();
+            let out = std::process::Command::new("/bin/sh")
+                .current_dir(dir.path())
+                .arg("-c")
+                .arg(format!("false || {{ {} }}", install_failure_handler()))
+                .output()
+                .unwrap();
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).to_string(),
+            )
+        };
+        let (code, err) = run("git is not available");
+        assert_eq!(code, Some(78), "{err}");
+        assert!(
+            err.contains("cannot be installed in the job Space"),
+            "{err}"
+        );
+        assert_eq!(run("commit mismatch").0, Some(78));
+        assert_eq!(run("download failed").0, Some(1));
+        assert_eq!(run("uv sync failed").0, Some(1));
+    }
+
+    #[test]
     fn the_state_dir_defaults_and_may_be_left_to_the_job() {
         let mut o = opts();
         o.durable.as_mut().unwrap().session = None;
@@ -718,6 +823,11 @@ mod tests {
         }
         for p in [Policy::AskModel, Policy::RerunSafe] {
             assert!(runner.contains(p.as_str()));
+        }
+        // The ship ack: the runner reads the file the host writes, by the
+        // keys cua_volume::journal ships.
+        for k in ["ackFile", "ackTimeoutMs", "tools.jsonl"] {
+            assert!(runner.contains(k), "the runner does not read {k}");
         }
     }
 
@@ -774,5 +884,13 @@ mod tests {
         assert_eq!(v["stateDir"], "/runs/r1");
         assert_eq!(v["epoch"], 4);
         assert_eq!(v["maxAgentRestarts"], 3);
+        assert!(v["ship"].is_null());
+        let d = DurableOptions {
+            ship: Some(Ship::default()),
+            ..Default::default()
+        };
+        let v = d.run_section(None);
+        assert_eq!(v["ship"]["ackFile"], SHIP_ACK_FILE);
+        assert_eq!(v["ship"]["ackTimeoutMs"], 30_000);
     }
 }

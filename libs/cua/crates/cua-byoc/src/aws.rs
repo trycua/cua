@@ -22,19 +22,22 @@
 //! No IAM user, role, key or policy is created or used.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use aws_sdk_ec2::error::ProvideErrorMetadata;
 use aws_sdk_ec2::types::{
-    BlockDeviceMapping, EbsBlockDevice, Filter, HttpTokensState, InstanceMetadataEndpointState,
-    InstanceMetadataOptionsRequest, InstanceType, LocationType, ResourceType, ShutdownBehavior,
-    Tag, TagSpecification, VolumeType,
+    BlockDeviceMapping, CpuOptionsRequest, EbsBlockDevice, Filter, HttpTokensState,
+    InstanceMetadataEndpointState, InstanceMetadataOptionsRequest, InstanceType, LocationType,
+    NestedVirtualizationSpecification, ResourceType, ShutdownBehavior, Tag, TagSpecification,
+    VolumeType,
 };
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
+use crate::federation::{IssuerClient, Purpose};
+use crate::model::Auth;
 use crate::model::{
     self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier, tag,
 };
@@ -91,7 +94,7 @@ pub const HOST_DISK_GB: u32 = 60;
 
 /// Machine types offered to the elastic pool: name, arch, vCPUs, GiB,
 /// on-demand Linux USD per hour in us-west-2 (AWS Price List, 2026-10-21),
-/// whether it has `/dev/kvm` (bare metal), and its GPU (empty: none).
+/// whether it has `/dev/kvm` directly (bare metal), and its GPU (empty: none).
 pub const HOST_TYPES: &[(&str, &str, u32, u64, f64, bool, &str)] = &[
     ("t3.medium", "amd64", 2, 4, 0.0416, false, ""),
     ("t3.large", "amd64", 2, 8, 0.0832, false, ""),
@@ -187,7 +190,13 @@ enum Mode {
 /// EC2 as a [`CloudApi`].
 pub struct Aws {
     mode: Mode,
-    clients: Mutex<HashMap<(String, String), Clients>>,
+    clients: Mutex<HashMap<String, Clients>>,
+    /// Cua's issuer for OIDC connections (`None`: built from the
+    /// environment on first use).
+    issuer: Mutex<Option<Arc<dyn IssuerClient>>>,
+    /// Held while this home's shared security group is found or created,
+    /// so concurrent first launches make it once.
+    group_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -370,6 +379,8 @@ impl Aws {
         Aws {
             mode: Mode::Cli,
             clients: Mutex::new(HashMap::new()),
+            issuer: Mutex::new(None),
+            group_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -383,17 +394,103 @@ impl Aws {
                 secret: secret.into(),
             },
             clients: Mutex::new(HashMap::new()),
+            issuer: Mutex::new(None),
+            group_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    async fn clients(&self, conn: &Connection) -> Clients {
-        let key = (conn.profile.clone(), conn.region.clone());
+    /// Gets OIDC connections' tokens from `issuer` instead of the one the
+    /// environment names ([`crate::federation::issuer_url`]).
+    pub fn with_issuer(self, issuer: Arc<dyn IssuerClient>) -> Self {
+        *self.issuer.lock().expect("aws issuer") = Some(issuer);
+        self
+    }
+
+    fn issuer(&self) -> Result<Arc<dyn IssuerClient>> {
+        let mut slot = self.issuer.lock().expect("aws issuer");
+        if let Some(i) = slot.as_ref() {
+            return Ok(i.clone());
+        }
+        let i: Arc<dyn IssuerClient> =
+            Arc::new(crate::federation::HttpIssuer::from_env().ok_or_else(|| {
+                Error::Cloud(
+                    "aws: this AWS link signs in through Cua, and this device has no Cua \
+                     sign-in yet (run `cua auth login`)"
+                        .into(),
+                )
+            })?);
+        *slot = Some(i.clone());
+        Ok(i)
+    }
+
+    /// The clients of `conn` for `purpose`: the AWS CLI's sign-in, or (an
+    /// OIDC connection) credentials from Cua's issuer through STS, one set
+    /// per purpose and agent so CloudTrail names each.
+    async fn clients(&self, conn: &Connection, purpose: Purpose) -> Result<Clients> {
+        let agent = crate::federation::caller_agent();
+        let key = match &conn.auth {
+            Auth::Cli => format!("cli|{}|{}", conn.profile, conn.region),
+            Auth::Oidc {
+                conn_id, role_arn, ..
+            } => format!(
+                "oidc|{conn_id}|{role_arn}|{}|{}|{}",
+                conn.region,
+                purpose.as_str(),
+                agent.as_deref().unwrap_or_default()
+            ),
+            Auth::Sealed { .. } => {
+                return Err(Error::InvalidArgument(
+                    "aws: a sealed token is not a way to link AWS (use OIDC or the AWS CLI)".into(),
+                ));
+            }
+        };
         if let Some(c) = self.clients.lock().expect("aws clients").get(&key) {
-            return c.clone();
+            return Ok(c.clone());
         }
         let region = aws_sdk_ec2::config::Region::new(conn.region.clone());
-        let clients = match &self.mode {
-            Mode::Cli => {
+        let endpoint = match &self.mode {
+            Mode::Cli => None,
+            Mode::Endpoint { url, .. } => Some(url.clone()),
+        };
+        let clients = match (&conn.auth, &self.mode) {
+            (
+                Auth::Oidc {
+                    conn_id, role_arn, ..
+                },
+                _,
+            ) => {
+                let role_arn = if role_arn.is_empty() {
+                    crate::federation::aws::role_arn(&conn.account)
+                } else {
+                    role_arn.clone()
+                };
+                let creds = aws_credential_types::provider::SharedCredentialsProvider::new(
+                    crate::federation::aws::WebIdentityProvider::new(
+                        self.issuer()?,
+                        crate::federation::aws::anonymous_sts(&conn.region, endpoint.as_deref()),
+                        conn_id,
+                        &role_arn,
+                        purpose,
+                        agent,
+                    ),
+                );
+                let mut ec2_conf = aws_sdk_ec2::Config::builder()
+                    .behavior_version_latest()
+                    .region(region.clone())
+                    .credentials_provider(creds.clone());
+                ec2_conf.set_endpoint_url(endpoint.clone());
+                let mut sts_conf = aws_sdk_sts::Config::builder()
+                    .behavior_version_latest()
+                    .region(aws_sdk_sts::config::Region::new(conn.region.clone()))
+                    .credentials_provider(creds);
+                sts_conf.set_endpoint_url(endpoint);
+                let (ec2, sts) = (ec2_conf.build(), sts_conf.build());
+                Clients {
+                    ec2: aws_sdk_ec2::Client::from_conf(ec2),
+                    sts: aws_sdk_sts::Client::from_conf(sts),
+                }
+            }
+            (_, Mode::Cli) => {
                 let mut loader =
                     aws_config::defaults(aws_config::BehaviorVersion::latest()).region(region);
                 if !conn.profile.is_empty() {
@@ -405,7 +502,7 @@ impl Aws {
                     sts: aws_sdk_sts::Client::new(&sdk),
                 }
             }
-            Mode::Endpoint { url, key, secret } => {
+            (_, Mode::Endpoint { url, key, secret }) => {
                 let creds = aws_sdk_ec2::config::Credentials::new(
                     key.clone(),
                     secret.clone(),
@@ -435,7 +532,7 @@ impl Aws {
             .lock()
             .expect("aws clients")
             .insert(key, clients.clone());
-        clients
+        Ok(clients)
     }
 
     /// The newest Canonical Ubuntu 24.04 image for `arch`, and its root
@@ -560,6 +657,9 @@ impl Aws {
         owner: &str,
         peer_ports: Option<(u16, u16)>,
     ) -> Result<(String, Option<Resource>)> {
+        // One caller at a time per provider: a cold burst of first launches
+        // finds the group the first one made instead of racing to create it.
+        let _one = self.group_lock.lock().await;
         let vpc = self.default_vpc(ec2).await?;
         let pool = peer_ports.is_some();
         if let Some(g) = self.find_group(ec2, &vpc, owner, pool).await? {
@@ -593,8 +693,32 @@ impl Aws {
             .vpc_id(&vpc)
             .tag_specifications(spec.build())
             .send()
-            .await
-            .map_err(|e| aws_err("create the Cua security group", e))?;
+            .await;
+        let out = match out {
+            Ok(out) => out,
+            // Another process (or an older run) made it between the look
+            // and the create: it is the same group, use it.
+            Err(e)
+                if e.as_service_error()
+                    .and_then(aws_sdk_ec2::error::ProvideErrorMetadata::code)
+                    == Some("InvalidGroup.Duplicate") =>
+            {
+                // EC2 lists are eventually consistent: the group another
+                // process just made may take a moment to show.
+                for wait in [0u64, 500, 1000, 2000, 4000] {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                    if let Some(g) = self.find_group(ec2, &vpc, owner, pool).await? {
+                        let id = g.group_id().unwrap_or_default().to_string();
+                        if let Some(ports) = peer_ports {
+                            open_to_group(ec2, &id, ports).await?;
+                        }
+                        return Ok((id, None));
+                    }
+                }
+                return Err(aws_err("create the Cua security group", e));
+            }
+            Err(e) => return Err(aws_err("create the Cua security group", e)),
+        };
         let id = out.group_id().unwrap_or_default().to_string();
         let record = Resource {
             provider: "aws".into(),
@@ -670,8 +794,22 @@ impl Aws {
             .tag_specifications(spec_for(ResourceType::Instance))
             .tag_specifications(spec_for(ResourceType::Volume))
             .user_data(base64::engine::general_purpose::STANDARD.encode(&spec.user_data));
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
+        }
         if let Some(g) = group {
             req = req.security_group_ids(g);
+        }
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
         }
         req
     }
@@ -883,7 +1021,13 @@ impl CloudApi for Aws {
 
     async fn test(&self, conn: &Connection) -> Tested {
         let mut t = Tested::default();
-        let c = self.clients(conn).await;
+        let c = match self.clients(conn, Purpose::Check).await {
+            Ok(c) => c,
+            Err(e) => {
+                t.check("credentials", false, e.to_string());
+                return t;
+            }
+        };
         match c.sts.get_caller_identity().send().await {
             Ok(me) => {
                 t.account = me.account().unwrap_or_default().to_string();
@@ -902,14 +1046,17 @@ impl CloudApi for Aws {
                 );
             }
             Err(e) => {
+                let hint = match &conn.auth {
+                    Auth::Cli => format!(
+                        " (sign in with `aws sso login --profile {}` or `aws configure`)",
+                        conn.profile
+                    ),
+                    _ => String::new(),
+                };
                 t.check(
                     "credentials",
                     false,
-                    format!(
-                        "{} (sign in with `aws sso login --profile {}` or `aws configure`)",
-                        sts_err("identify the account", e),
-                        conn.profile
-                    ),
+                    format!("{}{hint}", sts_err("identify the account", e)),
                 );
                 return t;
             }
@@ -1053,7 +1200,7 @@ impl CloudApi for Aws {
             };
             &in_region
         };
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Create).await?;
         let owner = spec
             .tags
             .get(tag::OWNER)
@@ -1167,7 +1314,7 @@ impl CloudApi for Aws {
         conn: &Connection,
         r: &Resource,
     ) -> Result<Option<(String, BTreeMap<String, String>)>> {
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         match r.resource_type.as_str() {
             "security_group" => {
                 match c
@@ -1196,7 +1343,7 @@ impl CloudApi for Aws {
         if self.guard(conn, r, owner, "stop").await?.is_none() {
             return Err(Error::NotFound(format!("aws instance {}", r.id)));
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         c.ec2
             .stop_instances()
             .instance_ids(&r.id)
@@ -1210,7 +1357,7 @@ impl CloudApi for Aws {
         if self.guard(conn, r, owner, "start").await?.is_none() {
             return Err(Error::NotFound(format!("aws instance {}", r.id)));
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         // A stop still under way refuses a start: wait for it (bounded).
         for _ in 0..60 {
             match self.describe(conn, r).await?.map(|(s, _)| s).as_deref() {
@@ -1231,7 +1378,7 @@ impl CloudApi for Aws {
         let Some(state) = self.guard(conn, r, owner, "delete").await? else {
             return Ok(());
         };
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         match r.resource_type.as_str() {
             "security_group" => {
                 // An instance terminated a moment ago still holds the group
@@ -1266,7 +1413,7 @@ impl CloudApi for Aws {
         if r.id.is_empty() || r.resource_type == "security_group" {
             return Ok(None);
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         // `latest` returns the newest output (Nitro instances only); the
         // plain call returns the last 64 KiB and works everywhere.
         let out = match c
@@ -1298,7 +1445,7 @@ impl CloudApi for Aws {
     }
 
     async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         let mut out = Vec::new();
         let mut req = c.ec2.describe_instances().filters(filter(
             "instance-state-name",
@@ -1383,24 +1530,32 @@ impl CloudApi for Aws {
         let regions = self.capabilities(conn).regions;
         let mut v: Vec<HostType> = HOST_TYPES
             .iter()
-            .map(|(name, arch, cpus, gb, usd, kvm, gpu)| HostType {
-                name: (*name).into(),
-                arch: (*arch).into(),
-                vcpus: *cpus,
-                memory_mb: gb * 1024,
-                disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
-                kvm: *kvm,
-                gpu: (*gpu).into(),
-                usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round() / 10_000.0,
-                regions: regions.clone(),
-                boot_secs: if *kvm { 300 } else { 90 },
-                // EC2's on-demand vCPU quotas: standard families, G, P.
-                quota_pool: match name.chars().next() {
-                    Some('g') if !gpu.is_empty() => "g",
-                    Some('p') if !gpu.is_empty() => "p",
-                    _ => "standard",
+            .map(|(name, arch, cpus, gb, usd, bare_metal_kvm, gpu)| {
+                // Nested-KVM instances receive /dev/kvm only when Hosts::add
+                // enables it in the EC2 launch request. Advertise that
+                // capability here as well, or the elastic planner will never
+                // choose these cheaper x86 hosts for VM/microVM Spaces.
+                let kvm = *bare_metal_kvm || crate::hosts::nested_kvm("aws", name);
+                HostType {
+                    name: (*name).into(),
+                    arch: (*arch).into(),
+                    vcpus: *cpus,
+                    memory_mb: gb * 1024,
+                    disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
+                    kvm,
+                    gpu: (*gpu).into(),
+                    usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round()
+                        / 10_000.0,
+                    regions: regions.clone(),
+                    boot_secs: if kvm { 300 } else { 90 },
+                    // EC2's on-demand vCPU quotas: standard families, G, P.
+                    quota_pool: match name.chars().next() {
+                        Some('g') if !gpu.is_empty() => "g",
+                        Some('p') if !gpu.is_empty() => "p",
+                        _ => "standard",
+                    }
+                    .into(),
                 }
-                .into(),
             })
             .collect();
         v.sort_by(|a, b| {

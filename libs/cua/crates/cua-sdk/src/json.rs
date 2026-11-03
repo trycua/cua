@@ -152,6 +152,7 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
     "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
     "/cua.env.v1.HostSpacesService/DiagnoseHost",
+    "/cua.env.v1.HostThreadService/CallThreadTool",
     "/cua.env.v1.VolumeService/AttachVolume",
     "/cua.env.v1.VolumeService/DetachVolume",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -164,6 +165,11 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.ProcessService/ResizePty",
     "/cua.env.v1.ProcessService/GetExecRecord",
     "/cua.env.v1.ProcessService/AdvanceEpoch",
+    "/cua.env.v1.ProcessService/PutService",
+    "/cua.env.v1.ProcessService/DeleteService",
+    "/cua.env.v1.ProcessService/ListServices",
+    "/cua.env.v1.ProcessService/ControlService",
+    "/cua.env.v1.ProcessService/GetServiceLogs",
     "/cua.env.v1.StreamService/ListTargets",
     "/cua.env.v1.StreamService/OpenMedia",
     "/cua.env.v1.StreamService/SetPreferences",
@@ -191,6 +197,9 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.TunnelService/StartHotspot",
     "/cua.env.v1.TunnelService/StopHotspot",
     "/cua.env.v1.TunnelService/GetHotspotStatus",
+    "/cua.env.v1.TunnelService/StartSpawn",
+    "/cua.env.v1.TunnelService/StopSpawn",
+    "/cua.env.v1.TunnelService/GetSpawnStatus",
     "/cua.env.v1.WindowsService/ListWindows",
     "/cua.env.v1.WindowsService/GetWindow",
     "/cua.env.v1.WindowsService/ActivateWindow",
@@ -513,6 +522,14 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.HostThreadService/CallThreadTool" => {
+            unary::<C, pb::CallThreadToolRequest, pb::CallThreadToolResponse>(
+                ch,
+                "/cua.env.v1.HostThreadService/CallThreadTool",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.HostJobsService/RunHostJobs" => {
             unary::<C, pb::RunHostJobsRequest, pb::RunHostJobsResponse>(
                 ch,
@@ -745,6 +762,46 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.ProcessService/PutService" => {
+            unary::<C, pb::PutServiceRequest, pb::PutServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/PutService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/DeleteService" => {
+            unary::<C, pb::DeleteServiceRequest, pb::DeleteServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/DeleteService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/ListServices" => {
+            unary::<C, pb::ListServicesRequest, pb::ListServicesResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/ListServices",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/ControlService" => {
+            unary::<C, pb::ControlServiceRequest, pb::ControlServiceResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/ControlService",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.ProcessService/GetServiceLogs" => {
+            unary::<C, pb::GetServiceLogsRequest, pb::GetServiceLogsResponse>(
+                ch,
+                "/cua.env.v1.ProcessService/GetServiceLogs",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.StreamService/ListTargets" => {
             unary::<C, pb::ListTargetsRequest, pb::ListTargetsResponse>(
                 ch,
@@ -957,6 +1014,30 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             unary::<C, pb::GetHotspotStatusRequest, pb::GetHotspotStatusResponse>(
                 ch,
                 "/cua.env.v1.TunnelService/GetHotspotStatus",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StartSpawn" => {
+            unary::<C, pb::StartSpawnRequest, pb::StartSpawnResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartSpawn",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopSpawn" => {
+            unary::<C, pb::StopSpawnRequest, pb::StopSpawnResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopSpawn",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/GetSpawnStatus" => {
+            unary::<C, pb::GetSpawnStatusRequest, pb::GetSpawnStatusResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/GetSpawnStatus",
                 json,
             )
             .await

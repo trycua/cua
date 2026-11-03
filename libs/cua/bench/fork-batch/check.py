@@ -48,24 +48,26 @@ def main() -> int:
     ap.add_argument("--profile", required=True)
     ap.add_argument("--factor", type=float, default=None)
     ap.add_argument("--update", action="store_true")
+    ap.add_argument("--baseline", type=Path, default=BASELINE, help="baseline file (default: baseline.json next to this script)")
     ap.add_argument("result")
     args = ap.parse_args()
     res = json.loads(Path(args.result).read_text())
-    if args.update and not BASELINE.exists():
-        BASELINE.write_text(json.dumps({"factor": 1.5, "profiles": {}}) + "\n")
-    baseline = json.loads(BASELINE.read_text())
+    path = args.baseline
+    if args.update and not path.exists():
+        path.write_text(json.dumps({"factor": 1.5, "profiles": {}}) + "\n")
+    baseline = json.loads(path.read_text())
     if args.update:
         keep = ("on", "count", "group_size", "parallel", "ok", "groups_split", *TIMED, "per_host", "peak_parallel")
         prev = baseline["profiles"].get(args.profile, {})
         baseline["profiles"][args.profile] = {k: res.get(k) for k in keep}
         if "factor" in prev:  # a per-profile tolerance survives a re-baseline
             baseline["profiles"][args.profile]["factor"] = prev["factor"]
-        BASELINE.write_text(json.dumps(baseline, indent=2) + "\n")
+        path.write_text(json.dumps(baseline, indent=2) + "\n")
         print(f"baseline {args.profile} updated")
         return 0
     base = baseline["profiles"].get(args.profile)
     if base is None:
-        print(f"no baseline for {args.profile} in {BASELINE}", file=sys.stderr)
+        print(f"no baseline for {args.profile} in {path}", file=sys.stderr)
         return 2
     factor = args.factor or base.get("factor") or baseline.get("factor", 1.5)
     problems = check(res, base, factor)

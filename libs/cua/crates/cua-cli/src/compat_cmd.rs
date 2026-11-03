@@ -148,7 +148,12 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
             let gw = if opts.no_warm {
                 Gateway::start(g, None).await
             } else {
-                eprintln!("cua compat: warming (image pull and first boot; the first create is made now)...");
+                eprintln!(
+                    "{}",
+                    crate::util::hint(
+                        "cua compat: warming (image pull and first boot; the first create is made now)..."
+                    )
+                );
                 Gateway::start_warmed(g, None).await
             }
             .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
@@ -160,7 +165,7 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
                     .collect();
                 crate::util::line(out, serde_json::Value::Object(m).to_string());
             } else {
-                crate::util::line(
+                crate::util::hint_line(
                     out,
                     format!(
                         "cua compat: serving the {} API on http://{} and sandbox hosts on {} (Spaces: --on {} --kind {}).\nClients export:\n{}",

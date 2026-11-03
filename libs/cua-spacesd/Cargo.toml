@@ -12,10 +12,11 @@ members = [
     "crates/cua-spacesd-server",
     "crates/cua-spacesd-supervise",
     "crates/cua-relay",
+    "crates/cua-oidc",
 ]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.10.1"
 edition = "2021"
 authors = ["TryCua"]
 license = "FSL-1.1-MIT"

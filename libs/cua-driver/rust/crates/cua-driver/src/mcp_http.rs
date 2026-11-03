@@ -276,8 +276,6 @@ fn apply_session_identity(req: &mut Request, transport_session: &str) {
 /// One parsed HTTP/1.1 request.
 struct HttpRequest {
     method: String,
-    #[allow(dead_code)]
-    path: String,
     body: Vec<u8>,
     /// Browser requests carry Origin; native MCP clients normally do not.
     has_origin: bool,
@@ -314,8 +312,7 @@ async fn read_http_request(
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_owned();
-    let path = parts.next().unwrap_or("/").to_owned();
-    let version = parts.next().unwrap_or("HTTP/1.1");
+    let version = parts.nth(1).unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
     let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
@@ -355,7 +352,6 @@ async fn read_http_request(
     }
     Ok(Some(HttpRequest {
         method,
-        path,
         body,
         has_origin,
         keep_alive,
@@ -457,6 +453,35 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
         server.await.unwrap();
         String::from_utf8(response).unwrap()
+    }
+
+    async fn parse_request(request: &str) -> (String, bool) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let req = read_http_request(&mut server, "token")
+            .await
+            .unwrap()
+            .unwrap();
+        (req.method, req.keep_alive)
+    }
+
+    #[tokio::test]
+    async fn keep_alive_follows_http_version_and_connection_header() {
+        for (request, expected) in [
+            ("POST /mcp HTTP/1.1\r\n\r\n", true),
+            ("POST /mcp HTTP/1.0\r\n\r\n", false),
+            ("POST /mcp HTTP/1.1\r\nConnection: close\r\n\r\n", false),
+            ("POST /mcp HTTP/1.0\r\nConnection: keep-alive\r\n\r\n", true),
+        ] {
+            assert_eq!(
+                parse_request(request).await,
+                ("POST".to_owned(), expected),
+                "{request:?}"
+            );
+        }
     }
 
     #[tokio::test]

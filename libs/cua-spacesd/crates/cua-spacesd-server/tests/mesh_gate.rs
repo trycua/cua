@@ -53,6 +53,7 @@ fn config(relay: &str, dir: &std::path::Path, on: Arc<AtomicBool>) -> MeshHostCo
         dir: dir.join("mesh"),
         local: "127.0.0.1:9".parse().unwrap(),
         quic: None,
+        media_udp_port: cua_mesh::MEDIA_UDP_PORT,
         account: Arc::default(),
         env_token: Arc::new(|| None),
         name: "test".into(),

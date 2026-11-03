@@ -375,6 +375,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
             }
         }
         KeyvaultCmd::ImportPasswords(a) => {
+            crate::teleport::preflight(&mut c, &a.browser, a.profile.as_deref()).await?;
             if !json {
                 eprintln!(
                     "The Cua daemon asks for Touch ID or your login password to import saved passwords."
@@ -397,6 +398,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
             }
         }
         KeyvaultCmd::ImportSession(a) => {
+            crate::teleport::preflight(&mut c, &a.app, a.profile.as_deref()).await?;
             if !json {
                 eprintln!(
                     "The Cua daemon asks for Touch ID or your login password to import a session."

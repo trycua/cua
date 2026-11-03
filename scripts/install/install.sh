@@ -13,21 +13,27 @@
 #   cua-driver  Cua Driver, which lets AI agents use apps while you keep
 #               working: installs it and adds its skill and MCP server to
 #               your agents (default off)
-# The checklist does not offer hosting. The app's first run asks how to use
-# this computer (--mode host|client preselects the answer). For scripts,
-# `--select host` / `--only host` still runs `cua host setup`, which lets
-# your other devices use this computer through the relay.
+# Signing in adds this computer to your account: after `cua auth login`
+# succeeds, the installer runs `cua host setup`, so your other devices can
+# use it through the relay (a computer set up before keeps its settings).
+# --no-host signs in only. Without a terminal there is no sign-in here; the
+# closing lines say how to finish. `--select host` / `--only host` run
+# `cua host setup` even without a sign-in here (kept for scripts).
 #
 # Options:
-#   --select LIST       preselect items (comma list: spaces, cua-driver, host)
+#   --select LIST       install these items plus the CLI, not the app unless
+#                       listed (comma list: spaces, cua-driver, host)
 #   --only LIST         install exactly LIST plus the CLI, no checklist
 #   --cli-only          install only the `cua` CLI (same as --only cli)
 #   --app-only          install only the Cua Spaces app (no CLI)
 #   --mode host|client  preselect the app's first-run choice (implies spaces)
 #   --pair CODE         add this machine to your account with a one-time code
-#                       from the Cua Spaces app (Add a machine): installs and
+#                       from the Cua Spaces app (Add a computer): installs and
 #                       runs `cua host setup --pair CODE`, no sign-in, no checklist
 #   --relay URL         relay for --pair (default https://relay.cua.ai)
+#   --no-host           sign in only: do not add this computer to your account
+#   --no-provide-spaces add this computer without creating Spaces for your
+#                       other devices on it (cua host setup --no-provide-spaces)
 #                       A computer that already has a cua with `host setup --pair`
 #                       (and the app) uses them instead of downloading again;
 #                       --version, --prefix or CUA_INSTALL_REINSTALL=1 install anyway
@@ -35,7 +41,7 @@
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
 #   --modify-path       add the bin dir to your shell profile without asking
 #   --no-modify-path    never edit your shell profile (print the one-line command)
-#   --no-onboarding     do not run `cua auth login` afterwards
+#   --no-onboarding     do not run `cua auth login` afterwards (nor add this computer)
 #   --no-skills         with cua-driver, add only its MCP server to your agents,
 #                       not its skill (by default both are added)
 #   -v, --verbose       print every step (manifest, downloads, signature checks)
@@ -100,6 +106,9 @@ verbose=0
 no_tty_noted=0
 signed_in=0
 onboarding=1
+no_host=0
+no_provide_spaces=0
+did_host=""
 driver_skills=1
 require_sig=0
 dry_run=0
@@ -402,6 +411,8 @@ parse_args() {
         --modify-path) modify_path=1 ;;
         --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
+        --no-host) no_host=1 ;;
+        --no-provide-spaces) no_provide_spaces=1 ;;
         --no-skills) driver_skills=0 ;;
         -v | --verbose) verbose=1 ;;
         --require-signature) require_sig=1 ;;
@@ -442,6 +453,13 @@ parse_args() {
         if [ "$only_set" = 1 ]; then only_list="$only_list,host"; fi
         # The code stands in for the account: no sign-in here.
         onboarding=0
+    fi
+    if [ "$no_host" = 1 ]; then
+        [ -z "$pair_code" ] || die "--no-host and --pair contradict each other: --pair adds this computer"
+        case " $(items_in "$select_list$only_list") " in
+        *" host "*) die "--no-host and --select host contradict each other" ;;
+        esac
+        [ "$no_provide_spaces" = 0 ] || die "--no-provide-spaces goes with adding this computer; drop --no-host"
     fi
     if [ -n "$relay_url" ]; then
         [ -n "$pair_code" ] || die "--relay goes with --pair"
@@ -580,8 +598,10 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS and Linux.
-        if spaces_supported; then sel_spaces=1; fi
+        # The app is a default on macOS and Linux, until --select names what
+        # to install: then only those items (and the CLI) are installed.
+        # --pair adds host to the list itself; it keeps the default.
+        if spaces_supported && { [ -n "$pair_code" ] || [ -z "$(printf %s "$list" | tr -d ', ')" ]; }; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.
@@ -1359,26 +1379,40 @@ host_setup() {
         host_pair
         return
     fi
+    set -- "$cua_bin" host setup
+    if [ "$sel_host" = 0 ]; then
+        # Added by signing in: a computer already set up keeps its settings,
+        # and a new one provides Spaces with its screen kept private (sharing
+        # its desktop is a choice on its page in Cua Spaces).
+        if [ "$dry_run" = 0 ] && "$cua_bin" host status --json </dev/null 2>/dev/null | grep -q '"configured":true'; then
+            did_host=1
+            return
+        fi
+        if [ "$no_provide_spaces" = 0 ]; then set -- "$@" --no-desktop --provide-spaces; fi
+    fi
+    if [ "$no_provide_spaces" = 1 ]; then set -- "$@" --no-provide-spaces; fi
     if [ "$dry_run" = 1 ]; then
-        say "[dry-run] $cua_bin host setup"
+        say "[dry-run] $*"
         return
     fi
-    step "Letting your other devices use this computer (cua host setup)"
+    step "Adding this computer to your account (cua host setup)"
     if tty_ok; then
-        if "$cua_bin" host setup </dev/tty; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/tty; then
+            did_host=1
         fi
     else
-        if "$cua_bin" host setup </dev/null; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/null; then
+            did_host=1
         fi
     fi
-    warn "host setup did not finish; run 'cua auth login --remote' (over ssh) or 'cua auth login', then 'cua host setup' again"
+    if [ -n "$did_host" ]; then
+        say "  cua runtime setup lume  # also needed to provide macOS VM Spaces"
+        return
+    fi
+    warn "adding this computer did not finish; run 'cua host setup' to try again (sign in first with 'cua auth login', or 'cua auth login --remote' over ssh)"
 }
 
-# Add this machine with a pairing code (Add a machine in the app): joins
+# Add this machine with a pairing code (Add a computer in the app): joins
 # the account (or team) that made the code, with no sign-in here.
 host_pair() {
     set -- "$cua_bin" host setup --pair "$pair_code"
@@ -1389,16 +1423,20 @@ host_pair() {
     fi
     # A CLI released before pairing exists would fail with a bare
     # "unexpected argument '--pair'"; say what to do instead.
-    if ! "$cua_bin" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+    setup_help="$("$cua_bin" host setup --help 2>&1 </dev/null)"
+    if ! printf '%s\n' "$setup_help" | grep -q -e '--pair'; then
         die "the installed cua CLI ($("$cua_bin" --version 2>/dev/null || echo unknown)) cannot add a machine with a code (no 'cua host setup --pair'); update the CLI (cua update, or install a newer release: --version) or sign in instead: cua auth login && cua host setup"
     fi
+    # It provides Spaces and keeps its screen private, as a computer added
+    # by signing in does; sharing its desktop is a choice on its page.
+    if printf '%s\n' "$setup_help" | grep -q -e '--no-desktop'; then set -- "$@" --no-desktop --provide-spaces; fi
     step "Adding this computer to your account (cua host setup --pair)"
     if "$@" </dev/null; then
         say ""
         say "This machine is added. It shows up in Cua Spaces on your other devices in a few seconds."
         return
     fi
-    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>"
+    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a computer) and run: cua host setup --pair <code>"
 }
 
 # ---------------------------------------------------------------- onboarding
@@ -1439,11 +1477,14 @@ summary() {
         [ -z "$did_cli$did_app" ] || checked=" (downloads checked)"
         say "Installed $(join_and "$@")$checked."
     fi
+    if [ -n "$did_host" ]; then
+        say "This computer is added to your account. It shows up in Cua Spaces on your other devices."
+    fi
     if [ -n "$did_app" ]; then
         if [ "$signed_in" = 1 ]; then
-            say "Next: $(app_where). There you can also let your other devices use this computer."
+            say "Next: $(app_where)."
         else
-            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer."
+            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. Signing in adds this computer to your account."
         fi
         if [ "$want_cli" = 1 ]; then
             if [ "$signed_in" = 1 ]; then
@@ -1459,16 +1500,32 @@ summary() {
             say 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             say '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         fi
-        if [ "$sel_host" = 0 ]; then
-            say 'To let your other devices use this computer, run "cua host setup".'
+        if [ -z "$did_host" ] && [ "$no_host" = 0 ]; then
+            say 'To add this computer to your account, run "cua host setup" after signing in.'
         fi
     fi
+}
+
+# The items this run installs, for --dry-run.
+plan_items() {
+    out=""
+    [ "$want_cli" != 1 ] || out="the cua command-line tools"
+    [ "$sel_spaces" != 1 ] || out="${out:+$out, }the Cua Spaces app"
+    [ "$sel_driver" != 1 ] || out="${out:+$out, }Cua Driver (its MCP server and skill in your agents)"
+    [ "$sel_host" != 1 ] || out="${out:+$out, }host setup"
+    printf '%s\n' "${out:-nothing}"
 }
 
 run_onboarding() {
     # --pair: the code stands in for the account; nothing to sign in to.
     [ -z "$pair_code" ] || return 0
     if [ "$want_cli" = 0 ] || [ "$onboarding" = 0 ] || [ "$dry_run" = 1 ]; then
+        return
+    fi
+    # Cua Driver on its own: `cua auth login` would end in the Cua Spaces
+    # agent onboarding (the cua MCP server and skills), which was not picked.
+    if [ "$sel_driver" = 1 ] && [ "$sel_spaces" = 0 ] && [ "$sel_host" = 0 ]; then
+        info "skipping sign-in: only Cua Driver was selected"
         return
     fi
     # No terminal to sign in on (piped install, -y, or nobody at the
@@ -1478,7 +1535,13 @@ run_onboarding() {
     say ""
     step "Signing in to Cua"
     # `cua auth login` runs agent onboarding after a successful sign-in.
-    if "$cua_bin" auth login </dev/tty; then
+    # No browser here (over ssh, or Linux without a display): a device code
+    # to approve in a browser on another device.
+    set -- auth login
+    if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ] || { [ "$os" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }; then
+        set -- "$@" --remote
+    fi
+    if "$cua_bin" "$@" </dev/tty; then
         signed_in=1
     else
         warn "sign-in did not finish. Run \"cua auth login\" later (add --remote if this computer has no web browser)"
@@ -1499,6 +1562,7 @@ main() {
     fi
     if [ "$dry_run" = 1 ]; then
         step "Dry run: nothing will be changed"
+        say "[dry-run] would install: $(plan_items)"
     fi
     # Nothing to download (--pair on a computer that has Cua): no manifest to read.
     if [ "$want_cli" = 1 ] || [ "$sel_spaces" = 1 ] || [ "$sel_driver" = 1 ]; then
@@ -1544,7 +1608,9 @@ main() {
     fi
     tel_stage=sign_in
     run_onboarding
-    if [ "$sel_host" = 1 ]; then
+    # Signing in adds this computer (unless --no-host); --select host adds
+    # it even without a sign-in here.
+    if [ "$sel_host" = 1 ] || { [ "$signed_in" = 1 ] && [ "$no_host" = 0 ]; }; then
         tel_stage=host
         host_setup
     fi

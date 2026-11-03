@@ -34,6 +34,38 @@ use crate::key::{PublicKey, SecretKey};
 /// the relay's HTTPS path.
 pub const VERSION: u32 = 1;
 
+/// WebSocket close codes the coordinator gives when it ends a session
+/// itself (the private-use range), so a node can say why it was dropped and
+/// whether trying again can help. The close reason is a short English
+/// sentence for logs.
+///
+/// The relay restarts or its state changed: reconnect (spread out).
+pub const CLOSE_RELAY_CHANGED: u16 = 4000;
+/// Another connection with the same node key took over this one. A node
+/// that keeps hearing this shares its identity with another running copy.
+pub const CLOSE_REPLACED: u16 = 4001;
+/// The device behind this node is no longer enrolled.
+pub const CLOSE_DEVICE: u16 = 4002;
+/// The session reached its maximum age: reconnect with a fresh token.
+pub const CLOSE_SESSION_MAX: u16 = 4003;
+/// The account or machine was erased.
+pub const CLOSE_ERASED: u16 = 4004;
+/// This node connected too often; the reason is `retry after N s`
+/// ([`retry_after_reason`], [`parse_retry_after`]).
+pub const CLOSE_RATE_LIMITED: u16 = 4029;
+
+/// The close reason that tells a node when it may connect again.
+pub fn retry_after_reason(secs: u64) -> String {
+    format!("too many reconnects: retry after {secs} s")
+}
+
+/// The seconds in a [`retry_after_reason`] (or any `retry after N` text).
+pub fn parse_retry_after(reason: &str) -> Option<u64> {
+    let rest = reason.split("retry after ").nth(1)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 /// The coordinator's WebSocket path.
 pub const CONNECT_PATH: &str = "/v1/mesh/connect";
 

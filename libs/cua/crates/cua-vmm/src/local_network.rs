@@ -154,10 +154,7 @@ pub async fn diagnose_unreachable(ip: &str) -> Option<cua_create_failure::prefli
     let iface = route
         .as_deref()
         .and_then(cua_create_failure::local_network::route_interface);
-    let lan = match lan_host() {
-        Some(host) => lan_access(&host).await,
-        None => cua_create_failure::local_network::Access::Unknown,
-    };
+    let lan = lan_access_now().await;
     let cause = cua_create_failure::local_network::unreachable_cause(iface, lan);
     tracing::info!(
         ip,
@@ -167,6 +164,71 @@ pub async fn diagnose_unreachable(ip: &str) -> Option<cua_create_failure::prefli
         "macOS VM unreachable: local network check"
     );
     cause
+}
+
+/// One connect from this process to this Mac's local network (its default
+/// gateway, else the first host of its subnet): the daemon's own answer to
+/// "may this process reach the local network?", which is the process that
+/// reaches the VMs. A first connect makes macOS ask (on this Mac's own
+/// screen) for the app responsible for this process. Bounded: about 3.5 s.
+pub async fn lan_access_now() -> cua_create_failure::local_network::Access {
+    use cua_create_failure::local_network::Access;
+    if !cfg!(target_os = "macos") {
+        return Access::Unknown;
+    }
+    match lan_target().await {
+        Some(host) => lan_access(&host).await,
+        None => Access::Unknown,
+    }
+}
+
+/// How long a create waits for someone to answer macOS's Local Network
+/// prompt (or turn the switch on) before it stops with the fix.
+pub const PROMPT_PATIENCE: Duration = Duration::from_secs(30);
+
+/// [`lan_access_now`] again until it is allowed, or `patience` is over (then
+/// the last answer). The first connect raises macOS's prompt; while it waits
+/// for an answer connects fail like a denial, so a "blocked" is only believed
+/// once the prompt had its time. Zero: one probe.
+pub async fn wait_for_lan_access(patience: Duration) -> cua_create_failure::local_network::Access {
+    use cua_create_failure::local_network::Access;
+    let deadline = tokio::time::Instant::now() + patience;
+    loop {
+        let access = lan_access_now().await;
+        if access == Access::Allowed || tokio::time::Instant::now() >= deadline {
+            return access;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// What to aim the local network probe at: this Mac's default gateway (the
+/// router answers a connect, even to refuse it, so the answer is clear),
+/// else the first host of its subnet ([`lan_host`], a guess that may be an
+/// address nobody has: the connect then stalls and says nothing). Not a
+/// VPN's tunnel.
+async fn lan_target() -> Option<String> {
+    let route = tokio::time::timeout(
+        Duration::from_secs(2),
+        crate::host::run("/sbin/route", &["-n", "get", "default"]),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok);
+    route.as_deref().and_then(default_gateway).or_else(lan_host)
+}
+
+/// The IPv4 gateway `route -n get default` names, when the default route is
+/// a real network (not a VPN's tunnel, not a `link#` route).
+fn default_gateway(route_get: &str) -> Option<String> {
+    let iface = cua_create_failure::local_network::route_interface(route_get)?;
+    if cua_create_failure::local_network::is_tunnel(iface) || iface.starts_with("bridge") {
+        return None;
+    }
+    route_get.lines().find_map(|l| {
+        let gw = l.trim().strip_prefix("gateway:")?.trim();
+        gw.parse::<std::net::Ipv4Addr>().ok().map(|a| a.to_string())
+    })
 }
 
 /// A connect from this process to `host` on the local network: macOS
@@ -271,9 +333,18 @@ fn subnet_host(ip: u32, mask: u32) -> Option<String> {
     Some(std::net::Ipv4Addr::from(target).to_string())
 }
 
-/// The `lume serve` this host's runtimes talk to.
+/// The `lume serve` this host's runtimes talk to: `$LUME_API`, else the
+/// default of this process's channel (Stable's `:7777`, Local's `:7787`).
 pub fn lume_base() -> String {
-    std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into())
+    lume_base_with(
+        cua_home::channel::CuaChannel::current(),
+        std::env::var("LUME_API").ok().as_deref(),
+    )
+}
+
+/// [`lume_base`] for `channel`, with `$LUME_API`'s value given (pure).
+pub fn lume_base_with(channel: cua_home::channel::CuaChannel, lume_api: Option<&str>) -> String {
+    lume_api.map_or_else(|| channel.lume_api().to_string(), str::to_string)
 }
 
 impl ResponsibleApp {
@@ -401,6 +472,18 @@ mod tests {
         assert_eq!(subnet_host(ip("10.8.0.6"), ip("255.255.255.255")), None);
     }
 
+    #[test]
+    fn the_lan_probe_prefers_the_default_gateway() {
+        let wifi = "   route to: default\ndestination: default\n       mask: default\n    gateway: 192.168.1.254\n  interface: en1\n";
+        assert_eq!(default_gateway(wifi).as_deref(), Some("192.168.1.254"));
+        // A VPN's tunnel or a link route is no local network.
+        let vpn = "    gateway: 10.200.1.1\n  interface: utun4\n";
+        assert_eq!(default_gateway(vpn), None);
+        let link = "    gateway: link#24\n  interface: en0\n";
+        assert_eq!(default_gateway(link), None);
+        assert_eq!(default_gateway(""), None);
+    }
+
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn diagnosing_is_bounded_and_never_panics() {
@@ -449,6 +532,25 @@ mod tests {
         assert_eq!(json["app"]["name"], "Cua Spaces");
         let back: Report = serde_json::from_value(json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn the_lume_server_comes_from_the_channel_unless_lume_api_says_otherwise() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(
+            lume_base_with(CuaChannel::Stable, None),
+            "http://127.0.0.1:7777"
+        );
+        assert_eq!(
+            lume_base_with(CuaChannel::Local, None),
+            "http://127.0.0.1:7787"
+        );
+        for c in CuaChannel::ALL {
+            assert_eq!(
+                lume_base_with(c, Some("http://10.0.0.5:9000")),
+                "http://10.0.0.5:9000"
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

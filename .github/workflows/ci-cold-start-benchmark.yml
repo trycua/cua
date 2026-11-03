@@ -27,7 +27,7 @@ jobs:
         run: |
           rm -rf .venv
           uv venv --python 3.12
-          uv pip install -e libs/python/core -e libs/python/computer -e libs/python/cua-sandbox
+          uv pip install -e libs/python/core -e libs/python/cua-sandbox
 
       - name: Run cold start benchmark
         id: benchmark

@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Your own cloud account as a sandbox location: `--on aws`, `gcp`,
-//! `modal`, `hetzner` for sandboxes (the SDK, `cua sb`, cua-bench) and, on top, for
+//! Your own cloud account as a sandbox location: `--on aws`, `azure`,
+//! `gcp`, `modal`, `hetzner` for sandboxes (the SDK, `cua sb`, cua-bench) and, on top, for
 //! Spaces.
 //!
 //! | Provider | How a sandbox runs | Credentials |
 //! |---|---|---|
 //! | `aws` (EC2) | one small VM per sandbox; Docker runs the image | the AWS CLI's profiles, SSO, assume-role |
-//! | `gcp` (Compute Engine) | the same | the gcloud CLI's sign-in |
+//! | `gcp` (Compute Engine) | the same | the gcloud CLI's sign-in, or Cua's issuer (workload identity federation) |
+//! | `azure` (Virtual Machines) | the same | Cua's issuer (a managed identity's federated credential) |
 //! | `hetzner` (Cloud) | one small server per sandbox; Docker runs the image (containers only: no `/dev/kvm`) | a project API token in the Cua credential store |
 //! | `modal` (Sandboxes) | one Modal sandbox (gVisor, or Modal's VM runtime) | `~/.modal.toml` profiles |
 //!
@@ -28,20 +29,27 @@
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod alerts;
 pub mod api;
 pub mod audit;
 pub mod autosweep;
 #[cfg(feature = "aws")]
 pub mod aws;
+#[cfg(feature = "azure")]
+pub mod azure;
 pub mod bootlog;
 pub mod bootstrap;
 #[cfg(any(test, feature = "testing"))]
 pub mod conformance;
+pub mod connect;
+#[cfg(feature = "federation")]
+pub mod federation;
 #[cfg(feature = "gcp")]
 pub mod gcp;
 #[cfg(feature = "hetzner")]
 pub mod hetzner;
 pub mod hosts;
+pub mod limits;
 pub mod manager;
 #[cfg(feature = "modal")]
 pub mod modal;
@@ -49,15 +57,22 @@ pub mod model;
 pub mod policy;
 pub mod provider;
 pub mod relay;
+#[cfg(feature = "federation")]
+pub mod sealed;
+#[cfg(feature = "federation")]
+pub mod spend;
 pub mod state;
 pub mod sweep;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod trust;
+pub mod usage;
 
-pub use api::{CloudApi, Result, Target, Tested};
+pub use api::{CloudApi, Result, Secret, SecretSource, Target, Tested};
 pub use manager::Clouds;
 pub use model::{
-    Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+    Auth, Billing, Capabilities, Connection, HostType, MaxSize, ProvisionSpec, Resource, Supplies,
+    Tier,
 };
 pub use provider::CloudSandboxes;
 pub use relay::{Join, RelayAccess};
@@ -76,6 +91,8 @@ pub fn builtin_apis() -> Vec<Arc<dyn CloudApi>> {
     v.push(Arc::new(gcp::Gcp::new()));
     #[cfg(feature = "hetzner")]
     v.push(Arc::new(hetzner::Hetzner::new()));
+    #[cfg(feature = "azure")]
+    v.push(Arc::new(azure::Azure::new()));
     v
 }
 

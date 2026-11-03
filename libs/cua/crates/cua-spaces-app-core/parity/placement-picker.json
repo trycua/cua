@@ -3,7 +3,6 @@
   "about": "New Space's Run on menu: This Mac, then your machines that provide Spaces (a Mac mini on the relay with two of four Spaces and its two macOS VMs in use, a Linux box added by its Tailscale address, an offline studio), then, unless Your cloud is turned off, your connected cloud. Disabled entries say why (offline, at its limit, not a Mac); choosing one sets the create's on (local, host:<machine>, aws). Turning Your cloud off while AWS is chosen goes back to this Mac and leaves AWS connected; a machine that leaves the list does the same.",
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker", "lume"],
@@ -11,7 +10,6 @@
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,
-    "cloudPricing": null,
     "experiments": { "yourCloud": false },
     "hosts": [
       {

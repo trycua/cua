@@ -265,6 +265,16 @@ pub fn missing_tool_error(tool: &str, info: &cua_proto::daemon::v1::GetInfoRespo
     } else {
         info.executable.clone()
     };
+    if cua_home::version::is_newer(crate::VERSION, &info.version) {
+        return format!(
+            "Spaces tool {tool}: the running cua daemon (pid {}, cua {}) is older than this cua \
+             ({}) and does not have it. Update cua and restart its daemon (`cua daemon stop`, \
+             then run this again, or quit and reopen Cua Spaces)",
+            info.pid,
+            info.version,
+            crate::VERSION
+        );
+    }
     format!(
         "Spaces tool {tool}: the running cua daemon (pid {}, cua {}, {whose}) does not have it. \
          It is another app's build; stop it with `cua daemon stop` (or quit that app) and \
@@ -480,14 +490,30 @@ mod tests {
     #[test]
     fn a_missing_tool_names_the_daemon_and_the_way_out() {
         let info = cua_proto::daemon::v1::GetInfoResponse {
-            version: "0.5.0".into(),
+            version: "99.0.0".into(),
             pid: 7,
             executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua".into(),
             ..Default::default()
         };
         let m = missing_tool_error("agent_keys.list", &info);
-        assert!(m.starts_with("Spaces tool agent_keys.list: the running cua daemon (pid 7, cua 0.5.0, /Applications/Cua Spaces.app/Contents/MacOS/cua)"), "{m}");
+        assert!(m.starts_with("Spaces tool agent_keys.list: the running cua daemon (pid 7, cua 99.0.0, /Applications/Cua Spaces.app/Contents/MacOS/cua)"), "{m}");
         assert!(m.contains("cua daemon stop"), "{m}");
+    }
+
+    #[test]
+    fn an_older_daemon_without_a_tool_says_to_update() {
+        let info = cua_proto::daemon::v1::GetInfoResponse {
+            version: "0.0.1".into(),
+            pid: 7,
+            executable: "/usr/local/bin/cua".into(),
+            ..Default::default()
+        };
+        let m = missing_tool_error("cloud_approve", &info);
+        assert!(
+            m.starts_with("Spaces tool cloud_approve: the running cua daemon (pid 7, cua 0.0.1) is older than this cua"),
+            "{m}"
+        );
+        assert!(m.contains("Update cua and restart its daemon"), "{m}");
     }
 
     #[test]

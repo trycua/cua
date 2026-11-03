@@ -155,6 +155,16 @@ pub async fn sync_status_for(spaces: &cua_spaces::Spaces, ctx: &Context) -> Resu
     let (volumes, errors) = space_volumes(spaces, ctx).await?;
     v["volumes"] = volumes;
     v["volume_errors"] = errors;
+    // Present only while the Volume is kept on more than one machine.
+    if ctx.principal == Principal::User
+        && let Some(rt) = spaces
+            .drive_extension()
+            .ok()
+            .and_then(|e| e.runtime.replica.get().cloned())
+        && let Some((status, words)) = rt.status().await
+    {
+        v["replication"] = serde_json::json!({"status": status, "words": words});
+    }
     Ok(v)
 }
 

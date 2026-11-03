@@ -64,7 +64,21 @@ pub struct AssertionClaims {
     /// predate it ignore the field, and an assertion without it parses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub teams: Vec<String>,
+    /// A thread grant ([`THREAD_ROLE`]): the one Space (relay machine id)
+    /// the machine provides whose thread the account may reach, because
+    /// that Space is shared with it. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// A thread grant's role on that Space: `viewer` or `shared`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_role: Option<String>,
 }
+
+/// The `role` of a thread grant: an account the machine is not shared with
+/// reaching the thread of one Space it provides ([`AssertionClaims::space`]).
+/// A machine that predates it refuses the call (the role is neither
+/// `viewer` nor `shared`).
+pub const THREAD_ROLE: &str = "thread";
 
 /// Seconds since the Unix epoch.
 pub fn now_secs() -> u64 {
@@ -248,6 +262,32 @@ fn temp_parts(path: &std::path::Path) -> (&std::path::Path, String) {
     (dir, name)
 }
 
+/// Removes `path`; `Ok(false)` when someone else removed it first.
+///
+/// On Windows a file another thread or process is deleting stays "delete
+/// pending" until that deleter closes its handle, and opening it meanwhile
+/// (which `remove_file` does) fails with ERROR_ACCESS_DENIED rather than
+/// not-found. That state lasts only until the other delete completes, so
+/// wait for it briefly and then see the file gone.
+pub(crate) fn remove_if_present(path: &std::path::Path) -> std::io::Result<bool> {
+    let mut attempt = 0;
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt < 100 =>
+            {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Deletes the temp files [`write_private`] leaves next to `path` when the
 /// process dies mid-write (an OOM kill): `.<name>.<uuid>.tmp`, which also
 /// covers sibling files named `<name>.<suffix>`. Each can be as large as
@@ -269,13 +309,19 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
         if !file_name.starts_with(&prefix) || !file_name.ends_with(".tmp") {
             continue;
         }
-        let meta = entry.metadata()?;
+        // Gone between the listing and here (its writer renamed it): fine.
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
         if !meta.is_file() {
             continue;
         }
-        std::fs::remove_file(entry.path())?;
-        files += 1;
-        bytes += meta.len();
+        if remove_if_present(&entry.path())? {
+            files += 1;
+            bytes += meta.len();
+        }
     }
     if files > 0 {
         tracing::warn!(
@@ -415,14 +461,37 @@ impl TrustedKeys {
                         return Err("assertion: lifetime too long".into());
                     }
                     if c.iat > now_secs() + LEEWAY_SECS {
-                        return Err("assertion: issued in the future".into());
+                        return Err(
+                            "assertion: issued in the future; the clock on this machine or on the \
+                             machine that checks it is off, so set both to automatic time"
+                                .into(),
+                        );
                     }
                     return Ok(c);
                 }
-                Err(e) => last = format!("assertion: {e}"),
+                Err(e) => last = assertion_error(&e),
             }
         }
         Err(last)
+    }
+}
+
+/// The words for a token that did not verify. An expired or not yet valid
+/// token is nearly always a clock that is off, so it says so (it used to
+/// read `assertion: ExpiredSignature`, and the machine looked broken for no
+/// reason a person could find).
+fn assertion_error(e: &jsonwebtoken::errors::Error) -> String {
+    use jsonwebtoken::errors::ErrorKind as K;
+    match e.kind() {
+        K::ExpiredSignature => "assertion: the sign-in proof has expired; the clock on this \
+             machine or on the machine that checks it is more than a few minutes off, so set both \
+             to automatic time"
+            .into(),
+        K::ImmatureSignature => "assertion: the sign-in proof is not valid yet; the clock on this \
+             machine or on the machine that checks it is more than a few minutes off, so set both \
+             to automatic time"
+            .into(),
+        _ => format!("assertion: {e}"),
     }
 }
 
@@ -438,6 +507,36 @@ mod tests {
         let key = RelayKey::load_or_create(&path).unwrap();
         assert!(!stale.exists());
         assert_eq!(RelayKey::load_or_create(&path).unwrap().kid(), key.kid());
+    }
+
+    #[test]
+    fn removing_stale_temps_racing_their_removal_does_not_fail() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let names: Vec<_> = (0..4000)
+            .map(|_| {
+                let id = uuid::Uuid::new_v4().simple();
+                dir.path().join(format!(".devices.json.{id}.tmp"))
+            })
+            .collect();
+        for name in &names {
+            std::fs::write(name, "partial").unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let remover = {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for name in &names {
+                    let _ = std::fs::remove_file(name);
+                }
+            })
+        };
+        barrier.wait();
+        let removed = super::remove_stale_temps(&path);
+        remover.join().unwrap();
+        removed.unwrap();
     }
 
     #[test]
@@ -526,6 +625,8 @@ mod tests {
             exp: now + ttl,
             jti: "j".into(),
             teams: Vec::new(),
+            space: None,
+            space_role: None,
         }
     }
 
@@ -615,7 +716,10 @@ mod tests {
         let mut old = claims("machine-01", 60);
         old.iat -= 600;
         old.exp -= 600;
-        assert!(trusted.verify(&key.sign(&old), "machine-01").is_err());
+        let e = trusted.verify(&key.sign(&old), "machine-01").unwrap_err();
+        // A clock that is off is named, not `ExpiredSignature`.
+        assert!(e.contains("clock") && e.contains("automatic time"), "{e}");
+        assert!(!e.contains("ExpiredSignature"), "{e}");
     }
 
     #[test]

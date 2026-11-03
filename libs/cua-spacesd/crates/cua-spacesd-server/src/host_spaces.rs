@@ -38,6 +38,8 @@ use cua_proto::env::v1::host_snapshots_service_server::{
 };
 use cua_proto::env::v1::host_spaces_service_client::HostSpacesServiceClient;
 use cua_proto::env::v1::host_spaces_service_server::{HostSpacesService, HostSpacesServiceServer};
+use cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient;
+use cua_proto::env::v1::host_thread_service_server::{HostThreadService, HostThreadServiceServer};
 use cua_proto::env::v1::*;
 use tonic::{Code, Request, Response, Status};
 
@@ -54,6 +56,11 @@ pub const CALLER_METADATA: &str = "x-cua-host-caller";
 
 /// The feature `GetCapabilities` reports while this host provides Spaces.
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+
+/// The feature `GetCapabilities` reports while this host serves the
+/// threads of the Spaces it provides to other people (`HostThreadService`):
+/// whenever it provides Spaces.
+pub const HOST_THREAD_FEATURE: &str = "host_thread";
 
 /// The feature `GetCapabilities` reports while this host runs cluster jobs
 /// (`HostJobsService`): whenever it provides Spaces.
@@ -188,6 +195,7 @@ impl ServiceProvider for HostSpacesProvider {
         vec![
             feature(HOST_SPACES_FEATURE, providing, limitation),
             feature(HOST_JOBS_FEATURE, providing, limitation),
+            feature(HOST_THREAD_FEATURE, providing, limitation),
         ]
     }
 
@@ -206,6 +214,7 @@ impl ServiceProvider for HostSpacesProvider {
                     .max_decoding_message_size(64 * 1024 * 1024)
                     .max_encoding_message_size(64 * 1024 * 1024),
             )
+            .add_service(HostThreadServiceServer::new(HostThreadImpl(host.clone())))
             .add_service(HostSpacesServiceServer::new(host))
     }
 
@@ -244,6 +253,7 @@ impl ServiceProvider for HostSpacesProvider {
             "cua.env.v1.HostSpacesService",
             "cua.env.v1.HostJobsService",
             "cua.env.v1.HostSnapshotsService",
+            "cua.env.v1.HostThreadService",
         ]
     }
 
@@ -343,6 +353,49 @@ impl HostJobsService for HostJobsImpl {
     }
 }
 
+/// `HostThreadService`: the threads of the Spaces this host provides, for
+/// the people it is shared with (view-only shares too: they read only).
+/// Forwarded to the daemon like `HostSpacesService`, with the verified
+/// caller; the daemon decides what each caller may do.
+struct HostThreadImpl(HostSpacesImpl);
+
+/// How long a forwarded thread call may take: a `thread_read` long poll
+/// waits up to 25 s on the daemon, plus the call itself.
+const THREAD_CALL: Duration = Duration::from_secs(60);
+
+#[tonic::async_trait]
+impl HostThreadService for HostThreadImpl {
+    async fn call_thread_tool(
+        &self,
+        request: Request<CallThreadToolRequest>,
+    ) -> Result<Response<CallThreadToolResponse>, Status> {
+        let policy = read_policy(&self.0.policy_file)?;
+        if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(&request)) {
+            return Err(refusal);
+        }
+        let who = caller_json_of(&request)?;
+        if !policy.provide_spaces {
+            return Err(status(
+                Code::FailedPrecondition,
+                ErrorReason::FeatureUnsupported,
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+            ));
+        }
+        let daemon = policy.spaces_daemon.ok_or_else(|| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::NotInitialized,
+                "this host's policy names no cua daemon; run `cua host setup` on it again",
+            )
+        })?;
+        let channel = daemon_channel(&daemon).await?;
+        // Never the arguments or the result here: they carry messages.
+        HostThreadServiceClient::new(channel)
+            .call_thread_tool(with_caller(request.into_inner(), &who, Some(THREAD_CALL))?)
+            .await
+    }
+}
+
 // Keep the JSON readable as ASCII gRPC metadata without losing Unicode names.
 struct AsciiJsonFormatter;
 
@@ -365,20 +418,39 @@ impl serde_json::ser::Formatter for AsciiJsonFormatter {
     }
 }
 
-/// The verified caller as the daemon receives it.
+/// The verified caller as the daemon receives it. A view-only share is
+/// refused.
 fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
-    let who = caller(req);
-    if who.viewer.is_some() {
+    if caller(req).account.is_some_and(|a| a.space.is_some()) {
+        return Err(status(
+            Code::PermissionDenied,
+            ErrorReason::PermissionDenied,
+            "a Space shared with you reaches only its thread on this host",
+        ));
+    }
+    if caller(req).viewer.is_some() {
         return Err(status(
             Code::PermissionDenied,
             ErrorReason::PermissionDenied,
             "a view-only share cannot create or delete Spaces on this host",
         ));
     }
+    caller_json_of(req)
+}
+
+/// The verified caller as the daemon receives it, a view-only share as
+/// role `viewer` (the daemon lets it read only).
+fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
+    let who = caller(req);
+    let viewer = who.viewer.is_some();
     let value = match (&who.account, who.asserted, who.token_verified) {
+        (Some(a), true, _) if a.space.is_some() => serde_json::json!({
+            "account": a.account, "email": a.email, "name": a.name,
+            "role": a.role, "space": a.space, "via": "relay",
+        }),
         (Some(a), true, _) => serde_json::json!({
             "account": a.account, "email": a.email, "name": a.name,
-            "role": a.role,
+            "role": if viewer { "viewer" } else { a.role.as_str() },
             // Who vouched: the relay (an assertion, also over the mesh) or
             // the host's tailnet (`--tailnet`).
             "via": if who.principal.as_ref().is_some_and(|p| p.id.starts_with("tailnet:")) {
@@ -567,8 +639,11 @@ pub async fn wake_daemon(policy_file: PathBuf) {
         }
     };
     let who = serde_json::json!({"account": "local", "role": "owner", "via": "token"}).to_string();
-    let Ok(request) = with_caller(GetHostSpacesRequest {}, &who, Some(Duration::from_secs(60)))
-    else {
+    let Ok(request) = with_caller(
+        GetHostSpacesRequest::default(),
+        &who,
+        Some(Duration::from_secs(60)),
+    ) else {
         return;
     };
     if let Err(error) = HostSpacesServiceClient::new(channel)

@@ -175,6 +175,8 @@ pub struct HostBoot<'a> {
     /// The cloud it runs in (`hetzner`): its relay machine says so, so the
     /// pool knows it whichever machine coordinates.
     pub provider: &'a str,
+    /// Install a local QEMU runtime for nested Spaces on this host.
+    pub nested_virtualization: bool,
     /// Extra environment (`CUA_ENV=staging`), as `K=V` words.
     pub env: &'a [String],
     /// Its cost per hour (shown in the pool).
@@ -188,6 +190,49 @@ pub struct HostBoot<'a> {
     pub expires: u64,
     /// Images pulled right after it joined.
     pub prepull: &'a [String],
+}
+
+/// Whether this EC2 instance type documents nested virtualization, so a
+/// host of it can run QEMU with KVM. Lives here, not in `aws`, because the
+/// `aws` module is behind a feature and the host launch code is not.
+pub fn supports_nested_virtualization(instance_type: &str) -> bool {
+    let family = instance_type.split('.').next().unwrap_or_default();
+    matches!(
+        family,
+        "c7i"
+            | "c7i-flex"
+            | "c8i"
+            | "c8i-flex"
+            | "c8id"
+            | "m7i"
+            | "m7i-flex"
+            | "m8i"
+            | "m8i-flex"
+            | "m8id"
+            | "r7i"
+            | "r7iz"
+            | "r8i"
+            | "r8i-flex"
+            | "r8id"
+            | "x8i"
+            | "i7i"
+            | "i7ie"
+    )
+}
+
+/// Whether a host of `machine_type` on `provider` gets nested KVM: an AWS
+/// type that supports it, with the `windows-kvm` experiment on. Off (the
+/// default): none do, and hosts and the pool planner behave as before.
+pub fn nested_kvm(provider: &str, machine_type: &str) -> bool {
+    nested_kvm_when(
+        cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm),
+        provider,
+        machine_type,
+    )
+}
+
+fn nested_kvm_when(on: bool, provider: &str, machine_type: &str) -> bool {
+    on && provider == "aws" && supports_nested_virtualization(machine_type)
 }
 
 fn sh_quote(s: &str) -> String {
@@ -218,13 +263,19 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
         .filter(|kv| kv.contains('=') && !kv.contains('\'') && !kv.contains('\n'))
         .map(|kv| format!("export {kv}\n"))
         .collect();
+    let qemu = if b.nested_virtualization {
+        " qemu-system-x86 qemu-utils ovmf"
+    } else {
+        ""
+    };
     let idle = if b.idle_poweroff_secs > 0 {
         format!(
             "# Backstop: power off after {secs} s with no Spaces (the scaler removes it sooner).\n\
              cat > /usr/local/bin/cua-idle-poweroff <<'IDLE'\n\
              #!/bin/bash\n\
              # Spaces are containers (Docker, runc or gVisor) or VMs (QEMU).\n\
-             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -x qemu-system-x86_64 >/dev/null || pgrep -x qemu-system-aarch64 >/dev/null; }}\n\
+             # Linux truncates long /proc comm names, so match QEMU command lines.\n\
+             busy() {{ [ \"$(docker ps -q 2>/dev/null | wc -l)\" -gt 0 ] || pgrep -f '[q]emu-system-(x86_64|aarch64)([[:space:]]|$)' >/dev/null; }}\n\
              idle=0\n\
              while sleep 60; do\n\
                if busy; then idle=0; else idle=$((idle+60)); fi\n\
@@ -277,7 +328,7 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          export HOME=/root DEBIAN_FRONTEND=noninteractive PATH=/usr/local/bin:$PATH\n\
          # cua-spacesd links the X11 client libraries, a cua built where libopus\n\
          # is installed links it; Docker runs container Spaces.\n\
-         pkgs='libx11-6 libxext6 libxi6 libopus0'\n\
+         pkgs='libx11-6 libxext6 libxi6 libopus0{qemu}'\n\
          command -v docker >/dev/null || pkgs=\"$pkgs docker.io\"\n\
          for i in 1 2 3 4 5; do apt-get update -qq && apt-get install -y -qq $pkgs && break; sleep 5; done\n\
          systemctl enable --now docker\n\
@@ -305,6 +356,7 @@ pub fn user_data(b: &HostBoot<'_>) -> String {
          {prepull}\
          echo 'cua: host ready'\n",
         runsc_args = RUNSC_ARGS,
+        qemu = qemu,
         expires = b.expires,
         usd = b.usd_per_hour,
         code = sh_quote(b.code),
@@ -395,7 +447,20 @@ pub struct Hosts {
     /// When each machine that did not answer was last asked about at its
     /// cloud (by cloud id and state).
     checked: Mutex<BTreeMap<String, Instant>>,
+    /// Pairing codes already revoked for hosts that ended unjoined.
+    revoked: Mutex<BTreeSet<String>>,
+    /// How long an add waits for the relay to have room for a pairing code.
+    code_wait: Duration,
+    /// How long after its create a host its cloud does not list yet is
+    /// still being created, not lost (cloud lists are eventually
+    /// consistent: EC2 answers NotFound for an instance it just started).
+    not_found_grace: Duration,
 }
+
+/// How long after its create a host its cloud does not list yet is still
+/// being created (EC2 lists an instance it just started a few seconds
+/// late).
+pub const NOT_FOUND_GRACE: Duration = Duration::from_secs(180);
 
 /// How often a host that does not answer is asked about at its cloud.
 const LOST_CHECK: Duration = Duration::from_secs(30);
@@ -423,7 +488,30 @@ impl Hosts {
             offers: Mutex::new(None),
             naming: tokio::sync::Mutex::new(()),
             checked: Mutex::new(BTreeMap::new()),
+            revoked: Mutex::new(BTreeSet::new()),
+            code_wait: Duration::from_secs(180),
+            not_found_grace: NOT_FOUND_GRACE,
         }
+    }
+
+    /// How long a host its cloud does not list yet counts as being created
+    /// (tests make it zero).
+    pub fn with_not_found_grace(mut self, grace: Duration) -> Self {
+        self.not_found_grace = grace;
+        self
+    }
+
+    /// How long an add waits for room under the relay's cap on unused
+    /// pairing codes (tests make it short).
+    pub fn with_code_wait(mut self, wait: Duration) -> Self {
+        self.code_wait = wait;
+        self
+    }
+
+    /// Revokes the pairing code of every host that ended before it joined
+    /// (listing marks them), freeing room under the relay's cap.
+    async fn reap_unused_codes(&self) {
+        let _ = self.list().await;
     }
 
     fn api(&self, provider: &str) -> Result<&Arc<dyn CloudApi>> {
@@ -472,7 +560,7 @@ impl Hosts {
             .apis
             .iter()
             .filter_map(|a| self.store.connection(a.name()).ok().flatten())
-            .map(|c| format!("{}/{}/{};", c.provider, c.region, c.zone))
+            .map(|c| format!("{}/{}/{}/{:?};", c.provider, c.region, c.zone, c.max_size))
             .collect();
         if let Some((at, sig, v)) = self.offers.lock().unwrap().as_ref()
             && at.elapsed() < OFFERS_TTL
@@ -501,6 +589,10 @@ impl Hosts {
             };
             for t in types {
                 if install.as_ref().is_some_and(|i| !i.installs(&t.arch)) {
+                    continue;
+                }
+                // Larger than the connection allows: never offered.
+                if conn.max_size.is_some_and(|m| !m.fits(t.vcpus, t.memory_mb)) {
                     continue;
                 }
                 let mut regions: Vec<String> = if t.regions.is_empty() {
@@ -619,6 +711,17 @@ impl Hosts {
                     }
                 }
             };
+            // A host that ended without joining leaves its code unused:
+            // revoke it (once), or the relay's cap fills up with dead codes.
+            if h.state == "gone"
+                && h.machine.is_empty()
+                && let Some(code) = r.extra.get("pair_code_id")
+                && let Some(relay) = &self.relay
+                && self.revoked.lock().unwrap().insert(code.clone())
+                && relay.revoke_pairing_code(code).await.is_err()
+            {
+                self.revoked.lock().unwrap().remove(code);
+            }
             out.push(h);
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -649,7 +752,21 @@ impl Hosts {
             conn.region = r.region.clone();
         }
         match api.describe(&conn, r).await {
-            Ok(None) => true,
+            // Not listed: lost, unless it was only just created (its
+            // cloud may not list it yet). A cloud that ended it says
+            // "terminated" for a while, which counts at once.
+            Ok(None) => {
+                let age = model::now().saturating_sub(r.created);
+                let lost = Duration::from_secs(age) >= self.not_found_grace;
+                if !lost {
+                    // Ask again on the next listing, not after LOST_CHECK.
+                    self.checked
+                        .lock()
+                        .unwrap()
+                        .remove(&format!("{}/{offline}", r.id));
+                }
+                lost
+            }
             Ok(Some((state, _))) => matches!(state.as_str(), "terminated" | "gone"),
             Err(e) => {
                 tracing::debug!(id = r.id, "host not described: {e}");
@@ -721,6 +838,18 @@ impl Hosts {
                 t.regions.join(", ")
             )));
         }
+        crate::alerts::check_all(&self.store, model::now());
+        crate::limits::check_new_machine(
+            &conn,
+            api.title(),
+            Some(t.vcpus),
+            Some(t.memory_mb),
+            t.usd_per_hour,
+            self.store
+                .spent_for_limits(&conn, model::now())
+                .await
+                .map_err(Self::io)?,
+        )?;
         let live = self
             .records()?
             .iter()
@@ -739,12 +868,6 @@ impl Hosts {
             )
         })?;
         let owner = self.store.owner_id().map_err(Self::io)?;
-        let naming = self.naming.lock().await;
-        let name = if req.name.is_empty() {
-            self.next_name(&req.provider)?
-        } else {
-            req.name.clone()
-        };
         let ttl = match req.ttl_secs {
             0 => DEFAULT_TTL_SECS,
             s => s.min(MAX_TTL_SECS),
@@ -765,7 +888,40 @@ impl Hosts {
             )));
         }
         let source = install.for_arch(&t.arch).clone();
-        let (code_id, code) = relay.mint_pairing_code(&name, CODE_TTL_SECS).await?;
+        // The code is minted last, once everything else checked out, and
+        // only when the relay has room: it caps the unused codes of an
+        // account, so a burst of launches waits (with backoff, reaping
+        // the codes of hosts that ended unjoined) instead of failing.
+        let mut waited = Duration::ZERO;
+        let mut step = Duration::from_millis(500);
+        let (naming, name, code_id, code) = loop {
+            let naming = self.naming.lock().await;
+            let name = if req.name.is_empty() {
+                self.next_name(&req.provider)?
+            } else {
+                req.name.clone()
+            };
+            match relay.mint_pairing_code(&name, CODE_TTL_SECS).await {
+                Ok((id, code)) => break (naming, name, id, code),
+                Err(e) if crate::relay::is_code_cap(&e) => {
+                    drop(naming);
+                    if waited >= self.code_wait {
+                        return Err(Error::Cloud(format!(
+                            "cua.ai relay: too many hosts are starting at once (the relay allows \
+                             a few unused pairing codes per account); waited {} s, try again in a \
+                             minute",
+                            waited.as_secs()
+                        )));
+                    }
+                    self.reap_unused_codes().await;
+                    let pause = step + Duration::from_millis(u64::from(rand::random::<u8>()) * 2);
+                    tokio::time::sleep(pause).await;
+                    waited += pause;
+                    step = (step * 2).min(Duration::from_secs(8));
+                }
+                Err(e) => return Err(e),
+            }
+        };
         let created = model::now();
         let expires = created + ttl;
         let mut tags = model::tags(&owner, &format!("host:{name}"), "", expires);
@@ -834,6 +990,7 @@ impl Hosts {
                 name: &name,
                 relay: &relay.url,
                 provider: &req.provider,
+                nested_virtualization: nested_kvm(api.name(), &t.name),
                 env: &opts.env,
                 usd_per_hour: t.usd_per_hour,
                 ttl_secs: ttl,
@@ -853,6 +1010,7 @@ impl Hosts {
             ttl_secs: ttl,
             image_parameter: opts.image_parameter.clone(),
             peer_ports: opts.peer_ports,
+            nested_virtualization: nested_kvm(api.name(), &t.name),
             role: ROLE_HOST.into(),
             region: region.clone(),
             ..Default::default()
@@ -1168,6 +1326,7 @@ mod tests {
             name: "hetzner-1",
             relay: "https://relay.cua.ai",
             provider: "hetzner",
+            nested_virtualization: false,
             env,
             usd_per_hour: 0.0684,
             ttl_secs: 3600,
@@ -1196,6 +1355,10 @@ mod tests {
         assert!(ud.contains("shutdown -h now 'cua: this host reached its TTL'"));
         assert!(ud.contains("echo 1800000000 > /etc/cua/expires"));
         assert!(ud.contains("cua-idle-poweroff"), "idle backstop");
+        assert!(
+            ud.contains("pgrep -f '[q]emu-system-(x86_64|aarch64)"),
+            "idle guard must match QEMU command lines"
+        );
         assert!(ud.contains("[ \"$idle\" -ge 1200 ]"));
         assert!(ud.contains("export CUA_ENV=staging"));
         // The mesh is on before setup, so the service keeps it; a person's
@@ -1369,5 +1532,29 @@ mod tests {
         let mut sandbox = r;
         sandbox.extra.remove(EXTRA_ROLE);
         assert!(!is_host_record(&sandbox));
+    }
+
+    #[test]
+    fn nested_kvm_needs_aws_a_supported_type_and_the_experiment() {
+        assert!(supports_nested_virtualization("c7i.2xlarge"));
+        assert!(!supports_nested_virtualization("t3.large"));
+        assert!(nested_kvm_when(true, "aws", "c7i.2xlarge"));
+        // Experiment off (the default): never.
+        assert!(!nested_kvm_when(false, "aws", "c7i.2xlarge"));
+        assert!(!nested_kvm_when(true, "hetzner", "c7i.2xlarge"));
+        assert!(!nested_kvm_when(true, "aws", "t3.large"));
+    }
+
+    #[test]
+    fn qemu_installs_only_for_nested_hosts() {
+        let env: Vec<String> = vec![];
+        let src = Source::Release;
+        let mk = |nested| {
+            let mut b = boot(&src, &env);
+            b.nested_virtualization = nested;
+            user_data(&b)
+        };
+        assert!(mk(true).contains("qemu-system-x86 qemu-utils ovmf"));
+        assert!(!mk(false).contains("qemu-system-x86"));
     }
 }

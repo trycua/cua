@@ -124,6 +124,7 @@ impl From<cua_daemon::Error> for CuaError {
             E::Env(_) => CuaError::Env(m),
             E::Http(_) => CuaError::Http(m),
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
+            E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::Transport(_) => CuaError::Transport(m),
             E::DaemonNotRunning(_) => CuaError::DaemonNotRunning(m),
             E::CapabilityMissing(_) => CuaError::CapabilityMissing(m),

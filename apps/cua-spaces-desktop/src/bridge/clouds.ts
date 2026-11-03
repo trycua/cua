@@ -31,5 +31,17 @@ export function cloudsMethods({ model }: BridgeContext): Handlers {
       await model.cloud.refresh();
       return row;
     },
+    "clouds.disconnect": async (args) => {
+      const receipt = await model.backend.tool("cloud_disconnect", { provider: string(args, "provider"), delete: args.deleteResources === true });
+      await model.cloud.refresh();
+      return receipt;
+    },
+    // A person approves or denies what an agent set up: the daemon's
+    // person-only `cloud_approve` (never an MCP tool).
+    "clouds.approve": async (args) => {
+      await model.backend.tool("cloud_approve", { provider: string(args, "provider"), deny: args.approve !== true });
+      await model.cloud.refresh();
+      return null;
+    },
   };
 }

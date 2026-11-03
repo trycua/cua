@@ -49,6 +49,8 @@ fn spec(name: &str) -> LocalStartSpec {
         forkable: false,
         headless: false,
         egress: Default::default(),
+        network: None,
+        tree: None,
         // A bare alpine, as it is.
         spacesd: Some(false),
     }

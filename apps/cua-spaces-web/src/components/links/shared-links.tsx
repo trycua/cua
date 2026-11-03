@@ -23,7 +23,7 @@ export function SharedLinks() {
     }, toastError("Could not copy the link"));
 
   return (
-    <SettingsGroup title="Shared links">
+    <SettingsGroup className="mb-7" title="Shared links">
       {links.length === 0 ? (
         <p data-links-empty="" className="px-4 py-3 text-[13px] text-muted-foreground">
           Nothing is shared.

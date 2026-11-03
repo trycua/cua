@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   useSession,
@@ -13,8 +13,10 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { throttleSeconds } from "@/bridge/friendly-errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -54,16 +56,18 @@ export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelV
     return (
       <div className="mt-6" data-host-alerts>
         {progress ? (
-          <div className="mb-6 rounded-xl border bg-card px-4 py-3">
-            <Progress text={progress} />
-          </div>
+          <GroupedSection className="mb-6">
+            <div className="px-4 py-3">
+              <Progress text={progress} />
+            </div>
+          </GroupedSection>
         ) : null}
         {panel.permissionsTitle ? (
           <Group title={panel.permissionsTitle}>
             {panel.permissions.map((p) => (
               <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
                 {p.settingsUrl ? (
-                  <Button size="sm" variant="outline" onClick={() => void openSettings(p.settingsUrl!)}>
+                  <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
                     {panel.openSettingsLabel}
                   </Button>
                 ) : null}
@@ -74,9 +78,11 @@ export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelV
         {host.error ? (
           // A switch that failed: what happened in plain words, Retry, and
           // the raw error under Details.
-          <div className="mb-6 rounded-xl border bg-card px-4 py-3 shadow-xs">
-            <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} />
-          </div>
+          <GroupedSection className="mb-6">
+            <div className="px-4 py-3">
+              <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} />
+            </div>
+          </GroupedSection>
         ) : null}
         {panel.accessWarning ? <Warning>{panel.accessWarning}</Warning> : null}
         {panel.activityWarning ? <Warning>{panel.activityWarning}</Warning> : null}
@@ -181,7 +187,7 @@ export function HostSetupForm({
         ) : null}
       </Group>
       <div className="mb-6 flex justify-end gap-2">
-        <Button type="button" size="sm" variant="outline" onClick={() => host.closeForm()}>
+        <Button type="button" size="sm" variant="secondary" onClick={() => host.closeForm()}>
           {view.backLabel}
         </Button>
         <Button type="submit" size="sm" data-host-submit disabled={!view.canSubmit}>
@@ -246,9 +252,9 @@ function Field({ field: f, host }: { field: HostFormView["fields"][number]; host
 function Group({ title, more, children }: { title?: string; more?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-6">
-      {title ? <h3 className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{title}</h3> : null}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
-      {more ? <div className="mt-1.5 flex justify-end px-1">{more}</div> : null}
+      {title ? <SectionHeading className="mt-0">{title}</SectionHeading> : null}
+      <GroupedSection>{children}</GroupedSection>
+      {more ? <div className="mt-1.5 flex justify-end">{more}</div> : null}
     </section>
   );
 }
@@ -288,11 +294,11 @@ export function HostLogDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="top-[10vh] flex max-h-[76vh] w-[min(720px,calc(100vw-2rem))] flex-col" data-host-log>
-        <DialogTitle className="border-b px-5 py-3 text-[15px] font-semibold">{title}</DialogTitle>
-        <div data-host-log-rows className="min-h-0 flex-1 divide-y overflow-y-auto">
+        <DialogTitle /* design-ok: full-width dialog header rule */ className="border-b px-5 py-3 text-[15px] font-semibold">{title}</DialogTitle>
+        <div data-host-log-rows className="min-h-0 flex-1 overflow-y-auto">
           <TimedRows rows={shown} now={now} keep={keep} />
         </div>
-        <div className="flex items-center gap-3 border-t bg-muted/60 px-5 py-3">
+        <div /* design-ok: full-width dialog footer */ className="flex items-center gap-3 border-t bg-muted/60 px-5 py-3">
           {backgroundRows ? (
             <label className="flex items-center gap-2 text-[13px]">
               <Checkbox data-host-log-background="" checked={withBackground} onCheckedChange={(on) => setWithBackground(on === true)} />
@@ -326,6 +332,30 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const details = failure.details && failure.details !== failure.message ? failure.details : null;
+  // One automatic retry per setup: a second throttle waits for the user.
+  const autoRetried = useRef(false);
+  const wait = autoRetried.current ? null : throttleSeconds(failure.details ?? failure.message);
+  const [left, setLeft] = useState<number | null>(wait);
+  // A throttled setup counts down live, then tries again once.
+  useEffect(() => {
+    if (wait === null) return setLeft(null);
+    let n = wait;
+    setLeft(n);
+    const timer = setInterval(() => {
+      n -= 1;
+      if (n > 0) return setLeft(n);
+      clearInterval(timer);
+      setLeft(null);
+      if (!retrying) {
+        autoRetried.current = true;
+        onRetry();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failure]);
+  const manual = autoRetried.current ? throttleSeconds(failure.details ?? failure.message) : null;
+  const message = manual ? `Wait ${manual} ${manual === 1 ? "second" : "seconds"}, then try again.` : left === null ? failure.message : `Trying again in ${left} ${left === 1 ? "second" : "seconds"}.`;
   return (
     <div data-host-failure className="text-[13px]">
       <div className="flex items-center gap-2">
@@ -333,13 +363,13 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
         <span data-host-failure-title className={cn("min-w-0 flex-1 break-words", failure.title ? "font-medium" : "text-destructive")}>
           {failure.title ?? failure.message}
         </span>
-        <Button size="sm" variant="outline" data-host-retry="" disabled={retrying} onClick={onRetry}>
+        <Button size="sm" variant="secondary" data-host-retry="" disabled={retrying} onClick={onRetry}>
           {retrying ? "Retrying…" : (failure.actionLabel ?? "Retry")}
         </Button>
       </div>
       {failure.title ? (
         <p data-host-failure-message className="mt-1 text-xs text-muted-foreground">
-          {failure.message}
+          {message}
         </p>
       ) : null}
       {details ? (

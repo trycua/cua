@@ -420,6 +420,19 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                 offer.reason
             )));
         }
+        // Say a budget share passed before a new machine adds to it.
+        crate::alerts::check_all(&self.store, now());
+        crate::limits::check_new_machine(
+            &conn,
+            self.api.title(),
+            Some(spec.cpus).filter(|c| *c > 0),
+            Some(spec.memory_mb).filter(|m| *m > 0),
+            offer.usd_per_hour,
+            self.store
+                .spent_for_limits(&conn, now())
+                .await
+                .map_err(Self::io)?,
+        )?;
         let owner = self.store.owner_id().map_err(Self::io)?;
         let created = now();
         let ttl_secs = match spec.ttl {

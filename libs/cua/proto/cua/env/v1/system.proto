@@ -408,7 +408,9 @@ message MetricsResponse {
   uint64 memory_total_bytes = 5;
   // Used guest memory in bytes (excluding reclaimable cache).
   uint64 memory_used_bytes = 6;
-  // Total bytes of the filesystem named by `disk_path`.
+  // Total bytes of the filesystem named by `disk_path`; 0 when it has no
+  // size of its own (gVisor's root overlay reports "unlimited"), never a
+  // sentinel such as 2^63.
   uint64 disk_total_bytes = 7;
   // Used bytes of that filesystem.
   uint64 disk_used_bytes = 8;

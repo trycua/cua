@@ -262,6 +262,7 @@ impl ExternalAuthenticator for TailnetAuth {
                     .map(|d| d.as_secs())
                     .unwrap_or(0),
                 teams: Vec::new(),
+                space: None,
             }),
         }))
     }

@@ -6,7 +6,12 @@
 //! extension, no approval step. This is the macOS mount until the FSKit
 //! module ships signed (see the Cua Volume guide).
 //!
-//! The server binds `127.0.0.1` on a random port and serves one
+//! A Space's server binds `127.0.0.1` on a random port. This machine's
+//! own mount ([`NfsServer::start_host`]) asks for the port and file handle
+//! generation it had before (kept in the cua home), so a daemon that
+//! restarted after a crash serves the mount the last one left, and the
+//! kernel's client reconnects to it instead of reporting the server gone
+//! ("Server connections interrupted"). Each serves one
 //! [`Vfs`]. NFSv3 has no open or close, so a written file uploads after
 //! [`crate::vfs::UPLOAD_IDLE`] without writes; unmounting (or stopping
 //! the server) uploads whatever is left first.
@@ -46,8 +51,29 @@ struct NfsFs {
     /// (nfsserve's default is one per process), so a client never mistakes
     /// one view's handles or cached listings for another's: two Spaces, or
     /// a Space's view after an agent's, get different handles for the same
-    /// file.
+    /// file. This machine's mount keeps it across restarts (see
+    /// [`NfsServer::start_host`]).
     generation: u64,
+    /// This process's server instance: the readdir cookie and write
+    /// verifier. Unlike the generation it always changes with a restart, so
+    /// a client that reconnects to a restarted server knows its earlier
+    /// cookies and unstable writes are void.
+    boot: u64,
+}
+
+/// The first inode number a restarted daemon's macOS mount hands out: the
+/// time in milliseconds times 1024, so no earlier daemon (which started
+/// earlier and would need over a million new files a second to catch up)
+/// numbered another file the same. Below 2^53 until the 23rd century, so it
+/// survives any JSON reader.
+pub fn ino_floor() -> u64 {
+    crate::now_ms().saturating_mul(1024)
+}
+
+/// A file handle generation for a new host server (see
+/// [`NfsServer::start_host`]).
+pub fn new_generation() -> u64 {
+    next_generation()
 }
 
 /// A generation no other server in this process has had: the time in
@@ -185,12 +211,22 @@ impl NFSFileSystem for NfsFs {
             // Another server's handle (an earlier view, or a restart).
             std::cmp::Ordering::Less => Err(nfsstat3::NFS3ERR_STALE),
             std::cmp::Ordering::Greater => Err(nfsstat3::NFS3ERR_BADHANDLE),
-            std::cmp::Ordering::Equal => Ok(u64::from_le_bytes(id.try_into().expect("8 bytes"))),
+            std::cmp::Ordering::Equal => {
+                let id = u64::from_le_bytes(id.try_into().expect("8 bytes"));
+                // Same generation, inode unknown: a handle from before this
+                // daemon restarted (the root stays valid, the rest is
+                // looked up again).
+                if self.vfs.knows(id) {
+                    Ok(id)
+                } else {
+                    Err(nfsstat3::NFS3ERR_STALE)
+                }
+            }
         }
     }
 
     fn serverid(&self) -> cookieverf3 {
-        self.generation.to_le_bytes()
+        self.boot.to_le_bytes()
     }
 
     async fn lookup(
@@ -408,9 +444,25 @@ fn parent_key(key: &str) -> String {
     }
 }
 
+/// Binds a server for `fs()` on the first of `ports` that is free, else
+/// on a random port. (tokio sets SO_REUSEADDR, so a port whose previous
+/// daemon's connections are still in TIME_WAIT binds.)
+async fn bind(fs: impl Fn() -> NfsFs, ports: &[u16]) -> Result<NFSTcpListener<NfsFs>> {
+    for &port in ports.iter().filter(|p| **p != 0) {
+        match NFSTcpListener::bind(&format!("127.0.0.1:{port}"), fs()).await {
+            Ok(l) => return Ok(l),
+            Err(e) => tracing::info!(port, error = %e, "nfs: the usual port is taken"),
+        }
+    }
+    NFSTcpListener::bind("127.0.0.1:0", fs())
+        .await
+        .map_err(|e| Error::Backend(format!("nfs listen: {e}")))
+}
+
 /// A running NFS server for one [`Vfs`].
 pub struct NfsServer {
     port: u16,
+    generation: u64,
     vfs: Arc<Vfs>,
     accept: tokio::task::JoinHandle<()>,
     uploader: tokio::task::JoinHandle<()>,
@@ -427,7 +479,19 @@ impl std::fmt::Debug for NfsServer {
 impl NfsServer {
     /// Serves `vfs` on `127.0.0.1:<random port>`.
     pub async fn start(vfs: Arc<Vfs>) -> Result<NfsServer> {
-        Self::start_with(vfs, false).await
+        Self::start_with(vfs, false, &[], next_generation()).await
+    }
+
+    /// Serves this machine's mount of `vfs` with file handle `generation`
+    /// on the first of `ports` it can bind, else a random port. A restarted
+    /// daemon that gets its previous port and generation serves the mount
+    /// the previous one left: the kernel reconnects, the root handle is
+    /// valid again and any other handle it cached is stale (looked up
+    /// again), so the mount keeps working. Call [`Vfs::start_inos_above`]
+    /// with [`ino_floor`] on `vfs` first, so a cached handle never names
+    /// another file.
+    pub async fn start_host(vfs: Arc<Vfs>, ports: &[u16], generation: u64) -> Result<NfsServer> {
+        Self::start_with(vfs, false, ports, generation).await
     }
 
     /// Serves a Space's view for its guest. The guest's NFS client is
@@ -436,25 +500,30 @@ impl NfsServer {
     /// would refuse a write on its own otherwise. The access rules stay
     /// here, and refuse what the view may not write.
     pub async fn start_for_guest(vfs: Arc<Vfs>) -> Result<NfsServer> {
-        Self::start_with(vfs, true).await
+        Self::start_with(vfs, true, &[], next_generation()).await
     }
 
-    async fn start_with(vfs: Arc<Vfs>, shared: bool) -> Result<NfsServer> {
+    async fn start_with(
+        vfs: Arc<Vfs>,
+        shared: bool,
+        ports: &[u16],
+        generation: u64,
+    ) -> Result<NfsServer> {
         #[cfg(unix)]
         // SAFETY: getuid/getgid never fail.
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
         #[cfg(not(unix))]
         let (uid, gid) = (0, 0);
-        let fs = NfsFs {
+        let boot = next_generation();
+        let fs = || NfsFs {
             vfs: vfs.clone(),
             uid,
             gid,
             shared,
-            generation: next_generation(),
+            generation,
+            boot,
         };
-        let listener = NFSTcpListener::bind("127.0.0.1:0", fs)
-            .await
-            .map_err(|e| Error::Backend(format!("nfs listen: {e}")))?;
+        let listener = bind(fs, ports).await?;
         let port = listener.get_listen_port();
         let accept = tokio::spawn(async move {
             let _ = listener.handle_forever().await;
@@ -468,6 +537,7 @@ impl NfsServer {
         });
         Ok(NfsServer {
             port,
+            generation,
             vfs,
             accept,
             uploader,
@@ -476,6 +546,11 @@ impl NfsServer {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// The generation in every file handle this server hands out.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn vfs(&self) -> &Arc<Vfs> {
@@ -491,10 +566,13 @@ impl NfsServer {
     }
 
     /// Uploads what is pending and stops serving.
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(mut self) -> Result<()> {
         self.uploader.abort();
         let r = self.vfs.flush_all().await;
         self.accept.abort();
+        // The listener is closed when this returns: a server started next
+        // (the same mount again) gets the same port.
+        let _ = (&mut self.accept).await;
         r
     }
 }
@@ -509,6 +587,7 @@ impl Drop for NfsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::ROOT;
     use crate::{Context, Drive};
 
     fn fs(dir: &std::path::Path, ctx: Context, sub: &str) -> NfsFs {
@@ -519,6 +598,7 @@ mod tests {
             gid: 0,
             shared: true,
             generation: next_generation(),
+            boot: next_generation(),
         }
     }
 
@@ -614,5 +694,75 @@ mod tests {
         let attr = user.vfs.getattr(root).await.unwrap();
         assert_ne!(fsid(&user, &attr), fsid(&space, &attr));
         assert!(fsid(&user, &attr) < 1 << 31 && fsid(&space, &attr) < 1 << 31);
+    }
+
+    /// A restarted daemon's server for this machine's mount keeps the
+    /// generation: the kernel's root handle is valid again, a handle for
+    /// any other file the previous daemon numbered is stale (looked up
+    /// again, never another file), and the verifier changes so cookies and
+    /// writes from before are void.
+    #[tokio::test]
+    async fn a_restarted_host_server_takes_the_root_handle_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let generation = new_generation();
+        let host = |sub: &str| {
+            let mut f = fs(dir.path(), Context::user(), sub);
+            f.generation = generation;
+            f.vfs.start_inos_above(ino_floor());
+            f
+        };
+        let code = |r: std::result::Result<fileid3, nfsstat3>| r.map_err(|e| e as u32);
+        let before = host("a");
+        let public = code(before.path_to_id(b"/public").await).unwrap();
+        assert!(public > ino_floor() - 1_000_000, "numbered above the floor");
+        let (root_fh, public_fh) = (before.id_to_fh(ROOT), before.id_to_fh(public));
+        std::thread::sleep(Duration::from_millis(5));
+        let after = host("b");
+        assert_eq!(code(after.fh_to_id(&root_fh)), Ok(ROOT));
+        assert_eq!(
+            code(after.fh_to_id(&public_fh)),
+            Err(nfsstat3::NFS3ERR_STALE as u32)
+        );
+        let again = code(after.path_to_id(b"/public").await).unwrap();
+        assert!(again > public, "a new number, never an earlier one");
+        assert_eq!(code(after.fh_to_id(&after.id_to_fh(again))), Ok(again));
+        assert_ne!(before.serverid(), after.serverid());
+        let attr = after.vfs.getattr(ROOT).await.unwrap();
+        assert_eq!(
+            before.fattr(&attr).fsid,
+            after.fattr(&attr).fsid,
+            "same fsid"
+        );
+    }
+
+    /// The host server binds the port it asks for, and another one when
+    /// that is taken.
+    #[tokio::test]
+    async fn the_host_server_keeps_its_port_or_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = || fs(dir.path(), Context::user(), "v").vfs;
+        let first = NfsServer::start_host(vfs(), &[], new_generation())
+            .await
+            .unwrap();
+        let port = first.port();
+        first.stop().await.unwrap();
+        let again = NfsServer::start_host(vfs(), &[port], new_generation())
+            .await
+            .unwrap();
+        assert_eq!(again.port(), port, "the same port after a restart");
+        // Taken (here by the running server): the next candidate, else any.
+        let other = NfsServer::start_host(vfs(), &[port], new_generation())
+            .await
+            .unwrap();
+        assert_ne!(other.port(), port);
+        let g = new_generation();
+        let third = NfsServer::start_host(vfs(), &[port, 0], g).await.unwrap();
+        assert_ne!(third.port(), port);
+        assert_eq!(third.generation(), g);
+        let opts = again.mount_options();
+        assert!(
+            opts.starts_with(&format!("port={port},mountport={port},")),
+            "{opts}"
+        );
     }
 }

@@ -61,6 +61,7 @@ pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 pub mod build;
+pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
@@ -79,23 +80,31 @@ pub mod groups;
 pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
+pub mod keep;
 pub mod lifetimes;
+pub mod list_watch;
+pub mod listing;
 mod local_load;
 pub mod mesh;
 pub mod named_volumes;
+pub mod network;
 pub mod operator;
 pub mod pool_checkpoints;
 pub mod prewarm;
 pub mod registry;
 pub mod relay;
+pub mod rename;
+mod repo_cache;
 pub mod resources;
 pub mod route;
 pub mod routines;
 pub mod services;
 pub mod snapshots;
 mod space;
+pub mod space_jobs;
 mod spaces;
 pub mod thumbnails;
+pub mod tree;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;
@@ -121,14 +130,19 @@ pub mod reattach;
 /// relay.
 #[cfg(feature = "spaces-agents")]
 pub mod share;
+pub mod sharing;
 /// The Keyvault seam and the whole `request_site_login` tool: sign in to a
 /// site in a Space with a saved password, approved by the user.
 pub mod site_login;
+#[cfg(feature = "spaces-spawn")]
+pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery
 /// through (the daemon supplies the implementation).
 pub mod teleport_broker;
+#[cfg(feature = "mcp")]
+pub mod thread_route;
 #[cfg(feature = "spaces-volume")]
 pub mod volume;
 #[cfg(feature = "spaces-files")]
@@ -136,11 +150,16 @@ pub mod walk;
 
 pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
+pub use cua_vmm::experiments;
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
+pub use listing::{LIST_WAIT, ListProgress, SpaceListing};
 pub use relay::{RelayAccount, RelayMachine};
 pub use route::{ChannelRoute, Transport};
-pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceService};
+pub use sharing::{BulkResult, SpaceSharing, TeamShare};
+pub use space::{
+    SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceResize, SpaceService,
+};
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,

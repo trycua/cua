@@ -84,7 +84,9 @@ fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
     }
 }
 
-fn arrival_fire(key: &CursorKey) {
+/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
+/// fires once the frame at the glide target is committed.
+pub(crate) fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
             if let Some(tx) = map.remove(key) {
@@ -95,20 +97,6 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
-/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
-/// fires once the frame at the glide target is committed.
-#[cfg(target_os = "linux")]
-pub(crate) fn fire_arrival(key: &CursorKey) {
-    arrival_fire(key);
-}
-
-/// Unblock every waiting pointer action; the renderer that would have fired
-/// their arrivals is gone.
-#[cfg(target_os = "linux")]
-pub(crate) fn release_arrivals() {
-    release_all_arrivals();
-}
-
 fn arrival_cancel(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
@@ -117,7 +105,9 @@ fn arrival_cancel(key: &CursorKey) {
     }
 }
 
-fn release_all_arrivals() {
+/// Unblock every waiting pointer action; the renderer that would have fired
+/// their arrivals is gone.
+pub(crate) fn release_all_arrivals() {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         clear_arrivals(&mut guard);
     }
@@ -443,8 +433,7 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         );
     }
     #[cfg(target_os = "linux")]
-    let layer_shell_queued = native_wayland
-        && dispatch_wayland_overlay_message(&msg) == WaylandOverlayBackend::LayerShell;
+    let layer_shell_queued = native_wayland && dispatch_wayland_overlay_message(&msg);
     #[cfg(not(target_os = "linux"))]
     let layer_shell_queued = false;
     x11_queued || layer_shell_queued
@@ -542,36 +531,164 @@ fn start_shell_helper_idle_watch() {
     });
 }
 
+/// Per-session poses for the GNOME Shell helper cursor (helper API 11). The
+/// helper draws its own cursor, so the shared planner, float, rotation and
+/// halo reach it as pose tracks instead of painted frames.
 #[cfg(target_os = "linux")]
-fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
+struct ShellHelperPoses {
+    model: cursor_overlay::pose_stream::PoseModel,
+    /// The look last sent, so it is sent again only when it changes.
+    look_sent: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_POSES: Mutex<Option<ShellHelperPoses>> = Mutex::new(None);
+
+/// Whether the helper plays pose tracks. Checked once, like the backend.
+#[cfg(target_os = "linux")]
+fn shell_helper_plays_poses() -> bool {
+    static POSES: OnceLock<bool> = OnceLock::new();
+    *POSES.get_or_init(crate::wayland::shell_helper::pose_cursor_available)
+}
+
+/// What one command sends the pose-playing helper, besides the command.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Default, PartialEq)]
+struct ShellHelperPoseUpdate {
+    /// The look JSON, when it changed.
+    look: Option<String>,
+    /// The track JSON of a move or snap.
+    track: Option<String>,
+    /// For a move: when its hotspot arrives, and which move it is.
+    arrival: Option<(Duration, u64)>,
+}
+
+/// Feed one message to the helper's pose model. `draws` says whether it
+/// reaches the helper (from [`shell_helper_surface_event`]).
+#[cfg(target_os = "linux")]
+fn shell_helper_pose_update(
+    poses: &mut ShellHelperPoses,
+    msg: &OverlayMsg,
+    draws: bool,
+    now: Instant,
+) -> ShellHelperPoseUpdate {
+    let track = poses.model.apply(msg, draws, now);
+    let mut update = ShellHelperPoseUpdate::default();
+    let OverlayMsg::Cmd(command) = msg else {
+        if draws {
+            // The helper hides; send the look again with the next draw.
+            poses.look_sent = None;
+        }
+        return update;
+    };
+    if !draws {
+        return update;
+    }
+    if let Some(look) = poses.model.look(&command.key).map(|look| look.to_json()) {
+        if poses.look_sent.as_deref() != Some(look.as_str()) {
+            poses.look_sent = Some(look.clone());
+            update.look = Some(look);
+        }
+    }
+    if let Some(track) = track {
+        if matches!(command.cmd, OverlayCommand::MoveTo { .. }) {
+            if let Some(seq) = poses.model.move_seq(&command.key) {
+                update.arrival = Some((Duration::from_secs_f64(track.arrival_secs()), seq));
+            }
+        }
+        update.track = Some(track.to_json());
+    }
+    update
+}
+
+/// Release `key`'s arrival waiter once the helper's hotspot has arrived,
+/// unless a later move replaced this one. Returns whether it is scheduled.
+#[cfg(target_os = "linux")]
+fn schedule_shell_helper_arrival(key: CursorKey, wait: Duration, seq: u64) -> bool {
+    std::thread::Builder::new()
+        .name("cua-shell-cursor-arrival".into())
+        .spawn(move || {
+            std::thread::sleep(wait);
+            let current = SHELL_HELPER_POSES
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().and_then(|p| p.model.move_seq(&key)));
+            if current == Some(seq) {
+                arrival_fire(&key);
+            }
+        })
+        .is_ok()
+}
+
+/// Dispatch one message to the Wayland backend. Returns whether a renderer
+/// will fire this command's arrival: the native layer-shell overlay, or the
+/// pose-playing shell helper for a move.
+#[cfg(target_os = "linux")]
+fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
     let backend = wayland_overlay_backend();
     match backend {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
-            if shell_helper_surface_event(msg, Instant::now()) {
-                if let OverlayMsg::Cmd(command) = msg {
-                    dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
-                } else {
-                    crate::wayland::shell_helper::hide_cursor();
-                }
+            let now = Instant::now();
+            let reach = shell_helper_surface_event(msg, now);
+            let poses = (semantic && shell_helper_plays_poses()).then(|| {
+                // Read the launch template before taking the pose lock.
+                let uninitialised = SHELL_HELPER_POSES.lock().unwrap().is_none();
+                let template = uninitialised
+                    .then(|| read_render(|map| map.template.clone()))
+                    .flatten();
+                let mut guard = SHELL_HELPER_POSES.lock().unwrap();
+                let poses = guard.get_or_insert_with(|| ShellHelperPoses {
+                    model: cursor_overlay::pose_stream::PoseModel::new(
+                        template.unwrap_or_default(),
+                    ),
+                    look_sent: None,
+                });
+                shell_helper_pose_update(poses, msg, reach, now)
+            });
+            if !reach {
+                return false;
             }
+            let OverlayMsg::Cmd(command) = msg else {
+                crate::wayland::shell_helper::hide_cursor();
+                return false;
+            };
+            dispatch_shell_helper_command(&command.key, &command.cmd, semantic, poses.as_ref());
+            poses
+                .and_then(|update| update.arrival)
+                .is_some_and(|(wait, seq)| {
+                    schedule_shell_helper_arrival(command.key.clone(), wait, seq)
+                })
         }
-        WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
-            return WaylandOverlayBackend::None;
-        }
-        WaylandOverlayBackend::LayerShell | WaylandOverlayBackend::None => {}
+        WaylandOverlayBackend::LayerShell => crate::wayland::overlay::forward(msg),
+        WaylandOverlayBackend::None => false,
     }
-    backend
 }
 
 #[cfg(target_os = "linux")]
-fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool) {
+fn dispatch_shell_helper_command(
+    key: &str,
+    cmd: &OverlayCommand,
+    semantic: bool,
+    poses: Option<&ShellHelperPoseUpdate>,
+) {
     if semantic {
         crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(key));
+    }
+    if let Some(look) = poses.and_then(|update| update.look.as_deref()) {
+        crate::wayland::shell_helper::set_cursor_look(look);
     }
     match cmd {
         OverlayCommand::ClickPulse { x, y } if semantic => {
             crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
+        }
+        // The pose-playing helper follows the planned path itself.
+        OverlayCommand::MoveTo { .. } | OverlayCommand::SnapTo { .. }
+            if poses.is_some_and(|update| update.track.is_some()) =>
+        {
+            if let Some(track) = poses.and_then(|update| update.track.as_deref()) {
+                crate::wayland::shell_helper::play_cursor_path(track);
+            }
         }
         OverlayCommand::MoveTo { x, y, .. }
         | OverlayCommand::SnapTo { x, y, .. }
@@ -583,16 +700,17 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             delivery,
             target,
         } if semantic => {
-            // The GNOME helper paints its own single-cursor badge. Under the
-            // minimal badge it gets only foreground moments; under `off`, no
-            // chips at all.
+            // The GNOME helper paints its own single-cursor badge. Only the
+            // verbose badge shows delivery and target chips there.
             let (delivery, target) = match cursor_overlay::badge_mode::active() {
                 cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
-                cursor_overlay::BadgeMode::Minimal => (
-                    delivery.filter(|value| *value == cursor_overlay::DeliveryModifier::Foreground),
-                    None,
-                ),
-                cursor_overlay::BadgeMode::Off => (None, None),
+                cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
+            };
+            // Its action marks are opt-in too (`cursor.marks`).
+            let action = if cursor_overlay::cursor_options::active().marks {
+                *action
+            } else {
+                cursor_overlay::CursorAction::Idle
             };
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),
@@ -620,19 +738,13 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
     }
 }
 
-pub fn is_enabled() -> bool {
-    is_enabled_for("default")
+/// Read the render map, treating a poisoned or uninitialised map as absent.
+fn read_render<T>(f: impl FnOnce(&RenderMap) -> T) -> Option<T> {
+    RENDER.lock().ok()?.as_ref().map(f)
 }
 
 pub fn is_enabled_for(key: &str) -> bool {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
-        })
-        .unwrap_or(false)
+    read_render(|map| map.is_enabled(key)).unwrap_or(false)
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. This checks the
@@ -650,46 +762,16 @@ pub fn is_visible_for_session(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn current_position() -> Option<(f64, f64)> {
-    current_position_for("default")
-}
-
 pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
-    RENDER.lock().ok().and_then(|g| {
-        g.as_ref()
-            .and_then(|m| m.cursors.get(key))
-            .filter(|rs| rs.core.placed)
-            .map(|rs| rs.core.pos)
-    })
+    read_render(|map| map.placed_position(key)).flatten()
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|guard| {
-            guard.as_ref().and_then(|map| {
-                map.cursor_or_default(key)
-                    .map(|state| state.core.motion.clone())
-            })
-        })
-        .unwrap_or_default()
+    read_render(|map| map.motion(key)).unwrap_or_default()
 }
 
-pub fn current_theme_state_for(
-    key: &str,
-) -> Option<(
-    String,
-    String,
-    String,
-    Option<String>,
-    cursor_overlay::CursorVisualState,
-)> {
-    let guard = RENDER.lock().ok()?;
-    let map = guard.as_ref()?;
-    let state = map.cursor_or_default(key)?;
-    let (id, version, profile, fallback) = state.core.active_theme_metadata();
-    Some((id, version, profile, fallback, state.core.visual.clone()))
+pub fn current_theme_state_for(key: &str) -> Option<cursor_overlay::CursorThemeState> {
+    read_render(|map| map.theme_state(key)).flatten()
 }
 
 fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
@@ -704,10 +786,6 @@ fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         f64::from(map.platform.scr_h),
     );
     map.seed_start_if_unplaced(key, target_x, target_y, Some(frame))
-}
-
-pub async fn animate_cursor_to(x: f64, y: f64) {
-    animate_cursor_to_for("default".to_owned(), x, y).await;
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
@@ -1463,6 +1541,19 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     )
     .ok();
 
+    // _NET_WM_BYPASS_COMPOSITOR = 2: never unredirect this window. The
+    // compositing-manager path keeps a full-window bounding shape and relies on
+    // alpha, so a manager that unredirected a full-screen window would show its
+    // transparent pixels as black.
+    if let Ok(atom) = conn
+        .intern_atom(false, b"_NET_WM_BYPASS_COMPOSITOR")
+        .map_err(anyhow::Error::from)
+        .and_then(|cookie| cookie.reply().map_err(anyhow::Error::from))
+    {
+        conn.change_property32(PropMode::REPLACE, win, atom.atom, AtomEnum::CARDINAL, &[2])
+            .ok();
+    }
+
     // Start with empty input AND bounding regions while unmapped. The empty
     // input region makes the window click-through. The empty bounding region
     // prevents a zero-filled full-screen window from appearing opaque black on
@@ -1498,6 +1589,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         depth,
         gc_id,
         mapped: std::cell::Cell::new(false),
+        full_shape: std::cell::Cell::new(false),
+        drawn: std::cell::RefCell::new(Vec::new()),
     };
 
     // Render at ~60 Hz only while pixels can change. Quiescent cursors use
@@ -1593,6 +1686,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 tracing::warn!("X11 overlay geometry repair failed; disabling overlay: {e}");
                 break;
             }
+            // The repair emptied the bounding shape.
+            paint_target.full_shape.set(false);
             // Every saved backdrop describes the pre-resize screen. The repair
             // above emptied our bounding shape, but that only queues Expose:
             // the framebuffer still holds our last frame until the windows
@@ -2038,6 +2133,12 @@ struct X11PaintTarget {
     depth: u8,
     gc_id: u32,
     mapped: std::cell::Cell<bool>,
+    /// The bounding shape is the whole window: the compositing-manager path
+    /// keeps it fixed and paints transparency instead of reshaping.
+    full_shape: std::cell::Cell<bool>,
+    /// Tile rects the compositing-manager path last drew, cleared by the next
+    /// frame.
+    drawn: std::cell::RefCell<Vec<X11TileBounds>>,
 }
 
 /// One rect of screen the overlay painted over: the desktop pixels that were
@@ -2350,6 +2451,13 @@ impl X11BackdropCache {
                 uploaded: saved.uploaded.clone(),
             })
             .collect()
+    }
+
+    /// The frame on screen now, if the last paint recorded one.
+    fn on_screen_frame(&self) -> Option<&X11BackdropFrame> {
+        self.frames
+            .front()
+            .filter(|frame| frame.vacated_at.is_none())
     }
 
     fn record_frame(
@@ -2869,6 +2977,8 @@ fn blank_x11_overlay_shape(
 
     conn.unmap_window(target.win)?.check()?;
     target.mapped.set(false);
+    target.full_shape.set(false);
+    target.drawn.borrow_mut().clear();
 
     let cookie = conn.shape_rectangles(
         SO::SET,
@@ -2898,15 +3008,14 @@ enum X11PaintOutcome {
 }
 
 #[cfg(target_os = "linux")]
-fn paint_x11_tiles(
-    conn: &impl x11rb::connection::Connection,
+fn paint_x11_tiles<C: x11rb::connection::Connection>(
+    conn: &C,
     target: &X11PaintTarget,
     tiles: &[X11PaintTile],
     compositor_present: bool,
     checked_requests: bool,
     backdrop: &mut X11BackdropCache,
 ) -> anyhow::Result<X11PaintOutcome> {
-    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
     use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, ImageFormat};
 
     // Phase A — decide, then read every root rect before any pixel is uploaded.
@@ -2995,66 +3104,93 @@ fn paint_x11_tiles(
         }
     }
 
-    // Phase C — expose the new shape, then upload into it. The order matters
-    // and is the reverse of what it once was: output to a window is CLIPPED to
-    // its current bounding shape, so uploading first silently discards every
-    // pixel of the frame's frontier — the runs the new shape adds over the old
-    // one — and enlarging the shape afterwards exposes the window's zero
-    // backing there instead. On an ARGB window zero is transparent and the
-    // loss was invisible, but it left the frontier unreadable to the
-    // save-under readback (adopting black as backdrop, which composites the
-    // shadow into a hard black ring), and on a 24-bit window zero shows as
-    // literal black. Shaping first means the frontier briefly exposes zero
-    // backing server-side, but both requests travel in one batch ahead of a
-    // single flush, so no frame with the bare frontier is ever presented.
-    let shape_cookie = conn.shape_rectangles(
-        SO::SET,
-        SK::BOUNDING,
-        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
-        target.win,
-        0,
-        0,
-        &visible_shape,
-    )?;
-    if checked_requests {
-        shape_cookie.check()?;
+    // Only an ARGB window can rely on alpha alone: without one, a fixed
+    // full-window shape would show its opaque background everywhere.
+    if compositor_present && !composited && target.depth == 32 {
+        present_composited_x11_frame(conn, target, &payloads, checked_requests)?;
+        return Ok(X11PaintOutcome::Painted);
     }
 
-    // Keep empty frames unmapped: some compositors capture a newly mapped
-    // full-root window as black even when its bounding shape is empty.
-    // Map after shaping and before upload, since an unmapped window need not
-    // retain pixels. Only transitions need a mapping request or round trip.
-    let should_map = !visible_shape.is_empty();
-    if should_map != target.mapped.get() {
-        if should_map {
-            conn.map_window(target.win)?.check()?;
-        } else {
-            conn.unmap_window(target.win)?.check()?;
+    // Without a compositing manager, pixels the cursor leaves keep our paint
+    // until the window under them answers its Expose: the arrow a frame ago
+    // stays on screen beside the new one, which is the moving arrow splitting
+    // in two (CUA-3120). The frame on screen saved the desktop it covered, so
+    // this frame paints that back over whatever it vacates before giving the
+    // pixels up. The window underneath then repaints pixels that already look
+    // right. Only the software-composited path has save-unders; a compositing
+    // manager repaints vacated pixels from the windows' own buffers.
+    let erase = if compositing_available && backdrop.enabled() && (composited || tiles.is_empty()) {
+        backdrop.on_screen_frame()
+    } else {
+        None
+    };
+    let (erase_shape, erase_payloads): (&[x11rb::protocol::xproto::Rectangle], Vec<_>) = match erase
+    {
+        Some(frame) => (
+            &frame.painted,
+            frame
+                .saved
+                .iter()
+                .map(|saved| (saved.bounds, opaque_bgrx(&saved.under, target.depth)))
+                .collect(),
+        ),
+        None => (&[], Vec::new()),
+    };
+
+    // Phase C — upload into offscreen pixmaps. Nothing here is visible, so
+    // the bulk of the frame's bytes can arrive in as many pieces as the
+    // socket likes without any client seeing a partial frame.
+    let mut erase_buffers = Vec::with_capacity(erase_payloads.len());
+    let mut back_buffers = Vec::with_capacity(payloads.len());
+    let presented = (|| -> anyhow::Result<()> {
+        for (buffers, uploads) in [
+            (&mut erase_buffers, &erase_payloads),
+            (&mut back_buffers, &payloads),
+        ] {
+            for (bounds, bgra) in uploads {
+                if bounds.width == 0 || bounds.height == 0 {
+                    continue;
+                }
+                let pixmap = conn.generate_id()?;
+                conn.create_pixmap(
+                    target.depth,
+                    pixmap,
+                    target.win,
+                    bounds.width,
+                    bounds.height,
+                )?;
+                buffers.push((pixmap, *bounds));
+                conn.put_image(
+                    ImageFormat::Z_PIXMAP,
+                    pixmap,
+                    target.gc_id,
+                    bounds.width,
+                    bounds.height,
+                    0,
+                    0,
+                    0,
+                    target.depth,
+                    bgra,
+                )?;
+            }
         }
-        target.mapped.set(should_map);
+        // Phase D — present it all at once.
+        present_x11_frame(
+            conn,
+            target,
+            X11Frame {
+                erase_shape,
+                erase: &erase_buffers,
+                shape: &visible_shape,
+                tiles: &back_buffers,
+            },
+            checked_requests,
+        )
+    })();
+    for (pixmap, _) in erase_buffers.iter().chain(&back_buffers) {
+        conn.free_pixmap(*pixmap).ok();
     }
-
-    // Phase D — upload. A composited buffer covers the whole tile rect; pixels
-    // outside the shape are the backdrop copied back and are never displayed.
-    for (bounds, bgra) in payloads {
-        let cookie = conn.put_image(
-            ImageFormat::Z_PIXMAP,
-            target.win,
-            target.gc_id,
-            bounds.width,
-            bounds.height,
-            bounds.x,
-            bounds.y,
-            0,
-            target.depth,
-            &bgra,
-        )?;
-        if checked_requests {
-            cookie.check()?;
-        }
-    }
-
-    conn.flush()?;
+    presented?;
 
     // Phase E — record what actually landed, after the flush succeeded. The
     // rects are exactly what we SET, so the contamination record is truthful. A
@@ -3065,6 +3201,267 @@ fn paint_x11_tiles(
         backdrop.record_frame(Instant::now(), visible_shape, saved);
     }
     Ok(X11PaintOutcome::Painted)
+}
+
+/// Present one frame to a compositing manager (CUA-3120).
+///
+/// A compositing manager learns about a window's bounding shape and its
+/// pixels through separate events, and some (picom among them) fetch the new
+/// shape asynchronously. Reshaping the overlay every frame therefore lets a
+/// composited frame pair one frame's shape with another frame's pixels, which
+/// on screen is the moving arrow split into two pieces. With a compositing
+/// manager the window's alpha already hides everything that is not cursor, so
+/// the shape here stays fixed at the whole window and only pixels change: the
+/// rects the last frame drew are cleared to transparent and the new tiles are
+/// copied in, in one server grab, so the manager sees one damage event set
+/// for one finished frame. The upload itself happens before the grab.
+#[cfg(target_os = "linux")]
+fn present_composited_x11_frame<C: x11rb::connection::Connection>(
+    conn: &C,
+    target: &X11PaintTarget,
+    payloads: &[(X11TileBounds, Vec<u8>)],
+    checked_requests: bool,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{
+        ClipOrdering, ConnectionExt as XprotoConnectionExt, ImageFormat, Rectangle,
+    };
+
+    let mut tiles = Vec::with_capacity(payloads.len());
+    let result = (|| -> anyhow::Result<()> {
+        for (bounds, bgra) in payloads {
+            if bounds.width == 0 || bounds.height == 0 {
+                continue;
+            }
+            let pixmap = conn.generate_id()?;
+            conn.create_pixmap(
+                target.depth,
+                pixmap,
+                target.win,
+                bounds.width,
+                bounds.height,
+            )?;
+            tiles.push((pixmap, *bounds));
+            conn.put_image(
+                ImageFormat::Z_PIXMAP,
+                pixmap,
+                target.gc_id,
+                bounds.width,
+                bounds.height,
+                0,
+                0,
+                0,
+                target.depth,
+                bgra,
+            )?;
+        }
+
+        let previous = std::mem::take(&mut *target.drawn.borrow_mut());
+        let mut cookies = Vec::with_capacity(previous.len() + tiles.len() + 3);
+        conn.grab_server()?;
+        let queued = (|| -> anyhow::Result<()> {
+            if !tiles.is_empty() && !target.full_shape.get() {
+                // Covers any root size; the server clips it to the window.
+                cookies.push(conn.shape_rectangles(
+                    SO::SET,
+                    SK::BOUNDING,
+                    ClipOrdering::UNSORTED,
+                    target.win,
+                    0,
+                    0,
+                    &[Rectangle {
+                        x: 0,
+                        y: 0,
+                        width: i16::MAX as u16,
+                        height: i16::MAX as u16,
+                    }],
+                )?);
+                target.full_shape.set(true);
+            }
+            if tiles.is_empty() {
+                // Nothing to show: unmapped, an idle overlay costs the
+                // manager nothing. A later map starts fully transparent.
+                if target.mapped.get() {
+                    cookies.push(conn.unmap_window(target.win)?);
+                    target.mapped.set(false);
+                }
+                return Ok(());
+            }
+            if !target.mapped.get() {
+                cookies.push(conn.map_window(target.win)?);
+                target.mapped.set(true);
+            }
+            // The window background is pixel 0, fully transparent.
+            for rect in &previous {
+                cookies.push(conn.clear_area(
+                    false,
+                    target.win,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                )?);
+            }
+            for (pixmap, bounds) in &tiles {
+                cookies.push(conn.copy_area(
+                    *pixmap,
+                    target.win,
+                    target.gc_id,
+                    0,
+                    0,
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    bounds.height,
+                )?);
+            }
+            Ok(())
+        })();
+        conn.ungrab_server()?;
+        conn.flush()?;
+        queued?;
+        *target.drawn.borrow_mut() = tiles.iter().map(|(_, bounds)| *bounds).collect();
+        if checked_requests {
+            for cookie in cookies {
+                cookie.check()?;
+            }
+        }
+        Ok(())
+    })();
+    for (pixmap, _) in &tiles {
+        conn.free_pixmap(*pixmap).ok();
+    }
+    result
+}
+
+/// One frame for [`present_x11_frame`]: the pixmaps are uploaded already.
+#[cfg(target_os = "linux")]
+struct X11Frame<'a> {
+    /// The visible shape of the frame on screen, and its save-unders, to paint
+    /// back over the pixels this frame vacates. Empty to erase nothing.
+    erase_shape: &'a [x11rb::protocol::xproto::Rectangle],
+    erase: &'a [(u32, X11TileBounds)],
+    /// This frame's visible shape and its tiles.
+    shape: &'a [x11rb::protocol::xproto::Rectangle],
+    tiles: &'a [(u32, X11TileBounds)],
+}
+
+/// Present one frame: erase what the last frame vacates, the new bounding
+/// shape, the map state and every tile's pixels, as one unit no other client
+/// can see part of.
+///
+/// The X server runs one client's requests at a time but switches clients
+/// between them, so a compositor repainting, or a screen grab, could land
+/// between the shape and the pixels and see the new outline filled with the
+/// last frame. Everything here happens inside one server grab. The grab holds
+/// only small requests (the pixels are already in pixmaps), all sent in the
+/// same flush as the ungrab, so it lasts microseconds of server time and
+/// never waits on us.
+#[cfg(target_os = "linux")]
+fn present_x11_frame<C: x11rb::connection::Connection>(
+    conn: &C,
+    target: &X11PaintTarget,
+    frame: X11Frame<'_>,
+    checked_requests: bool,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+
+    let set_shape = |rects: &[x11rb::protocol::xproto::Rectangle]| {
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::UNSORTED,
+            target.win,
+            0,
+            0,
+            rects,
+        )
+    };
+    let copy = |(pixmap, bounds): &(u32, X11TileBounds)| {
+        conn.copy_area(
+            *pixmap,
+            target.win,
+            target.gc_id,
+            0,
+            0,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+        )
+    };
+    // This path reshapes every frame.
+    target.full_shape.set(false);
+    target.drawn.borrow_mut().clear();
+    let erasing = !frame.erase.is_empty() && !frame.erase_shape.is_empty();
+    let should_map = !frame.shape.is_empty();
+    let mut cookies = Vec::with_capacity(frame.erase.len() + frame.tiles.len() + 4);
+    conn.grab_server()?;
+    let queued = (|| -> anyhow::Result<()> {
+        // Output to a window is clipped to its bounding shape, so each shape
+        // comes before the pixels it lets through: copying first would drop
+        // the frontier a larger shape adds, and expose the window's zero
+        // backing there instead.
+        if erasing {
+            // Old and new together: the save-unders cover the old frame, the
+            // tiles cover the new one (and, outside its shape, carry the
+            // resolved desktop too).
+            let both: Vec<_> = frame
+                .erase_shape
+                .iter()
+                .chain(frame.shape)
+                .copied()
+                .collect();
+            cookies.push(set_shape(&both)?);
+        } else {
+            cookies.push(set_shape(frame.shape)?);
+        }
+        // Keep empty frames unmapped: some compositors capture a newly mapped
+        // full-root window as black even when its bounding shape is empty.
+        // Map before the copies, since an unmapped window need not retain
+        // pixels, and unmap only after the erase painted the desktop back.
+        if should_map && !target.mapped.get() {
+            cookies.push(conn.map_window(target.win)?);
+            target.mapped.set(true);
+        }
+        for buffer in frame.erase.iter().chain(frame.tiles) {
+            cookies.push(copy(buffer)?);
+        }
+        if erasing {
+            cookies.push(set_shape(frame.shape)?);
+        }
+        if !should_map && target.mapped.get() {
+            cookies.push(conn.unmap_window(target.win)?);
+            target.mapped.set(false);
+        }
+        Ok(())
+    })();
+    // Always release the grab, even when a request above failed to queue.
+    conn.ungrab_server()?;
+    conn.flush()?;
+    queued?;
+    // Checked only after the ungrab: a check is a round trip, and nothing may
+    // wait on a reply while the server is grabbed.
+    if checked_requests {
+        for cookie in cookies {
+            cookie.check()?;
+        }
+    }
+    Ok(())
+}
+
+/// A save-under as pixels for this window: a root read pads the fourth byte
+/// with zero, which a 32-bit window would take as fully transparent.
+#[cfg(target_os = "linux")]
+fn opaque_bgrx(pixels: &[u8], depth: u8) -> Vec<u8> {
+    let mut out = pixels.to_vec();
+    if depth == 32 {
+        for pixel in out.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+    }
+    out
 }
 
 /// Software-composite a premultiplied cursor tile over the real backdrop under
@@ -3415,7 +3812,7 @@ mod tests {
         fn wait_for_cursor_move_from(x: f64, y: f64, phase: &str) -> anyhow::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
-                let position = current_position().expect("placed cursor");
+                let position = current_position_for("default").expect("placed cursor");
                 if (position.0 - x).hypot(position.1 - y) > 32.0 {
                     eprintln!(
                         "{phase}: cursor moved from ({x}, {y}) to ({}, {})",
@@ -3425,7 +3822,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let position = current_position().expect("placed cursor");
+            let position = current_position_for("default").expect("placed cursor");
             anyhow::bail!(
                 "cursor position remained ({}, {}) near ({x}, {y}) during {phase}",
                 position.0,
@@ -3825,6 +4222,243 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+        Ok(())
+    }
+
+    /// CUA-3120: with no compositing manager, what another client reads off
+    /// the screen (a screen grab, a recording) must always be one whole frame.
+    /// The window under the overlay here never answers Expose, the worst case
+    /// of a busy app, so any pixel the cursor leaves shows our old paint unless
+    /// the overlay erases it itself; and a read landing between a frame's
+    /// shape and its pixels would see the new outline holding the last frame.
+    /// Either one is the moving arrow splitting in two. Each frame is one
+    /// solid square in a colour that alternates per frame, so every read must
+    /// show exactly one whole square in exactly one of the two colours.
+    #[test]
+    #[ignore = "requires a live X11 server (run under xvfb-run)"]
+    fn x11_overlay_frames_are_never_seen_half_presented() -> anyhow::Result<()> {
+        assert_x11_frames_are_never_seen_half_presented(false)
+    }
+
+    /// The same under a compositing manager (CI runs it under picom). A
+    /// manager tracks the window's shape and pixels through separate events,
+    /// so reshaping every frame let a composited frame pair one frame's shape
+    /// with another's pixels: the split arrow recorded on XFCE with picom.
+    #[test]
+    #[ignore = "requires a live X11 server with a compositing manager (run under xvfb-run with picom)"]
+    fn x11_overlay_frames_are_never_composited_half_presented() -> anyhow::Result<()> {
+        let (conn, screen_num) = x11rb::connect(None)?;
+        if !x11_compositor_present(&conn, screen_num) {
+            anyhow::bail!("no compositing manager owns _NET_WM_CM_S{screen_num}");
+        }
+        drop(conn);
+        assert_x11_frames_are_never_seen_half_presented(true)
+    }
+
+    fn assert_x11_frames_are_never_seen_half_presented(
+        with_compositor: bool,
+    ) -> anyhow::Result<()> {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{
+            ConnectionExt as XprotoConnectionExt, CreateGCAux, CreateWindowAux, ImageFormat,
+            WindowClass,
+        };
+        use x11rb::wrapper::ConnectionExt as _;
+
+        const AREA: u16 = 480;
+        const SIDE: u16 = 160;
+        // A compositing manager presents far faster than the software path
+        // (no root reads), so it runs longer to be read as often.
+        let frames: usize = if with_compositor { 6000 } else { 600 };
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let screen = conn.setup().roots[screen_num].clone();
+        let root = screen.root;
+
+        // A white window under the overlay that never repaints: with no
+        // background the server leaves whatever was on screen when an area
+        // is exposed, and nothing here answers the Expose.
+        let desktop = conn.generate_id()?;
+        conn.create_window(
+            screen.root_depth,
+            desktop,
+            root,
+            0,
+            0,
+            AREA,
+            AREA,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .background_pixmap(x11rb::NONE)
+                .override_redirect(1),
+        )?
+        .check()?;
+        conn.map_window(desktop)?.check()?;
+        let white = conn.generate_id()?;
+        conn.create_gc(
+            white,
+            desktop,
+            &CreateGCAux::new().foreground(screen.white_pixel),
+        )?
+        .check()?;
+        conn.poly_fill_rectangle(
+            desktop,
+            white,
+            &[x11rb::protocol::xproto::Rectangle {
+                x: 0,
+                y: 0,
+                width: AREA,
+                height: AREA,
+            }],
+        )?
+        .check()?;
+        // The overlay exactly as `run_overlay_thread` makes it: ARGB under a
+        // compositing manager, the root visual without one.
+        let (visual, depth, colormap) = if with_compositor {
+            let (visual, depth, _) =
+                find_argb_visual(&conn, &screen).expect("a 32-bit TrueColor visual");
+            let colormap = conn.generate_id()?;
+            conn.create_colormap(
+                x11rb::protocol::xproto::ColormapAlloc::NONE,
+                colormap,
+                root,
+                visual,
+            )?
+            .check()?;
+            (visual, depth, colormap)
+        } else {
+            (
+                screen.root_visual,
+                screen.root_depth,
+                screen.default_colormap,
+            )
+        };
+        let win = conn.generate_id()?;
+        conn.create_window(
+            depth,
+            win,
+            root,
+            0,
+            0,
+            AREA,
+            AREA,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            visual,
+            &CreateWindowAux::new()
+                .background_pixel(0)
+                .border_pixel(0)
+                .colormap(colormap)
+                .override_redirect(1),
+        )?
+        .check()?;
+        prepare_x11_overlay_with_empty_input(&conn, win)?;
+        let gc_id = conn.generate_id()?;
+        conn.create_gc(gc_id, win, &CreateGCAux::new())?.check()?;
+        let target = X11PaintTarget {
+            win,
+            root,
+            depth,
+            gc_id,
+            mapped: std::cell::Cell::new(false),
+            full_shape: std::cell::Cell::new(false),
+            drawn: std::cell::RefCell::new(Vec::new()),
+        };
+        conn.sync()?;
+
+        let done = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let observer = {
+            let done = Arc::clone(&done);
+            let reads = Arc::clone(&reads);
+            std::thread::spawn(move || -> anyhow::Result<Vec<String>> {
+                let (conn, _) = x11rb::connect(None)?;
+                let mut torn = Vec::new();
+                while !done.load(Ordering::SeqCst) {
+                    let image = conn
+                        .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, AREA, AREA, !0)?
+                        .reply()?;
+                    let (mut red, mut blue, mut other) = (0usize, 0usize, 0usize);
+                    for px in image.data.chunks_exact(4) {
+                        match (px[0], px[1], px[2]) {
+                            (255, 255, 255) => {}
+                            (0, 0, 255) => red += 1,
+                            (255, 0, 0) => blue += 1,
+                            _ => other += 1,
+                        }
+                    }
+                    let whole = usize::from(SIDE) * usize::from(SIDE);
+                    let frame_ok = (red, blue, other) == (whole, 0, 0)
+                        || (red, blue, other) == (0, whole, 0)
+                        // Before the first frame is presented.
+                        || (red, blue, other) == (0, 0, 0);
+                    if !frame_ok {
+                        torn.push(format!("red {red}, blue {blue}, other {other}"));
+                    }
+                    reads.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(torn)
+            })
+        };
+
+        let mut backdrop = X11BackdropCache::default();
+        for frame in 0..frames {
+            let mut pixmap = tiny_skia::Pixmap::new(u32::from(SIDE), u32::from(SIDE)).unwrap();
+            pixmap.fill(if frame % 2 == 0 {
+                tiny_skia::Color::from_rgba8(255, 0, 0, 255)
+            } else {
+                tiny_skia::Color::from_rgba8(0, 0, 255, 255)
+            });
+            let step = (frame % 100) as i16;
+            let tiles = [X11PaintTile {
+                bounds: X11TileBounds {
+                    x: 8 + step * 3,
+                    y: 8 + step,
+                    width: SIDE,
+                    height: SIDE,
+                },
+                pixmap,
+            }];
+            // Without a compositing manager this is the software-composited
+            // path, which blends over the desktop it reads back. The squares
+            // are opaque, so their colours stay exact either way.
+            let outcome = paint_x11_tiles(
+                &conn,
+                &target,
+                &tiles,
+                with_compositor,
+                false,
+                &mut backdrop,
+            )?;
+            assert_eq!(outcome, X11PaintOutcome::Painted, "frame {frame}");
+        }
+        conn.sync()?;
+        // Let the observer read the final frame at least once.
+        let settled = reads.load(Ordering::SeqCst) + 2;
+        while reads.load(Ordering::SeqCst) < settled {
+            std::thread::yield_now();
+        }
+        done.store(true, Ordering::SeqCst);
+        let torn = observer.join().expect("observer thread")?;
+        let total = reads.load(Ordering::SeqCst);
+        conn.destroy_window(win)?;
+        conn.destroy_window(desktop)?;
+        conn.free_gc(gc_id)?;
+        conn.free_gc(white)?;
+        if with_compositor {
+            conn.free_colormap(colormap)?;
+        }
+        conn.sync()?;
+        assert!(total >= 20, "the observer read only {total} frames");
+        assert!(
+            torn.is_empty(),
+            "{} of {total} reads saw a half-presented frame, first: {:?}",
+            torn.len(),
+            &torn[..torn.len().min(5)]
+        );
         Ok(())
     }
 
@@ -5829,5 +6463,81 @@ mod shell_helper_surface_tests {
             now
         ));
         assert!(shell_helper_surface_event(&cmd(b), now));
+    }
+
+    fn keyed(key: &str, cmd: OverlayCommand) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd,
+        })
+    }
+
+    fn poses() -> ShellHelperPoses {
+        ShellHelperPoses {
+            model: cursor_overlay::pose_stream::PoseModel::new(CursorConfig::default()),
+            look_sent: None,
+        }
+    }
+
+    fn move_to(x: f64, y: f64) -> OverlayCommand {
+        OverlayCommand::MoveTo {
+            x,
+            y,
+            end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target: None,
+        }
+    }
+
+    /// The helper gets the shared planner's path for a move, with the
+    /// arrival that releases the waiting action, and a one-pose track for
+    /// a snap. Only commands that reach it send anything.
+    #[test]
+    fn moves_and_snaps_reach_the_helper_as_pose_tracks() {
+        let now = Instant::now();
+        let mut poses = poses();
+        let snap = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        let track: serde_json::Value =
+            serde_json::from_str(snap.track.as_deref().unwrap()).unwrap();
+        assert_eq!(track["samples"].as_array().unwrap().len(), 1);
+        assert!(track["arrival"].is_null());
+        assert_eq!(track["rest"].as_array().unwrap().len(), 3);
+        assert_eq!(snap.arrival, None, "a snap has no glide to wait for");
+
+        let glide =
+            shell_helper_pose_update(&mut poses, &keyed("a", move_to(600.0, 400.0)), true, now);
+        let track: serde_json::Value =
+            serde_json::from_str(glide.track.as_deref().unwrap()).unwrap();
+        let samples = track["samples"].as_array().unwrap();
+        assert!(samples.len() > 10, "the planned path, not one jump");
+        let last = samples.last().unwrap().as_array().unwrap();
+        assert!((last[1].as_f64().unwrap() - 600.0).abs() < 1.0);
+        assert!((last[2].as_f64().unwrap() - 400.0).abs() < 1.0);
+        let (wait, seq) = glide.arrival.unwrap();
+        assert!(wait > Duration::ZERO);
+        assert_eq!(poses.model.move_seq(&"a".to_owned()), Some(seq));
+
+        let elsewhere =
+            shell_helper_pose_update(&mut poses, &keyed("b", move_to(9.0, 9.0)), false, now);
+        assert_eq!(elsewhere, ShellHelperPoseUpdate::default());
+    }
+
+    /// The look (resting float, halo colour) is sent once, again when it
+    /// changes (another session's colour), and again after the helper hid.
+    #[test]
+    fn the_helper_look_is_sent_only_when_it_changes() {
+        let now = Instant::now();
+        let mut poses = poses();
+        let first = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        assert!(first.look.is_some());
+        assert_eq!(
+            shell_helper_pose_update(&mut poses, &cmd("a"), true, now).look,
+            None
+        );
+        let other = shell_helper_pose_update(&mut poses, &cmd("b"), true, now);
+        assert!(other.look.is_some() && other.look != first.look);
+        shell_helper_pose_update(&mut poses, &OverlayMsg::Remove("b".to_owned()), true, now);
+        assert!(shell_helper_pose_update(&mut poses, &cmd("a"), true, now)
+            .look
+            .is_some());
     }
 }

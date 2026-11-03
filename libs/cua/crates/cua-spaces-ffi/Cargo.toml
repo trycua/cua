@@ -24,6 +24,7 @@ cua-home.workspace = true
 cua-host.workspace = true
 cua-spacesd-client.workspace = true
 cua-telemetry.workspace = true
+cua-crash.workspace = true
 tokio-tungstenite.workspace = true
 uniffi.workspace = true
 serde.workspace = true

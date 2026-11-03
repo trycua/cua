@@ -483,12 +483,72 @@ export const PAGES: PageSpec[] = [
     python: [['`cua_sandbox` runtimes', `${PY}/runtimes`]],
   },
   {
+    slug: 'runtime-kinds',
+    title: 'Runtime per kind',
+    description: 'Which program runs containers, virtual machines and microVMs on this machine, and what a given binary is.',
+    intro:
+      'Each kind of Space has its own setting, `runtime.container`, `runtime.vm` and `runtime.microvm` (`auto`, `builtin` or `system`), and with `system` a `runtime.<kind>_path` naming the program to use. `runtime_kinds` reads them with what is installed for each kind; `runtime_check_path` tells what a binary is before it is saved. The Cua app\'s Settings, Advanced shows the same, and `cua` and the daemon use the same program.',
+    members: [{ object: 'Local', title: 'Runtime per kind methods', methods: ['runtime_kinds', 'runtime_check_path'] }],
+    items: ['RuntimeKindState', 'RuntimeDetected', 'RuntimePathProbe'],
+  },
+  {
+    slug: 'repo-cache',
+    title: 'Repo cache',
+    description: 'What the repo cache holds and what it saved, and clearing it.',
+    intro:
+      'The daemon keeps verified copies of public git repositories so a repeat `git clone` in a Space is fast. `repo_cache_status` reads what it holds and what the last week saved in plain words; `repo_cache_clear` deletes every copy. It is on by default and is turned off, or given a size, with `config_set` on `cache.repos` and `cache.repos_size_gb`.',
+    items: ['RepoCacheStatus', 'repo_cache_status', 'repo_cache_clear'],
+  },
+  {
     slug: 'spaces',
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
-      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
-    items: ['Spaces', 'SpaceInfo', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings (experiment)',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      'These calls belong to the Secure Spaces experiment (`cua experiments enable secure-spaces`) and are refused while it is off. `Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
+  },
+  {
+    slug: 'spaces/children',
+    title: 'Child Spaces (experiment)',
+    description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) and are refused while it is off. `set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+    items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
+    members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
+  },
+  {
+    slug: 'spaces/services',
+    title: 'Kept commands (experiment)',
+    description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) for adding a service; listing, stopping and removing work either way. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+    items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
+    members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
+  },
+  {
+    slug: 'spaces/resize',
+    title: 'Power and resize',
+    description: 'Stop, suspend and start a Space, and change a local VM\'s CPU, memory or disk while keeping its files.',
+    intro:
+      '`Spaces.stop`, `suspend` and `start` answer a `SpacePowerReport`. `Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
+    items: ['SpacePowerReport', 'SpaceResizeReport'],
+    members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
   },
   {
     slug: 'spaces/lifetime',
@@ -527,6 +587,27 @@ export const PAGES: PageSpec[] = [
       'SpaceHotspotStatus',
     ],
     modules: ['spaces'],
+  },
+  {
+    slug: 'spaces/sharing',
+    title: 'Sharing, leaving and bulk delete',
+    description: 'Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once.',
+    intro:
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.',
+    members: [
+      { object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] },
+      { object: 'Spaces', title: 'Leave and bulk delete', methods: ['leave_many', 'delete_many'] },
+    ],
+    items: ['SpaceShareEntry', 'SpaceShares', 'SpaceSharing', 'SpaceTeamShare', 'BulkResult'],
+  },
+  {
+    slug: 'spaces/relay-registration',
+    title: 'Relay registration',
+    description: 'Register a Space with the relay so other devices reach it, and unregister it.',
+    intro:
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+    items: ['SpaceRelayRegistration'],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
   },
   {
     slug: 'spaces/elastic',
@@ -731,6 +812,15 @@ export const PAGES: PageSpec[] = [
     catalog: true,
   },
   {
+    slug: 'spaces/list-watch',
+    title: 'The list and its changes',
+    description: 'The Space list `Spaces.list` reads, and hearing when it changed so it is read again then instead of on a timer.',
+    intro:
+      '`Spaces.watch_list` calls a `SpacesListListener` once at the start and again whenever the list changes: this computer\'s Spaces within a second, your other computers on the mesh within about a second of connecting or going away, the others within 10 seconds. Read the list again (`Spaces.list`) when it is called. It reopens by itself after a daemon restart; `SpacesListWatch.stop` ends it.',
+    members: [{ object: 'Spaces', title: 'List changes', methods: ['watch_list'] }],
+    items: ['SpaceList', 'SpacesListListener', 'SpacesListWatch'],
+  },
+  {
     slug: 'spaces/agents',
     title: 'Agents in a Space',
     description: 'Start, follow, message and stop coding-agent runs inside a Space.',
@@ -746,7 +836,7 @@ export const PAGES: PageSpec[] = [
     title: 'Persistent agents and your cloud',
     description: 'Named agents whose memory outlives their Space: homes in the Cua Volume, routines, notifications, pause and resume, access to your computers, and Spaces in your own AWS, Google Cloud or Modal account.',
     intro:
-      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Persistent agents](/spaces/guides/persistent-agents).',
+      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Memory and identity](/spaces/guides/agent-memory-and-identity).',
     members: [
       {
         object: 'Spaces',
@@ -765,7 +855,7 @@ export const PAGES: PageSpec[] = [
       { object: 'Spaces', title: 'Notifications', methods: ['notify_user', 'notifications', 'notifications_ack'] },
       { object: 'Spaces', title: 'Access to your computers', methods: ['computer_access_grant', 'computer_access_revoke', 'computer_access'] },
     ],
-    items: [
+    items: ['ThreadView', 'thread_view_of', 
       'PersistentAgentInfo',
       'PersistentAgentOptions',
       'AgentDelivery',
@@ -788,7 +878,7 @@ export const PAGES: PageSpec[] = [
       {
         object: 'Spaces',
         title: 'Your cloud',
-        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep', 'cloud_audit'],
+        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep', 'cloud_audit', 'cloud_approve', 'cloud_cost'],
       },
     ],
     items: [
@@ -952,7 +1042,7 @@ const TELEMETRY_CONCEPTS = ['../concepts/telemetry', '../concepts/telemetry-even
 
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
+  ['Sandboxes', ['cua', 'runtime-kinds', 'repo-cache', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
   ['Inside a sandbox', ['spacesd', 'agents', 'agent-setup']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],

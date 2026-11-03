@@ -14,7 +14,7 @@ use std::time::Duration;
 use clap::Args;
 use cua_sdk::{BuildListener, BuildOptions, BuildProgress, Cua, CuaError};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// `cua build`.
 #[derive(Args, Debug, Clone)]
@@ -207,7 +207,7 @@ pub async fn run(
             result.seconds
         ),
     );
-    line(out, format!("Run it: cua spaces create build:{image}"));
+    hint_line(out, format!("Run it: cua spaces create build:{image}"));
     Ok(0)
 }
 

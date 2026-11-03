@@ -86,13 +86,11 @@ impl VolumeMount {
                 self.name
             )));
         }
-        let path = Path::new(&self.path);
-        if !path.is_absolute()
-            || self.path == "/"
+        // The path is inside the guest, where paths are POSIX whatever this
+        // machine is: a Windows host's `Path` calls `/mnt/a` relative.
+        if !self.path.starts_with('/')
+            || self.path.trim_matches('/').is_empty()
             || self.path.split('/').any(|seg| seg == "." || seg == "..")
-            || !path
-                .components()
-                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
         {
             return Err(Error::invalid(format!(
                 "volume {:?}: the path {:?} must be absolute, without `.` or `..` (for example \
@@ -117,6 +115,11 @@ impl VolumeMount {
     }
 }
 
+/// The folders of a guest path, in order (empty ones, from `//`, dropped).
+fn guest_segments(path: &str) -> Vec<&str> {
+    path.split('/').filter(|s| !s.is_empty()).collect()
+}
+
 /// Checks a Space's mounts: each valid, no two at the same or nested paths.
 pub fn validate(mounts: &[VolumeMount]) -> Result<()> {
     if mounts.len() > MAX_MOUNTS {
@@ -127,10 +130,10 @@ pub fn validate(mounts: &[VolumeMount]) -> Result<()> {
     }
     for (i, m) in mounts.iter().enumerate() {
         m.check()?;
-        let p = Path::new(&m.path);
+        let p = guest_segments(&m.path);
         for other in &mounts[..i] {
-            let q = Path::new(&other.path);
-            if p.starts_with(q) || q.starts_with(p) {
+            let q = guest_segments(&other.path);
+            if p.starts_with(&q) || q.starts_with(&p) {
                 return Err(Error::invalid(format!(
                     "volumes {:?} and {:?} are mounted at {} and {}: paths cannot be the same \
                      or inside one another",

@@ -99,8 +99,9 @@ pub fn find_binary(arch: Arch) -> Option<PathBuf> {
 ///    its `bin/`: when Node or Python loads the SDK library in-process the
 ///    executable is `node` or `python`, and the binary ships with the
 ///    library instead. The npm native package keeps it beside the library
-///    and `cua`; the wheel keeps the library at `cua/` and the binary next
-///    to `cua/bin/cua`;
+///    and `cua`; the wheel keeps the library at `cua/` and the binary in
+///    `cua/bin/` (the `cua` console command hands it to the CLI from the
+///    `cua-cli` wheel as `$CUA_SPACESD_STATIC`);
 /// 3. `$CUA_HOME/bin` (`~/.cua/bin`).
 pub fn search_paths(
     name: &str,

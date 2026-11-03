@@ -30,6 +30,7 @@ mod agent_keys_cmd;
 mod agent_session_cmd;
 mod agents;
 mod auth;
+mod bench_cmd;
 mod browse;
 mod build_cmd;
 mod cache;
@@ -38,11 +39,13 @@ mod cloud_cmd;
 mod compat_cmd;
 mod computer;
 mod config_cmd;
+mod connections_cmd;
 mod devices_cmd;
 mod do_cmd;
 mod doctor;
 pub mod drive_cmd;
 mod dump_docs;
+mod experiments_cmd;
 pub mod extension;
 mod host;
 mod image_build;
@@ -50,10 +53,13 @@ mod image_release;
 mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
+mod member_cmd;
+mod network_cmd;
 pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
 mod providers;
+mod repo_cache_cmd;
 mod resources_view;
 mod risky;
 mod runs;
@@ -68,6 +74,8 @@ mod telemetry_cmd;
 pub mod teleport;
 pub mod teleport_session;
 mod trajectory;
+#[cfg(test)]
+mod upgrade_070_tests;
 mod usage_cmd;
 pub mod util;
 
@@ -129,19 +137,34 @@ struct Cli {
     command: Command,
 }
 
+/// Former command names that still work, and the command each is now
+/// (`cua dump-docs` marks them `deprecated` with `replaced_by`).
+pub(crate) const DEPRECATED_COMMANDS: &[(&str, &str)] = &[
+    ("cua agents", "cua connect"),
+    ("cua agent create", "cua agent add"),
+    ("cua agent persistent", "cua agent ls"),
+    ("cua agent tell", "cua agent send"),
+    ("cua agent forget", "cua agent rm"),
+    ("cua agent routine", "cua agent schedule"),
+];
+
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Log in to Cua and manage the signed-in session.
     #[command(subcommand)]
     Auth(AuthCmd),
-    /// AI coding agents on this computer: install cua skills and configure the cua MCP server.
+    /// Connect the AI agents on this computer to Cua: install the cua skills
+    /// and configure the cua MCP server.
+    #[command(subcommand)]
+    Connect(agents::AgentsCmd),
+    /// Deprecated alias of `connect`.
     #[command(subcommand)]
     Agents(agents::AgentsCmd),
     /// Share a link to a port, a file or a folder that opens on your other
     /// signed-in devices (never localhost): `cua share 3000`, `cua share
     /// ./report.html`, `cua share ls`, `cua share stop ID`.
     Share(share_cmd::ShareArgs),
-    /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
+    /// Agents in a Space: add, send, ls, rm, schedule; run, logs, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
     /// Sandboxes: local or an existing computer (direct).
@@ -188,7 +211,9 @@ enum Command {
   # Serve every tool over stdio (what MCP clients launch)
   cua mcp
   # Read-only sandbox tools, computer tools on the sandbox dev
-  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev"
+  cua mcp --permissions sandbox:readonly,computer:all --sandbox dev
+  # An agent that joined a Space with cua join: its thread tools only
+  cua mcp --member ubuntu-build/codex"
     )]
     Mcp {
         /// Comma-separated permissions or groups (default: all).
@@ -197,7 +222,20 @@ enum Command {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Serve only the Space thread tools (thread_join, thread_inbox,
+        /// thread_read, thread_post, agent_members) as the agent this
+        /// computer joined with `cua join` (`<space>/<handle>`). Its key
+        /// stays in the keychain.
+        #[arg(long, conflicts_with_all = ["permissions", "sandbox"])]
+        member: Option<String>,
     },
+    /// Join a Space as an agent on this computer, with the code from a
+    /// "Join my Cua Space" link. Needs your Cua sign-in; the code works once.
+    Join(member_cmd::JoinArgs),
+    /// A Space's thread, as the agent this computer joined with `cua join`:
+    /// say who you are, read your inbox, post.
+    #[command(subcommand)]
+    Thread(member_cmd::ThreadCmd),
     /// Recorded demonstrations (skills) for agents.
     #[command(subcommand)]
     Skills(SkillsCmd),
@@ -217,6 +255,14 @@ enum Command {
     /// that Spaces fork from in under a second. Works in any directory;
     /// layers already built are reused.
     Build(build_cmd::BuildArgs),
+    /// What a Space can reach on the network, and changing it: `show`,
+    /// `set`, `log`. An experiment: see `cua experiments`.
+    #[command(subcommand)]
+    Network(network_cmd::NetworkCmd),
+    /// Features that are still being built, one switch each: `list`,
+    /// `enable`, `disable`.
+    #[command(subcommand)]
+    Experiments(experiments_cmd::ExperimentsCmd),
     /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
@@ -277,6 +323,9 @@ enum Command {
   cua computers
   cua computers --json")]
     Computers,
+    /// Your computers on the relay: remove one that is gone.
+    #[command(subcommand)]
+    Machines(host::MachinesCmd),
     /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
     Host(host::HostCmd),
@@ -332,6 +381,18 @@ enum Command {
         #[arg(long, hide = true)]
         relay: Option<String>,
     },
+    /// The AI providers connected once for every app that can use them: list,
+    /// add (a key from stdin), test, remove. What Cua Spaces shows in
+    /// Settings, Connections. (`cua connect` connects your coding apps to Cua.)
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua connections list
+  cua connections add deepseek
+  cua connections test
+  cua connections remove deepseek"
+    )]
+    Connections(connections_cmd::ConnectionsCmd),
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -376,6 +437,17 @@ enum Command {
   cua telemetry show-last"
     )]
     Telemetry(telemetry_cmd::TelemetryCmd),
+    /// Spaces performance benchmarks: list them, run one in Spaces of its
+    /// own (writes result.json and samples.csv in the bench-result v1
+    /// format), and check a run against a committed baseline.
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua bench list
+  cua bench run microvm-fork --n 5 --out ./mf
+  cua bench check ./mf/result.json --baseline microvm-fork/baseline.json"
+    )]
+    Bench(bench_cmd::BenchCmd),
     /// (internal) The CLI and MCP surface as JSON, for the generated docs.
     #[command(name = "dump-docs", hide = true)]
     DumpDocs {
@@ -1162,6 +1234,14 @@ async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
         let _ = TOPOLOGY.set("daemon");
         return Cua::connect(cli.daemon.clone(), cli.daemon_token.clone());
     }
+    // Inside a Space with children on: its spawn channel, where every
+    // Space made is a child of this one.
+    if let Some(cua_daemon::client::DaemonAddress::Url { url, token }) =
+        cua_daemon::client::spawn_channel()
+    {
+        let _ = TOPOLOGY.set("space");
+        return Cua::connect(Some(url), Some(token));
+    }
     // A daemon that is starting is waited for (bounded), never raced with
     // a runtime of this process's own (a `cua volume mount` would mount
     // here, not in the daemon).
@@ -1266,8 +1346,16 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),
         ));
     }
+    // An experiment that is off is refused before any sign-in, daemon or
+    // relay call.
+    if let Some(g) = uses_experiment(&cli.command)
+        && !cua_vmm::experiments::enabled(g)
+    {
+        return Err(CuaError::InvalidArgument(g.off_message()));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
+        Command::Experiments(cmd) => return experiments_cmd::run(cmd, json, out),
         Command::Images(cmd) => {
             return match cmd {
                 ImagesCmd::Ls { all, os, browser } => catalog::print_list(
@@ -1509,7 +1597,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 AuthCmd::Provider(ProviderCmd::Rm { name }) => providers::remove(name, out),
             };
         }
-        Command::Agents(a) => {
+        Command::Connect(a) | Command::Agents(a) => {
             return match a {
                 agents::AgentsCmd::Detect => agents::cmd_detect(json, out),
                 agents::AgentsCmd::Setup(args) => agents::cmd_setup(args, json, out),
@@ -1589,6 +1677,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Config(cmd) => return config_cmd::run(cmd.clone(), json, out),
         Command::Telemetry(cmd) => return telemetry_cmd::run(cmd.clone(), json, out),
+        Command::Bench(cmd) => return bench_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
         Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
@@ -1641,7 +1730,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return Ok(i32::from(ended.iter().any(|e| e.error.is_some())));
         }
         Command::Teleport(
-            cmd @ (teleport::TeleportCmd::Providers | teleport::TeleportCmd::Manifest(_)),
+            cmd @ (teleport::TeleportCmd::Providers
+            | teleport::TeleportCmd::Manifest(_)
+            | teleport::TeleportCmd::Doctor(_)),
         ) => {
             return extension::teleport(None, cmd.clone(), json, out).await;
         }
@@ -1667,6 +1758,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                         relay: None,
                         label: vec![],
                         no_size: false,
+                        tree: false,
                     }),
                     ..cli
                 };
@@ -1725,8 +1817,14 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Gpus { .. }
             | host::SpacesCmd::Delete { .. }
             | host::SpacesCmd::Stop { .. }
+            | host::SpacesCmd::Suspend { .. }
+            | host::SpacesCmd::Resize { .. }
             | host::SpacesCmd::Start { .. }
             | host::SpacesCmd::Egress { .. }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(..)
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }
@@ -1757,6 +1855,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1767,19 +1866,39 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
                 let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                if let Some(rt) = cua.embedded_runtime() {
-                    if !rt.spaces().has_share_consent() {
-                        rt.spaces()
-                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
-                    }
-                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
-                    // The daemon asks for user presence on this computer.
+                let is_share = matches!(cmd, host::SpacesCmd::Share { .. });
+                let mut presence_asks = is_share;
+                if let Some(rt) = cua.embedded_runtime()
+                    && !rt.spaces().has_share_consent()
+                {
+                    rt.spaces()
+                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    presence_asks = false;
+                }
+                if presence_asks {
+                    // The daemon, or an embedded runtime that carries the
+                    // daemon's extensions, asks for user presence on this
+                    // computer; `--yes` cannot skip that.
                     use std::io::IsTerminal as _;
                     host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
                     eprintln!("{}", host::share_confirm_prompt());
                 }
             }
-            return host::run_spaces_sdk(&cua, cmd, json, out).await;
+            let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
+            res.map_err(host::explain_share_presence_failure)
+        }
+        Command::Network(cmd) => {
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                    tree: false,
+                }),
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            return network_cmd::run(&cua, cmd, json, out).await;
         }
         Command::Build(a) => {
             let rest = Cli {
@@ -1787,6 +1906,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1796,18 +1916,57 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Cloud(cloud_cmd::CloudCmd::Add {
             cloud: cloud_cmd::AddCloud::Aws(a),
         }) => return add_aws(a, json, out).await,
+        Command::Cloud(cloud_cmd::CloudCmd::Trust { cloud }) => {
+            return cloud_trust(&cloud, out).await;
+        }
         Command::Cloud(cmd) => {
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
             let cua = open(&rest, false).await?;
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
             return cloud_cmd::run(&cua, cmd, json, out).await;
+        }
+        Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
+            // Embedded: the row, the lookup and the device all use this
+            // process's relay, never a daemon's.
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                    tree: false,
+                }),
+                embedded: true,
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            let home = util::cua_home();
+            host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
+            let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
+            return host::remove_machine(
+                &cua,
+                &auth,
+                &host::SessionTokens,
+                &name,
+                &|q| yes || (util::interactive() && util::confirm(q, false)),
+                json,
+                out,
+            )
+            .await;
+        }
+        Command::Spaces(host::SpacesCmd::Ls { .. })
+            if cli.daemon.is_none() && cua_daemon::client::spawn_channel().is_some() =>
+        {
+            // Inside a Space: its own children, through its spawn channel.
+            let cua = open(&cli, false).await?;
+            return host::run_children_ls(&cua, json, out).await;
         }
         Command::Spaces(cmd) => {
             // Relay machines only when signed in; the registry either way.
@@ -1832,6 +1991,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         cli.command,
         Command::Sandbox(_)
             | Command::Agent(_)
+            | Command::Connections(_)
             | Command::Do(_)
             | Command::DoHostConsent
             | Command::Mcp { .. }
@@ -1873,6 +2033,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return extension::viewer(cua.clone(), &listen, no_open, out).await;
         }
         Command::Agent(cmd) => return agent_cmd::run(&cua, cmd, json, out).await,
+        Command::Connections(cmd) => return connections_cmd::run(&cua, cmd, json, out).await,
         Command::Volume(cmd) => return drive_cmd::run(&cua, cmd, json, out).await,
         Command::Teleport(cmd @ teleport::TeleportCmd::Push(_)) => {
             return extension::teleport(Some(&cua), cmd, json, out).await;
@@ -1881,8 +2042,17 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Doctor(cmd) => return doctor::dispatch(&cua, *cmd, json, out).await,
         Command::DoHostConsent => return do_cmd::host_consent(&cua, out).await,
         Command::Mcp {
+            member: Some(member),
+            ..
+        } => {
+            return mcp::serve_stdio(member_cmd::member_server(cua, &member)?).await;
+        }
+        Command::Join(args) => return member_cmd::join(&cua, args, json, out).await,
+        Command::Thread(cmd) => return member_cmd::thread(&cua, cmd, json, out).await,
+        Command::Mcp {
             permissions,
             sandbox,
+            member: None,
         }
         | Command::Daemon(DaemonCmd::Mcp {
             permissions,
@@ -2147,6 +2317,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             }
         }
         Command::Auth(_)
+        | Command::Connect(_)
         | Command::Agents(_)
         | Command::WifToken(_)
         | Command::Trajectory(_)
@@ -2155,8 +2326,10 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Host(_)
         | Command::Run(_)
         | Command::Build(_)
+        | Command::Network(_)
         | Command::Jobs(_)
         | Command::Computers
+        | Command::Machines(_)
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)
@@ -2170,8 +2343,10 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Compat(_)
         | Command::Config(_)
         | Command::Telemetry(_)
+        | Command::Bench(_)
         | Command::Keyvault(_)
         | Command::Images(_)
+        | Command::Experiments(_)
         | Command::DumpDocs { .. } => unreachable!("handled above"),
     }
     Ok(0)
@@ -2181,6 +2356,28 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
 #[cfg(feature = "byoc")]
 async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     add_aws::run(a, json, out).await
+}
+
+/// `cua cloud trust <cloud>`: the trust setup file this cua ships.
+#[cfg(feature = "byoc")]
+async fn cloud_trust(cloud: &str, out: &mut dyn Write) -> Result<i32, CuaError> {
+    let cloud = cloud.trim().to_ascii_lowercase();
+    let file = cua_byoc::trust::file(&cloud).ok_or_else(|| {
+        CuaError::InvalidArgument(format!(
+            "{cloud:?} has no trust file: aws, gcp or azure (Hetzner and Modal take an API token)"
+        ))
+    })?;
+    out.write_all(file.as_bytes())
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    Ok(0)
+}
+
+#[cfg(not(feature = "byoc"))]
+async fn cloud_trust(_cloud: &str, _out: &mut dyn Write) -> Result<i32, CuaError> {
+    Err(CuaError::Unsupported(
+        "this cua was built without your own clouds (the byoc feature); install the Cua Spaces cua"
+            .into(),
+    ))
 }
 
 #[cfg(not(feature = "byoc"))]
@@ -2406,6 +2603,20 @@ async fn daemon_start(
             "the daemon did not start within 10 s".into(),
         ));
     }
+    // One daemon per home: one still winding down (stopped, or an app
+    // restarting it) is waited for, never run next to.
+    let lock_path = discovery
+        .parent()
+        .map(|d| d.join("daemon.lock"))
+        .unwrap_or_else(cua_daemon::InstanceLock::path);
+    let _instance = {
+        let path = lock_path.clone();
+        let wait = cua_daemon::server::SHUTDOWN_GRACE + Duration::from_secs(5);
+        tokio::task::spawn_blocking(move || cua_daemon::InstanceLock::acquire(&path, wait))
+            .await
+            .map_err(util::internal)?
+            .map_err(|held| CuaError::InvalidArgument(held.to_string()))?
+    };
     // A daemon holds a descriptor per Space, client and stream: dozens of
     // concurrent creates exhausted macOS's default soft limit of 256.
     if let Some((before, after)) = util::raise_open_file_limit() {
@@ -2514,12 +2725,15 @@ async fn daemon_start(
             .unwrap_or_default(),
         h.loopback_url.clone().unwrap_or_default()
     );
+    // SIGTERM and Ctrl-C stop it cleanly, within a bounded time.
     let trigger = h.shutdown_trigger();
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        cua_daemon::server::stop_signal().await;
         let _ = trigger.send(true);
     });
-    h.wait().await;
+    if !h.wait_bounded(cua_daemon::server::SHUTDOWN_GRACE).await {
+        eprintln!("cua daemon: shutdown took too long; exiting");
+    }
     Ok(0)
 }
 
@@ -2599,11 +2813,82 @@ fn uses_teams(cmd: &Command) -> bool {
     }
 }
 
+/// The experiment a command belongs to, if any: the commands and flags that
+/// are new with it. They are hidden from help, and refused with how to turn
+/// the experiment on, until it is on.
+fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
+    use cua_vmm::experiments::Gate;
+    match cmd {
+        Command::Network(_) => Some(Gate::SecureSpaces),
+        Command::Spaces(host::SpacesCmd::Create {
+            network,
+            parent,
+            widen,
+            children,
+            ..
+        }) => {
+            if network.is_some() {
+                Some(Gate::SecureSpaces)
+            } else if parent.is_some() || *widen || *children {
+                Some(Gate::ChildSpaces)
+            } else {
+                None
+            }
+        }
+        Command::Spaces(
+            host::SpacesCmd::Ls { tree: true, .. }
+            | host::SpacesCmd::Delete {
+                keep_children: true,
+                ..
+            }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(host::ServiceCmd::Add { .. }),
+        ) => Some(Gate::ChildSpaces),
+        _ => None,
+    }
+}
+
 /// The clap command `cua` parses with. Teams are experimental: without
 /// them, `cua team` and `cua host pair --team` stay out of help (they still
 /// parse, and are refused with a short reason).
 fn cli_command(teams: bool) -> clap::Command {
-    let cmd = Cli::command();
+    cli_command_for(teams, |_| true)
+}
+
+/// [`cli_command`] with the experiments `on` says are on; the commands and
+/// flags of the others stay out of help (they still parse, and are refused
+/// with how to turn the experiment on).
+fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool) -> clap::Command {
+    use cua_vmm::experiments::Gate;
+    let mut cmd = without_teams_if(Cli::command(), teams);
+    if !on(Gate::SecureSpaces) {
+        cmd = cmd
+            .mut_subcommand("network", |c| c.hide(true))
+            .mut_subcommand("spaces", |s| {
+                s.mut_subcommand("create", |c| c.mut_arg("network", |a| a.hide(true)))
+            });
+    }
+    if !on(Gate::ChildSpaces) {
+        cmd = cmd.mut_subcommand("spaces", |s| {
+            s.mut_subcommand("create", |c| {
+                c.mut_arg("parent", |a| a.hide(true))
+                    .mut_arg("widen", |a| a.hide(true))
+                    .mut_arg("children", |a| a.hide(true))
+            })
+            .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
+            .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+            .mut_subcommand("children", |c| c.hide(true))
+            .mut_subcommand("budget", |c| c.hide(true))
+            .mut_subcommand("orphans", |c| c.hide(true))
+            .mut_subcommand("service", |c| c.hide(true))
+        });
+    }
+    cmd
+}
+
+fn without_teams_if(cmd: clap::Command, teams: bool) -> clap::Command {
     if teams {
         return cmd;
     }
@@ -2654,8 +2939,100 @@ Examples:
   cua host setup --direct 0.0.0.0:3211 --name studio-mac
   # A spare Mac on your tailnet that runs Spaces, without a relay
   # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare
+  cua host setup --direct 100.101.102.103:3211 --share spaces
 ";
+
+/// The command `cua` parses with, named for `channel`. Stable's is `cli`
+/// untouched. A Local build ("Cua Spaces Local", CUA-1776) installs its CLI as
+/// `cua-local`, so its help says so: usage lines print `cua-local` (the
+/// bundled copy is a file named `cua` inside the app, which clap would name
+/// `cua`), and an example that starts with `cua` starts with `cua-local`, so
+/// pasting it does not run the Stable CLI.
+fn channel_command(cli: clap::Command, channel: cua_home::channel::CuaChannel) -> clap::Command {
+    if !channel.is_local() {
+        return cli;
+    }
+    let verbs = util::verbs_of(&cli);
+    localize_help(cli.bin_name(channel.cli_name()), channel, &verbs)
+}
+
+/// `cmd` and its subcommands, their arguments included, with every command
+/// their help tells the reader to run named for `channel`'s CLI: the
+/// examples in the after-help (see [`localize_examples`]) and a `cua <verb>`
+/// anywhere in the about, long about, after-help and argument help (see
+/// [`util::hint`]). `verbs` are the CLI's command names.
+fn localize_help(
+    cmd: clap::Command,
+    channel: cua_home::channel::CuaChannel,
+    verbs: &std::collections::HashSet<String>,
+) -> clap::Command {
+    let name = channel.cli_name();
+    let text = |s: &clap::builder::StyledStr| {
+        util::localize_for(channel, &localize_examples(&s.to_string(), name), verbs)
+    };
+    let about = cmd.get_about().map(text);
+    let long_about = cmd.get_long_about().map(text);
+    let after = cmd.get_after_help().map(text);
+    let after_long = cmd.get_after_long_help().map(text);
+    let mut cmd = cmd;
+    if let Some(h) = about {
+        cmd = cmd.about(h);
+    }
+    if let Some(h) = long_about {
+        cmd = cmd.long_about(h);
+    }
+    if let Some(h) = after {
+        cmd = cmd.after_help(h);
+    }
+    if let Some(h) = after_long {
+        cmd = cmd.after_long_help(h);
+    }
+    cmd.mut_args(|arg| {
+        let help = arg.get_help().map(text);
+        let long_help = arg.get_long_help().map(text);
+        let mut arg = arg;
+        if let Some(h) = help {
+            arg = arg.help(h);
+        }
+        if let Some(h) = long_help {
+            arg = arg.long_help(h);
+        }
+        arg
+    })
+    .mut_subcommands(|sub| localize_help(sub, channel, verbs))
+}
+
+/// `text` with every line that is a `cua ...` example (it starts with `cua `
+/// once indented) starting with `name` instead.
+fn localize_examples(text: &str, name: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let body = line.trim_start();
+        match body.strip_prefix("cua ") {
+            Some(rest) => {
+                out.push_str(&line[..line.len() - body.len()]);
+                out.push_str(name);
+                out.push(' ');
+                out.push_str(rest);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// The text of `cua help advanced` for `channel`: Local's names its own CLI in
+/// the examples and wherever a command is named in a sentence.
+fn advanced_help_for(channel: cua_home::channel::CuaChannel) -> String {
+    if !channel.is_local() {
+        return ADVANCED_HELP.to_string();
+    }
+    let examples = localize_examples(ADVANCED_HELP, channel.cli_name());
+    util::localize_for(channel, &examples, &util::verbs_of(&cli_command(true)))
+}
 
 /// `cua help advanced`, answered before clap: it is a help topic, not a
 /// command.
@@ -2666,28 +3043,38 @@ fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
 /// Shows a fallback to the relay's HTTPS path on stderr (never stdout, so
 /// `--json` output and pipes stay clean).
 fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
-    eprintln!("cua: {}", n.message());
+    eprintln!("{}: {}", util::cli(), n.message());
 }
 
 pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
+    let channel = cua_home::channel::CuaChannel::current();
     if is_advanced_help(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
-        print!("{ADVANCED_HELP}");
+        print!("{}", advanced_help_for(channel));
         return;
     }
     promote_spacesd_env_vars();
-    // `CUA_ENV` picks every endpoint and the cua home: a typo must not fall
-    // back to production silently.
+    // `CUA_CHANNEL` and `CUA_ENV` pick every endpoint and the cua home (Local
+    // is `cua-local`: staging and `~/.cua-local` unless told otherwise): a
+    // typo must not fall back to production silently.
     if let Err(e) = cua_home::env::CuaEnv::try_current() {
         eprintln!("error: {e}");
         std::process::exit(2);
     }
     // SAFETY: still first in `main`, before any other thread exists. Pins
-    // `CUA_HOME` for a non-production `CUA_ENV` so every component and
-    // child process (the daemon) uses that environment's home.
+    // `CUA_HOME` for the Local channel or a non-production `CUA_ENV` (and
+    // `CUA_CHANNEL` and `CUA_ENV` for Local) so every component and child
+    // process (the daemon) uses that channel's and environment's home.
     unsafe { cua_home::env::pin_home() };
-    let matches = cli_command(cua_home::experimental::teams_enabled()).get_matches();
+    let matches = channel_command(
+        cli_command_for(
+            cua_home::experimental::teams_enabled(),
+            cua_vmm::experiments::enabled,
+        ),
+        channel,
+    )
+    .get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let daemon_process = matches!(cli.command, Command::Daemon(DaemonCmd::Start { .. }));
@@ -2700,6 +3087,17 @@ pub fn main() {
     telemetry.set_notice_mode(notice_mode(
         std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
     ));
+    // Crash reports (opt-in, only when the Spaces shell passed a DSN) come
+    // from the daemon process itself, not the `cua daemon start` launcher.
+    let crash_guard = matches!(
+        cli.command,
+        Command::Daemon(DaemonCmd::Start {
+            foreground: true,
+            ..
+        })
+    )
+    .then(|| cua_crash::init_from_env("daemon"))
+    .flatten();
     // The first-run notice goes to stderr before anything could be sent
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
@@ -2761,7 +3159,14 @@ pub fn main() {
         .enable_all()
         .build()
         .expect("tokio runtime");
+    // A signed-in machine links usage data even when it signed in before
+    // the server offered linking (CUA-1881): at most every few hours, in
+    // the background. Not around `cua auth`, which links or unlinks itself.
+    let refresh_link = record && !matches!(cli.command, Command::Auth(_) | Command::Config(_));
     let code = rt.block_on(async {
+        if refresh_link {
+            tokio::spawn(auth::refresh_usage_link());
+        }
         let mut out = std::io::stdout();
         let result = run(cli, &mut out).await;
         if record && !daemon_process {
@@ -2773,6 +3178,13 @@ pub fn main() {
                 Ok(_) => (Outcome::Error, None),
                 Err(e) => (Outcome::Error, Some(e.variant())),
             };
+            // A command turned down over a plan limit prints the sentence and
+            // the upgrade link: `cua_plan_limit_shown` (CUA-1881).
+            if let Err(e) = &result
+                && let Some(ev) = plan_limit_shown(&e.to_string())
+            {
+                telemetry.capture(ev);
+            }
             telemetry.capture(events::cli_command(
                 &command,
                 outcome,
@@ -2788,18 +3200,32 @@ pub fn main() {
             Ok(c) => c,
             Err(e) => {
                 let _ = out.flush();
-                eprintln!("cua: {e}");
+                eprintln!("{}: {}", channel.cli_name(), util::hint(&e.to_string()));
                 exit_code(&e)
             }
         }
     });
     let _ = std::io::stdout().flush();
+    // `process::exit` skips destructors: flush crash reports explicitly.
+    drop(crash_guard);
     // Telemetry never holds the exit up for more than this; what is left
     // goes to the offline spool, which the cua daemon (or the next command)
     // sends. A round trip to the collector often takes longer than this, and
     // agents run commands back to back: every one used to wait out 400 ms.
     telemetry.shutdown(EXIT_TELEMETRY_BUDGET);
     std::process::exit(code);
+}
+
+/// `cua_plan_limit_shown` for an error that is the relay's plan-limit
+/// refusal (the sentence the CLI prints, with its upgrade link); none for
+/// any other error.
+fn plan_limit_shown(error: &str) -> Option<cua_telemetry::Event> {
+    let l = cua_home::plan_limit::PlanLimit::parse(error)?;
+    Some(cua_telemetry::events::plan_limit_shown(
+        "cli_limit",
+        l.kind.word(),
+        &l.plan,
+    ))
 }
 
 /// The longest a command waits at exit to send its telemetry.
@@ -2905,6 +3331,23 @@ fn runtime_setup_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CUA-1881: a command turned down over a plan limit is
+    /// `cua_plan_limit_shown` (`cli_limit`, its cap and plan); other errors
+    /// are not.
+    #[test]
+    fn a_plan_limit_error_is_a_plan_limit_shown() {
+        let e = crate::host::host_err(cua_host::Error::PlanLimit(
+            "You've used 20 of 20 remote hours this month on the free plan. Upgrade to Pro for more.".into(),
+        ));
+        let ev = plan_limit_shown(&e.to_string()).unwrap();
+        assert_eq!(ev.name, "cua_plan_limit_shown");
+        assert_eq!(ev.props["surface"], "cli_limit");
+        assert_eq!(ev.props["kind"], "hours");
+        assert_eq!(ev.props["plan"], "free");
+        assert!(e.to_string().contains("/buy/pro?from=cli_limit"), "{e}");
+        assert!(plan_limit_shown("relay: timed out").is_none());
+    }
 
     /// The WireGuard library's retry/expiry messages stay out of the log
     /// (also with `CUA_LOG=info`, as a service sets), unless
@@ -3156,7 +3599,7 @@ mod tests {
     /// `cua computers` is the one command that lists the pool's computers;
     /// `cua machines` and `cua sb runs --machines` (old spellings) are gone, not aliases.
     #[test]
-    fn computers_is_its_own_command_and_machines_is_gone() {
+    fn computers_is_its_own_command_and_machines_only_removes() {
         let parse =
             |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
         assert!(matches!(
@@ -3166,7 +3609,19 @@ mod tests {
         let j = parse(&["computers", "--json"]).unwrap();
         assert!(j.json && matches!(j.command, Command::Computers));
         assert!(parse(&["computers", "extra"]).is_err());
-        assert!(parse(&["machines"]).is_err());
+        assert_eq!(
+            parse(&["machines"]).unwrap_err().kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        let Command::Machines(host::MachinesCmd::Rm { name, yes }) =
+            parse(&["machines", "rm", "old-laptop", "--yes"])
+                .unwrap()
+                .command
+        else {
+            panic!()
+        };
+        assert!(name == "old-laptop" && yes);
+        assert!(parse(&["machines", "ls"]).is_err());
         for sb in ["sb", "sandbox"] {
             let e = parse(&[sb, "runs", "--machines"]).unwrap_err();
             assert_eq!(
@@ -3575,6 +4030,131 @@ mod tests {
             );
             assert!(String::from_utf8(out).unwrap().contains("last"));
         }
+    }
+
+    /// Every command of the tree with its rendered long help.
+    fn all_help(cmd: &mut clap::Command) -> Vec<(String, String)> {
+        let mut out = vec![(
+            cmd.get_bin_name().unwrap_or(cmd.get_name()).to_string(),
+            cmd.render_long_help().to_string(),
+        )];
+        for name in cmd
+            .get_subcommands()
+            .map(|c| c.get_name().to_string())
+            .collect::<Vec<_>>()
+        {
+            let sub = cmd.find_subcommand_mut(&name).unwrap();
+            out.extend(all_help(sub));
+        }
+        out
+    }
+
+    /// CUA-1776: the Local CLI (`cua-local`) says `cua-local` in its usage
+    /// and examples, so nothing it prints sends the user to Stable's `cua`.
+    #[test]
+    fn local_help_says_cua_local() {
+        use cua_home::channel::CuaChannel;
+        let mut local = channel_command(cli_command(true), CuaChannel::Local);
+        local.build();
+        let help = all_help(&mut local);
+        assert!(help.len() > 20, "the whole tree is rendered");
+        assert!(help[0].1.contains("Usage: cua-local "), "{}", help[0].1);
+        for (name, text) in &help {
+            assert!(name.starts_with("cua-local"), "{name}");
+            for line in text.lines() {
+                let l = line.trim_start();
+                assert!(
+                    !l.starts_with("cua ") && !l.starts_with("Usage: cua "),
+                    "{name}: {line}"
+                );
+            }
+        }
+        // The examples are still there, renamed.
+        assert!(
+            help.iter().any(|(_, t)| t
+                .lines()
+                .any(|l| l.trim_start().starts_with("cua-local host setup"))),
+            "host setup example"
+        );
+        // The version line is still `cua <version>`: the app checks it to
+        // recognise its CLI.
+        assert_eq!(
+            local.render_version().trim(),
+            format!("cua {}", cua_sdk::VERSION)
+        );
+    }
+
+    /// Everything in Local's help that tells the reader to run a command is
+    /// already named `cua-local`: running the hint rewriter over the rendered
+    /// help (after-help, about, argument help) finds nothing left to change.
+    /// A new help text that spells `cua host setup` in the middle of a line, or
+    /// in backticks, is caught here, not by a user who pastes it.
+    #[test]
+    fn local_help_has_no_stable_command_left() {
+        use cua_home::channel::CuaChannel;
+        let verbs = util::verbs_of(&cli_command(true));
+        let mut local = channel_command(cli_command(true), CuaChannel::Local);
+        local.build();
+        for (name, text) in all_help(&mut local) {
+            assert_eq!(
+                util::localize_for(CuaChannel::Local, &text, &verbs),
+                text,
+                "{name} still names the Stable `cua`"
+            );
+        }
+        // And the rewrite is not a no-op: Stable's help still has them.
+        let mut stable = cli_command(true);
+        stable.build();
+        assert!(
+            all_help(&mut stable)
+                .iter()
+                .any(|(_, t)| t.contains("`cua ")),
+            "Stable help has backticked commands"
+        );
+    }
+
+    /// `cua help advanced` is a help topic printed before clap runs, so the help
+    /// tree above does not cover it: Local's names `cua-local` in its examples
+    /// and in its sentences, Stable's is the text as written.
+    #[test]
+    fn help_advanced_follows_the_channel() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(advanced_help_for(CuaChannel::Stable), ADVANCED_HELP);
+        let local = advanced_help_for(CuaChannel::Local);
+        assert!(local.contains("Works with cua-local host setup"), "{local}");
+        let verbs = util::verbs_of(&cli_command(true));
+        assert_eq!(
+            util::localize_for(CuaChannel::Local, &local, &verbs),
+            local,
+            "nothing left that names the Stable `cua`"
+        );
+        assert!(
+            !local.lines().any(|l| l.trim_start().starts_with("cua ")),
+            "{local}"
+        );
+    }
+
+    /// Stable's command and its help are exactly what they were.
+    #[test]
+    fn stable_help_is_unchanged() {
+        use cua_home::channel::CuaChannel;
+        for teams in [true, false] {
+            let mut plain = cli_command(teams);
+            let mut stable = channel_command(cli_command(teams), CuaChannel::Stable);
+            plain.build();
+            stable.build();
+            assert_eq!(all_help(&mut plain), all_help(&mut stable));
+        }
+    }
+
+    #[test]
+    fn examples_are_renamed_line_by_line() {
+        let text = "Examples:\n  cua host setup\n  # cua is a comment\nthe cua daemon\n    cua sb ls  # list\ncua\n";
+        assert_eq!(
+            localize_examples(text, "cua-local"),
+            "Examples:\n  cua-local host setup\n  # cua is a comment\nthe cua daemon\n    cua-local sb ls  # list\ncua\n"
+        );
+        assert_eq!(localize_examples("", "cua-local"), "");
     }
 
     #[tokio::test]

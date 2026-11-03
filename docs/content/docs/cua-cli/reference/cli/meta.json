@@ -3,12 +3,14 @@
   "pages": [
     "index",
     "spaces-and-computers",
+    "computers-and-teams",
     "files-teleport-and-keys",
     "sandboxes",
     "images-and-clouds",
     "computer-actions",
     "agents",
     "account-and-setup",
-    "pool"
+    "pool",
+    "bench"
   ]
 }

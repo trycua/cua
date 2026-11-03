@@ -50,7 +50,8 @@ fn firecracker_url(arch: Arch) -> String {
     )
 }
 
-/// The `firecracker` binary: `$CUA_FIRECRACKER`, then `~/.cua/bin`, then
+/// The `firecracker` binary: `$CUA_FIRECRACKER`, then (with
+/// `runtime.microvm = system`) the installed one, else `~/.cua/bin`, then
 /// `PATH`.
 pub fn firecracker_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CUA_FIRECRACKER").map(PathBuf::from)
@@ -58,11 +59,45 @@ pub fn firecracker_bin() -> Option<PathBuf> {
     {
         return Some(p);
     }
+    // `runtime.microvm = system`: the one already installed (its custom
+    // path, else the one on PATH), never cua's own.
+    if crate::kinds::source(crate::kinds::RuntimeKind::Microvm) == crate::kinds::KindSource::System
+    {
+        return crate::kinds::system_bin(crate::kinds::RuntimeKind::Microvm);
+    }
     let own = host::cua_home().join("bin").join("firecracker");
     if own.is_file() {
         return Some(own);
     }
     host::which("firecracker")
+}
+
+/// `pasta` (passt), which gives a microVM its network without root:
+/// `$CUA_PASTA`, then `~/.cua/bin`, then `PATH`. passt publishes no
+/// versioned static build to pin, so cua does not download it: a host
+/// without it gets [`pasta_missing`].
+pub fn pasta_bin() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("CUA_PASTA").map(PathBuf::from)
+        && p.is_file()
+    {
+        return Some(p);
+    }
+    let own = host::cua_home().join("bin").join("pasta");
+    if own.is_file() {
+        return Some(own);
+    }
+    host::which("pasta")
+}
+
+/// The one line a host without passt gets, in the app and the CLI alike.
+pub const PASTA_HINT: &str = "microVM Spaces need passt for their network. Install it \
+     (Ubuntu and Debian: sudo apt-get install passt; Fedora: sudo dnf install passt), then \
+     create the Space again";
+
+/// The error for a host without passt: what to install, never a raw
+/// "not found".
+pub fn pasta_missing() -> VmmError {
+    VmmError::missing("passt", PASTA_HINT)
 }
 
 /// The guest init: `$CUA_MICROVM_INIT`, next to the running executable (or
@@ -138,6 +173,10 @@ pub async fn ensure_kernel(root: &Path) -> Result<PathBuf> {
     if p.is_file() {
         return Ok(p);
     }
+    crate::progress::report(
+        crate::progress::Progress::phase(crate::progress::Phase::Preparing)
+            .detail(format!("Downloading the microVM kernel {KERNEL_VERSION}")),
+    );
     let arch = Arch::host();
     download(&kernel_url(arch), &p, kernel_sha256(arch)).await?;
     if sha256_file(&p)? != kernel_sha256(arch) {
@@ -149,8 +188,33 @@ pub async fn ensure_kernel(root: &Path) -> Result<PathBuf> {
     Ok(p)
 }
 
+/// The `firecracker` binary, installed on first use: the pinned release
+/// into `~/.cua/bin`, as the kernel is fetched, with the create's stage
+/// saying so. Only on Linux (macOS microVMs use `cua-vz`).
+pub async fn ensure_firecracker() -> Result<PathBuf> {
+    ensure_firecracker_with(firecracker_bin, install_firecracker).await
+}
+
+/// [`ensure_firecracker`] with the lookup and the installer given (tests).
+pub async fn ensure_firecracker_with(
+    find: impl Fn() -> Option<PathBuf>,
+    install: impl AsyncFnOnce() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(p) = find() {
+        return Ok(p);
+    }
+    crate::progress::report(
+        crate::progress::Progress::phase(crate::progress::Phase::Preparing).detail(format!(
+            "Setting up microVMs: installing Firecracker {FIRECRACKER_VERSION}"
+        )),
+    );
+    let bin = install().await?;
+    tracing::info!(bin = %bin.display(), "installed Firecracker on first use");
+    Ok(bin)
+}
+
 /// Installs the pinned Firecracker release into `~/.cua/bin`
-/// (`cua runtime setup firecracker`).
+/// (`cua runtime setup firecracker`, and the first microVM create).
 pub async fn install_firecracker() -> Result<PathBuf> {
     if std::env::consts::OS != "linux" {
         return Err(VmmError::Unsupported {
@@ -212,7 +276,7 @@ pub async fn report(root: &Path) -> MicroVmReport {
         firecracker,
         firecracker_version,
         init: init_bin(),
-        pasta: host::which("pasta"),
+        pasta: pasta_bin(),
         sqfstar: host::which("sqfstar"),
         debugfs: host::which("debugfs"),
         init_static: init_bin()
@@ -247,4 +311,77 @@ fn userns_allowed() -> bool {
     // AppArmor's restriction applies to binaries without a profile; pasta
     // ships one on Ubuntu, so this only warns.
     true
+}
+
+#[cfg(test)]
+mod first_use_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn capture() -> (Arc<Mutex<Vec<String>>>, crate::progress::Sink) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: crate::progress::Sink = Arc::new(move |p: &crate::progress::Progress| {
+            s.lock()
+                .unwrap()
+                .push(format!("{} {}", p.phase.as_str(), p.detail));
+        });
+        (seen, sink)
+    }
+
+    #[tokio::test]
+    async fn firecracker_installs_on_first_use_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("firecracker");
+        let (seen, sink) = capture();
+        let installed = Arc::new(Mutex::new(0));
+        let n = installed.clone();
+        let b = bin.clone();
+        let got = crate::progress::scope(sink, async {
+            ensure_firecracker_with(
+                || None,
+                async move || {
+                    *n.lock().unwrap() += 1;
+                    std::fs::write(&b, b"#!/bin/sh\n").unwrap();
+                    Ok(b.clone())
+                },
+            )
+            .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, bin);
+        assert_eq!(*installed.lock().unwrap(), 1);
+        let lines = seen.lock().unwrap().join("\n");
+        assert!(lines.contains("installing Firecracker"), "{lines}");
+    }
+
+    #[tokio::test]
+    async fn an_installed_firecracker_is_used_as_is() {
+        let p = PathBuf::from("/opt/fc/firecracker");
+        let q = p.clone();
+        let got = ensure_firecracker_with(
+            move || Some(q.clone()),
+            async || -> Result<PathBuf> { panic!("no install when it is there") },
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, p);
+    }
+
+    #[tokio::test]
+    async fn a_failed_install_is_the_error() {
+        let e = ensure_firecracker_with(|| None, async || Err(VmmError::other("offline")))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("offline"), "{e}");
+    }
+
+    #[test]
+    fn without_passt_the_error_says_what_to_install() {
+        let e = pasta_missing().to_string();
+        assert!(e.contains("sudo apt-get install passt"), "{e}");
+        assert!(e.contains("sudo dnf install passt"), "{e}");
+        assert!(!e.contains("not found"), "{e}");
+    }
 }

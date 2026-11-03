@@ -58,10 +58,18 @@ async fn a_host_publishes_numbers_into_its_machine_record() {
     let spaces = host(&relay, home.path()).await;
 
     let out = spaces.publish_resources().await.unwrap();
-    assert_eq!(out, Published::Sent { watchers: 0 });
+    assert_eq!(
+        out,
+        Published::Sent {
+            watchers: 0,
+            spaces: 0
+        }
+    );
     let meta = relay.machine(MACHINE).unwrap().meta;
-    // What registration set stays; the summary joins it.
+    // What registration set stays; the summary joins it. Nothing is being
+    // created: no creates key.
     assert_eq!(meta["cua.host.os"], "macos");
+    assert!(!meta.contains_key(cua_spaces::resources::creates::META_KEY));
     let value = &meta[summary::META_KEY];
     assert!(value.len() <= summary::MAX_LEN, "{value}");
     let c = summary::decode(MACHINE, "Studio Mac", true, value).expect("a summary");
@@ -94,7 +102,10 @@ async fn somebody_connected_means_watched() {
     );
     assert_eq!(
         spaces.publish_resources().await.unwrap(),
-        Published::Sent { watchers: 1 }
+        Published::Sent {
+            watchers: 1,
+            spaces: 0
+        }
     );
 }
 

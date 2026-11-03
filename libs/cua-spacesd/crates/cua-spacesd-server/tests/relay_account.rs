@@ -418,6 +418,8 @@ async fn sharing_with_another_account_and_forged_assertions() {
             exp: cua_relay::assertion::now_secs() + 60,
             jti: "x".into(),
             teams: Vec::new(),
+            space: None,
+            space_role: None,
         });
     let response = http_client()
         .request(

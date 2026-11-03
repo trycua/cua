@@ -11,7 +11,7 @@
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -22,8 +22,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [],
           "canAdd": false,
           "error": null,
@@ -40,14 +40,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "load ada",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -58,8 +58,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -83,14 +83,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -101,8 +101,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -126,14 +126,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "read agents/ada/hermes/memories/MEMORY.md",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -144,8 +144,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -177,14 +177,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -195,8 +195,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -228,14 +228,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "restore agents/ada/hermes/memories/MEMORY.md v1",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -246,8 +246,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -271,14 +271,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory*, Routines, Access to this computer"
+          "tabs": "Memory*, Routines, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -289,8 +289,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -314,14 +314,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -332,8 +332,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -357,14 +357,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -375,8 +375,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -400,14 +400,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -418,8 +418,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -443,14 +443,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -461,8 +461,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -486,14 +486,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -504,8 +504,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -529,14 +529,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -547,8 +547,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -572,14 +572,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -590,8 +590,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -615,14 +615,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "add routine ada \"Inbox sweep\" every 30",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -633,8 +633,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -659,14 +659,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -677,8 +677,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -703,14 +703,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "routine R1 off",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -721,8 +721,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -747,14 +747,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines*, Access to this computer"
+          "tabs": "Memory, Routines*, Access to this machine"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -765,8 +765,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -791,14 +791,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -809,8 +809,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -835,14 +835,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "allow ada on relay:0123456789abcdef",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -853,8 +853,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -879,14 +879,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": "not confirmed: you declined",
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -897,8 +897,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -923,14 +923,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "allow ada on relay:0123456789abcdef",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -941,9 +941,9 @@
         "busy": false,
         "detail": {
           "access": [
-            "This computer |  | Revoke | - | -"
+            "This machine |  | Revoke | - | -"
           ],
-          "accessEmpty": "This agent cannot use your computers.",
+          "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
@@ -969,14 +969,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -987,9 +987,9 @@
         "busy": true,
         "detail": {
           "access": [
-            "This computer |  | Revoke | - | -"
+            "This machine |  | Revoke | - | -"
           ],
-          "accessEmpty": "This agent cannot use your computers.",
+          "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
@@ -1015,14 +1015,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "revoke ada on relay:0123456789abcdef",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -1033,8 +1033,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1059,14 +1059,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -1077,8 +1077,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1103,14 +1103,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved 5m ago",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "pause ada",
         "rows": [
           "ada | Hermes in local:dev | Running | Pause (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -1121,8 +1121,8 @@
         "busy": false,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1147,14 +1147,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved just now",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": null,
         "rows": [
           "ada | Hermes in local:dev | Paused | Resume (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }
@@ -1165,8 +1165,8 @@
         "busy": true,
         "detail": {
           "access": [],
-          "accessEmpty": "This agent cannot use your computers.",
-          "allowThisMachine": "Allow on this computer",
+          "accessEmpty": "This agent cannot use your machines.",
+          "allowThisMachine": "Allow on this machine",
           "audit": [
             "Refused relay:0123456789abcdef | 16m ago | - | - | -"
           ],
@@ -1191,14 +1191,14 @@
             "Every week |  | - | - | off"
           ],
           "subtitle": "Home agents/ada/, saved just now",
-          "tabs": "Memory, Routines, Access to this computer*"
+          "tabs": "Memory, Routines, Access to this machine*"
         },
         "empty": "No persistent agents. Create one with cua agent create, or ask your agent to.",
         "error": null,
         "request": "resume bob",
         "rows": [
           "ada | Hermes in local:dev | Paused | Resume (selected)",
-          "bob | Claude Code in cloud:bob | Paused | Resume"
+          "bob | Claude Code in direct:bob | Paused | Resume"
         ],
         "title": "Agents"
       }

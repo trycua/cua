@@ -34,7 +34,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -78,7 +77,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -122,7 +120,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -166,7 +163,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -210,7 +206,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image… 1%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -254,7 +249,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image… 10%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -298,7 +292,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -342,7 +335,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -386,7 +378,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -430,7 +421,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 36%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -474,7 +464,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 52%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -518,7 +507,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 85%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -562,7 +550,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -606,7 +593,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -650,7 +636,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -672,7 +657,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -719,7 +703,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Creating the container… 5%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -741,7 +724,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -788,7 +770,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Creating the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -810,7 +791,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 96%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -857,7 +837,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Creating the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -879,7 +858,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -926,7 +904,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -948,7 +925,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -995,7 +971,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1017,7 +992,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1064,7 +1038,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1086,7 +1059,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image… 98%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1133,7 +1105,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 83%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1155,7 +1126,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1202,7 +1172,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 90%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1224,7 +1193,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Ready 100%",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1271,7 +1239,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 90%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1293,7 +1260,6 @@
               "Open"
             ],
             "canStream": true,
-            "creditNotice": null,
             "facts": [
               "Status: Running",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",

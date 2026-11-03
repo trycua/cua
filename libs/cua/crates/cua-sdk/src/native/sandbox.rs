@@ -91,7 +91,7 @@ impl From<cua_sandbox_core::ImageInfo> for ImageInfo {
 pub struct SandboxInfo {
     /// Name.
     pub name: String,
-    /// What kind of machine: `container` or `vm` (empty when not known:
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known:
     /// an existing machine).
     pub kind: String,
     /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
@@ -516,7 +516,7 @@ pub struct SandboxCreateOptions {
     /// ended" error.
     #[uniffi(default = None)]
     pub on: Option<String>,
-    /// What kind of machine: `auto`, `container` or `vm`. `None`: the user
+    /// What kind of machine: `auto`, `container`, `vm` or `microvm`. `None`: the user
     /// default (`default.kind`, else `auto`: macOS and Windows images are
     /// VMs, an image with a container rootfs is a container, a disk-only
     /// image is a VM).
@@ -1647,7 +1647,7 @@ impl Sandbox {
         self.info.location.clone()
     }
 
-    /// What kind of machine: `container` or `vm` (empty when not known).
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known).
     pub fn kind(&self) -> String {
         self.info.kind.clone()
     }

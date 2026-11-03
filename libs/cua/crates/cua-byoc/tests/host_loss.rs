@@ -209,17 +209,17 @@ async fn a_host_terminated_mid_batch_takes_its_spaces_and_nothing_else() {
     let on_b: Vec<String> = (3..5).map(|n| placed(&w, &b, n)).collect();
 
     // Mid-batch, host a's cloud terminates it (`aws ec2
-    // terminate-instances`): its machine is gone and its relay entry stops
-    // answering.
+    // terminate-instances`): its cloud says "terminated" and its relay
+    // entry stops answering. (A host its cloud merely does not list yet,
+    // seconds after its create, is still booting: hosts.rs tests that.)
     {
         let mut acct = w.fake.account.lock().unwrap();
-        let id = acct
+        let r = acct
             .resources
-            .values()
+            .values_mut()
             .find(|r| r.name.contains(a.trim_start_matches("host-")))
-            .map(|r| r.id.clone())
             .expect("host a's machine");
-        acct.resources.remove(&id);
+        r.state = "terminated".into();
     }
     w.relay.set_online(&a, false, "0.0.0");
 

@@ -1,4 +1,9 @@
 //! Where a share's link points: this machine's entry on the cua.ai relay.
+//!
+//! The relay decides the form: with a host domain (hosted relay: `m.cua.sh`,
+//! a domain of its own so shared content never lives under cua.ai) the
+//! directory lists `https://<id>.<domain>` and each share gets its own
+//! origin; without one, links stay in path mode under the relay URL.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -181,28 +186,37 @@ mod tests {
     #[test]
     fn host_mode_gives_each_share_its_own_origin() {
         let u = compose_link(
-            &format!("https://{ID}.m.relay.cua.ai"),
+            &format!("https://{ID}.m.cua.sh"),
             ID,
             "aaaa1111bbbb2222",
             Access::Private,
         );
-        assert_eq!(
-            u,
-            "https://saaaa1111bbbb2222-0123456789abcdef.m.relay.cua.ai/"
-        );
+        assert_eq!(u, "https://saaaa1111bbbb2222-0123456789abcdef.m.cua.sh/");
         let token = "t".repeat(40);
         let p = compose_link(
-            &format!("https://{ID}.m.relay.cua.ai"),
+            &format!("https://{ID}.m.cua.sh"),
             ID,
             &token,
             Access::Public,
         );
-        assert_eq!(
-            p,
-            format!("https://p{token}-0123456789abcdef.m.relay.cua.ai/")
-        );
+        assert_eq!(p, format!("https://p{token}-0123456789abcdef.m.cua.sh/"));
         let label = p.trim_start_matches("https://").split('.').next().unwrap();
         assert!(label.len() <= 63, "{label}");
+    }
+
+    #[test]
+    fn host_mode_follows_whatever_domain_the_relay_lists() {
+        // A self-hosted relay's own domain, and a relay URL with a port.
+        let u = compose_link(
+            &format!("https://{ID}.m.relay.example.com:8443/"),
+            ID,
+            "aaaa1111bbbb2222",
+            Access::Team,
+        );
+        assert_eq!(
+            u,
+            "https://saaaa1111bbbb2222-0123456789abcdef.m.relay.example.com:8443/"
+        );
     }
 
     #[test]

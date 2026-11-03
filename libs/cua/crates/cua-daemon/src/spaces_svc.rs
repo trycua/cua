@@ -43,7 +43,7 @@ pub(crate) fn network_word(n: cua_sandbox_core::NetworkMode) -> &'static str {
 }
 
 #[cfg(feature = "spaces")]
-mod imp {
+pub(crate) mod imp {
     use super::*;
     use crate::convert::from_dur;
     use crate::passthrough;
@@ -51,11 +51,63 @@ mod imp {
     use cua_sandbox_core::placement::{Kind, On, Runtime};
     use prost::Message;
 
+    /// The top-level Space of `space`'s tree.
+    fn tree_root(spaces: &cua_spaces::Spaces, space: &str) -> Result<String, tonic::Status> {
+        let id = spaces.resolve(space).map_err(|e| st(e.into()))?.to_string();
+        Ok(crate::children::api::position(spaces, &id).0)
+    }
+
+    /// Sets `Space.children` from the setting.
+    pub(crate) fn mark_children(spaces: &cua_spaces::Spaces, records: &mut [pb::Space]) {
+        let on: std::collections::BTreeSet<String> =
+            spaces.children_enabled().into_iter().collect();
+        for r in records {
+            r.children = on.contains(&r.id);
+        }
+    }
+
+    /// Refuses a create that asks for children while the experiment is off,
+    /// before anything is made.
+    fn children_allowed(children: bool) -> Result<(), tonic::Status> {
+        if children && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
+            return Err(tonic::Status::failed_precondition(
+                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Turns children on for `space`: only a Space this computer runs can
+    /// hold a channel to it.
+    fn turn_on_children(
+        spaces: &cua_spaces::Spaces,
+        space: &mut pb::Space,
+    ) -> Result<(), tonic::Status> {
+        // An experiment, off unless the owner turned it on.
+        if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
+            return Err(tonic::Status::failed_precondition(
+                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
+            ));
+        }
+        if !space.id.starts_with("local:") {
+            return Err(tonic::Status::failed_precondition(
+                "child Spaces are available for Spaces this computer runs; turn them on \
+                 on the machine that runs this Space",
+            ));
+        }
+        spaces
+            .set_children(&space.id, true)
+            .map_err(|e| st(e.into()))?;
+        space.children = true;
+        Ok(())
+    }
+
     async fn record(spaces: &cua_spaces::Spaces, id: &str) -> Result<pb::Space, Error> {
         if let Some(r) = spaces.registry().get(id).map_err(Error::from)? {
             let mut r = [r];
             spaces.fill_records(&mut r);
-            let [r] = r;
+            let [mut r] = r;
+            r.children = spaces.children_on(&r.id);
             return Ok(r);
         }
         Ok(info_record(&spaces.find(id).await.map_err(Error::from)?))
@@ -66,6 +118,7 @@ mod imp {
         pb::Space {
             id: info.id.clone(),
             name: info.name.clone(),
+            display_name: info.display_name.clone(),
             spacesd_version: info.spacesd_version.clone(),
             features: info.features.clone(),
             os: info.os.clone(),
@@ -100,6 +153,34 @@ mod imp {
                 .map(|e| e.as_str().to_string())
                 .unwrap_or_default(),
             volumes: info.volumes.iter().map(Into::into).collect(),
+            sharing: info.sharing.as_ref().map(Into::into),
+            network_settings: info
+                .network
+                .as_ref()
+                .map(|n| cua_spaces::network::to_pb(&n.settings)),
+            network_note: info
+                .network
+                .as_ref()
+                .and_then(|n| n.note.clone())
+                .unwrap_or_default(),
+            network_notice_pending: info.network.as_ref().is_some_and(|n| n.notice_pending),
+            parent: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.parent.clone())
+                .unwrap_or_default(),
+            root: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.root.clone())
+                .unwrap_or_default(),
+            depth: info.tree.as_ref().map_or(0, |t| t.depth),
+            origin: info
+                .tree
+                .as_ref()
+                .map(|t| t.origin.clone())
+                .unwrap_or_default(),
+            children: false,
         }
     }
 
@@ -168,6 +249,14 @@ mod imp {
                     deny: e.deny,
                 })
                 .unwrap_or_default(),
+            network_settings: r
+                .network_settings
+                .as_ref()
+                .map(cua_spaces::network::from_pb)
+                .transpose()
+                .map_err(|e| st(e.into()))?,
+            parent: opt(r.parent),
+            widen: r.widen,
         })
     }
 
@@ -338,23 +427,58 @@ mod imp {
 
         async fn list_spaces(
             &self,
-            _: tonic::Request<pb::ListSpacesRequest>,
+            req: tonic::Request<pb::ListSpacesRequest>,
         ) -> R<pb::ListSpacesResponse> {
+            let known_now = req.into_inner().known_now;
             let mut spaces = self.spaces().registry().list().map_err(|e| st(e.into()))?;
             for s in &mut spaces {
                 (s.power, s.power_state) = self.spaces().power_of(&s.id);
                 s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             self.spaces().fill_records(&mut spaces);
-            // Plus the signed-in account's relay machines (refreshed).
-            for info in self.spaces().list_all().await.map_err(|e| st(e.into()))? {
-                if info.provider == cua_spaces::Provider::Relay
-                    && !spaces.iter().any(|s| s.id == info.id)
-                {
+            mark_children(self.spaces(), &mut spaces);
+            // Plus the signed-in account's relay machines: refreshed, or
+            // (`known_now`) as far as they answered, never holding up this
+            // machine's own Spaces.
+            let (others, progress, creating) = if known_now {
+                let l = self
+                    .spaces()
+                    .list_known(cua_spaces::LIST_WAIT)
+                    .await
+                    .map_err(|e| st(e.into()))?;
+                (l.spaces, l.progress, l.creating)
+            } else {
+                let all = self.spaces().list_all().await.map_err(|e| st(e.into()))?;
+                (all, cua_spaces::ListProgress::default(), Vec::new())
+            };
+            for info in others {
+                if let Some(s) = spaces.iter_mut().find(|s| s.id == info.id) {
+                    // A Space this computer provides shows its name on the
+                    // relay (renamed from another device).
+                    s.display_name = info.display_name;
+                } else if info.provider == cua_spaces::Provider::Relay {
                     spaces.push(info_record(&info));
                 }
             }
-            ok(pb::ListSpacesResponse { spaces })
+            ok(pb::ListSpacesResponse {
+                spaces,
+                incomplete: progress.incomplete,
+                reaching: progress.reaching,
+                stale: progress.stale,
+                notice: progress.notice,
+                creating: creating
+                    .into_iter()
+                    .map(|c| pb::CreatingSpace {
+                        machine_id: c.machine_id,
+                        machine_name: c.machine_name,
+                        name: c.name,
+                        os: c.os,
+                        phase: c.phase,
+                        percent: u32::from(c.percent),
+                        updated_at_ms: c.updated_at_ms,
+                    })
+                    .collect(),
+            })
         }
 
         async fn list_volumes(
@@ -595,14 +719,21 @@ mod imp {
             &self,
             req: tonic::Request<pb::CreateSpaceRequest>,
         ) -> R<pb::CreateSpaceResponse> {
-            let create = create_args(req.into_inner())?;
+            let r = req.into_inner();
+            let children = r.children.unwrap_or(false);
+            children_allowed(children)?;
+            let create = create_args(r)?;
             let network = create.network;
             let created = self
                 .spaces()
                 .create(create)
                 .await
                 .map_err(|e| st(e.into()))?;
-            ok(create_response(self.spaces(), created, network).await?)
+            let mut resp = create_response(self.spaces(), created, network).await?;
+            if children && let Some(s) = resp.space.as_mut() {
+                turn_on_children(self.spaces(), s)?;
+            }
+            ok(resp)
         }
 
         type CreateSpaceStreamStream = std::pin::Pin<
@@ -621,6 +752,8 @@ mod imp {
             let mut r = req.into_inner().create.unwrap_or_default();
             // The stream runs until the Space is ready.
             r.wait = Some(true);
+            let children = r.children.unwrap_or(false);
+            children_allowed(children)?;
             let mut create = create_args(r)?;
             // Bounded: a slow reader drops progress, never the result (which
             // goes out on the same channel after every report).
@@ -635,11 +768,18 @@ mod imp {
             let network = create.network;
             tokio::spawn(async move {
                 let result = match spaces.create(create).await {
-                    Ok(created) => create_response(&spaces, created, network).await.map(|r| {
-                        pb::CreateSpaceStreamResponse {
-                            event: Some(Event::Result(r)),
+                    Ok(created) => match create_response(&spaces, created, network).await {
+                        Ok(mut r) => {
+                            let on = match r.space.as_mut() {
+                                Some(s) if children => turn_on_children(&spaces, s),
+                                _ => Ok(()),
+                            };
+                            on.map(|()| pb::CreateSpaceStreamResponse {
+                                event: Some(Event::Result(r)),
+                            })
                         }
-                    }),
+                        Err(e) => Err(e),
+                    },
                     Err(e) => Err(st(e.into())),
                 };
                 let _ = tx.send(result).await;
@@ -733,20 +873,204 @@ mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn get_space_network(
+            &self,
+            req: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            if r.ack_notice {
+                self.spaces()
+                    .ack_network_notice(&r.space)
+                    .map_err(|e| st(e.into()))?;
+            }
+            ok(pb::GetSpaceNetworkResponse {
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
+        async fn set_space_network(
+            &self,
+            req: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let settings = cua_spaces::network::from_pb(&r.settings.unwrap_or_default())
+                .map_err(|e| st(e.into()))?;
+            let applied = self
+                .spaces()
+                .set_network(&r.space, &settings, r.widen, r.tree)
+                .await
+                .map_err(|e| st(e.into()))?;
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceNetworkResponse {
+                applied: match applied {
+                    cua_vmm::network::Applied::Now => "now",
+                    cua_vmm::network::Applied::NextStart => "next_start",
+                }
+                .into(),
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
+        async fn get_tree_budget(
+            &self,
+            req: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            let root = tree_root(self.spaces(), &req.into_inner().space)?;
+            ok(pb::GetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
+        async fn set_tree_budget(
+            &self,
+            req: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
+            let r = req.into_inner();
+            let root = tree_root(self.spaces(), &r.space)?;
+            let l = r.limits.unwrap_or_default();
+            for (what, v) in [("usd_per_hour", l.usd_per_hour), ("usd_total", l.usd_total)] {
+                if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
+                    return Err(tonic::Status::invalid_argument(format!(
+                        "{what} must be a number of dollars, 0 or more"
+                    )));
+                }
+            }
+            let budget = crate::children::budget::Budget {
+                max_spaces: l.max_spaces,
+                max_vcpus: l.max_vcpus,
+                max_memory_mb: l.max_memory_mb,
+                usd_per_hour: l.usd_per_hour,
+                usd_total: l.usd_total,
+            };
+            let Some(c) = self.0.children.as_deref() else {
+                return Err(tonic::Status::failed_precondition(
+                    "child Spaces are unavailable in this daemon",
+                ));
+            };
+            c.budget
+                .set_budget(&root, budget)
+                .map_err(|e| tonic::Status::internal(format!("save the budget: {e}")))?;
+            ok(pb::SetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
+            ok(pb::ListOrphansResponse {
+                orphans: crate::children::orphans(&self.0),
+            })
+        }
+
+        async fn set_space_children(
+            &self,
+            req: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
+            let r = req.into_inner();
+            let id = self
+                .spaces()
+                .resolve(&r.space)
+                .map_err(|e| st(e.into()))?
+                .to_string();
+            let mut space = record(self.spaces(), &id).await.map_err(st)?;
+            if r.enabled {
+                turn_on_children(self.spaces(), &mut space)?;
+            } else {
+                self.spaces()
+                    .set_children(&id, false)
+                    .map_err(|e| st(e.into()))?;
+                if let Some(a) = self.0.spawn_authority() {
+                    a.revoke(&id);
+                }
+                space.children = false;
+            }
+            ok(pb::SetSpaceChildrenResponse { space: Some(space) })
+        }
+
+        async fn rename_space(
+            &self,
+            req: tonic::Request<pb::RenameSpaceRequest>,
+        ) -> R<pb::RenameSpaceResponse> {
+            let r = req.into_inner();
+            let info = self
+                .spaces()
+                .rename(&r.space, &r.name)
+                .await
+                .map_err(|e| st(e.into()))?;
+            let space = record(self.spaces(), &info.id).await.map_err(st)?;
+            ok(pb::RenameSpaceResponse { space: Some(space) })
+        }
+
         async fn delete_space(
             &self,
             req: tonic::Request<pb::DeleteSpaceRequest>,
         ) -> R<pb::DeleteSpaceResponse> {
-            let space = req.into_inner().space;
+            let req = req.into_inner();
+            let space = req.space;
+            // Its child Spaces go first, unless it keeps them.
+            let gone = if req.keep_children {
+                vec![]
+            } else {
+                self.spaces().descendants(&space).unwrap_or_default()
+            };
             let message = self
                 .spaces()
-                .delete(&space)
+                .delete_tree(&space, req.keep_children)
                 .await
                 .map_err(|e| st(e.into()))?;
+            for child in &gone {
+                self.rt().detach(child).await;
+            }
             // Drop the connection an exec or a call cached for it: a new
             // Space of the same name must not reach the deleted one.
             self.rt().detach(&space).await;
+            // Its capability ends with it (the channel loop also notices).
+            if let Ok(id) = self.spaces().resolve(&space)
+                && let Some(a) = self.0.spawn_authority()
+            {
+                a.revoke(&id.to_string());
+            }
             ok(pb::DeleteSpaceResponse { message })
+        }
+
+        async fn delete_spaces(
+            &self,
+            req: tonic::Request<pb::DeleteSpacesRequest>,
+        ) -> R<pb::DeleteSpacesResponse> {
+            let spaces = req.into_inner().spaces;
+            let results = self.spaces().delete_many(&spaces).await;
+            // As one delete does: no cached connection reaches a deleted one.
+            for r in results.iter().filter(|r| r.ok) {
+                self.rt().detach(&r.id).await;
+            }
+            ok(pb::DeleteSpacesResponse {
+                results: results.iter().map(Into::into).collect(),
+            })
+        }
+
+        async fn leave_spaces(
+            &self,
+            req: tonic::Request<pb::LeaveSpacesRequest>,
+        ) -> R<pb::LeaveSpacesResponse> {
+            let spaces = req.into_inner().spaces;
+            let results = self.spaces().leave_many(&spaces).await;
+            for r in results.iter().filter(|r| r.ok) {
+                self.rt().detach(&r.id).await;
+            }
+            ok(pb::LeaveSpacesResponse {
+                results: results.iter().map(Into::into).collect(),
+            })
         }
 
         async fn connect_space(
@@ -838,6 +1162,13 @@ mod imp {
             &self,
             req: tonic::Request<pb::CallSpaceToolRequest>,
         ) -> R<pb::CallSpaceToolResponse> {
+            // Who is calling: this machine's user, or the relay account a
+            // host's cua-spacesd verified and forwarded (the same metadata
+            // the host services read). Tools that record an author (the
+            // Space thread) stamp it from here, never from the arguments.
+            let caller = cua_spaces::host_spaces::HostCaller::from_grpc_metadata(req.metadata())
+                .map_err(|e| st(e.into()))?;
+            let caller = cua_spaces::extension::Caller::from_host(&caller);
             let r = req.into_inner();
             let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
             if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
@@ -850,14 +1181,16 @@ mod imp {
                 serde_json::from_str(&r.arguments_json)
                     .map_err(|_| st(Error::InvalidArgument("arguments_json is not JSON".into())))?
             };
-            // The app's Settings → Agents methods: not contract tools, so no
+            // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
             let out = if app_method {
-                cua_spaces::agents::keys::app_tool(&r.name, args).unwrap_or_else(|| {
-                    cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
-                })
+                cua_spaces::agents::keys::app_tool_async(&r.name, args)
+                    .await
+                    .unwrap_or_else(|| {
+                        cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                    })
             } else {
-                self.mcp().call(&r.name, args).await
+                caller.scope(self.mcp().call(&r.name, args)).await
             };
             ok(pb::CallSpaceToolResponse {
                 content_json: serde_json::Value::Array(out.content).to_string(),
@@ -1006,6 +1339,44 @@ mod imp {
             });
             ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
         }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
+            let mut watch = self.spaces().watch_list();
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            // The subscription is the interest: it ends with the stream, so
+            // the watcher stops when the last reader is gone.
+            tokio::spawn(async move {
+                let mut generation = watch.generation();
+                loop {
+                    if tx
+                        .send(Ok(pb::WatchSpacesResponse { generation }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        g = watch.changed() => match g {
+                            Some(g) => generation = g,
+                            None => break,
+                        },
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -1140,11 +1511,68 @@ mod imp {
         ) -> R<pb::SetSpaceEgressResponse> {
             off()
         }
+        async fn set_space_children(
+            &self,
+            _: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
+            off()
+        }
+        async fn get_tree_budget(
+            &self,
+            _: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            off()
+        }
+        async fn set_tree_budget(
+            &self,
+            _: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
+            off()
+        }
+
+        async fn get_space_network(
+            &self,
+            _: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            off()
+        }
+
+        async fn set_space_network(
+            &self,
+            _: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
+            off()
+        }
+
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
+            off()
+        }
 
         async fn delete_space(
             &self,
             _: tonic::Request<pb::DeleteSpaceRequest>,
         ) -> R<pb::DeleteSpaceResponse> {
+            off()
+        }
+        async fn delete_spaces(
+            &self,
+            _: tonic::Request<pb::DeleteSpacesRequest>,
+        ) -> R<pb::DeleteSpacesResponse> {
+            off()
+        }
+        async fn leave_spaces(
+            &self,
+            _: tonic::Request<pb::LeaveSpacesRequest>,
+        ) -> R<pb::LeaveSpacesResponse> {
+            off()
+        }
+        async fn rename_space(
+            &self,
+            _: tonic::Request<pb::RenameSpaceRequest>,
+        ) -> R<pb::RenameSpaceResponse> {
             off()
         }
         async fn connect_space(
@@ -1209,6 +1637,21 @@ mod imp {
             &self,
             _: tonic::Request<pb::WatchResourcesRequest>,
         ) -> R<Self::WatchResourcesStream> {
+            off()
+        }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
             off()
         }
     }

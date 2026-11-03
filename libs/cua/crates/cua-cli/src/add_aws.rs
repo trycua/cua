@@ -24,7 +24,7 @@ use cua_sdk::CuaError;
 use serde_json::json;
 
 use crate::onboard::AwsArgs;
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// The TCP ports open between pool hosts (and only between them): all of
 /// them, since ranks of frameworks such as PyTorch (NCCL, Gloo) listen on
@@ -121,7 +121,7 @@ async fn add(a: AwsArgs, hosts: &Hosts, json: bool, out: &mut dyn Write) -> Resu
         if json {
             line(out, json!({"hosts": rows(&made)}).to_string());
         } else {
-            line(
+            hint_line(
                 out,
                 "They join your pool in a few minutes: cua cloud add aws --list, cua cloud hosts ls",
             );
@@ -154,7 +154,7 @@ async fn add(a: AwsArgs, hosts: &Hosts, json: bool, out: &mut dyn Write) -> Resu
             line(out, l);
         }
         if joined == made.len() {
-            line(
+            hint_line(
                 out,
                 format!(
                     "{joined} host{} in your pool: cua computers · cua sb run --on {} -- echo hi · \
@@ -164,7 +164,7 @@ async fn add(a: AwsArgs, hosts: &Hosts, json: bool, out: &mut dyn Write) -> Resu
                 ),
             );
         } else {
-            line(
+            hint_line(
                 out,
                 "Not all hosts joined within 20 minutes: see `cua cloud add aws --list`; its boot log \
                  says why: aws ec2 get-console-output --latest --instance-id <instance>",

@@ -200,6 +200,10 @@ pub struct VzReport {
     pub init_static: bool,
     /// gvproxy (downloaded on first use, pinned).
     pub gvproxy: Option<PathBuf>,
+    /// The network gateway (`cua-netgw`), which ships next to `cua`: the
+    /// guests' network under Secure Spaces.
+    #[serde(default)]
+    pub gateway: Option<PathBuf>,
     /// The guest kernel is cached (downloaded on first use).
     pub kernel_cached: bool,
 }
@@ -215,6 +219,11 @@ impl VzReport {
             m.push("cua-microvm-init (ships next to `cua`)".into());
         } else if !self.init_static {
             m.push("a static cua-microvm-init (this one is dynamically linked)".into());
+        }
+        if self.gateway.is_none()
+            && crate::network::Mode::from_env() == crate::network::Mode::Secure
+        {
+            m.push("cua-netgw, the network gateway (ships next to `cua`)".into());
         }
         m
     }
@@ -597,6 +606,7 @@ fn vz_status() -> Option<(BackendStatus, VzReport)> {
             .is_some_and(|interp| interp.is_none()),
         init,
         gvproxy: vz::gvproxy_bin(),
+        gateway: crate::netgw::bin(),
         kernel_cached: assets::kernel_path(&root).is_file(),
     };
     let missing = if r.supported_host {

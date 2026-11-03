@@ -86,6 +86,11 @@ pub struct SpaceMeta {
     /// top-level Space, which is its own root).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    /// For a Space made here for a tree that started on another computer
+    /// ([`crate::overlay`]): that tree's id, qualified with the computer it
+    /// started on. `None` for every other Space (its tree is `root`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_tree: Option<String>,
     /// How far below its tree's top-level Space it is ([`crate::tree`]): 0
     /// for a top-level Space, 1 for its children, ...
     #[serde(default, skip_serializing_if = "is_zero_u32")]
@@ -99,6 +104,90 @@ pub struct SpaceMeta {
     /// [`crate::tree::MAX_DEPTH`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth_limit: Option<u32>,
+    /// The Space's immutable id: 8 lowercase hex digits, made when its
+    /// record is first written and never changed. Its Cua Volume folder is
+    /// `spaces/<name>--<uid>/` ([`SpaceMeta::volume_id`]), so a Space made
+    /// later under the same name starts with an empty folder. Empty for a
+    /// Space from before it existed; [`Registry::ensure_uid`] gives it one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub uid: String,
+    /// The Space got its `uid` after it was created, so its Volume folder
+    /// still has the old name (`spaces/<name>/`) and is moved on the next
+    /// attach, once.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub volume_legacy: bool,
+    /// Whether the Space gets a Volume folder ([`VolumeSetting`]).
+    #[serde(default, skip_serializing_if = "VolumeSetting::is_own")]
+    pub volume: VolumeSetting,
+    /// When viewers may move the clipboard ([`crate::clipboard`]).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::clipboard::ClipboardSetting::is_default"
+    )]
+    pub clipboard: crate::clipboard::ClipboardSetting,
+}
+
+impl SpaceMeta {
+    /// The id the Space's Volume folder is named after: its id and `uid`.
+    pub fn volume_id(&self, id: &str) -> String {
+        volume_id_of(id, &self.uid)
+    }
+}
+
+/// The id a Space's Volume folder is named after: `local:work--0a1b2c3d`
+/// (the bare id when `uid` is empty).
+pub fn volume_id_of(id: &str, uid: &str) -> String {
+    if uid.is_empty() {
+        id.to_string()
+    } else {
+        format!("{id}--{uid}")
+    }
+}
+
+/// What a Space's Volume shows it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VolumeSetting {
+    /// Its own folder only (read and write). The default.
+    #[default]
+    Own,
+    /// No Volume in the Space at all (named volumes still mount if asked
+    /// for).
+    Off,
+}
+
+impl VolumeSetting {
+    pub fn is_own(&self) -> bool {
+        *self == VolumeSetting::Own
+    }
+
+    /// `own` or `off`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VolumeSetting::Own => "own",
+            VolumeSetting::Off => "off",
+        }
+    }
+
+    /// Parses `own` / `off` (also "own folder").
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().replace(' ', "_").as_str() {
+            "own" | "own_folder" | "on" => Ok(VolumeSetting::Own),
+            "off" | "none" => Ok(VolumeSetting::Off),
+            other => Err(Error::invalid(format!(
+                "volume {other:?}: use own (its own folder) or off"
+            ))),
+        }
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// A fresh Space uid.
+pub fn new_uid() -> String {
+    format!("{:08x}", rand::random::<u32>())
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -304,6 +393,26 @@ impl Registry {
         Ok(out)
     }
 
+    /// The Space's uid, making one if it has none (a Space from before uids:
+    /// it is marked so its old Volume folder is moved, see
+    /// [`SpaceMeta::volume_legacy`]).
+    pub fn ensure_uid(&self, id: &str) -> Result<String> {
+        if let Some(m) = self.meta(id)
+            && !m.uid.is_empty()
+        {
+            return Ok(m.uid);
+        }
+        let mut uid = String::new();
+        self.update_meta(id, |m| {
+            if m.uid.is_empty() {
+                m.uid = new_uid();
+                m.volume_legacy = true;
+            }
+            uid = m.uid.clone();
+        })?;
+        Ok(uid)
+    }
+
     /// Gives Space `to` the labels and egress policy of Space `from` (a
     /// fork starts as its source was; its creation time and lifetime are
     /// its own). Returns whether `from` had any.
@@ -323,12 +432,15 @@ impl Registry {
             kept.network = source.network;
             kept.network_generation = kept.network_generation.max(1);
         }
+        // Its Volume setting too, but never its uid: its folder is its own.
+        kept.volume = source.volume;
         kept.parent = source.parent;
         kept.root = source.root;
         kept.depth = source.depth;
         if kept.parent.is_some() {
             kept.origin = source.origin;
         }
+        kept.clipboard = source.clipboard;
         self.write_meta(&all)?;
         Ok(true)
     }
@@ -492,7 +604,22 @@ impl Registry {
         let mut spaces = self.read_spaces()?;
         match spaces.iter_mut().find(|s| s.id == space.id) {
             Some(slot) => *slot = space.clone(),
-            None => spaces.push(space.clone()),
+            None => {
+                spaces.push(space.clone());
+                // Under Secure Spaces a new Space gets its immutable id now,
+                // before anything connects to it, whatever an earlier Space
+                // of this name left behind. (Without the experiment its
+                // Volume folder keeps the old name, so it gets none; it is
+                // given one, and its folder moved, when the experiment is
+                // on and it is used.)
+                if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+                    let mut meta = self.read_meta();
+                    let m = meta.entry(space.id.clone()).or_default();
+                    m.uid = new_uid();
+                    m.volume_legacy = false;
+                    self.write_meta(&meta)?;
+                }
+            }
         }
         let mut creds = self.read_credentials()?;
         if credential == Credential::default() {
@@ -760,6 +887,38 @@ mod tests {
         assert_eq!(reg.meta("local:src").unwrap().created_at_unix, 100);
         assert!(!reg.inherit_meta("local:none", "local:other").unwrap());
         assert!(reg.meta("local:other").is_none());
+    }
+
+    #[test]
+    fn the_clipboard_setting_is_kept_inherited_and_the_default_is_not_stored() {
+        use crate::clipboard::ClipboardSetting;
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::new(dir.path().join("cua"));
+        // Nothing stored means the default: only while viewing.
+        assert_eq!(
+            reg.meta("local:a").map(|m| m.clipboard).unwrap_or_default(),
+            ClipboardSetting::Viewing
+        );
+        reg.update_meta("local:a", |m| m.clipboard = ClipboardSetting::Off)
+            .unwrap();
+        let again = Registry::new(dir.path().join("cua"));
+        assert_eq!(
+            again.meta("local:a").unwrap().clipboard,
+            ClipboardSetting::Off
+        );
+        let raw = std::fs::read_to_string(again.meta_path()).unwrap();
+        assert!(raw.contains("\"clipboard\": \"off\""), "{raw}");
+        // A fork keeps it.
+        assert!(again.inherit_meta("local:a", "local:b").unwrap());
+        assert_eq!(
+            again.meta("local:b").unwrap().clipboard,
+            ClipboardSetting::Off
+        );
+        // Back to the default drops the record, not a `"viewing"` entry.
+        again
+            .update_meta("local:a", |m| m.clipboard = ClipboardSetting::Viewing)
+            .unwrap();
+        assert!(again.meta("local:a").is_none());
     }
 
     #[test]

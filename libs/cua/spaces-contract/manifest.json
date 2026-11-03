@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 118,
+  "tool_count": 119,
   "categories": [
     {
       "id": "lifecycle",
@@ -646,6 +646,56 @@
       }
     },
     {
+      "name": "network_log",
+      "category": "lifecycle",
+      "description": "List what a Space tried to reach and its network blocked.",
+      "instructions": "Lists what a Space on this computer tried to reach and its network blocked. When a connection from a Space fails or hangs, call this: if the destination is here, it is blocked on purpose (this computer, the local network, cloud metadata or another tree), and retrying won't help. Tell the user what was blocked in plain words; changing it is theirs to do.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.network_log(space)",
+      "rust_symbol": "Spaces::network_events",
+      "notes": [],
+      "result": "JSON array, most recent first: `reason` (`platform:metadata`, `default:host-loopback`, `default:lan`, `user:deny`, `default:none`, ...), `dst`, `proto`, `count`, `last_unix`.",
+      "errors": [
+        "wrong_provider",
+        "not_found",
+        "sandbox"
+      ],
+      "input_schema": {
+        "properties": {
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "network_set",
       "category": "lifecycle",
       "description": "Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.",
@@ -711,6 +761,10 @@
           "tree": {
             "description": "Its child Spaces take the same settings (each within its parent's).",
             "type": "boolean"
+          },
+          "via": {
+            "description": "Where its internet traffic leaves: `internet` (its own network) or\n`space:<name>` (a Space of its tree). This computer and a SOCKS5\nproxy are the user's to choose (`cua network set --via`). Unset:\nthe exit it has. A child keeps its parent's.",
+            "type": "string"
           }
         },
         "required": [
@@ -2193,6 +2247,10 @@
       ],
       "input_schema": {
         "properties": {
+          "client_id": {
+            "description": "A key of the caller's for this message: sending it again (after a\nlost connection) returns the first answer and delivers nothing twice.",
+            "type": "string"
+          },
           "force": {
             "description": "Interrupt a running turn first instead of queueing. Default false.",
             "type": "boolean"
@@ -2616,6 +2674,10 @@
             "description": "A custom model endpoint base URL.",
             "type": "string"
           },
+          "brief": {
+            "description": "Standing instructions: the first message each run takes carries them\nin front of its text (the thread shows only the message).",
+            "type": "string"
+          },
           "daily_at": {
             "description": "A schedule: every day at `HH:MM` local time (with `prompt`).",
             "type": "string"
@@ -2752,6 +2814,10 @@
           "space": {
             "description": "The Space it works in (id or name).",
             "type": "string"
+          },
+          "standby": {
+            "description": "Keep a run open with its session ready, so a message starts its turn\nat once (the agent is started in the background, and again if it\nends). Default false.",
+            "type": "boolean"
           },
           "title": {
             "description": "The schedule's title. Default: the first words of `prompt`.",
@@ -3722,9 +3788,23 @@
                 "description": "Approve (true) or deny (false).",
                 "type": "boolean"
               },
+              "client_id": {
+                "description": "A key of the caller's for this answer. Sending the same answer\nagain after a lost connection returns the first one\n(`replayed: true`) and never writes a second; a different decision\nfor an approval already answered is refused.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "note": {
                 "default": null,
                 "description": "A note for the agent.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "description": "`once` (default): this approval only. `space`: allow this kind of\nrequest from this agent in this Space from now on; the daemon\nanswers the same request itself, and the grant can be taken back.\nOnly for an approval whose `scope_choices` lists it (an agent's own\nrequest; never a push, a sign-in, a join or an ability request),\nand never with `approve: false`.",
                 "type": [
                   "string",
                   "null"
@@ -3765,6 +3845,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "client_id": {
+            "description": "A key of the caller's for this post: the same key from the same\nauthor again (a retry after a lost connection) returns the first\nentry (`replayed: true`) and writes nothing. Kept on the entry as\n`client_id`.",
+            "type": "string"
           },
           "reply_to": {
             "description": "The `seq` of the entry this answers.",
@@ -4914,7 +4998,7 @@
       "name": "hotspot_start",
       "category": "hotspot",
       "description": "Start sharing this computer's network with a Space.",
-      "instructions": "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.",
+      "instructions": "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. With Secure Spaces on, only after the user says yes: pass confirm=true, and without it the call is refused; the Space's own network rules apply first (the internet only unless they allow more), and its system proxy is left alone unless set_system_proxy is true (apps use the hotspot through the returned socks_address). Runs until hotspot_stop, delete_space, or this server exiting.",
       "platforms": [
         "macos",
         "windows",
@@ -4956,8 +5040,12 @@
             },
             "type": "array"
           },
+          "confirm": {
+            "description": "The user said yes to sharing this computer's network with the Space.\nWith Secure Spaces on, required: without `true` the call is refused.\nAsk the user first; never set it on your own.",
+            "type": "boolean"
+          },
           "set_system_proxy": {
-            "description": "Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)\nat the hotspot. Default true.",
+            "description": "Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)\nat the hotspot. Default true; with Secure Spaces on, false: apps in the\nSpace use the hotspot only when they are told to (SOCKS5 at the\nreturned `socks_address`).",
             "type": "boolean"
           },
           "space": {

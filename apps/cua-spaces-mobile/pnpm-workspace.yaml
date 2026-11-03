@@ -1,0 +1,3 @@
+# Standalone project (like apps/cua-spaces-desktop): install with a plain
+# `pnpm install` here. React Native's tooling needs a flat node_modules.
+packages: []

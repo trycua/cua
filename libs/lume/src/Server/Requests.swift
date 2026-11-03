@@ -5,7 +5,7 @@ import Virtualization
 private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
     guard let mode = NetworkMode.parse(value) else {
         throw ValidationError(
-            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', 'bridged:<interface>' or 'gateway:<socket path>'."
         )
     }
     return mode
@@ -137,7 +137,9 @@ struct CreateVMRequest: Codable {
         guard let network else {
             return .nat
         }
-        return try parseNetworkModeString(network)
+        let mode = try parseNetworkModeString(network)
+        try mode.checkStorable()
+        return mode
     }
 }
 

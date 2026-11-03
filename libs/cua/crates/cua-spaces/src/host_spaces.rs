@@ -101,6 +101,12 @@ pub struct HostCaller {
     /// else of this machine answers such a caller.
     #[serde(default)]
     pub space: Option<String>,
+    /// The enrolled device behind the call, when the relay named it.
+    #[serde(default)]
+    pub device: Option<String>,
+    /// The device is a phone (the relay's signed class).
+    #[serde(default)]
+    pub phone: bool,
 }
 
 impl HostCaller {
@@ -229,6 +235,7 @@ fn host_request(opts: &SpaceCreate, fork: Option<&str>) -> pb::CreateHostSpaceRe
             .network_settings
             .as_ref()
             .map(crate::network::to_host_pb),
+        tree: opts.tree.clone().unwrap_or_default(),
         ..Default::default()
     }
 }
@@ -1759,6 +1766,9 @@ impl HostSpacesServer {
                 // Enforced by this host, from the guest's first instruction.
                 egress: egress_from_pb(req.egress.clone()),
                 network_settings: network_settings.clone(),
+                // A child of a tree that started on the caller's machine
+                // joins it here (tree overlay).
+                tree: Some(req.tree.trim().to_string()).filter(|t| !t.is_empty()),
                 ..Default::default()
             };
             match self.spaces.create(create.clone()).await {

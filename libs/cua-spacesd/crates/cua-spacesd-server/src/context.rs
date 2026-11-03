@@ -307,6 +307,23 @@ impl ServerContext {
             .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
     }
 
+    /// [`Self::mint_ticket_issued`] bound to the enrolled `device` whose call
+    /// minted it.
+    pub fn mint_ticket_for(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        device: Option<&str>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
+        self.inner
+            .auth
+            .mint_ticket_for(scope, resource, principal_id, issued, device, ttl)
+    }
+
     /// Validates a ticket string for `scope`.
     pub fn validate_ticket(
         &self,

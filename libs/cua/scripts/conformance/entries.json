@@ -6,11 +6,11 @@
     },
     {
       "case": "policy",
-      "what": "the default network holds: internet yes; host, LAN, cloud metadata, other trees no"
+      "what": "the default network holds: internet yes; host, LAN, cloud metadata, other trees no, and each refusal is in the network log with its destination and time"
     },
     {
       "case": "dns",
-      "what": "names resolve in the guest, IPv4 and IPv6"
+      "what": "a Space resolves names and downloads over https, on the secure and the default network; with no network the lookup fails at once"
     },
     {
       "case": "download",
@@ -539,8 +539,8 @@
             },
             {
               "case": "policy",
-              "expect": "refused",
-              "why": "Apple's microVM network can't be filtered per Space yet"
+              "expect": "pass",
+              "why": null
             },
             {
               "case": "dns",
@@ -615,7 +615,7 @@
             {
               "case": "policy",
               "expect": "refused",
-              "why": "Apple's Containerization can't protect your network yet. Use the standard microVM (the default) or choose No protection."
+              "why": "Apple's Containerization can't protect your network: its guests sit on Apple's vmnet network, which only pf can filter (pf needs root), and a firewall inside the guest would not hold against the Space's own root. Use the Cua microVM monitor (`--runtime vz`: cua-vz and cua-microvm-init, which the Cua Spaces app ships next to `cua`) or choose No protection."
             },
             {
               "case": "dns",
@@ -742,8 +742,8 @@
             },
             {
               "case": "policy",
-              "expect": "refused",
-              "why": "QEMU on this system can't filter one VM's connections yet"
+              "expect": "pass",
+              "why": null
             },
             {
               "case": "dns",
@@ -792,8 +792,8 @@
             },
             {
               "case": "policy",
-              "expect": "refused",
-              "why": "QEMU on this system can't filter one VM's connections yet"
+              "expect": "pass",
+              "why": null
             },
             {
               "case": "dns",
@@ -866,8 +866,8 @@
             },
             {
               "case": "policy",
-              "expect": "refused",
-              "why": "macOS VMs can't protect your network yet, and Cua reaches a macOS VM over its network, so it can't start without one. Choose No protection to start it."
+              "expect": "pass",
+              "why": null
             },
             {
               "case": "dns",

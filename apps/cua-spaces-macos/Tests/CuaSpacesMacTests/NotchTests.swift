@@ -674,3 +674,45 @@ struct LaunchTests {
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
     }
 }
+
+
+/// The hotspot indicator on the notch is on for a hotspot started by hand
+/// and for as long as any Space exits through this machine; neither turns
+/// the other off (CUA-2616: the hotspot keeps every feature).
+@MainActor
+@Suite("Notch exits")
+struct NotchExitsTests {
+    @Test func exitsAloneLightTheHotspotIndicator() {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        #expect(notch.state.hotspot == false)
+        notch.setExits(["local:b", "local:a", "local:a"])
+        #expect(notch.state.hotspot)
+        #expect(notch.exitSpaces == ["local:a", "local:b"])
+        notch.setExits([])
+        #expect(notch.state.hotspot == false)
+    }
+
+    @Test func aHotspotStartedByHandAndAnExitDoNotTurnEachOtherOff() {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        notch.setActivity(hotspot: true, transfer: nil)
+        notch.setExits(["local:a"])
+        notch.setActivity(hotspot: false, transfer: nil)
+        #expect(notch.state.hotspot, "the exit keeps it on after the hotspot stops")
+        notch.setActivity(hotspot: true, transfer: nil)
+        notch.setExits([])
+        #expect(notch.state.hotspot, "the hotspot keeps it on after the exit ends")
+        notch.setActivity(hotspot: false, transfer: nil)
+        #expect(notch.state.hotspot == false)
+    }
+
+    @Test func aTransferKeepsTheExitIndicator() {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        notch.setExits(["local:a"])
+        notch.setActivity(hotspot: notch.manualHotspot, transfer: AppNotchTransfer(sent: nil, total: nil))
+        #expect(notch.state.hotspot)
+        #expect(notch.state.transfer != nil)
+        notch.setActivity(hotspot: notch.manualHotspot, transfer: nil)
+        #expect(notch.state.hotspot)
+        #expect(notch.manualHotspot == false, "a transfer never turns the manual hotspot on")
+    }
+}

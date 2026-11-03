@@ -611,6 +611,8 @@ impl Persistent {
                     rights: Some(rights),
                     ..Default::default()
                 },
+                brief: None,
+                briefed_run: None,
                 added_by: Some(me.clone()),
                 member_since_ms: now,
                 task: None,
@@ -771,6 +773,7 @@ impl Persistent {
                 approval: seq,
                 approve: false,
                 note: why.into(),
+                ..Default::default()
             });
             store.append(d)?;
         }

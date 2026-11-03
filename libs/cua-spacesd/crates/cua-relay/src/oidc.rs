@@ -42,6 +42,13 @@ pub struct OidcConfig {
     /// `amr` values that count as multi-factor (RFC 8176), checked in
     /// addition to `mfa_acr_values`. Defaults to [`DEFAULT_MFA_AMR_VALUES`].
     pub mfa_amr_values: Vec<String>,
+    /// OAuth clients (`azp`) whose tokens are accepted. Empty (the default)
+    /// accepts any client of the issuer, as before; set it to pin the relay
+    /// to the clients it is meant for (the CLI, the apps and the phone app).
+    pub authorized_parties: Vec<String>,
+    /// Refuse a token whose `nbf` (not before) is still in the future. Off
+    /// by default (as before); the relay turns it on with phone support.
+    pub validate_nbf: bool,
 }
 
 impl OidcConfig {
@@ -57,6 +64,8 @@ impl OidcConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            authorized_parties: Vec::new(),
+            validate_nbf: false,
         }
     }
 }
@@ -86,6 +95,9 @@ pub struct Identity {
     /// Keycloak Organizations the user is in (the `organization` claim),
     /// with the role their org group gives. Empty when the token has none.
     pub orgs: Vec<OrgClaim>,
+    /// The OAuth client the token was issued to (`azp`), when the issuer says. Never a client-supplied value: it is read from
+    /// the signed token.
+    pub azp: Option<String>,
 }
 
 /// One entry of the `organization` claim.
@@ -433,9 +445,26 @@ impl OidcValidator {
         validation.set_audience(&self.config.audiences);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.leeway = 30;
+        // A token that is not valid yet is not valid.
+        validation.validate_nbf = self.config.validate_nbf;
         let data = jsonwebtoken::decode::<serde_json::Value>(token, &key, &validation)
             .map_err(|e| (jwt_reason(e.kind()), format!("account token: {e}")))?;
         let claims = data.claims;
+        let azp = claims
+            .get("azp")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        if !self.config.authorized_parties.is_empty()
+            && !azp
+                .as_deref()
+                .is_some_and(|a| self.config.authorized_parties.iter().any(|p| p == a))
+        {
+            return Err((
+                Reason::UnauthorizedParty,
+                "account token: this client may not use this relay".to_owned(),
+            ));
+        }
         let text = |name: &str| {
             claims
                 .get(name)
@@ -481,6 +510,7 @@ impl OidcValidator {
             auth_time: claims.get("auth_time").and_then(|v| v.as_u64()),
             mfa,
             orgs: org_claims(&claims),
+            azp,
         })
     }
 }
@@ -636,6 +666,23 @@ pub mod testing {
             self.token_with(sub, email, true, aud, ttl)
         }
 
+        /// Like [`Self::token`], issued to the OAuth client `azp`.
+        pub fn token_for_client(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            aud: &str,
+            ttl: i64,
+            azp: &str,
+        ) -> String {
+            self.build(sub, email, true, aud, ttl, Some(azp), None)
+        }
+
+        /// Like [`Self::token`], not valid until `nbf_in_secs` from now.
+        pub fn token_not_before(&self, sub: &str, aud: &str, ttl: i64, nbf_in_secs: i64) -> String {
+            self.build(sub, None, true, aud, ttl, None, Some(nbf_in_secs))
+        }
+
         /// Like [`Self::token`], choosing whether the email is verified.
         pub fn token_with(
             &self,
@@ -645,11 +692,31 @@ pub mod testing {
             aud: &str,
             ttl: i64,
         ) -> String {
+            self.build(sub, email, email_verified, aud, ttl, None, None)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn build(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            email_verified: bool,
+            aud: &str,
+            ttl: i64,
+            azp: Option<&str>,
+            nbf_in_secs: Option<i64>,
+        ) -> String {
             let now = super::super::assertion::now_secs() as i64;
             let mut claims = serde_json::json!({
                 "iss": self.issuer, "sub": sub, "aud": aud,
                 "iat": now, "exp": now + ttl, "name": format!("User {sub}"),
             });
+            if let Some(azp) = azp {
+                claims["azp"] = azp.into();
+            }
+            if let Some(nbf) = nbf_in_secs {
+                claims["nbf"] = (now + nbf).into();
+            }
             if let Some(auth_time) = self.auth_time(sub) {
                 claims["auth_time"] = auth_time.into();
             }
@@ -737,6 +804,54 @@ mod tests {
             .validate(&issuer.token("u1", None, "cua-relay", 300))
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_token_not_valid_yet_is_refused() {
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.validate_nbf = true;
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let e = v
+            .validate(&issuer.token_not_before("u1", "cua-relay", 7200, 3600))
+            .await
+            .unwrap_err();
+        assert_eq!(e.reason, Reason::NotYetValid);
+        assert!(v
+            .validate(&issuer.token_not_before("u1", "cua-relay", 7200, -10))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn only_the_configured_clients_may_use_the_relay() {
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.authorized_parties = vec!["cua-spaces-mobile".into(), "cua-cli".into()];
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let phone = v
+            .validate(&issuer.token_for_client("u1", None, "cua-relay", 300, "cua-spaces-mobile"))
+            .await
+            .unwrap();
+        assert_eq!(phone.azp.as_deref(), Some("cua-spaces-mobile"));
+        // Another client of the same issuer, and a token that names none.
+        for token in [
+            issuer.token_for_client("u1", None, "cua-relay", 300, "some-other-app"),
+            issuer.token("u1", None, "cua-relay", 300),
+        ] {
+            let e = v.validate(&token).await.unwrap_err();
+            assert_eq!(e.reason, Reason::UnauthorizedParty);
+            assert_eq!(
+                e.message,
+                "account token: this client may not use this relay"
+            );
+        }
+        // Not set: any client, as before.
+        let any = OidcValidator::with_jwks(OidcConfig::new(issuer.issuer.clone()), issuer.jwks());
+        assert!(any
+            .validate(&issuer.token_for_client("u1", None, "cua-relay", 300, "some-other-app"))
+            .await
+            .is_ok());
     }
 
     /// CUA-2323: with keys held, validating a token never touches the

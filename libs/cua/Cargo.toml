@@ -34,6 +34,8 @@ members = [
     "crates/cua-sdk",
     "crates/cua-bindgen",
     "crates/cua-cli",
+    # Cua CI: GitHub Actions jobs on Cua Spaces (`cua ci`), an experiment.
+    "crates/cua-ci",
     "crates/cua-spaces-contract",
     "crates/cua-spaces-transcript",
     # Test rig for the replicated Volume (impairment proxy, replica node, chaos matrix); not shipped.
@@ -108,6 +110,10 @@ members = [
     # Copies checkpoints between your machines (FSL-1.1-MIT): manifests,
     # read grants, resumable LAN transfer, the S3 / Cua Volume fallback.
     "crates/cua-snapshot-sync",
+    # Push notifications for the phone app, server side (FSL-1.1-MIT): the
+    # account's phones and preferences, event to alert, provider interface
+    # with a mock and the APNs provider. Served by cua-relay.
+    "crates/cua-push",
 ]
 
 [workspace.package]
@@ -207,6 +213,7 @@ cua-agents = { path = "crates/cua-agents", version = "0.10.1" } # x-release-plea
 cua-volume = { path = "crates/cua-volume", version = "0.10.1" } # x-release-please-version
 cua-snapshot-sync = { path = "crates/cua-snapshot-sync", version = "0.10.1", default-features = false } # x-release-please-version
 cua-sdk = { path = "crates/cua-sdk", version = "0.10.1", default-features = false } # x-release-please-version
+cua-ci = { path = "crates/cua-ci", version = "0.10.1" } # x-release-please-version
 cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.10.1" } # x-release-please-version
 cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.10.1" } # x-release-please-version
 cua-teleport = { path = "crates/cua-teleport", version = "0.10.1" } # x-release-please-version

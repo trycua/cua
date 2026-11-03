@@ -237,6 +237,11 @@ pub struct QemuState {
     /// pasta, holding that namespace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pasta_pid: Option<u32>,
+    /// The current run's network goes through the Cua network gateway
+    /// (macOS and Windows hosts): its readiness-probe endpoint
+    /// ([`crate::netgw::probe`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_control: Option<String>,
     #[serde(default)]
     pub extra_args: Vec<String>,
     /// Internal (`savevm`) snapshots taken while running.
@@ -810,6 +815,7 @@ impl QemuRuntime {
                 network: None,
                 netns: false,
                 pasta_pid: None,
+                gateway_control: None,
                 extra_args: spec_like.extra_args.clone(),
                 snapshots: Vec::new(),
                 paused: false,
@@ -1174,8 +1180,8 @@ impl QemuRuntime {
         // runs in that namespace, policy or not: its network settings are
         // compiled there (the host's own addresses closed, pasta's resolver
         // open on 53) and the host's loopback is out of reach (`--no-map-gw`;
-        // `10.0.2.2` is the namespace's own loopback). Elsewhere QEMU has no
-        // such point: a runtime above refuses or starts it without network.
+        // `10.0.2.2` is the namespace's own loopback). On macOS and Windows
+        // the Cua network gateway enforces them instead.
         let secure = secure_netns();
         let netns_rules = if secure {
             Some(
@@ -1188,9 +1194,14 @@ impl QemuRuntime {
                 .map_err(VmmError::from)?,
             )
         } else {
+            // Off Linux, under Secure Spaces, the network goes through the
+            // Cua network gateway, policy or not
+            // ([`QemuRuntime::start_gateway`]); its rules are not the
+            // namespace's.
+            let gateway = gateway_mode(st);
             match st.egress.as_ref() {
                 Some(p) => Some(crate::egress::check(BackendKind::Qemu, p)?)
-                    .filter(crate::egress::Rules::blocks_anything),
+                    .filter(|r| !gateway && r.blocks_anything()),
                 None => None,
             }
         };
@@ -1212,6 +1223,7 @@ impl QemuRuntime {
         if let Some(plan) = crate::network::gate(BackendKind::Qemu, &st.name, &qemu_settings(st))? {
             st.restrict_network = !matches!(plan, crate::network::NetworkPlan::Open { .. });
         }
+        st.gateway_control = None;
         if spec.gpu.is_some() {
             st.gpu = spec.gpu.clone();
         }
@@ -1280,6 +1292,14 @@ impl QemuRuntime {
             }
             false => None,
         };
+        // The gateway first: QEMU connects to it as it starts. It ends with
+        // QEMU; the guard ends it if QEMU never comes.
+        let (gateway, mut gateway_guard) = if gateway_mode(st) {
+            let (stream, pid) = self.start_gateway(st, &dir).await?;
+            (Some(stream), GatewayGuard(Some(pid)))
+        } else {
+            (None, GatewayGuard(None))
+        };
         let mut cfg = args::LaunchConfig {
             binary: bin.clone(),
             name: st.name.clone(),
@@ -1296,6 +1316,7 @@ impl QemuRuntime {
             firmware: st.firmware.clone(),
             forwards: st.ports.iter().map(|(g, h)| (*h, *g)).collect(),
             restrict_network: st.restrict_network,
+            gateway,
             vnc_display: st.vnc_display,
             qmp_port,
             qmp_listen: st.qmp_socket.clone(),
@@ -1347,6 +1368,8 @@ impl QemuRuntime {
             // In its namespace: pasta runs the script that installs the
             // rules and then execs QEMU (so the rules are there before
             // the guest's first instruction).
+            let mut relay: Option<PathBuf> = None;
+            let mut tree_argv: Vec<String> = Vec::new();
             let (program, args): (PathBuf, Vec<String>) = match &netns_rules {
                 Some(rules) => {
                     let pasta = host::which("pasta").ok_or_else(|| {
@@ -1358,6 +1381,23 @@ impl QemuRuntime {
                         )
                     })?;
                     std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules, !secure))?;
+                    // Its tree: the relay in the namespace, with a monitor
+                    // of its own to publish a guest port on the
+                    // namespace's loopback when a member connects; or a
+                    // refusal when its tree has running members and the
+                    // relay is missing (fail closed).
+                    let tree_qmp = tree_qmp_listen();
+                    relay = crate::tree::prepare_linux(
+                        &tree_key(&st.name),
+                        None,
+                        &dir,
+                        crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+                        args::GUEST_IP,
+                        Some(&tree_qmp),
+                    )?;
+                    if relay.is_some() {
+                        tree_argv = vec!["-qmp".into(), format!("{tree_qmp},server=on,wait=off")];
+                    }
                     let mut ports: Vec<u16> = st.ports.values().copied().collect();
                     if st.qmp_socket.is_none() {
                         ports.push(qmp_port);
@@ -1371,10 +1411,15 @@ impl QemuRuntime {
                     } else {
                         Vec::new()
                     };
-                    let mut a = netns_pasta_args(&ports, &localhost);
+                    let mut a = netns_pasta_args(
+                        &ports,
+                        &localhost,
+                        crate::pasta::supports_host_lo(&pasta),
+                    );
                     a.push(NETNS_SCRIPT.into());
                     a.push(bin.display().to_string());
                     a.extend(argv.iter().cloned());
+                    a.extend(tree_argv.iter().cloned());
                     (pasta, a)
                 }
                 None => (bin.clone(), argv.clone()),
@@ -1386,6 +1431,7 @@ impl QemuRuntime {
             });
             let (program2, args2, log2, dir2) =
                 (program.clone(), args.clone(), log_path.clone(), dir.clone());
+            let relay2 = relay.clone().unwrap_or_default();
             let (record2, tpm_dir2) = (record.clone(), tpm_dir.clone());
             let (record3, tpm_dir3) = (record.clone(), tpm_dir.clone());
             let create = async move {
@@ -1406,6 +1452,7 @@ impl QemuRuntime {
                     .arg(&program2)
                     .args(&args2)
                     .env("CUA_QEMU_LOG", &log2)
+                    .env("CUA_NETGW_BIN", &relay2)
                     .current_dir(&dir2)
                     .output()
                     .await;
@@ -1512,6 +1559,7 @@ impl QemuRuntime {
             .await?;
         }
         launch_guard.disarm();
+        gateway_guard.0 = None;
         Ok(())
     }
 
@@ -1851,6 +1899,86 @@ impl QemuRuntime {
         self.stop_tpm(st).await
     }
 
+    /// Writes the network gateway's rules and configuration into `dir` and
+    /// starts it: the guest gets QEMU's user-network layout (10.0.2.15
+    /// behind 10.0.2.2, DNS on 10.0.2.2 and 10.0.2.3), and the gateway
+    /// publishes the VM's ports on the host's loopback. Returns where QEMU
+    /// connects, and the gateway's pid.
+    async fn start_gateway(
+        &self,
+        st: &mut QemuState,
+        dir: &Path,
+    ) -> Result<(args::NetStream, u32)> {
+        let bin = crate::netgw::bin().ok_or_else(crate::netgw::missing)?;
+        let (rules, domains) = gateway_rules(st)?;
+        crate::netgw::write_rules_named(dir, &rules, &domains)?;
+        let (stream, listen, control) = if cfg!(unix) {
+            // Unix socket paths are short (104 bytes): a folder of its own
+            // under the temporary directory.
+            let run = gateway_run_dir(dir);
+            let _ = std::fs::remove_dir_all(&run);
+            std::fs::create_dir_all(&run)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let q = run.join("q.sock");
+            let c = run.join("c.sock");
+            (
+                args::NetStream::Unix(q.clone()),
+                format!("unix://{}", q.display()),
+                format!("unix://{}", c.display()),
+            )
+        } else {
+            let ports = host::free_ports(2)?;
+            (
+                args::NetStream::Tcp(ports[0]),
+                format!("tcp://127.0.0.1:{}", ports[0]),
+                format!("tcp://127.0.0.1:{}", ports[1]),
+            )
+        };
+        let net = crate::netgw::Network {
+            subnet: GATEWAY_SUBNET,
+            gateway_ip: GATEWAY_IP,
+            gateway_mac: GATEWAY_MAC,
+            // QEMU's user network has the host at its gateway address.
+            host_ip: Some(GATEWAY_IP),
+            dhcp: true,
+            static_leases: [(args::GUEST_IP.to_string(), args::GUEST_MAC.to_string())].into(),
+            vfkit: None,
+            qemu: Some(listen),
+            dns_ips: vec![GATEWAY_DNS_IP.into()],
+            forwards: st
+                .ports
+                .iter()
+                .map(|(g, h)| (format!("127.0.0.1:{h}"), format!("{}:{g}", args::GUEST_IP)))
+                .collect(),
+            control: Some(control.clone()),
+        };
+        // Its tree: the gateway carries connections to the tree's running
+        // members and takes theirs ([`crate::tree`]).
+        let joined = crate::tree::join(
+            &tree_key(&st.name),
+            None,
+            dir,
+            crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+        )?;
+        let mut config = crate::netgw::config(&net);
+        config["tree"] = crate::tree::GatewayTree {
+            sock: joined.sock,
+            guest_ip: args::GUEST_IP.to_string(),
+        }
+        .config();
+        std::fs::write(
+            dir.join(crate::netgw::CONFIG_FILE),
+            serde_json::to_vec_pretty(&config)?,
+        )?;
+        let pid = crate::netgw::start(&bin, dir, Duration::from_secs(10)).await?;
+        st.gateway_control = Some(control);
+        Ok((stream, pid))
+    }
+
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
     fn end_netns(st: &mut QemuState) {
         if let Some(p) = st.pasta_pid.take()
@@ -1859,6 +1987,8 @@ impl QemuRuntime {
             host::signal(p, "TERM");
         }
         st.netns = false;
+        // Its tree stops sending it connections.
+        let _ = crate::tree::leave(&tree_key(&st.name));
     }
 }
 
@@ -1932,6 +2062,12 @@ impl QemuRuntime {
         for probe in &spec.probes {
             loop {
                 let ok = match probe {
+                    Probe::Tcp { port } if st.gateway_control.is_some() => {
+                        let control = st.gateway_control.as_deref().expect("checked");
+                        crate::netgw::probe(control, &format!("{}:{port}", args::GUEST_IP))
+                            .await
+                            .unwrap_or(false)
+                    }
                     Probe::Tcp { port } => self.guest_tcp_established(st, *port).await?,
                     other => crate::probe::check(ep, other).await?,
                 };
@@ -2128,9 +2264,12 @@ const SLIRP_DNS: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 0, 2, 3);
 /// pasta's arguments for a VM's namespace: its host ports (`ports`, on
 /// loopback) forwarded to the same ports in the namespace, DNS to the
 /// host's resolver through [`DNS_FWD`], no way to the host's own loopback,
-/// then the script.
+/// then the script. `host_lo_to_ns_lo`: this pasta takes the option that
+/// keeps those forwards on the namespace's loopback, where QEMU listens
+/// ([`crate::pasta`]); without it a newer pasta delivers them to the
+/// namespace's public address and the connection is reset.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
+fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) -> Vec<String> {
     // The `localhost` preset's ports only: the guest reaches them as
     // `10.0.2.2:<port>` (the namespace's loopback, forwarded to the host's).
     let out = crate::network::pasta_out_spec(localhost);
@@ -2157,6 +2296,9 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
+    if host_lo_to_ns_lo {
+        a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
+    }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
     }
@@ -2173,9 +2315,11 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16]) -> Vec<String> {
 #[cfg_attr(not(unix), allow(dead_code))]
 fn netns_script(rules: &crate::egress::Rules, legacy: bool) -> String {
     format!(
-        "{rules}printf 'nameserver {DNS_FWD}\\n' > \"$PWD/resolv.conf\"\n\
+        "{rules}{tree}{relay}printf 'nameserver {DNS_FWD}\\n' > \"$PWD/resolv.conf\"\n\
          exec unshare -m sh -c 'mount --bind \"$0\" /etc/resolv.conf && exec \"$@\"' \"$PWD/resolv.conf\" \"$@\"\n",
         rules = netns_rules_script(rules, legacy),
+        tree = crate::tree::ns_shell(crate::egress::NsHook::Output),
+        relay = crate::tree::relay_start(),
     )
 }
 
@@ -2219,6 +2363,25 @@ fn qmp_listen(dir: &Path, name: &str) -> String {
     #[cfg(not(unix))]
     {
         format!("pipe:cua-qmp-{}", random_token(16))
+    }
+}
+
+/// A QEMU VM's key in the tree book ([`crate::tree`]).
+fn tree_key(name: &str) -> String {
+    crate::tree::key("qemu", name)
+}
+
+/// The tree relay's own QMP socket on Linux (`unix:<path>`), beside the
+/// VM's own monitor socket and as private ([`qmp_socket_path`]).
+#[cfg_attr(not(unix), allow(dead_code))]
+fn tree_qmp_listen() -> String {
+    #[cfg(unix)]
+    {
+        format!("unix:{}", qmp_socket_path().display())
+    }
+    #[cfg(not(unix))]
+    {
+        String::new()
     }
 }
 
@@ -2296,7 +2459,9 @@ fn netns_context() -> crate::network::NetworkContext {
         resolvers: vec![std::net::IpAddr::V4(DNS_FWD)],
         host_aliases: vec![],
         host_addrs: crate::network::host_addresses(),
-        tree: vec![],
+        // The tree range: the relay in the namespace carries it to the
+        // tree's running members only ([`crate::tree`]).
+        tree: crate::tree::context_tree(),
         other_trees: vec![],
         daemon_ports: crate::network::daemon_ports(),
     }
@@ -2563,6 +2728,7 @@ impl Runtime for QemuRuntime {
             network: None,
             netns: false,
             pasta_pid: None,
+            gateway_control: None,
             extra_args: vec![],
             snapshots: vec![],
             paused: false,
@@ -2607,6 +2773,8 @@ impl Runtime for QemuRuntime {
             _ => spec,
         };
         validate_name(&spec.name)?;
+        // Its tree (the start spec's), for its tree address and members.
+        crate::tree::assign(&tree_key(&spec.name), spec.tree.as_deref())?;
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::types::reject_mounts(BackendKind::Qemu, spec)?;
         crate::types::reject_injection(BackendKind::Qemu, spec)?;
@@ -3300,7 +3468,17 @@ impl Runtime for QemuRuntime {
         } else {
             legacy_rules
         };
-        if Self::is_running(&st) {
+        let (rules, domains) = if gateway_mode(&st) {
+            gateway_rules(&st)?
+        } else {
+            (rules, Default::default())
+        };
+        if gateway_mode(&st) {
+            // The gateway reloads its rules file at once (and closes the
+            // connections they now refuse); a stopped VM's are written at
+            // its next start.
+            crate::netgw::write_rules_named(&self.dir(name), &rules, &domains)?;
+        } else if Self::is_running(&st) {
             let applied = if st.netns {
                 let pid = st.pid.expect("running");
                 crate::egress::ns_apply(pid, &netns_rules_script(&rules, !secure)).await
@@ -3330,6 +3508,52 @@ impl Runtime for QemuRuntime {
     /// Kept with the VM. In its namespace (Linux) the rules are refilled at
     /// once, except what pasta fixes at launch (the localhost ports), which
     /// changes at its next start; elsewhere at its next start.
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        let st = self.load(name)?;
+        if gateway_mode(&st) {
+            // Behind the gateway, which logs every refused connection.
+            return Ok(crate::netgw::read_events(&self.dir(name)));
+        }
+        if !st.netns || !Self::is_running(&st) {
+            return Ok(vec![]);
+        }
+        let Some(pid) = st.pid else {
+            return Ok(vec![]);
+        };
+        let secure = secure_netns();
+        let rules = if secure {
+            crate::network::vm_rules(
+                st.network.as_ref(),
+                st.egress.as_ref(),
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?
+        } else {
+            match st.egress.as_ref() {
+                Some(p) => p.parse()?,
+                None => return Ok(vec![]),
+            }
+        };
+        let labels = crate::egress::ns_drop_labels(
+            &rules,
+            false,
+            (!secure).then_some(crate::egress::Resolver {
+                guest: SLIRP_DNS,
+                forward: DNS_FWD,
+            }),
+        );
+        let counts = crate::egress::ns_counters(pid).await?;
+        // Plus what the tree relay refused (an address outside its tree).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut events =
+            crate::egress::stamp_counted(name, crate::egress::drop_events(&labels, &counts), now);
+        events.extend(crate::netgw::read_events(&self.dir(name)));
+        Ok(crate::egress::merge_events(events))
+    }
+
     async fn set_network(
         &self,
         name: &str,
@@ -3343,7 +3567,14 @@ impl Runtime for QemuRuntime {
         }
         let before = st.network.clone();
         st.network = Some(settings.clone());
-        st.egress = Some(settings.custom.clone());
+        st.egress = Some(settings.custom.split_domains().0);
+        if Self::is_running(&st) {
+            // Whether its tree may still connect to it.
+            crate::tree::set_ingress(
+                &tree_key(name),
+                crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+            )?;
+        }
         let ports_change = crate::network::vm_localhost_ports(before.as_ref()).ok()
             != crate::network::vm_localhost_ports(Some(settings)).ok();
         let restrict_change =
@@ -3362,6 +3593,17 @@ impl Runtime for QemuRuntime {
                 crate::network::Applied::NextStart
             } else {
                 crate::network::Applied::Now
+            }
+        } else if gateway_mode(&st) {
+            // Behind the gateway: it reloads its rules file at once (and
+            // closes connections they now refuse); a stopped VM reads it
+            // at its next start.
+            let (rules, domains) = gateway_rules(&st)?;
+            crate::netgw::write_rules_named(&self.dir(name), &rules, &domains)?;
+            if Self::is_running(&st) && !restrict_change {
+                crate::network::Applied::Now
+            } else {
+                crate::network::Applied::NextStart
             }
         } else {
             crate::network::Applied::NextStart
@@ -3484,6 +3726,8 @@ impl Runtime for QemuRuntime {
                 let _ = std::fs::remove_file(snap.state());
             }
             std::fs::remove_dir_all(self.dir(name))?;
+            // The network gateway's socket folder (macOS).
+            let _ = std::fs::remove_dir_all(gateway_run_dir(&self.dir(name)));
         }
         drop(owner);
         self.collect_layers().await
@@ -3494,11 +3738,17 @@ impl Runtime for QemuRuntime {
     }
 
     /// Slirp-aware: whether the guest side of a forwarded connection
-    /// reaches ESTABLISHED (`info usernet`).
+    /// reaches ESTABLISHED (`info usernet`); behind the network gateway,
+    /// whether the gateway can open a connection to the guest's port.
     async fn guest_tcp_listening(&self, name: &str, guest_port: u16) -> Result<Option<bool>> {
         let st = self.load(name)?;
         if !Self::is_running(&st) {
             return Ok(Some(false));
+        }
+        if let Some(control) = st.gateway_control.as_deref() {
+            return crate::netgw::probe(control, &format!("{}:{guest_port}", args::GUEST_IP))
+                .await
+                .map(Some);
         }
         self.guest_tcp_established(&st, guest_port).await.map(Some)
     }
@@ -3541,6 +3791,20 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
+        use super::gateway_run_dir;
+        use std::path::Path;
+        let long = Path::new("/Users/someone/.cua/vmm/qemu/a-very-long-space-name-for-a-vm");
+        let a = gateway_run_dir(long);
+        let b = gateway_run_dir(Path::new("/Users/someone/.cua/vmm/qemu/another"));
+        assert_ne!(a, b);
+        assert_eq!(a, gateway_run_dir(long), "the same VM, the same folder");
+        assert!(a.starts_with(std::env::temp_dir()));
+        // QEMU and the gateway need a socket path under 104 bytes.
+        assert!(a.join("q.sock").as_os_str().len() < 104, "{}", a.display());
+    }
+
     #[test]
     fn port_conflicts_in_qemu_stderr_are_recognised() {
         assert!(is_port_conflict(
@@ -4152,6 +4416,7 @@ mod tests {
 
     #[test]
     fn the_secure_default_namespace_closes_the_host_and_opens_dns() {
+        crate::tree::force_enabled_in_this_test();
         let mut ctx = netns_context();
         ctx.host_addrs = vec!["10.0.1.5".parse().unwrap()];
         ctx.daemon_ports = vec![4100];
@@ -4162,6 +4427,26 @@ mod tests {
         )
         .unwrap();
         let s = netns_script(&rules, false);
+        // The tree: QEMU's TCP to the range goes to the relay; anything
+        // else to it stops first in OUTPUT; the relay starts before QEMU.
+        assert!(
+            s.contains(
+                "iptables -t nat -A OUTPUT -d 198.19.0.0/16 -p tcp -j REDIRECT --to-ports 41919"
+            ),
+            "{s}"
+        );
+        assert!(
+            s.contains("iptables -I OUTPUT 1 -d 198.19.0.0/16 -j DROP"),
+            "{s}"
+        );
+        assert!(s.find("-tree-relay").unwrap() < s.find("exec unshare").unwrap());
+        assert!(s.contains("--ctorigdst 198.19.0.0/16 -j ACCEPT"), "{s}");
+        // The relay's own loopback traffic is accepted, a redirected
+        // connection is not (its original destination decides).
+        assert!(
+            s.contains("-o lo -m conntrack ! --ctstate DNAT -j ACCEPT"),
+            "{s}"
+        );
         // pasta's DNS forward is open on 53 (no legacy verdict line).
         assert!(
             s.contains(
@@ -4173,13 +4458,16 @@ mod tests {
         // The host's own addresses, every address local to the namespace,
         // metadata and the private ranges are closed.
         assert!(s.contains("--ctorigdst 10.0.1.5/32 -j DROP"), "{s}");
-        assert!(s.contains("-m addrtype --dst-type LOCAL -j DROP"), "{s}");
+        assert!(
+            s.contains("-m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT -j DROP"),
+            "{s}"
+        );
         assert!(s.contains("--ctorigdst 169.254.169.254/32 -j DROP"), "{s}");
         assert!(s.contains("--ctorigdst 10.0.0.0/8 -j DROP"), "{s}");
         // The daemon's port on every local address.
         assert!(
             s.contains(
-                "-p tcp -m addrtype --dst-type LOCAL -m conntrack --ctorigdstport 4100 -j DROP"
+                "-p tcp -m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT --ctorigdstport 4100 -j DROP"
             ),
             "{s}"
         );
@@ -4261,9 +4549,9 @@ mod tests {
         assert!(
             netns_script(&allowed, true).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT")
         );
-        let a = netns_pasta_args(&[4000, 5901], &[]);
+        let a = netns_pasta_args(&[4000, 5901], &[], false);
         assert!(a.windows(2).any(|w| w[0] == "-T" && w[1] == "none"));
-        let open = netns_pasta_args(&[4000], &[5432, 3000]);
+        let open = netns_pasta_args(&[4000], &[5432, 3000], false);
         assert!(
             open.windows(2).any(|w| w[0] == "-T" && w[1] == "5432,3000"),
             "{open:?}"
@@ -4276,6 +4564,16 @@ mod tests {
             "no way to the host's loopback"
         );
         assert_eq!(a[a.len() - 2..], ["--".to_string(), "/bin/sh".to_string()]);
+        // An older pasta rejects the option: not passed unless supported.
+        assert!(!a.contains(&"--host-lo-to-ns-lo".to_string()));
+        // A newer one needs it, before the first forward.
+        let new = netns_pasta_args(&[4000, 5901], &[], true);
+        let at = |s: &str| new.iter().position(|x| x == s).unwrap();
+        assert!(
+            at("--host-lo-to-ns-lo") < at("127.0.0.1/4000:4000"),
+            "{new:?}"
+        );
+        assert_eq!(new.len(), a.len() + 1);
     }
 
     #[test]
@@ -5296,5 +5594,78 @@ mod launch_guard_tests {
         assert!(child.try_wait().unwrap().is_none());
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+}
+
+/// Whether `st`'s network goes through the Cua network gateway: on macOS
+/// and Windows, under Secure Spaces, unless the VM has no network. Without
+/// the experiment QEMU's own user network carries it as it always did.
+fn gateway_mode(st: &QemuState) -> bool {
+    host::HostOs::current() != host::HostOs::Linux
+        && !st.restrict_network
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+}
+
+/// The rules a VM's network gateway enforces (macOS, Windows): its
+/// settings compiled with [`gateway_context`] under the secure default,
+/// else its old policy alone.
+fn gateway_rules(st: &QemuState) -> Result<(crate::egress::Rules, crate::egress::Domains)> {
+    crate::network::vm_rules_named(
+        st.network.as_ref(),
+        st.egress.as_ref(),
+        st.restrict_network,
+        &gateway_context(),
+    )
+    .map_err(VmmError::from)
+}
+
+/// What a VM's gateway knows: the guest's resolver ([`GATEWAY_DNS_IP`])
+/// is open on 53; the host is the gateway's address ([`GATEWAY_IP`]),
+/// opened only by the localhost preset's ports; the host's own addresses
+/// and the daemon's ports stay closed.
+fn gateway_context() -> crate::network::NetworkContext {
+    let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("a valid address") };
+    crate::network::NetworkContext {
+        resolvers: vec![ip(GATEWAY_DNS_IP)],
+        host_aliases: vec![ip(GATEWAY_IP)],
+        host_addrs: crate::network::host_addresses(),
+        // The tree range: the gateway carries it to the tree's running
+        // members only ([`crate::tree`]).
+        tree: crate::tree::context_tree(),
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
+}
+
+/// The guest's network behind the Cua network gateway: QEMU's user-network
+/// layout, so a guest (or a snapshot of one) made under either works under
+/// the other.
+const GATEWAY_SUBNET: &str = "10.0.2.0/24";
+const GATEWAY_IP: &str = "10.0.2.2";
+const GATEWAY_DNS_IP: &str = "10.0.2.3";
+const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:dd";
+
+/// A short folder for the gateway's Unix sockets of the VM in `dir`.
+fn gateway_run_dir(dir: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(dir.to_string_lossy().as_bytes());
+    std::env::temp_dir().join(format!("cuagw-{}", hex12(&h)))
+}
+
+fn hex12(b: &[u8]) -> String {
+    b.iter().take(6).map(|x| format!("{x:02x}")).collect()
+}
+
+/// Ends a gateway whose QEMU never started (it would end by itself after
+/// two minutes).
+struct GatewayGuard(Option<u32>);
+
+impl Drop for GatewayGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.take()
+            && host::pid_alive(pid)
+        {
+            host::signal(pid, "TERM");
+        }
     }
 }

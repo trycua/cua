@@ -54,6 +54,8 @@ export type {
 } from "./store";
 export { newPendingId } from "./store";
 export type { TranscriptItem, TranscriptStep } from "./transcript";
+export { authorView, exportCardView } from "./thread-cards";
+export type { AuthorView, CardCommitRow, CardFileRow, ExportCardView, Square } from "./thread-cards";
 export {
   AUTOMATION_PANE,
   FULL_DISK_ACCESS_PANE,
@@ -132,6 +134,11 @@ export { runCreateFix, type CreateFixActions } from "./create-retry";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstPrompts, type FirstSpaceOffer, type PromptCap, type PromptExample, type PromptSuggestion } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
+export type { GithubAccountRow, GithubDetail, GithubRow, GithubSourceLine, GithubTone, GithubView } from "./contracts/github";
+export { githubView, useGithub, type GithubHook } from "./github";
+export type { GithubReport, GithubHost, GithubAccount, GithubSource } from "./ops/github";
+export type * from "./contracts/ci-runners";
+export * from "./ci-runners";
 export type * from "./contracts/prepare";
 export * from "./prepare-core";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
@@ -174,7 +181,7 @@ export {
   type RelayUsageView,
 } from "./relay-usage";
 
-export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
+export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
 export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
@@ -204,7 +211,7 @@ export {
   type ThreadPage,
   type ThreadRole,
 } from "./ops/thread";
-export type { LinkAccess, LinkCreate, ShareLink } from "./ops/links";
+export type { LinkAccess, LinkCreate, ShareLanding, ShareLink, ShareSettings } from "./ops/links";
 export {
   useResources,
   hostResources,

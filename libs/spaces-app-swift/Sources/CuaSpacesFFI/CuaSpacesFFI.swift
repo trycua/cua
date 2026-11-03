@@ -17081,6 +17081,30 @@ public struct AppExperiments: Equatable, Hashable {
      * on; the daemon enforces it (the switch is kept in the cua home).
      */
     public var childSpaces: Bool
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var askFirst: Bool
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    public var ciRunners: Bool
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var tcpShares: Bool
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    public var mobile: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17107,13 +17131,37 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * Child Spaces: a Space may make Spaces of its own. Off unless turned
          * on; the daemon enforces it (the switch is kept in the cua home).
-         */childSpaces: Bool) {
+         */childSpaces: Bool,
+        /**
+         * Ask first: an agent asks on a card before something leaves its Space
+         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */askFirst: Bool,
+        /**
+         * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+         * and the CI Runners page). Off unless turned on; the daemon and the
+         * `cua` command enforce it (the switch is kept in the cua home).
+         */ciRunners: Bool,
+        /**
+         * Public TCP shares: a raw TCP service in a Space (a game server) at a
+         * public address. Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */tcpShares: Bool,
+        /**
+         * Mobile: the computer answers the Cua Spaces phone app (its tools and
+         * push events). Off unless turned on; the daemon enforces it (the switch
+         * is kept in the cua home).
+         */mobile: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
         self.webUi = webUi
         self.secureSpaces = secureSpaces
         self.childSpaces = childSpaces
+        self.askFirst = askFirst
+        self.ciRunners = ciRunners
+        self.tcpShares = tcpShares
+        self.mobile = mobile
     }
 
 
@@ -17137,7 +17185,11 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 sharing: FfiConverterBool.read(from: &buf),
                 webUi: FfiConverterBool.read(from: &buf),
                 secureSpaces: FfiConverterBool.read(from: &buf),
-                childSpaces: FfiConverterBool.read(from: &buf)
+                childSpaces: FfiConverterBool.read(from: &buf),
+                askFirst: FfiConverterBool.read(from: &buf),
+                ciRunners: FfiConverterBool.read(from: &buf),
+                tcpShares: FfiConverterBool.read(from: &buf),
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17148,6 +17200,10 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.webUi, into: &buf)
         FfiConverterBool.write(value.secureSpaces, into: &buf)
         FfiConverterBool.write(value.childSpaces, into: &buf)
+        FfiConverterBool.write(value.askFirst, into: &buf)
+        FfiConverterBool.write(value.ciRunners, into: &buf)
+        FfiConverterBool.write(value.tcpShares, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
     }
 }
 
@@ -80711,7 +80767,7 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 }
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces) are what
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
@@ -82831,7 +82887,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 48517) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {

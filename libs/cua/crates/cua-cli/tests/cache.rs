@@ -58,6 +58,7 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         network: None,
         netns: false,
         pasta_pid: None,
+        gateway_control: None,
         extra_args: vec![],
         snapshots: vec![],
         paused: false,

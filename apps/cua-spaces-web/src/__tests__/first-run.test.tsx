@@ -191,7 +191,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.querySelector("[data-onboarding-primary]")!.textContent).toBe("Continue");
   });
 
-  it("walks Welcome, the question, Connect your machines and Try it, connecting only what is asked", async () => {
+  it("walks Welcome, the question, Connect your computers and Try it, connecting only what is asked", async () => {
     const calls = await mount({ agents: onlyCodex });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");

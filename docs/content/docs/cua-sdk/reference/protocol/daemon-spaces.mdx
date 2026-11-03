@@ -56,6 +56,9 @@ without touching it.
 | [`SetSpaceEgress`](#spaceservicesetspaceegress) | [`SetSpaceEgressRequest`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressrequest) | [`SetSpaceEgressResponse`](/cua-sdk/reference/protocol/daemon-egress#setspaceegressresponse) | unary |
 | [`GetSpaceNetwork`](#spaceservicegetspacenetwork) | [`GetSpaceNetworkRequest`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworkrequest) | [`GetSpaceNetworkResponse`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworkresponse) | unary |
 | [`SetSpaceNetwork`](#spaceservicesetspacenetwork) | [`SetSpaceNetworkRequest`](/cua-sdk/reference/protocol/daemon-egress#setspacenetworkrequest) | [`SetSpaceNetworkResponse`](/cua-sdk/reference/protocol/daemon-egress#setspacenetworkresponse) | unary |
+| [`GetSpaceNetworkLog`](#spaceservicegetspacenetworklog) | [`GetSpaceNetworkLogRequest`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworklogrequest) | [`GetSpaceNetworkLogResponse`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworklogresponse) | unary |
+| [`SetSpaceClipboard`](#spaceservicesetspaceclipboard) | [`SetSpaceClipboardRequest`](#setspaceclipboardrequest) | [`SetSpaceClipboardResponse`](#setspaceclipboardresponse) | unary |
+| [`SetSpaceVolume`](#spaceservicesetspacevolume) | [`SetSpaceVolumeRequest`](#setspacevolumerequest) | [`SetSpaceVolumeResponse`](#setspacevolumeresponse) | unary |
 | [`SetSpaceChildren`](#spaceservicesetspacechildren) | [`SetSpaceChildrenRequest`](#setspacechildrenrequest) | [`SetSpaceChildrenResponse`](#setspacechildrenresponse) | unary |
 | [`GetTreeBudget`](#spaceservicegettreebudget) | [`GetTreeBudgetRequest`](#gettreebudgetrequest) | [`GetTreeBudgetResponse`](#gettreebudgetresponse) | unary |
 | [`SetTreeBudget`](#spaceservicesettreebudget) | [`SetTreeBudgetRequest`](#settreebudgetrequest) | [`SetTreeBudgetResponse`](#settreebudgetresponse) | unary |
@@ -259,6 +262,25 @@ enforced (or why its network is cut), and what is always blocked.
 
 Replaces a Space's network settings (a child's stay within its
 parent's unless `widen`).
+
+### SpaceService.GetSpaceNetworkLog
+
+`/cua.daemon.v1.SpaceService/GetSpaceNetworkLog`, unary: [`GetSpaceNetworkLogRequest`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworklogrequest) to [`GetSpaceNetworkLogResponse`](/cua-sdk/reference/protocol/daemon-egress#getspacenetworklogresponse).
+
+What a Space tried to reach and its network refused, most recent first.
+
+### SpaceService.SetSpaceClipboard
+
+`/cua.daemon.v1.SpaceService/SetSpaceClipboard`, unary: [`SetSpaceClipboardRequest`](#setspaceclipboardrequest) to [`SetSpaceClipboardResponse`](#setspaceclipboardresponse).
+
+Sets when the Space's viewers may move the clipboard between this
+computer and the Space ("viewing", "ask" or "off").
+
+### SpaceService.SetSpaceVolume
+
+`/cua.daemon.v1.SpaceService/SetSpaceVolume`, unary: [`SetSpaceVolumeRequest`](#setspacevolumerequest) to [`SetSpaceVolumeResponse`](#setspacevolumeresponse).
+
+Sets what the Space sees of the Cua Volume ("own" or "off"), now.
 
 ### SpaceService.SetSpaceChildren
 
@@ -482,7 +504,40 @@ A registered Space.
 | `network_notice_pending` | 38 | `bool` | Its network settings changed by an update (an old Space moved to the new defaults); apps and the CLI say so once. |
 | `depth` | 39 | `uint32` | How far below its tree's top-level Space it is: 0 for a top-level Space, 1 for its children, ... |
 | `origin` | 40 | `string` | How it was made: "user", "child" or "fork-batch:&lt;id&gt;". |
+| `clipboard` | 41 | `string` | When viewers may move the clipboard between this computer and the Space: "viewing" (only while you're viewing, the default), "ask" or "off". Empty from a daemon that predates the setting, which means "viewing". |
+| `volume` | 42 | `string` | What the Space sees of the Cua Volume: "own" (its own folder, the default) or "off". Empty means "own". |
 | `children` | 43 | `bool` | The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on a channel only it can reach. |
+| `tree_address` | 44 | `string` | A VM's address in its tree (198.19.0.0/16), where the other members of its tree reach it; empty otherwise. |
+
+### SetSpaceClipboardRequest
+
+Request for `SpaceService.SetSpaceClipboard`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Space. |
+| `clipboard` | 2 | `string` | "viewing", "ask" or "off". |
+
+### SetSpaceClipboardResponse
+
+Response for `SpaceService.SetSpaceClipboard`.
+
+No fields.
+
+### SetSpaceVolumeRequest
+
+Request for `SpaceService.SetSpaceVolume`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Space. |
+| `volume` | 2 | `string` | "own" (its own folder) or "off". |
+
+### SetSpaceVolumeResponse
+
+Response for `SpaceService.SetSpaceVolume`.
+
+No fields.
 
 ### SpaceSharing
 

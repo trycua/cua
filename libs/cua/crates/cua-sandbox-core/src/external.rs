@@ -1447,6 +1447,16 @@ impl LocalRuntime for WithExternal {
         }
     }
 
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        match self.owner(name).await {
+            Some(rt) => rt.network_events(name).await,
+            None => self.inner.network_events(name).await,
+        }
+    }
+
     async fn set_network(
         &self,
         name: &str,

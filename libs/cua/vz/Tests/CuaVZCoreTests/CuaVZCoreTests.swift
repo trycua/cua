@@ -33,6 +33,18 @@ let sample = """
     #expect(bare.restore == nil)
 }
 
+@Test func theNetworkProgramMayBeNamedGatewayUnderSecureSpaces() throws {
+    var j = try #require(try JSONSerialization.jsonObject(with: Data(sample.utf8)) as? [String: Any])
+    j["network"] = ["gateway": "/bin/cua-netgw", "config": "netgw.json"]
+    let c = try JSONDecoder().decode(VZConfig.self, from: JSONSerialization.data(withJSONObject: j))
+    #expect(c.network == .init(gvproxy: "/bin/cua-netgw", config: "netgw.json"))
+    // A config naming neither is refused, not guessed.
+    j["network"] = ["config": "netgw.json"]
+    #expect(throws: (any Error).self) {
+        _ = try JSONDecoder().decode(VZConfig.self, from: JSONSerialization.data(withJSONObject: j))
+    }
+}
+
 @Test func problemsAreReportedBeforeTheFrameworkSeesThem() throws {
     var c = try JSONDecoder().decode(VZConfig.self, from: Data(sample.utf8))
     c.sockets = "/" + String(repeating: "x", count: 100)

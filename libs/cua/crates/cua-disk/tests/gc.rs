@@ -90,6 +90,7 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         network: None,
         netns: false,
         pasta_pid: None,
+        gateway_control: None,
         extra_args: vec![],
         snapshots: vec![],
         paused: false,

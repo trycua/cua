@@ -34,8 +34,6 @@ use crate::{Error, Result};
 /// move it.
 pub const MEDIA_UDP_PORT: u16 = 3212;
 
-/// How long a connection to a peer the map lists online may take.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// ... and to one it lists offline (only a direct path could carry it).
 const OFFLINE_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -73,6 +71,9 @@ pub struct MeshConfig {
     /// only; leave at 1).
     #[doc(hidden)]
     pub reconnect_speedup: u32,
+    /// How long a QUIC connection to a peer may take before the peer is
+    /// unreachable (and stays so for a moment, see [`Mesh::open_stream`]).
+    pub connect_timeout: Duration,
 }
 
 impl std::fmt::Debug for MeshConfig {
@@ -106,9 +107,19 @@ impl MeshConfig {
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
             media_udp_port: MEDIA_UDP_PORT,
             reconnect_speedup: 1,
+            connect_timeout: CONNECT_TIMEOUT,
         }
     }
 }
+
+/// How long a QUIC connection to a peer the map lists online may take
+/// ([`MeshConfig::connect_timeout`]).
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long a failed dial answers for its peer: callers that waited for it,
+/// and callers arriving right after, fail at once instead of each dialing
+/// (and holding its local connection) for another full timeout.
+const FAILED_DIAL_HOLD: Duration = Duration::from_secs(5);
 
 /// The machine's hostname, for display.
 pub fn hostname() -> String {
@@ -320,6 +331,9 @@ struct Inner {
     endpoints: Mutex<Vec<SocketAddr>>,
     /// Connections peers opened to us, so a peer leaving the map is cut.
     inbound: Mutex<Vec<(PublicKey, quinn::Connection)>>,
+    connect_timeout: Duration,
+    /// The last failed dial per peer: when, and why.
+    failed_dials: Mutex<HashMap<PublicKey, (Instant, String)>>,
 }
 
 /// One node on the mesh. Cheap to clone.
@@ -380,6 +394,8 @@ impl Mesh {
             udp_flows: Mutex::new(Vec::new()),
             endpoints: Mutex::new(Vec::new()),
             inbound: Mutex::new(Vec::new()),
+            connect_timeout: cfg.connect_timeout,
+            failed_dials: Mutex::new(HashMap::new()),
         });
         // Coordinator connection.
         tokio::spawn(coord::run(
@@ -624,7 +640,10 @@ impl Mesh {
         }
         // Per peer: a peer that does not answer holds up only its own
         // callers, never connections to the others (an offline computer
-        // used to stall every other one for the whole connect timeout).
+        // used to stall every other one for the whole connect timeout), and
+        // none dials while holding the connection map (a daemon probing an
+        // offline machine every few seconds piled up thousands of accepted
+        // loopback connections that way).
         let gate = self
             .inner
             .connecting
@@ -637,42 +656,72 @@ impl Mesh {
         if let Some(c) = self.live_connection(&peer.node_key).await {
             return Ok(c);
         }
+        // A dial that just failed answers the callers that waited for it.
+        if let Some(why) = self.recent_failure(&peer.node_key) {
+            return Err(Error::Unreachable(why));
+        }
         self.inner.engine.want(&peer.node_key);
         // A peer the map lists offline gets a short try (a direct path may
         // still carry it), not the full wait.
         let within = if peer.online {
-            CONNECT_TIMEOUT
+            self.inner.connect_timeout
         } else {
-            OFFLINE_CONNECT_TIMEOUT
+            OFFLINE_CONNECT_TIMEOUT.min(self.inner.connect_timeout)
         };
-        let c = tokio::time::timeout(
+        let mut timed_out = false;
+        let dialed = tokio::time::timeout(
             within,
             quic::connect(&self.inner.endpoint, peer.addr(), &peer.quic_pin),
         )
         .await
-        .map_err(|_| {
-            Error::Unreachable(if peer.online {
+        .unwrap_or_else(|_| {
+            timed_out = true;
+            Err(Error::Unreachable(if peer.online {
                 format!("{} did not answer on the mesh", peer.name)
             } else {
                 format!("{} is offline", peer.name)
-            })
-        })??;
-        // Refused, or the peer left the map, while connecting: as if the
-        // connection had been open then (`denial_loop`, `prune_loop`).
-        if let Some(reason) = self.denied() {
-            c.close(3u32.into(), b"device refused");
-            return Err(Error::Refused(reason));
+            }))
+        });
+        match dialed {
+            Ok(c) => {
+                // Refused, or the peer left the map, while connecting: as if
+                // the connection had been open then (`denial_loop`,
+                // `prune_loop`).
+                if let Some(reason) = self.denied() {
+                    c.close(3u32.into(), b"device refused");
+                    return Err(Error::Refused(reason));
+                }
+                if self.inner.engine.peer(&peer.node_key).is_none() {
+                    c.close(2u32.into(), b"peer removed");
+                    return Err(Error::NotFound(format!("{} left the mesh", peer.name)));
+                }
+                self.inner
+                    .conns
+                    .lock()
+                    .await
+                    .insert(peer.node_key, c.clone());
+                self.inner
+                    .failed_dials
+                    .lock()
+                    .expect("failed dials")
+                    .remove(&peer.node_key);
+                Ok(c)
+            }
+            Err(e) => {
+                // Only a dial that held its connection for the whole timeout
+                // is remembered: one that failed at once (the peer not yet
+                // listening) costs nothing to retry, and holding it made the
+                // next caller fail for no reason.
+                if timed_out {
+                    self.inner
+                        .failed_dials
+                        .lock()
+                        .expect("failed dials")
+                        .insert(peer.node_key, (Instant::now(), e.to_string()));
+                }
+                Err(e)
+            }
         }
-        if self.inner.engine.peer(&peer.node_key).is_none() {
-            c.close(2u32.into(), b"peer removed");
-            return Err(Error::NotFound(format!("{} left the mesh", peer.name)));
-        }
-        self.inner
-            .conns
-            .lock()
-            .await
-            .insert(peer.node_key, c.clone());
-        Ok(c)
     }
 
     async fn live_connection(&self, peer: &PublicKey) -> Option<quinn::Connection> {
@@ -683,6 +732,16 @@ impl Mesh {
             .get(peer)
             .filter(|c| c.close_reason().is_none())
             .cloned()
+    }
+
+    /// Why the last dial to `peer` failed, when it failed less than
+    /// [`FAILED_DIAL_HOLD`] ago.
+    fn recent_failure(&self, peer: &PublicKey) -> Option<String> {
+        let failed = self.inner.failed_dials.lock().expect("failed dials");
+        failed
+            .get(peer)
+            .filter(|(at, _)| at.elapsed() < FAILED_DIAL_HOLD)
+            .map(|(_, why)| why.clone())
     }
 
     /// Why this node can no longer use the mesh, while it holds: its
@@ -756,7 +815,7 @@ impl Mesh {
     /// connection to the returned address becomes one mesh stream, and
     /// datagrams to the same port number on UDP go to the peer's
     /// [`MeshConfig::media_udp_port`] (default [`MEDIA_UDP_PORT`]). Dropping
-    /// the [`Forward`] stops it.
+    /// the [`Forward`] stops it and ends the connections it accepted.
     pub async fn forward(
         &self,
         peer: PublicKey,
@@ -782,23 +841,42 @@ impl Mesh {
         let me = self.clone();
         let service = service.to_owned();
         let session2 = session.clone();
+        // Ends this forward's connections when the forward is dropped:
+        // aborting the accept loop alone left them running, each holding
+        // its local socket while it waited for a peer that never answered.
+        let stop = coord::tokio_util_cancel::Token::new();
+        let stop2 = stop.clone();
         let tcp_task = tokio::spawn(async move {
             loop {
-                let Ok((conn, _)) = tcp.accept().await else {
-                    continue;
+                let conn = match tcp.accept().await {
+                    Ok((conn, _)) => conn,
+                    Err(e) => {
+                        // Out of descriptors (EMFILE) fails every accept at
+                        // once: back off instead of spinning.
+                        tracing::debug!(error = %e, "mesh forward accept");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
                 };
                 let me = me.clone();
                 let service = service.clone();
                 let session = session2.clone();
+                let stop = stop2.clone();
                 tokio::spawn(async move {
-                    match me.open_stream(&peer, &service, session).await {
-                        Ok(stream) => quic::splice(conn, stream).await,
-                        // The process or the node is going away (a short
-                        // `cua` run exiting): nothing to warn about.
-                        Err(e) if stopping(&e, me.inner.shutdown.is_cancelled()) => {
-                            tracing::debug!(error = %e, "mesh forward while stopping")
+                    let serve = async {
+                        match me.open_stream(&peer, &service, session).await {
+                            Ok(stream) => quic::splice(conn, stream).await,
+                            // The process or the node is going away (a short
+                            // `cua` run exiting): nothing to warn about.
+                            Err(e) if stopping(&e, me.inner.shutdown.is_cancelled()) => {
+                                tracing::debug!(error = %e, "mesh forward while stopping")
+                            }
+                            Err(e) => tracing::warn!(error = %e, "mesh forward"),
                         }
-                        Err(e) => tracing::warn!(error = %e, "mesh forward"),
+                    };
+                    tokio::select! {
+                        () = serve => {}
+                        () = stop.cancelled() => {}
                     }
                 });
             }
@@ -810,6 +888,7 @@ impl Mesh {
         Ok(Forward {
             local,
             tasks: [Some(tcp_task), udp_task].into_iter().flatten().collect(),
+            stop,
         })
     }
 
@@ -959,10 +1038,13 @@ pub struct Forward {
     /// Where to connect (TCP, and UDP on the same port when it was free).
     pub local: SocketAddr,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Ends the connections it accepted.
+    stop: coord::tokio_util_cancel::Token,
 }
 
 impl Drop for Forward {
     fn drop(&mut self) {
+        self.stop.cancel();
         for t in &self.tasks {
             t.abort();
         }
@@ -1218,6 +1300,7 @@ async fn discovery_loop(inner: std::sync::Weak<Inner>) {
             // stop trusting direct paths and find new ones.
             tracing::info!("network change: re-discovering mesh paths");
             strong.engine.forget_paths();
+            strong.failed_dials.lock().expect("failed dials").clear();
         }
         let due = last_full.is_none_or(|t| t.elapsed() > Duration::from_secs(30));
         if changed || due || (connected && !was_connected) {

@@ -2014,6 +2014,16 @@ impl Sandboxes {
         }
     }
 
+    /// What sandbox `name` tried to reach and its network rules refused,
+    /// most recent first: counted on its local runtime; empty for a sandbox
+    /// that is not local.
+    pub async fn network_events(&self, name: &str) -> Result<Vec<cua_vmm::egress::NetworkEvent>> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.network_events(name).await?),
+            _ => Ok(vec![]),
+        }
+    }
+
     /// The egress policy kept with sandbox `name` (empty: none, or a
     /// sandbox that is not local).
     pub async fn egress(&self, name: &str) -> Result<cua_vmm::egress::EgressPolicy> {

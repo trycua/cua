@@ -43,8 +43,11 @@
 //!
 //! **Network policy.** None can be enforced: the guests sit on vmnet,
 //! which only pf can filter and pf needs root, and Apple's runtime helper
-//! attaches no other network device. A Space with an egress policy or no
-//! network is refused here.
+//! attaches no other network device. A firewall inside the guest would
+//! not be Cua's to promise (the Space's own root can change it), so under
+//! the secure default only No protection starts a Space here, and
+//! [`NO_PROTECTION_WHY`] says why and what to use instead (the `vz`
+//! backend, which keeps every connection behind `cua-netgw`).
 //!
 //! The environment (the Spaces token among it) goes in through an env file,
 //! never the command line; the host reaches the guest's ports at its own
@@ -790,6 +793,10 @@ impl ContainerizationRuntime {
     }
 }
 
+/// Why a Space on Apple's Containerization starts only with No protection
+/// (the support table's words, [`crate::network::WHY_CONTAINERIZATION`]).
+pub const NO_PROTECTION_WHY: &str = crate::network::WHY_CONTAINERIZATION;
+
 /// What a person can do when `image` needs a registry sign-in: the reason
 /// the shared puller gave when it was asked first (the registry's own words),
 /// else how to give Cua the credential.
@@ -838,11 +845,7 @@ impl Runtime for ContainerizationRuntime {
         )? {
             Some(crate::network::NetworkPlan::Open { .. }) => {}
             Some(_) => {
-                return Err(VmmError::Other(
-                    "Apple's Containerization can't protect your network yet. Use the standard \
-                     microVM (the default) or choose No protection."
-                        .into(),
-                ));
+                return Err(VmmError::Other(NO_PROTECTION_WHY.into()));
             }
             None => {
                 reject_restricted_network(BackendKind::Containerization, spec)?;

@@ -534,6 +534,18 @@ async fn a_child_past_the_trees_budget_gets_a_plain_refusal() {
         .unwrap_err();
     assert_eq!(e.code(), Code::ResourceExhausted);
     assert!(e.message().contains("3 child Spaces"), "{}", e.message());
+    // The refusal is in the audit log with who asked.
+    let log = w
+        .shared
+        .runtime
+        .spaces()
+        .home_dir()
+        .join("children-audit.jsonl");
+    let text = std::fs::read_to_string(&log).expect("the refusal is audited");
+    assert!(
+        text.contains("\"refuse\"") && text.contains("space:local:a"),
+        "{text}"
+    );
     // Nothing was created, and nothing stays reserved.
     assert_eq!(
         w.shared.runtime.spaces().registry().list().unwrap().len(),

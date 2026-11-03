@@ -209,9 +209,16 @@ and gRPC-Web-only networks.
 | [`StartHotspot`](#tunnelservicestarthotspot) | [`StartHotspotRequest`](#starthotspotrequest) | [`StartHotspotResponse`](#starthotspotresponse) | unary |
 | [`StopHotspot`](#tunnelservicestophotspot) | [`StopHotspotRequest`](#stophotspotrequest) | [`StopHotspotResponse`](#stophotspotresponse) | unary |
 | [`GetHotspotStatus`](#tunnelservicegethotspotstatus) | [`GetHotspotStatusRequest`](#gethotspotstatusrequest) | [`GetHotspotStatusResponse`](#gethotspotstatusresponse) | unary |
+| [`StartExit`](#tunnelservicestartexit) | [`StartExitRequest`](#startexitrequest) | [`StartExitResponse`](#startexitresponse) | unary |
+| [`StopExit`](#tunnelservicestopexit) | [`StopExitRequest`](#stopexitrequest) | [`StopExitResponse`](#stopexitresponse) | unary |
+| [`StartHostPorts`](#tunnelservicestarthostports) | [`StartHostPortsRequest`](#starthostportsrequest) | [`StartHostPortsResponse`](#starthostportsresponse) | unary |
+| [`StopHostPorts`](#tunnelservicestophostports) | [`StopHostPortsRequest`](#stophostportsrequest) | [`StopHostPortsResponse`](#stophostportsresponse) | unary |
 | [`StartSpawn`](#tunnelservicestartspawn) | [`StartSpawnRequest`](#startspawnrequest) | [`StartSpawnResponse`](#startspawnresponse) | unary |
 | [`StopSpawn`](#tunnelservicestopspawn) | [`StopSpawnRequest`](#stopspawnrequest) | [`StopSpawnResponse`](#stopspawnresponse) | unary |
 | [`GetSpawnStatus`](#tunnelservicegetspawnstatus) | [`GetSpawnStatusRequest`](#getspawnstatusrequest) | [`GetSpawnStatusResponse`](#getspawnstatusresponse) | unary |
+| [`PublishShareSlot`](#tunnelservicepublishshareslot) | [`PublishShareSlotRequest`](#publishshareslotrequest) | [`PublishShareSlotResponse`](#publishshareslotresponse) | unary |
+| [`UnpublishShareSlot`](#tunnelserviceunpublishshareslot) | [`UnpublishShareSlotRequest`](#unpublishshareslotrequest) | [`UnpublishShareSlotResponse`](#unpublishshareslotresponse) | unary |
+| [`ListShareSlots`](#tunnelservicelistshareslots) | [`ListShareSlotsRequest`](#listshareslotsrequest) | [`ListShareSlotsResponse`](#listshareslotsresponse) | unary |
 
 ### TunnelService.Forward
 
@@ -250,6 +257,39 @@ Stops the hotspot.
 
 Reports hotspot state and counters.
 
+### TunnelService.StartExit
+
+`/cua.env.v1.TunnelService/StartExit`, unary: [`StartExitRequest`](#startexitrequest) to [`StartExitResponse`](#startexitresponse).
+
+Makes this Space an exit for the Spaces of its tree ("Exit through" a
+Space): a SOCKS5 listener on guest loopback that connects from this
+Space's own network (under this Space's network rules, which its host
+enforces). It is reached only through a `Forward` to that loopback
+port. Starting it again keeps the running exit.
+
+### TunnelService.StopExit
+
+`/cua.env.v1.TunnelService/StopExit`, unary: [`StopExitRequest`](#stopexitrequest) to [`StopExitResponse`](#stopexitresponse).
+
+Stops the exit (its connections close).
+
+### TunnelService.StartHostPorts
+
+`/cua.env.v1.TunnelService/StartHostPorts`, unary: [`StartHostPortsRequest`](#starthostportsrequest) to [`StartHostPortsResponse`](#starthostportsresponse).
+
+Publishes host ports on the guest's loopback: for each port, a listener
+on 127.0.0.1:&lt;port&gt; whose connections the host that runs the Space
+carries to the same port on its own loopback (the ports the Space's
+`localhost` network setting opens, so `localhost:3000` works as
+written). Only that host may call it; starting it again replaces the
+listeners.
+
+### TunnelService.StopHostPorts
+
+`/cua.env.v1.TunnelService/StopHostPorts`, unary: [`StopHostPortsRequest`](#stophostportsrequest) to [`StopHostPortsResponse`](#stophostportsresponse).
+
+Stops publishing host ports.
+
 ### TunnelService.StartSpawn
 
 `/cua.env.v1.TunnelService/StartSpawn`, unary: [`StartSpawnRequest`](#startspawnrequest) to [`StartSpawnResponse`](#startspawnresponse).
@@ -269,6 +309,28 @@ Stops the spawn channel and removes the capability from the guest.
 `/cua.env.v1.TunnelService/GetSpawnStatus`, unary: [`GetSpawnStatusRequest`](#getspawnstatusrequest) to [`GetSpawnStatusResponse`](#getspawnstatusresponse).
 
 Reports the spawn channel's state.
+
+### TunnelService.PublishShareSlot
+
+`/cua.env.v1.TunnelService/PublishShareSlot`, unary: [`PublishShareSlotRequest`](#publishshareslotrequest) to [`PublishShareSlotResponse`](#publishshareslotresponse).
+
+Serves one public TCP share on a share slot: a port the cloud computer
+publishes from this Space (`CUA_SHARE_SLOTS`), forwarded to a port of
+this Space's own loopback only. The computer's firewall opens the slot
+separately. Only the Space's owner (or its host) may call it.
+
+### TunnelService.UnpublishShareSlot
+
+`/cua.env.v1.TunnelService/UnpublishShareSlot`, unary: [`UnpublishShareSlotRequest`](#unpublishshareslotrequest) to [`UnpublishShareSlotResponse`](#unpublishshareslotresponse).
+
+Stops serving a share slot (its connections close).
+
+### TunnelService.ListShareSlots
+
+`/cua.env.v1.TunnelService/ListShareSlots`, unary: [`ListShareSlotsRequest`](#listshareslotsrequest) to [`ListShareSlotsResponse`](#listshareslotsresponse).
+
+The share slots served now, with the data each moved (the daemon's
+data cap and its sweep of slots no share explains).
 
 ## VolumeService
 
@@ -1080,6 +1142,69 @@ What to do when a received file already exists.
 
 ## Types in `cua/env/v1/tunnel.proto`
 
+### PublishShareSlotRequest
+
+Request for `TunnelService.PublishShareSlot`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `slot` | 1 | `uint32` | The slot (one of `CUA_SHARE_SLOTS`). |
+| `port` | 2 | `uint32` | The Space port it reaches (on 127.0.0.1). |
+| `allow` | 3 | repeated `string` | Who may connect (CIDRs); empty: anyone. |
+| `expect_hosts` | 4 | repeated `string` | Minecraft Java: drop connections whose handshake names none of these hosts. Empty: no check. |
+| `ttl` | 5 | `google.protobuf.Duration` | How long it serves. Unset: 24 hours, the most. |
+| `max_bytes` | 6 | `uint64` | The most bytes it may move (both ways); 0: no cap. Reaching it ends every connection and refuses new ones. |
+
+### PublishShareSlotResponse
+
+Response for `TunnelService.PublishShareSlot`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `slot` | 1 | `uint32` | The slot. |
+| `expires_at` | 2 | `google.protobuf.Timestamp` | When it stops. |
+
+### UnpublishShareSlotRequest
+
+Request for `TunnelService.UnpublishShareSlot`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `slot` | 1 | `uint32` | The slot. |
+
+### UnpublishShareSlotResponse
+
+Response for `TunnelService.UnpublishShareSlot`.
+
+No fields.
+
+### ListShareSlotsRequest
+
+Request for `TunnelService.ListShareSlots`.
+
+No fields.
+
+### ShareSlot
+
+One served share slot.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `slot` | 1 | `uint32` | The slot. |
+| `port` | 2 | `uint32` | The Space port it reaches. |
+| `bytes` | 3 | `uint64` | Bytes moved since it was published. |
+| `max_bytes` | 4 | `uint64` | Its data cap (0: none). |
+| `connections` | 5 | `uint32` | Open connections. |
+| `expires_at` | 6 | `google.protobuf.Timestamp` | When it stops. |
+
+### ListShareSlotsResponse
+
+Response for `TunnelService.ListShareSlots`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `slots` | 1 | repeated [`ShareSlot`](#shareslot) | The slots, with what each moved. |
+
 ### ForwardRequest
 
 Request for `TunnelService.Forward`.
@@ -1164,6 +1289,76 @@ Response for `TunnelService.StartHotspot`.
 | `ticket` | 2 | `string` | Ticket for the hotspot WebSocket. |
 | `ws_path` | 3 | `string` | WebSocket path relative to the spacesd base URL, including the ticket, for example "/hotspot?ticket=…". The client keeps this socket open; the hotspot stops when it closes. |
 | `socks_address` | 4 | `string` | Guest-side SOCKS5 address, for example "127.0.0.1:1080". |
+
+### StartExitRequest
+
+Request for `TunnelService.StartExit`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `socks_port` | 1 | `uint32` | Guest loopback port; 0 picks a free one. |
+
+### StartExitResponse
+
+Response for `TunnelService.StartExit`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `socks_address` | 1 | `string` | Where the exit listens on guest loopback ("127.0.0.1:41081"). |
+
+### StartHostPortsRequest
+
+Request for `TunnelService.StartHostPorts`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `ports` | 1 | repeated `uint32` | Host ports to publish on the guest's loopback, at the same numbers. |
+| `ticket_ttl` | 2 | `google.protobuf.Duration` | How long the ticket accepts the host's WebSocket. Unset: 60 s. |
+
+### HostPortSkipped
+
+A host port the guest could not publish.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `port` | 1 | `uint32` | The host port. |
+| `reason` | 2 | `string` | Why, in plain words ("something in the Space listens there"). |
+
+### StartHostPortsResponse
+
+Response for `TunnelService.StartHostPorts`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | 1 | `string` | The session to stop later. |
+| `ticket` | 2 | `string` | One-time ticket for the host's WebSocket. |
+| `ws_path` | 3 | `string` | WebSocket path relative to the spacesd base URL, with the ticket. |
+| `listening` | 4 | repeated `uint32` | The ports listening on the guest's loopback now. |
+| `skipped` | 5 | repeated [`HostPortSkipped`](#hostportskipped) | The ports it could not take. |
+
+### StopHostPortsRequest
+
+Request for `TunnelService.StopHostPorts`.
+
+No fields.
+
+### StopHostPortsResponse
+
+Response for `TunnelService.StopHostPorts`.
+
+No fields.
+
+### StopExitRequest
+
+Request for `TunnelService.StopExit`.
+
+No fields.
+
+### StopExitResponse
+
+Response for `TunnelService.StopExit`.
+
+No fields.
 
 ### StopHotspotRequest
 

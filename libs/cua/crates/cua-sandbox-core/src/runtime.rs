@@ -683,6 +683,16 @@ pub trait LocalRuntime: Send + Sync {
         Ok(Default::default())
     }
 
+    /// What instance `name` tried to reach and its rules refused, most
+    /// recent first (empty where the runtime does not count them).
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        let _ = name;
+        Ok(vec![])
+    }
+
     /// Replaces instance `name`'s network settings ([`cua_vmm::network`]),
     /// kept with it; says whether they hold now or from its next start.
     async fn set_network(

@@ -251,6 +251,11 @@ pub(crate) fn channel_app(shared: Arc<Shared>, space: String) -> axum::Router {
             .max_encoding_message_size(limit),
     )
     .add_service(DaemonServiceServer::new(scoped.clone()))
+    // Public TCP shares of the Space's own tree (an experiment of its own,
+    // checked by the share hub).
+    .add_service(
+        cua_proto::daemon::v1::share_service_server::ShareServiceServer::new(scoped.clone()),
+    )
     .into_axum_router();
     let routes = axum::Router::new()
         .route(

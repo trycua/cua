@@ -2163,6 +2163,14 @@ impl LocalRuntime for VmmLocal {
         rt.egress(name).await.map_err(rt_err)
     }
 
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        let (_, rt) = self.owner(name).await?;
+        rt.network_events(name).await.map_err(rt_err)
+    }
+
     async fn set_network(
         &self,
         name: &str,
@@ -3019,8 +3027,8 @@ pub(crate) fn headless_command_line() -> Vec<String> {
 
 /// `cua runtime setup firecracker`: the pinned Firecracker release into
 /// `~/.cua/bin` and the guest kernel into the microVM cache.
-/// macOS microVMs: the pinned guest kernel and gvproxy (`cua-vz` and the
-/// guest init ship with cua).
+/// macOS microVMs: the pinned guest kernel and gvproxy, or the network
+/// gateway under Secure Spaces (`cua-vz` and the guest init ship with cua).
 async fn install_vz() -> std::result::Result<(), VmmError> {
     use cua_vmm::microvm::{assets, vz};
     if let Some(why) = vz::unsupported_reason() {
@@ -3033,7 +3041,19 @@ async fn install_vz() -> std::result::Result<(), VmmError> {
              aarch64-unknown-linux-musl cua-microvm-init in ~/.cua/bin)",
         ));
     }
-    vz::ensure_gvproxy().await?;
+    // Secure Spaces runs the guests' network behind the Cua network gateway
+    // (it ships next to `cua`); without the experiment it is gvproxy,
+    // downloaded here.
+    if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+        if cua_vmm::netgw::bin().is_none() {
+            return Err(VmmError::missing(
+                "cua-netgw",
+                "it ships next to `cua` (a cua release, or libs/cua/netgw/build.sh into ~/.cua/bin)",
+            ));
+        }
+    } else {
+        vz::ensure_gvproxy().await?;
+    }
     assets::ensure_kernel(&MicroVmConfig::default().root).await?;
     Ok(())
 }

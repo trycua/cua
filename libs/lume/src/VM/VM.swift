@@ -121,6 +121,19 @@ class VM {
     /// starts until the guest stops or the run fails.
     var isRunActive: Bool { !sessionCleanedUp }
 
+    /// The network mode of the run in progress (the run's override, or the
+    /// VM's configured mode), while it runs.
+    private(set) var activeNetworkMode: NetworkMode?
+
+    /// The guest's address: the gateway's DHCP lease in gateway mode,
+    /// vmnet's leases (or the ARP table) otherwise.
+    static func ipAddress(forMAC mac: String, networkMode: NetworkMode?) -> String? {
+        if let control = networkMode?.gatewayControlSocket {
+            return GatewayNetwork.leasedAddress(control: control, mac: mac)
+        }
+        return DHCPLeaseParser.getIPAddress(forMAC: mac)
+    }
+
     // MARK: - VM State Management
 
     private var isRunning: Bool {
@@ -130,6 +143,12 @@ class VM {
                 "Cannot check if VM is running: macAddress is nil",
                 metadata: ["name": vmDirContext.name])
             return false
+        }
+
+        // Behind a gateway the guest's address is not reachable from the
+        // host: the run itself says whether it runs.
+        if activeNetworkMode?.gatewayControlSocket != nil {
+            return isRunActive
         }
 
         // Then check if we have an IP address
@@ -160,7 +179,8 @@ class VM {
         // Safely access MAC address
         let macAddress = vmDirContext.config.macAddress
         let ipAddress: String? =
-            isRunning && macAddress != nil ? DHCPLeaseParser.getIPAddress(forMAC: macAddress!) : nil
+            isRunning && macAddress != nil
+            ? VM.ipAddress(forMAC: macAddress!, networkMode: activeNetworkMode) : nil
 
         // Check if SSH is available (only if we have an IP)
         let sshAvailable: Bool? = ipAddress != nil ? NetworkUtils.isSSHAvailable(ipAddress: ipAddress!) : nil
@@ -328,6 +348,7 @@ class VM {
                 additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode
             )
+            activeNetworkMode = config.networkMode
             // A saved state restores only into the devices it was saved
             // with: one saved without the socket device resumes without
             // forwards (the client then uses the VM's address).

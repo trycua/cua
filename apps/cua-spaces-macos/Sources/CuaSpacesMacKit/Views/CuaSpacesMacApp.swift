@@ -403,6 +403,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // Spaces exiting through this machine keep the notch's hotspot
+        // indicator on.
+        _ = model.startExitsPoll()
         // ... and the daemon says when it changed, so a Space starting or
         // stopping on another computer shows within a second or two.
         Task { @MainActor in await model.startListWatch() }

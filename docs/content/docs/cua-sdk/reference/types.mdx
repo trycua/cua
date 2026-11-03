@@ -48,7 +48,7 @@ Renamed members: in Kotlin, objects implement `AutoCloseable`, whose `close()` f
 
 ## All items
 
-337 items. Methods are listed on their object.
+340 items. Methods are listed on their object.
 
 The 10 items of Batched forks are listed on [its page](/cua-sdk/reference/sandbox/fork-batch#all-items).
 
@@ -217,6 +217,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`MediaSession`](/cua-sdk/reference/spacesd/computer#mediasession) | object | A live media session. |
 | [`MediaStats`](/cua-sdk/reference/spacesd/computer#mediastats-record) | record | Delivery counters. |
 | [`NamedVolume`](/cua-sdk/reference/spaces/volume#namedvolume-record) | record | A named volume of Cua Volume (`Spaces.volumes`). |
+| [`NetworkEvent`](/cua-sdk/reference/spaces/space#networkevent-record) | record | One kind of connection a Space tried and its network refused (`Spaces.network_log`). |
 | [`NetworkSettings`](/cua-sdk/reference/spaces/network#networksettings-record) | record | A Space's network settings: a preset and the user's own lists. |
 | [`normalize_image`](/cua-sdk/reference/image#normalize_image) | function | Normalises a reference like the docker CLI (`python` is `docker.io/library/python:latest`). |
 | [`NotificationInfo`](/cua-sdk/reference/spaces/persistent-agents#notificationinfo-record) | record | One entry of the notifications feed. |
@@ -294,6 +295,8 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`ShareAccess`](/cua-sdk/reference/share#shareaccess-enum) | enum | Who may open a share. |
 | [`ShareCheck`](/cua-sdk/reference/share#sharecheck-record) | record | What opening a link once returned. |
 | [`SharedBase`](/cua-sdk/reference/spaces/space#sharedbase-record) | record | A base image several Spaces share copy-on-write (a container image's layers, the image a VM disk was cloned from). |
+| [`ShareLanding`](/cua-sdk/reference/share#sharelanding-enum) | enum | Where public TCP shares land. |
+| [`ShareSettings`](/cua-sdk/reference/share#sharesettings-record) | record | The share settings. |
 | [`SiteLoginOptions`](/cua-sdk/reference/spaces/space#siteloginoptions-record) | record | Options for `Space.request_site_login`. |
 | [`SiteLoginReport`](/cua-sdk/reference/spaces/space#siteloginreport-record) | record | What `Space.request_site_login` did. |
 | [`Space`](/cua-sdk/reference/spaces/space#space) | object | A connected Space. |

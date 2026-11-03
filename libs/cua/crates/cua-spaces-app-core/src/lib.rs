@@ -39,6 +39,8 @@
 //! | [`profile_card`] | the card a person or an agent opens to in a Space: access, presence, who runs an agent and on what, its status, Details |
 //! | [`agent_list`] | every agent you work with as one list (agents in Spaces and this device's unfinished runs): the Agents page and Home draw it |
 //! | [`about`] | Settings, About: name, version, links, the update controls; the refresh after an update |
+//! | [`thread_cards`] | the cards in a Space's thread: the push card (repository, `branch into base`, `+N -N` with per-file bars, commits, the pull request that will open, the account) and how Cua's own entries show (name, the APP tag, the app icon) |
+//! | [`phone`] | the phone app's views and state machines: starting a task, tool rows, the outbox (exactly-once sends, offline), approval scopes and "n of m", Queue and Steer, dictation, diffs and previews, push routing and registration |
 //! | [`notch`] | notch geometry, notch mode and tiles |
 //! | [`window`] | the main window's chrome (account line, New Space, empty state) and the menu bar item's menu |
 //! | [`host`] | "This machine": the roster entry, its page, the host setup form and its validation |
@@ -68,6 +70,7 @@ pub mod agent_prompts;
 pub mod agents;
 pub mod bulk_confirm;
 pub mod checklist;
+pub mod ci_runners;
 pub mod cloud_connect;
 pub mod cloud_page;
 pub mod cloud_sheet;
@@ -84,6 +87,7 @@ pub mod errors;
 pub mod experiments;
 pub mod first_prompts;
 pub mod first_run;
+pub mod github_connection;
 pub mod host;
 pub mod installer;
 pub mod keyvault;
@@ -100,10 +104,12 @@ pub mod notifications;
 pub mod nudges;
 pub mod onboarding;
 pub mod onboarding_preview;
+pub mod onboarding_reset;
 pub mod palette;
 pub mod parity;
 pub mod paths;
 pub mod persistent;
+pub mod phone;
 pub mod prepare;
 pub mod presence;
 pub mod profile_card;
@@ -119,6 +125,7 @@ pub mod summon;
 pub mod teams;
 pub mod telemetry;
 pub mod teleport;
+pub mod thread_cards;
 pub mod tips;
 pub mod upsell;
 mod util;

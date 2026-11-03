@@ -1744,6 +1744,13 @@ mod engine_impl {
             self.engine().await?.set_network(name, settings).await
         }
 
+        async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+            match self.engine_if_running().await {
+                Some(rt) => rt.network_events(name).await,
+                None => Ok(vec![]),
+            }
+        }
+
         async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
             Ok(crate::container::egress::kept(name)
                 .map(|k| k.policy)

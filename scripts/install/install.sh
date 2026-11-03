@@ -139,6 +139,19 @@ usage() {
     sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed -e '$d' -e 's/^# \{0,1\}//' || true
 }
 
+# Detaches the disk image at "$1". Right after a copy, macOS may still hold
+# the volume (Spotlight or fseventsd indexing it) and a plain detach says
+# "resource busy": try a few times, then force it.
+detach_dmg() {
+    n=0
+    while [ "$n" -lt 5 ]; do
+        hdiutil detach -quiet "$1" >/dev/null 2>&1 && return 0
+        n=$((n + 1))
+        sleep 1
+    done
+    hdiutil detach -quiet -force "$1" >/dev/null 2>&1 || true
+}
+
 cleanup() {
     rc=$?
     if [ "$rc" != 0 ] && [ "$tel_on" = 1 ] && [ "$tel_ended" = 0 ]; then
@@ -150,7 +163,7 @@ cleanup() {
         tty_saved=""
     fi
     if [ -n "$mounted" ]; then
-        hdiutil detach -quiet "$mounted" >/dev/null 2>&1 || true
+        detach_dmg "$mounted"
     fi
     if [ -n "$tmp" ] && [ -d "$tmp" ]; then
         rm -rf "$tmp"
@@ -1139,10 +1152,10 @@ install_cli() {
         chmod 0755 "$bindir/.cua.tmp.$$"
         mv -f "$bindir/.cua.tmp.$$" "$target"
         info "installed $target"
-        # macOS microVMs: the monitor and the guest init ship with the CLI
-        # and are found next to it, as is the static cua-spacesd injected
-        # into OCI images that carry none.
-        for extra in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+        # macOS microVMs: the monitor, its network gateway and the guest
+        # init ship with the CLI and are found next to it, as is the static
+        # cua-spacesd injected into OCI images that carry none.
+        for extra in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
             xsrc="$(find "$tmp/cli" -type f -name "$extra" | head -n 1)"
             [ -n "$xsrc" ] || continue
             cp "$xsrc" "$bindir/.$extra.tmp.$$"
@@ -1211,7 +1224,7 @@ install_app_darwin() {
     ditto "$src" "$app_path.cua-new" 2>/dev/null || cp -R "$src" "$app_path.cua-new"
     rm -rf "$app_path"
     mv "$app_path.cua-new" "$app_path"
-    hdiutil detach -quiet "$mounted" >/dev/null 2>&1 || true
+    detach_dmg "$mounted"
     mounted=""
     did_app="$app_path"
 }

@@ -937,8 +937,15 @@ export const PAGES: PageSpec[] = [
     slug: 'share',
     title: 'Shares',
     description: 'Links to a port, a file or a folder that open on your other signed-in devices.',
-    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
-    items: ['Share', 'ShareAccess', 'ShareCheck'],
+    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. `share_tcp` makes a public TCP address for a port in a Space (the `tcp-shares` experiment); `approve_share`, `deny_share`, `share_settings`, `set_share_settings` and `remove_share_edge` manage it. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    members: [
+      {
+        object: 'Cua',
+        title: 'Share methods',
+        methods: ['share', 'shares', 'stop_share', 'stop_all_shares', 'check_share', 'share_tcp', 'approve_share', 'deny_share', 'share_settings', 'set_share_settings', 'remove_share_edge'],
+      },
+    ],
+    items: ['Share', 'ShareAccess', 'ShareCheck', 'ShareLanding', 'ShareSettings'],
     modules: ['share'],
   },
   {

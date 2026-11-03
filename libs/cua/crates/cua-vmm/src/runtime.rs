@@ -209,6 +209,14 @@ pub trait Runtime: Send + Sync {
         Ok(Default::default())
     }
 
+    /// What instance `name` tried to reach and its network rules refused
+    /// ([`crate::egress::NetworkEvent`]), most recent first. Empty where the
+    /// runtime does not count them.
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        let _ = name;
+        Ok(vec![])
+    }
+
     /// Replaces instance `name`'s network settings ([`crate::network`]),
     /// kept with it from now on (they win over a later start spec's). Says
     /// whether the running guest is under them now or from its next start.

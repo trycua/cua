@@ -197,9 +197,16 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.TunnelService/StartHotspot",
     "/cua.env.v1.TunnelService/StopHotspot",
     "/cua.env.v1.TunnelService/GetHotspotStatus",
+    "/cua.env.v1.TunnelService/StartExit",
+    "/cua.env.v1.TunnelService/StopExit",
+    "/cua.env.v1.TunnelService/StartHostPorts",
+    "/cua.env.v1.TunnelService/StopHostPorts",
     "/cua.env.v1.TunnelService/StartSpawn",
     "/cua.env.v1.TunnelService/StopSpawn",
     "/cua.env.v1.TunnelService/GetSpawnStatus",
+    "/cua.env.v1.TunnelService/PublishShareSlot",
+    "/cua.env.v1.TunnelService/UnpublishShareSlot",
+    "/cua.env.v1.TunnelService/ListShareSlots",
     "/cua.env.v1.WindowsService/ListWindows",
     "/cua.env.v1.WindowsService/GetWindow",
     "/cua.env.v1.WindowsService/ActivateWindow",
@@ -1010,6 +1017,38 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             )
             .await
         }
+        "/cua.env.v1.TunnelService/StartExit" => {
+            unary::<C, pb::StartExitRequest, pb::StartExitResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartExit",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopExit" => {
+            unary::<C, pb::StopExitRequest, pb::StopExitResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopExit",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StartHostPorts" => {
+            unary::<C, pb::StartHostPortsRequest, pb::StartHostPortsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StartHostPorts",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/StopHostPorts" => {
+            unary::<C, pb::StopHostPortsRequest, pb::StopHostPortsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/StopHostPorts",
+                json,
+            )
+            .await
+        }
         "/cua.env.v1.TunnelService/GetHotspotStatus" => {
             unary::<C, pb::GetHotspotStatusRequest, pb::GetHotspotStatusResponse>(
                 ch,
@@ -1038,6 +1077,30 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             unary::<C, pb::GetSpawnStatusRequest, pb::GetSpawnStatusResponse>(
                 ch,
                 "/cua.env.v1.TunnelService/GetSpawnStatus",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/PublishShareSlot" => {
+            unary::<C, pb::PublishShareSlotRequest, pb::PublishShareSlotResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/PublishShareSlot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/UnpublishShareSlot" => {
+            unary::<C, pb::UnpublishShareSlotRequest, pb::UnpublishShareSlotResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/UnpublishShareSlot",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.TunnelService/ListShareSlots" => {
+            unary::<C, pb::ListShareSlotsRequest, pb::ListShareSlotsResponse>(
+                ch,
+                "/cua.env.v1.TunnelService/ListShareSlots",
                 json,
             )
             .await

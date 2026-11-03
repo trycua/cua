@@ -49,6 +49,20 @@ pub const MACOS_SETUP_TOKEN_FILE: &str = "env-token";
 /// `setup`; [`crate::StartSpec::mounts`] add more.
 pub const MACOS_SHARE_ROOT: &str = "/Volumes/My Shared Files";
 
+/// macOS VMs Apple's macOS license and Virtualization framework allow at
+/// once on one Mac.
+pub const MACOS_VMS_PER_MAC: u32 = 2;
+
+/// The capacity error for a macOS VM past [`MACOS_VMS_PER_MAC`].
+pub fn macos_limit_message(others: &[String]) -> String {
+    format!(
+        "this Mac already runs {} macOS VMs ({}); Apple allows {MACOS_VMS_PER_MAC} at once. \
+         Stop or delete one (`cua spaces ls`, `cua spaces delete`) and try again",
+        others.len(),
+        others.join(", ")
+    )
+}
+
 /// The host a macOS guest's published ports are dialed on once they are
 /// forwarded over vsock ([`client::VmDetails::forwards`]).
 pub const VSOCK_HOST: &str = "127.0.0.1";
@@ -149,6 +163,63 @@ impl Default for LumeConfig {
 }
 
 /// The Lume backend.
+/// A protected VM's current gateway ([`LumeRuntime::gateway_network`]).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct LumeGateway {
+    /// `gateway:<socket>`, for Lume's run.
+    network: String,
+    /// Guest port -> the host loopback port it is forwarded on.
+    ports: std::collections::BTreeMap<u16, u16>,
+}
+
+const GATEWAY_FILE: &str = "gateway.json";
+
+/// A Lume VM's key in the tree book ([`crate::tree`]).
+fn tree_key(name: &str) -> String {
+    crate::tree::key("lume", name)
+}
+const GATEWAY_SUBNET: &str = "10.0.3.0/24";
+const GATEWAY_IP: &str = "10.0.3.1";
+const GATEWAY_HOST_IP: &str = "10.0.3.2";
+const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:de";
+/// The address the gateway's DHCP gives the guest (by its MAC).
+const GUEST_IP: &str = "10.0.3.15";
+
+/// Whether a VM with `settings` runs behind a gateway: under the secure
+/// default, unless the user chose No protection.
+fn protected(settings: &crate::network::NetworkSettings) -> bool {
+    crate::network::Mode::from_env() == crate::network::Mode::Secure
+        && settings.preset != crate::network::NetworkPreset::Unprotected
+}
+
+/// What a macOS VM's gateway knows: the guest's resolver is the gateway
+/// (open on 53); the host is the gateway's host address, opened only by
+/// the localhost preset's ports; the Mac's own addresses and the daemon's
+/// ports stay closed.
+fn gateway_context() -> crate::network::NetworkContext {
+    let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("a valid address") };
+    crate::network::NetworkContext {
+        resolvers: vec![ip(GATEWAY_IP)],
+        host_aliases: vec![ip(GATEWAY_HOST_IP)],
+        host_addrs: crate::network::host_addresses(),
+        // The tree range: the gateway carries it to the tree's running
+        // members only ([`crate::tree`]).
+        tree: crate::tree::context_tree(),
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
+}
+
+/// A short private folder for one VM's gateway sockets (a unix socket path
+/// is at most 104 bytes): under the temporary directory, named after the
+/// VM's directory.
+fn gateway_run_dir(vm_dir: &std::path::Path) -> PathBuf {
+    use sha2::Digest as _;
+    let h = sha2::Sha256::digest(vm_dir.display().to_string().as_bytes());
+    let hex: String = h.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    std::env::temp_dir().join(format!("cua-lgw-{hex}"))
+}
+
 pub struct LumeRuntime {
     cfg: LumeConfig,
     client: LumeClient,
@@ -471,10 +542,36 @@ impl LumeRuntime {
 
     /// Before a macOS VM boots: GPU acceleration's host preference, when
     /// the VM has it.
-    fn before_macos_boot(&self, name: &str) -> Result<()> {
+    async fn before_macos_boot(&self, name: &str) -> Result<()> {
+        self.ensure_macos_slot(name).await?;
         self.gpu()
             .before_start(name)
             .map_err(|e| VmmError::other(format!("GPU acceleration for {name}: {e}")))
+    }
+
+    /// The macOS VMs Lume runs on this Mac other than `name` (Spaces or
+    /// not, any owner of this Lume); `None` when Lume cannot list them.
+    async fn macos_vms_running_besides(&self, name: &str) -> Option<Vec<String>> {
+        let vms = self.client.list().await.ok()?;
+        Some(
+            vms.into_iter()
+                .filter(|v| v.name != name && v.os.eq_ignore_ascii_case("macos"))
+                .filter(|v| matches!(v.status.as_str(), "running" | "starting" | "provisioning"))
+                .map(|v| v.name)
+                .collect(),
+        )
+    }
+
+    /// Refuses to boot a third macOS VM up front with a capacity error
+    /// that says why, instead of letting Apple Virtualization stop it while
+    /// it boots ("stopped while booting").
+    async fn ensure_macos_slot(&self, name: &str) -> Result<()> {
+        match self.macos_vms_running_besides(name).await {
+            Some(others) if others.len() as u32 >= MACOS_VMS_PER_MAC => {
+                Err(VmmError::HostCapacity(macos_limit_message(&others)))
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn with_defaults() -> Self {
@@ -771,6 +868,13 @@ impl LumeRuntime {
                 match vm.status.as_str() {
                     "running" => saw_running = true,
                     "stopped" if saw_running => {
+                        // Apple Virtualization stops a macOS VM past its
+                        // limit while it boots: say so when that is why.
+                        if let Some(others) = self.macos_vms_running_besides(name).await
+                            && others.len() as u32 >= MACOS_VMS_PER_MAC
+                        {
+                            return Err(VmmError::HostCapacity(macos_limit_message(&others)));
+                        }
                         return Err(VmmError::other(format!(
                             "lume VM '{name}' stopped while booting{}",
                             self.run_log_tail(name)
@@ -905,6 +1009,180 @@ impl LumeRuntime {
             .unwrap_or_default()
     }
 
+    /// [`Self::instance`], reached through the VM's network gateway when it
+    /// has one.
+    fn instance_gw(&self, vm: &VmDetails, ssh: Option<&SshAccess>, ports: &[u16]) -> Instance {
+        let mut i = Self::instance(vm, ssh, ports);
+        i.endpoints = self.with_gateway(&vm.name, i.endpoints);
+        i
+    }
+
+    /// `<root>/<name>/network.json`: the settings a protected VM's gateway
+    /// enforces (written at start, read at every later run).
+    fn network_file(&self, name: &str) -> PathBuf {
+        self.cfg.root.join(name).join("network.json")
+    }
+
+    /// `<root>/<name>/gateway.json`: the current run's gateway.
+    fn gateway_file(&self, name: &str) -> PathBuf {
+        self.cfg.root.join(name).join(GATEWAY_FILE)
+    }
+
+    fn keep_network(&self, name: &str, settings: &crate::network::NetworkSettings) -> Result<()> {
+        let path = self.network_file(name);
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(&path, serde_json::to_vec_pretty(settings)?)?;
+        Ok(())
+    }
+
+    fn forget_network(&self, name: &str) {
+        let _ = std::fs::remove_file(self.network_file(name));
+        let _ = std::fs::remove_file(self.gateway_file(name));
+    }
+
+    fn kept_network(&self, name: &str) -> Option<crate::network::NetworkSettings> {
+        std::fs::read(self.network_file(name))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+    }
+
+    fn load_gateway(&self, name: &str) -> Option<LumeGateway> {
+        std::fs::read(self.gateway_file(name))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+    }
+
+    /// `ep` as the host reaches a VM behind its gateway: on loopback,
+    /// through the gateway's forwards. Unchanged for a VM on Apple's NAT.
+    fn with_gateway(&self, name: &str, mut ep: Endpoints) -> Endpoints {
+        let Some(gw) = self.load_gateway(name) else {
+            return ep;
+        };
+        ep.host = "127.0.0.1".into();
+        ep.ports = ep
+            .ports
+            .keys()
+            .filter_map(|g| gw.ports.get(g).map(|h| (*g, *h)))
+            .collect();
+        if let Some(ssh) = ep.ssh.as_mut() {
+            ssh.host = "127.0.0.1".into();
+            if let Some(h) = gw.ports.get(&22) {
+                ssh.port = *h;
+            }
+        }
+        ep
+    }
+
+    /// [`Self::macos_run`], behind the VM's gateway when its network is
+    /// protected ([`Self::gateway_network`]).
+    async fn protected_run(&self, name: &str, spec: Option<&StartSpec>) -> Result<RunVm> {
+        let mut run = self.macos_run(name, spec)?;
+        run.network = self.gateway_network(name).await?;
+        Ok(run)
+    }
+
+    /// Starts the gateway of VM `name` for one run and returns its
+    /// `gateway:<socket>` network, when the VM's network is protected
+    /// ([`Self::keep_network`]); `None` for a VM on Apple's NAT. The gateway
+    /// enforces the VM's compiled settings, hands the guest a fixed address
+    /// by DHCP, and forwards the VM's published ports (and SSH) from the
+    /// host's loopback; it ends when the VM disconnects.
+    async fn gateway_network(&self, name: &str) -> Result<Option<String>> {
+        let Some(settings) = self.kept_network(name) else {
+            let _ = std::fs::remove_file(self.gateway_file(name));
+            return Ok(None);
+        };
+        let vm = self
+            .client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let mac = vm
+            .mac_address
+            .as_deref()
+            .and_then(lease::normalize_mac)
+            .or_else(|| lease::config_mac(&host::home_dir(), name))
+            .ok_or_else(|| {
+                VmmError::other(format!(
+                    "{name}: Lume did not report the VM's MAC address, which its network \
+                     gateway needs (Lume 0.6 or later)"
+                ))
+            })?;
+        let bin = crate::netgw::bin().ok_or_else(crate::netgw::missing)?;
+        let dir = self.cfg.root.join(name);
+        std::fs::create_dir_all(&dir)?;
+        let (rules, domains) = crate::network::compile_named(
+            &settings,
+            &gateway_context(),
+            crate::network::Mode::from_env(),
+        )
+        .map_err(VmmError::from)?;
+        crate::netgw::write_rules_named(&dir, &rules, &domains)?;
+        let run = gateway_run_dir(&dir);
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir_all(&run)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700))?;
+        }
+        // Lume finds the control socket beside the network socket.
+        let sock = run.join("net.sock");
+        let control = run.join("control.sock");
+        let mut guest: Vec<u16> = self.load_ports(name);
+        guest.push(22);
+        guest.sort_unstable();
+        guest.dedup();
+        let hosts = host::free_ports(guest.len())?;
+        let ports: std::collections::BTreeMap<u16, u16> =
+            guest.iter().copied().zip(hosts).collect();
+        let net = crate::netgw::Network {
+            subnet: GATEWAY_SUBNET,
+            gateway_ip: GATEWAY_IP,
+            gateway_mac: GATEWAY_MAC,
+            host_ip: Some(GATEWAY_HOST_IP),
+            dhcp: true,
+            static_leases: [(GUEST_IP.to_string(), mac)].into(),
+            vfkit: Some(format!("unixgram://{}", sock.display())),
+            qemu: None,
+            // The gateway answers DNS on its own address (the DHCP lease names it);
+            // `dns_ips` is for more addresses, and refuses the gateway's own.
+            dns_ips: vec![],
+            forwards: ports
+                .iter()
+                .map(|(g, h)| (format!("127.0.0.1:{h}"), format!("{GUEST_IP}:{g}")))
+                .collect(),
+            control: Some(format!("unix://{}", control.display())),
+        };
+        // Its tree: the gateway carries connections to the tree's running
+        // members and takes theirs ([`crate::tree`]).
+        let joined = crate::tree::join(
+            &tree_key(name),
+            None,
+            &dir,
+            crate::tree::ingress_for(Some(&settings), false),
+        )?;
+        let mut config = crate::netgw::config(&net);
+        config["tree"] = crate::tree::GatewayTree {
+            sock: joined.sock,
+            guest_ip: GUEST_IP.to_string(),
+        }
+        .config();
+        std::fs::write(
+            dir.join(crate::netgw::CONFIG_FILE),
+            serde_json::to_vec_pretty(&config)?,
+        )?;
+        crate::netgw::start(&bin, &dir, Duration::from_secs(15)).await?;
+        let gw = LumeGateway {
+            network: format!("gateway:{}", sock.display()),
+            ports,
+        };
+        std::fs::write(self.gateway_file(name), serde_json::to_vec_pretty(&gw)?)?;
+        Ok(Some(gw.network))
+    }
+
     fn instance(vm: &VmDetails, ssh: Option<&SshAccess>, ports: &[u16]) -> Instance {
         Instance {
             name: vm.name.clone(),
@@ -989,6 +1267,10 @@ impl LumeRuntime {
             args.push("--mount".into());
             args.push(s.display().to_string());
         }
+        if let Some(network) = self.gateway_network(name).await? {
+            args.push("--network".into());
+            args.push(network);
+        }
         cli_run(&lume, &args).await
     }
 
@@ -1045,6 +1327,7 @@ impl LumeRuntime {
         Ok(RunVm {
             no_display: true,
             shared_directories,
+            vnc: (!builtin::vnc_enabled()).then(|| "disabled".to_string()),
             // The published ports also over vsock (the IP stays the
             // fallback for a guest without the agent). A restart publishes
             // what the start did, so a state saved with the socket device
@@ -1786,17 +2069,18 @@ impl LumeRuntime {
         {
             return Err(VmmError::invalid(why));
         }
-        // Under the secure default a macOS VM can't be protected yet (it
-        // shares Apple's NAT), and cua reaches it over that network, so a
-        // VM without one could never answer: only No protection starts it.
-        match crate::network::gate(
-            BackendKind::Lume,
-            &spec.name,
-            &crate::network::spec_settings(spec),
-        )? {
-            Some(crate::network::NetworkPlan::Open { .. }) => {}
+        // Under the secure default the VM runs behind its own Cua network
+        // gateway, which enforces its settings ("none" too: the gateway
+        // drops everything the guest opens, while cua still reaches it
+        // through the gateway's forwards). No protection runs it on Apple's
+        // NAT as before.
+        let settings = crate::network::spec_settings(spec);
+        match crate::network::gate(BackendKind::Lume, &spec.name, &settings)? {
+            Some(crate::network::NetworkPlan::Open { .. }) => self.forget_network(&spec.name),
             Some(_) => return Err(VmmError::Other(crate::network::WHY_LUME.into())),
+            None if protected(&settings) => self.keep_network(&spec.name, &settings)?,
             None => {
+                self.forget_network(&spec.name);
                 crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
                 crate::egress::check(BackendKind::Lume, &spec.egress)?;
             }
@@ -1851,8 +2135,8 @@ impl LumeRuntime {
                             .await?
                     }
                     None => {
-                        let run = self.macos_run(&spec.name, Some(spec))?;
-                        self.before_macos_boot(&spec.name)?;
+                        let run = self.protected_run(&spec.name, Some(spec)).await?;
+                        self.before_macos_boot(&spec.name).await?;
                         self.client.run(&spec.name, &run).await?;
                         if resumes_state {
                             self.wait_restored(&spec.name).await;
@@ -1891,7 +2175,10 @@ impl LumeRuntime {
                     *created = true;
                     OwnedVms::default().mark(&spec.name, OwnedKind::Instance, Some(&base));
                     OwnedVms::default().touch(&base);
-                    let run = self.macos_run(&spec.name, Some(spec))?;
+                    let run = self
+                        .protected_run(&spec.name, Some(spec))
+                        .await
+                        .inspect_err(|_| made.done())?;
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
@@ -1935,11 +2222,15 @@ impl LumeRuntime {
                 if spec.gpu.is_some() {
                     self.gpu().enable(&spec.name).inspect_err(|_| made.done())?;
                 }
-                let run = self.macos_run(&spec.name, Some(spec))?;
+                let run = self
+                    .protected_run(&spec.name, Some(spec))
+                    .await
+                    .inspect_err(|_| made.done())?;
                 crate::progress::report(crate::progress::Progress::phase(
                     crate::progress::Phase::Booting,
                 ));
                 self.before_macos_boot(&spec.name)
+                    .await
                     .inspect_err(|_| made.done())?;
                 self.client
                     .run(&spec.name, &run)
@@ -2015,7 +2306,7 @@ impl LumeRuntime {
         // Remember the published guest ports: a later process reattaching
         // by name (`endpoints`) must still see e.g. cua-spacesd's 3211.
         self.save_ports(&spec.name, &spec.ports);
-        let inst = Self::instance(&vm, spec.ssh.as_ref(), &spec.ports);
+        let inst = self.instance_gw(&vm, spec.ssh.as_ref(), &spec.ports);
         if !spec.probes.is_empty() {
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::WaitingForServices,
@@ -2260,7 +2551,7 @@ impl LumeRuntime {
             boot.name = building.clone();
             boot.env.clear();
             self.apply_clone_resources(&boot).await?;
-            self.before_macos_boot(&building)?;
+            self.before_macos_boot(&building).await?;
             // The same run options as a Space's (the setup share, empty):
             // the state restores only into the devices it was saved with.
             let run = self.macos_run(&building, Some(&boot))?;
@@ -2330,8 +2621,8 @@ impl LumeRuntime {
         if cloned.is_ok() {
             OwnedVms::default().mark(checkpoint, OwnedKind::Checkpoint, Some(name));
         }
-        let run = self.macos_run(name, None)?;
-        self.before_macos_boot(name)?;
+        let run = self.protected_run(name, None).await?;
+        self.before_macos_boot(name).await?;
         self.client.run(name, &run).await?;
         cloned?;
         tracing::info!(
@@ -2380,6 +2671,8 @@ impl Runtime for LumeRuntime {
     }
 
     async fn start(&self, spec: &StartSpec) -> Result<Instance> {
+        // Its tree (the start spec's), for its tree address and members.
+        crate::tree::assign(&tree_key(&spec.name), spec.tree.as_deref())?;
         let mut created = false;
         match self.start_vm(spec, &mut created).await {
             Ok(inst) => Ok(inst),
@@ -2398,7 +2691,10 @@ impl Runtime for LumeRuntime {
     }
 
     async fn stop(&self, name: &str) -> Result<()> {
-        self.stop_vm(name).await
+        let stopped = self.stop_vm(name).await;
+        // Its tree stops sending it connections.
+        let _ = crate::tree::leave(&tree_key(name));
+        stopped
     }
 
     /// A running macOS VM is suspended to disk: Lume saves its memory and
@@ -2443,8 +2739,8 @@ impl Runtime for LumeRuntime {
                         .await?
                 }
                 None => {
-                    let run = self.macos_run(name, None)?;
-                    self.before_macos_boot(name)?;
+                    let run = self.protected_run(name, None).await?;
+                    self.before_macos_boot(name).await?;
                     self.client.run(name, &run).await?;
                     if vm.saved_state {
                         self.wait_restored(name).await;
@@ -2453,7 +2749,7 @@ impl Runtime for LumeRuntime {
             }
         }
         let vm = self.wait_for_ip(name).await?;
-        Ok(Self::instance(&vm, None, &self.load_ports(name)))
+        Ok(self.instance_gw(&vm, None, &self.load_ports(name)))
     }
 
     /// Binds the running pool member `member` to a Space: Lume renames
@@ -2508,11 +2804,14 @@ impl Runtime for LumeRuntime {
                 identity.hostname.as_deref().unwrap_or(new_name),
             );
         }
-        Ok(Self::instance(&vm, None, &self.load_ports(new_name)))
+        Ok(self.instance_gw(&vm, None, &self.load_ports(new_name)))
     }
 
     async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
         validate_name(new_name)?;
+        // `lume serve` may have exited (an update swapped its binary, a
+        // crash): start it again rather than fail "not reachable".
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(source)
@@ -2561,6 +2860,7 @@ impl Runtime for LumeRuntime {
     /// clone → restart, a clean stopped-state clone, the same contract as
     /// cloud snapshots.
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -2590,8 +2890,8 @@ impl Runtime for LumeRuntime {
                         .await?
                 }
                 None => {
-                    let run = self.macos_run(name, None)?;
-                    self.before_macos_boot(name)?;
+                    let run = self.protected_run(name, None).await?;
+                    self.before_macos_boot(name).await?;
                     self.client.run(name, &run).await?
                 }
             }
@@ -2668,6 +2968,13 @@ impl Runtime for LumeRuntime {
         Ok(())
     }
 
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        // A VM behind its gateway: the gateway logs every refused
+        // connection beside the VM's other files. On Apple's NAT nothing is
+        // counted.
+        Ok(crate::netgw::read_events(&self.cfg.root.join(name)))
+    }
+
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
         // As in `delete`: a `lume serve` that exited (a crash, an update,
         // `lume stop` on a VM it hosted) is started again rather than leave a
@@ -2678,7 +2985,10 @@ impl Runtime for LumeRuntime {
             .get(name)
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
-        Ok(Self::endpoints_from(&vm, None, &self.load_ports(name)))
+        Ok(self.with_gateway(
+            name,
+            Self::endpoints_from(&vm, None, &self.load_ports(name)),
+        ))
     }
 
     /// [`LumeSshExec`] (`lume ssh <vm>`) for macOS guests (password auth
@@ -3653,6 +3963,33 @@ mod tests {
         });
         let e = Runtime::delete(&gone, "m").await.unwrap_err();
         assert!(e.to_string().contains("start it with `lume serve`"), "{e}");
+    }
+
+    /// A fork or checkpoint after `lume serve` exited (an update swapped
+    /// its binary) goes through the same check as delete: Lume answers
+    /// first (or is started), not a raw "not reachable".
+    #[tokio::test]
+    async fn fork_and_checkpoint_make_sure_lume_serve_answers_first() {
+        let dir = tempfile::tempdir().unwrap();
+        for op in ["fork", "checkpoint"] {
+            let (url, seen) = fake_lume("stopped").await;
+            let rt = LumeRuntime::new(LumeConfig {
+                url,
+                spawn_serve: false,
+                root: dir.path().to_path_buf(),
+                ..LumeConfig::default()
+            });
+            let _ = match op {
+                "fork" => Runtime::fork(&rt, "m", "n").await,
+                _ => Runtime::checkpoint(&rt, "m", "c").await.map(|_| ()),
+            };
+            let lines = seen.lock().unwrap().clone();
+            assert_eq!(
+                lines.first().map(String::as_str),
+                Some("GET /lume/host/status HTTP/1.1"),
+                "{op}: {lines:?}"
+            );
+        }
     }
 
     #[test]

@@ -58,6 +58,10 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `parent` | `Option<String>` |  | The Space it was created from, by id; `None` for a top-level Space. |
 | `root` | `Option<String>` |  | The top-level Space of its tree, by id; `None` for a top-level Space. |
 | `depth` | `u32` |  | How far below its tree's top-level Space it is (0: top-level). |
+| `children` | `bool` | `false` | It may make child Spaces of its own (`Spaces.set_children`). |
+| `tree_address` / `treeAddress` | `Option<String>` | `None` | A VM's address in its tree (`198.19.0.0/16`), where the other members of its tree reach it; `None` otherwise. |
+| `clipboard` | `String` |  | When viewers may move the clipboard between this computer and the Space: `viewing` (only while you're viewing, the default), `ask` or `off`. See `Spaces.set_clipboard`. |
+| `volume` | `String` |  | What it sees of the Cua Volume: `own` (its own folder, the default) or `off`. See `Spaces.set_volume`. |
 | `volumes` | [`Vec<VolumeMount>`](/cua-sdk/reference/spaces/volume#volumemount-record) |  | Named volumes mounted in the Space (see `SpaceCreateOptions.volumes`). |
 | `sharing` | [`Option<SpaceSharing>`](/cua-sdk/reference/spaces/sharing#spacesharing-record) | `None` | A Space that is a machine on the relay: who owns it and who else has it, as this account sees it. `None` for other Spaces. |
 

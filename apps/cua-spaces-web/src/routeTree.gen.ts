@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as AgentsAllRouteImport } from './routes/agents/all'
+import { Route as CiIndexRouteImport } from './routes/ci/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
@@ -56,6 +57,11 @@ const AgentsIndexRoute = AgentsIndexRouteImport.update({
 const AgentsAllRoute = AgentsAllRouteImport.update({
   id: '/agents/all',
   path: '/agents/all',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CiIndexRoute = CiIndexRouteImport.update({
+  id: '/ci/',
+  path: '/ci/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HomeIndexRoute = HomeIndexRouteImport.update({
@@ -180,6 +186,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/ci/': typeof CiIndexRoute
   '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
@@ -206,6 +213,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/ci': typeof CiIndexRoute
   '/home': typeof HomeIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
   '/machines': typeof MachinesIndexRoute
@@ -234,6 +242,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/ci/': typeof CiIndexRoute
   '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
@@ -263,6 +272,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/ci/'
     | '/home/'
     | '/keyvault/'
     | '/machines/'
@@ -289,6 +299,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents'
+    | '/ci'
     | '/home'
     | '/keyvault'
     | '/machines'
@@ -316,6 +327,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/ci/'
     | '/home/'
     | '/keyvault/'
     | '/machines/'
@@ -335,6 +347,7 @@ export interface RootRouteChildren {
   HomeTaskIdRoute: typeof HomeTaskIdRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  CiIndexRoute: typeof CiIndexRoute
   HomeIndexRoute: typeof HomeIndexRoute
   KeyvaultIndexRoute: typeof KeyvaultIndexRoute
   MachinesIndexRoute: typeof MachinesIndexRoute
@@ -372,6 +385,13 @@ declare module '@tanstack/react-router' {
       path: '/agents/all'
       fullPath: '/agents/all'
       preLoaderRoute: typeof AgentsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ci/': {
+      id: '/ci/'
+      path: '/ci'
+      fullPath: '/ci/'
+      preLoaderRoute: typeof CiIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/home/': {
@@ -583,6 +603,7 @@ const rootRouteChildren: RootRouteChildren = {
   HomeTaskIdRoute: HomeTaskIdRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  CiIndexRoute: CiIndexRoute,
   HomeIndexRoute: HomeIndexRoute,
   KeyvaultIndexRoute: KeyvaultIndexRoute,
   MachinesIndexRoute: MachinesIndexRoute,

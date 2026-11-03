@@ -406,7 +406,8 @@ final class LumeController {
             // Try to get IP address from DHCP lease if we have MAC address
             if let config = try? vmDir.loadConfig(),
                let macAddress = config.macAddress {
-                ipAddress = DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                ipAddress = VM.ipAddress(
+                    forMAC: macAddress, networkMode: runningVM?.activeNetworkMode)
 
                 // Check if SSH is available
                 if let ip = ipAddress {

@@ -485,9 +485,11 @@ Examples:
         #[arg(long)]
         region: Option<String>,
         /// Mount a named volume of Cua Volume in the Space:
-        /// `NAME:PATH[:ro]`, or `NAME/SUBFOLDER:PATH[:ro]` for a folder of
-        /// it. Repeat for several. Make one with `cua volume named create`.
-        #[arg(long = "volume", value_name = "NAME:PATH[:ro]")]
+        /// `NAME:PATH[:ro|:rw]`, or `NAME/SUBFOLDER:PATH[:ro|:rw]` for a
+        /// folder of it. With Secure Spaces on it is read-only unless you
+        /// add `:rw`. Repeat for several. Make one with `cua volume named
+        /// create`.
+        #[arg(long = "volume", value_name = "NAME:PATH[:ro|:rw]")]
         volumes: Vec<String>,
         /// A label to keep with the Space (`key=value`; repeat for more; up
         /// to 64, keys up to 63 bytes, values up to 256, none empty). Not
@@ -511,7 +513,8 @@ Examples:
         )]
         egress_deny: Vec<String>,
         /// Allow this destination, also where a block covers it (IP or CIDR;
-        /// repeat for more).
+        /// repeat for more). This computer itself opens only with
+        /// `--network localhost:<ports>`.
         #[arg(
             long = "allow",
             visible_alias = "egress-allow",
@@ -786,6 +789,28 @@ Examples:
         /// The new name.
         name: String,
     },
+    /// Change a setting of a Space. `--clipboard` says when its viewers may
+    /// move the clipboard between this computer and the Space: `viewing`
+    /// (the default) only while a viewer window is focused, when you paste
+    /// or copy in it; `ask` asks for every transfer; `off` never. Viewers
+    /// opened afterwards use it. An agent's own `computer_clipboard_*`
+    /// tools act inside the Space and are not affected. `--volume` says what
+    /// it sees of the Cua Volume: `own` (its own folder, the default) or
+    /// `off`; it applies at once.
+    #[command(after_help = "Examples:
+  cua spaces set local:studio --clipboard off
+  cua spaces set local:studio --clipboard viewing
+  cua spaces set local:studio --volume off")]
+    Set {
+        /// Space id or name (as `cua spaces ls` shows).
+        space: String,
+        /// When viewers may move the clipboard: viewing, ask or off.
+        #[arg(long, value_name = "viewing|ask|off")]
+        clipboard: Option<String>,
+        /// What it sees of the Cua Volume: own or off.
+        #[arg(long, value_name = "own|off")]
+        volume: Option<String>,
+    },
     /// Let someone in your team watch (viewer) or use (editor) a Space,
     /// through the relay. They open it as `relay:<computer>`. Sharing is for
     /// teams: you need a team, and they must be in it (or share with the
@@ -1049,6 +1074,9 @@ fn space_json(s: &cua_sdk::SpaceInfo) -> serde_json::Value {
         "created_at_unix": s.created_at_unix,
         "egress": {"allow": s.egress.allow, "deny": s.egress.deny},
         "egress_enforced": s.egress_enforced.map(|_| "host"),
+        // Part of Secure Spaces: without it the viewers sync both ways.
+        "clipboard": (cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure)
+            .then_some(s.clipboard.as_str()),
         "stop_reason": s.stop_reason,
     })
 }
@@ -1184,6 +1212,46 @@ pub async fn run_spaces_sdk(
                 );
             } else {
                 line(out, format!("Removed {} ({})", info.id, info.name));
+            }
+        }
+        SpacesCmd::Set {
+            space,
+            clipboard,
+            volume,
+        } => {
+            if clipboard.is_none() && volume.is_none() {
+                return Err(CuaError::InvalidArgument(
+                    "name what to set: --clipboard viewing|ask|off or --volume own|off".into(),
+                ));
+            }
+            let mut done = serde_json::json!({"space": space});
+            if let Some(clipboard) = clipboard {
+                spaces
+                    .set_clipboard(space.clone(), clipboard.clone())
+                    .await?;
+                let clipboard = clipboard.trim().to_ascii_lowercase();
+                if !json {
+                    line(out, format!("Set the clipboard of {space} to {clipboard}."));
+                }
+                done["clipboard"] = clipboard.into();
+            }
+            if let Some(volume) = volume {
+                spaces.set_volume(space.clone(), volume.clone()).await?;
+                let volume = volume.trim().to_ascii_lowercase();
+                if !json {
+                    line(
+                        out,
+                        if volume == "off" {
+                            format!("{space} no longer sees the Cua Volume.")
+                        } else {
+                            format!("{space} sees its own Cua Volume folder.")
+                        },
+                    );
+                }
+                done["volume"] = volume.into();
+            }
+            if json {
+                line(out, done.to_string());
             }
         }
         SpacesCmd::Rename { space, name } => {
@@ -3479,12 +3547,21 @@ fn display_name(s: &cua_spaces::SpaceInfo) -> String {
 /// `cua spaces ls --json`: each Space as the registry has it, plus
 /// `display_name` (the name the list and the apps show).
 /// `--volume NAME[/SUBFOLDER]:PATH[:ro|:rw]` arguments as volume mounts.
+/// Under Secure Spaces a mount is read-only unless it says `:rw`.
 pub(crate) fn parse_volumes(args: &[String]) -> Result<Vec<cua_sdk::VolumeMount>, CuaError> {
+    parse_volumes_in(args, cua_vmm::network::Mode::from_env())
+}
+
+/// [`parse_volumes`] under `mode`: what a mount with no mode means.
+pub(crate) fn parse_volumes_in(
+    args: &[String],
+    mode: cua_vmm::network::Mode,
+) -> Result<Vec<cua_sdk::VolumeMount>, CuaError> {
     let mut out = Vec::new();
     for a in args {
         let bad = |why: &str| {
             CuaError::InvalidArgument(format!(
-                "--volume {a:?}: {why}; write it as NAME:PATH[:ro] (for example shared:/mnt/shared:ro)"
+                "--volume {a:?}: {why}; write it as NAME:PATH[:rw] (for example shared:/mnt/shared, read-only, or shared:/mnt/shared:rw)"
             ))
         };
         let parts: Vec<&str> = a.split(':').collect();
@@ -3492,8 +3569,11 @@ pub(crate) fn parse_volumes(args: &[String]) -> Result<Vec<cua_sdk::VolumeMount>
             return Err(bad("expected a name and a path"));
         }
         let read_only = match parts.get(2).copied() {
-            None | Some("rw") => false,
+            // No mode: read-only under Secure Spaces, read-write as before
+            // without it.
+            None => cua_spaces::named_volumes::default_read_only(mode),
             Some("ro") => true,
+            Some("rw") => false,
             Some(other) => return Err(bad(&format!("{other:?} is not ro or rw"))),
         };
         let (name, subpath) = match parts[0].split_once('/') {
@@ -4289,6 +4369,8 @@ mod tests {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
         };
         let mut list = vec![
@@ -4353,6 +4435,8 @@ mod tests {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
             stop_reason: String::new(),
         };
@@ -4424,6 +4508,8 @@ mod tests {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
             stop_reason: String::new(),
         }
@@ -4574,15 +4660,19 @@ mod tests {
 
     #[test]
     fn volume_arguments_are_name_path_and_mode() {
-        let v = parse_volumes(&[
+        let args = [
             "shared:/mnt/shared".into(),
             "data/in/raw:/data:ro".into(),
             "w:/w:rw".into(),
-        ])
-        .unwrap();
+        ];
+        let v = parse_volumes_in(&args, cua_vmm::network::Mode::Secure).unwrap();
         assert_eq!(v[0].name, "shared");
         assert_eq!(v[0].path, "/mnt/shared");
-        assert!(!v[0].read_only);
+        // Under Secure Spaces no mode means read-only; only `:rw` opens it
+        // for writing. Without it a mount is read-write, as it always was.
+        assert!(v[0].read_only);
+        let old = parse_volumes_in(&args, cua_vmm::network::Mode::Legacy).unwrap();
+        assert!(!old[0].read_only && old[1].read_only && !old[2].read_only);
         assert_eq!(
             (v[1].name.as_str(), v[1].subpath.as_str()),
             ("data", "in/raw")
@@ -4651,6 +4741,8 @@ mod tests {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
             stop_reason: String::new(),
         };
@@ -4716,6 +4808,26 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(parse_spaces(&["rename", "local:studio"]).is_err());
+    }
+
+    #[test]
+    fn spaces_set_takes_a_clipboard_word() {
+        match parse_spaces(&["set", "local:studio", "--clipboard", "off"]).unwrap() {
+            SpacesCmd::Set {
+                space, clipboard, ..
+            } => {
+                assert_eq!(
+                    (space.as_str(), clipboard.as_deref()),
+                    ("local:studio", Some("off"))
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        match parse_spaces(&["set", "local:studio"]).unwrap() {
+            SpacesCmd::Set { clipboard, .. } => assert_eq!(clipboard, None),
+            other => panic!("{other:?}"),
+        }
+        assert!(parse_spaces(&["set"]).is_err());
     }
 
     #[test]
@@ -6365,6 +6477,7 @@ pub async fn run_children_ls(
                     "id": s.id,
                     "name": if s.display_name.is_empty() { &s.name } else { &s.display_name },
                     "parent": parent_of(s),
+                    "tree_address": s.tree_address,
                     "power": s.power,
                     "image": s.image,
                     "expires_at_unix": s.expires_at_unix,
@@ -6380,7 +6493,10 @@ pub async fn run_children_ls(
     }
     line(
         out,
-        format!("{:<28} {:<36} {:<10} PARENT", "NAME", "ID", "STATE"),
+        format!(
+            "{:<28} {:<36} {:<10} {:<15} PARENT",
+            "NAME", "ID", "STATE", "TREE ADDRESS"
+        ),
     );
     for s in &list {
         let name = if s.display_name.is_empty() {
@@ -6393,9 +6509,16 @@ pub async fn run_children_ls(
         } else {
             s.power.as_str()
         };
+        // A VM's tree address; a container is reached by name on its
+        // tree's network.
+        let addr = s.tree_address.as_deref().unwrap_or("-");
         line(
             out,
-            format!("{name:<28} {:<36} {state:<10} {}", s.id, parent_of(s)),
+            format!(
+                "{name:<28} {:<36} {state:<10} {addr:<15} {}",
+                s.id,
+                parent_of(s)
+            ),
         );
     }
     Ok(0)

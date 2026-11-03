@@ -22,11 +22,9 @@ use crate::{Error, Result, Spaces};
 use cua_proto::daemon::v1 as dpb;
 use cua_proto::env::v1 as epb;
 
-use cua_vmm::network::compile_mode;
-
 pub use cua_vmm::network::{
-    Applied, Mode, NO_NETWORK_NOTE, NetworkContext, NetworkPlan, NetworkPreset, NetworkSettings,
-    NetworkSupport, Placement, UNPROTECTED_NOTE, network_support,
+    Applied, EgressVia, Mode, NO_NETWORK_NOTE, NetworkContext, NetworkPlan, NetworkPreset,
+    NetworkSettings, NetworkSupport, Placement, UNPROTECTED_NOTE, network_support,
 };
 
 /// The runtime of a local Space's backend word (`qemu`, `docker`,
@@ -80,6 +78,8 @@ pub fn require_secure_spaces(settings: Option<&NetworkSettings>) -> Result<()> {
             || !s.localhost_ports.is_empty()
             || s.all_localhost_ports
             || s.widened_by.is_some()
+            || s.via.is_some()
+            || !s.custom.split_domains().1.is_empty()
     });
     if beyond_lists {
         return Err(Error::invalid(
@@ -139,6 +139,19 @@ pub struct NetworkInfo {
     pub always_blocked: Vec<String>,
     /// An update changed its settings; say so once.
     pub notice_pending: bool,
+    /// A VM's address in its tree ([`cua_vmm::tree`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tree_address: Option<String>,
+    /// Its topology (names, members, host, exit, path) as JSON text
+    /// ([`crate::Spaces::network_status`]); empty when unknown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub topology_json: String,
+}
+
+/// The tree address of this computer's VM Space `name` ([`cua_vmm::tree`]),
+/// if it has one.
+pub fn tree_address(name: &str) -> Option<String> {
+    cua_vmm::tree::address_by_name(name).map(|a| a.to_string())
 }
 
 /// [`NetworkInfo`] in the daemon's wire form.
@@ -154,6 +167,8 @@ pub fn info_to_pb(i: &NetworkInfo) -> dpb::SpaceNetworkInfo {
         root: i.root.clone().unwrap_or_default(),
         always_blocked: i.always_blocked.clone(),
         notice_pending: i.notice_pending,
+        tree_address: i.tree_address.clone().unwrap_or_default(),
+        topology_json: i.topology_json.clone(),
     }
 }
 
@@ -220,6 +235,7 @@ pub fn to_pb(s: &NetworkSettings) -> dpb::NetworkSettings {
             _ => String::new(),
         },
         widened_by: s.widened_by.clone().unwrap_or_default(),
+        via: s.via.as_ref().map(|v| v.as_word()).unwrap_or_default(),
     }
 }
 
@@ -233,6 +249,7 @@ pub fn from_pb(p: &dpb::NetworkSettings) -> Result<NetworkSettings> {
         &p.deny,
         &p.custom_base,
         &p.widened_by,
+        &p.via,
     )
 }
 
@@ -247,6 +264,7 @@ pub fn to_host_pb(s: &NetworkSettings) -> epb::HostNetworkSettings {
         deny: p.deny,
         custom_base: p.custom_base,
         widened_by: p.widened_by,
+        via: p.via,
     }
 }
 
@@ -260,9 +278,11 @@ pub fn from_host_pb(p: &epb::HostNetworkSettings) -> Result<NetworkSettings> {
         &p.deny,
         &p.custom_base,
         &p.widened_by,
+        &p.via,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settings_from_parts(
     preset: &str,
     ports: &[u32],
@@ -271,6 +291,7 @@ fn settings_from_parts(
     deny: &[String],
     base: &str,
     widened_by: &str,
+    via: &str,
 ) -> Result<NetworkSettings> {
     let word = |w: &str| -> Result<NetworkPreset> {
         if w.trim().is_empty() {
@@ -297,9 +318,39 @@ fn settings_from_parts(
         },
         custom_base: word(base)?,
         widened_by: (!widened_by.is_empty()).then(|| widened_by.to_string()),
+        via: cua_vmm::network::EgressVia::parse(via).map_err(|e| Error::invalid(e.0))?,
     };
     s.validate().map_err(|e| Error::invalid(e.0))?;
     Ok(s)
+}
+
+/// `s` with the exit `word` ([`cua_vmm::network::EgressVia::parse`]:
+/// `internet`, `this-computer`, `space:<name>` or `socks5://host:port`).
+pub fn with_via(mut s: NetworkSettings, word: &str) -> Result<NetworkSettings> {
+    s.via = cua_vmm::network::EgressVia::parse(word).map_err(|e| Error::invalid(e.0))?;
+    s.validate().map_err(|e| Error::invalid(e.0))?;
+    Ok(s)
+}
+
+/// Refuses an exit an agent may not choose: this computer (it shares this
+/// machine's network, which only the user decides, as `hotspot_start`
+/// asks) and a SOCKS5 proxy. A Space of its tree, or none, an agent may
+/// pick.
+pub fn refuse_exit_by_agent(
+    settings: &NetworkSettings,
+    current: Option<&NetworkSettings>,
+) -> Result<()> {
+    use cua_vmm::network::EgressVia as V;
+    if settings.via == current.and_then(|c| c.via.clone()) {
+        return Ok(());
+    }
+    match &settings.via {
+        None | Some(V::Space(_)) => Ok(()),
+        Some(V::ThisMachine) | Some(V::Socks5(_)) => Err(Error::invalid(
+            "exiting through this computer or a proxy is the user's to choose: ask them to run \
+             `cua network set <space> --via ...` (or use the app)",
+        )),
+    }
 }
 
 /// Who widened a child and when: `user@2026-10-26T12:00:00Z`.
@@ -403,11 +454,15 @@ pub fn refuse_widening_by_agent(
     if let Some(current) = current {
         // No more open than now: cutting it down to what the Space has now
         // changes nothing.
+        // Names count too: a name allowed now that the Space didn't let
+        // through before is more open.
         let ctx = NetworkContext::default();
-        let want = compile_mode(settings, &ctx, Mode::Secure).map_err(|e| Error::invalid(e.0))?;
-        let within = compile_mode(&settings.intersect(current), &ctx, Mode::Secure)
+        let want = cua_vmm::network::compile_named(settings, &ctx, Mode::Secure)
             .map_err(|e| Error::invalid(e.0))?;
-        if want != within {
+        let within =
+            cua_vmm::network::compile_named(&settings.intersect(current), &ctx, Mode::Secure)
+                .map_err(|e| Error::invalid(e.0))?;
+        if want.0 != within.0 || want.1.allow.iter().any(|n| !within.1.allow.contains(n)) {
             return user_only("Opening more than the Space has now");
         }
     }
@@ -449,8 +504,16 @@ pub(crate) fn resolve_create(
         .unwrap_or_else(|| parent_id.clone());
     let theirs = settings_of(parent_meta.as_ref());
     let settings = if widen {
+        // Allowed more than its parent, but never out of its parent's exit
+        // (a parent sends its whole tree through it).
+        let via = if asked.preset == NetworkPreset::None {
+            None
+        } else {
+            theirs.via.clone().or_else(|| asked.via.clone())
+        };
         NetworkSettings {
-            widened_by: Some(widened_stamp()),
+            widened_by: asked.widened_by.clone().or_else(|| Some(widened_stamp())),
+            via,
             ..asked
         }
     } else {
@@ -495,6 +558,38 @@ impl Spaces {
                 )?;
                 Some((id, meta))
             }
+        };
+        // An exit Space by its id, in the tree the new Space joins.
+        let asked = match (&asked.via, &parent) {
+            (Some(EgressVia::Space(name)), Some((pid, pmeta))) => {
+                let exit = self.resolve(name)?.to_string();
+                let root = pmeta
+                    .as_ref()
+                    .and_then(|m| m.root.clone())
+                    .unwrap_or_else(|| pid.clone());
+                let exit_root = self
+                    .inner
+                    .registry
+                    .meta(&exit)
+                    .and_then(|m| m.root)
+                    .unwrap_or_else(|| exit.clone());
+                if exit_root != root {
+                    return Err(Error::invalid(format!(
+                        "{name} is not in this Space's tree: a Space exits through its own tree's Spaces"
+                    )));
+                }
+                NetworkSettings {
+                    via: Some(EgressVia::Space(exit)),
+                    ..asked
+                }
+            }
+            (Some(EgressVia::Space(name)), None) => {
+                return Err(Error::invalid(format!(
+                    "{name} can't be the exit of a new top-level Space: it starts a tree of its own; \
+                     set the exit once it has a Space to exit through"
+                )));
+            }
+            _ => asked,
         };
         resolve_create(asked, parent, opts.widen)
     }
@@ -587,6 +682,7 @@ impl Spaces {
         };
         let key = id.to_string();
         let meta = self.inner.registry.meta(&key).unwrap_or_default();
+        let settings = &self.resolve_via(&key, settings)?;
         let parent = meta.parent.clone().map(|p| {
             let m = self.inner.registry.meta(&p);
             (p, m)
@@ -616,7 +712,8 @@ impl Spaces {
             m.network_generation = m.network_generation.saturating_add(1);
             m.network_note = note;
             m.network_notice_pending = false;
-            m.egress = resolved.settings.custom.clone();
+            // The address lists (names live in `network` only).
+            m.egress = resolved.settings.custom.split_domains().0;
         })?;
         // Its children stay within it: each keeps its own settings, intersected
         // with the new ones (a child someone widened keeps that), or with
@@ -628,6 +725,9 @@ impl Spaces {
                 .and_then(|m| m.network.as_ref())
                 .is_some_and(|n| n.widened_by.is_some());
             if widened && !tree {
+                // It keeps what it was allowed, but takes the parent's exit.
+                let own = settings_of(current.as_ref());
+                Box::pin(self.set_network(&child, &own, true, false)).await?;
                 continue;
             }
             let child_settings = if tree {
@@ -637,7 +737,79 @@ impl Spaces {
             };
             Box::pin(self.set_network(&child, &child_settings, false, tree)).await?;
         }
+        // Its exit and published host ports follow at once.
+        #[cfg(feature = "spaces-hotspot")]
+        self.exit_changed(&key);
         Ok(applied)
+    }
+
+    /// `settings` with an exit Space named by its canonical id, checked:
+    /// another Space of the same tree.
+    pub(crate) fn resolve_via(
+        &self,
+        key: &str,
+        settings: &NetworkSettings,
+    ) -> Result<NetworkSettings> {
+        let current = crate::network::settings_of(self.inner.registry.meta(key).as_ref());
+        // Choosing an exit is part of Secure Spaces; an exit that is a Space
+        // of the tree needs Child Spaces as well.
+        if settings.via.is_some() && settings.via != current.via {
+            if Mode::from_env() == Mode::Legacy {
+                return Err(Error::invalid(
+                    cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+                ));
+            }
+            if matches!(settings.via, Some(cua_vmm::network::EgressVia::Space(_)))
+                && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
+            {
+                return Err(Error::invalid(
+                    cua_vmm::experiments::Gate::ChildSpaces.off_message(),
+                ));
+            }
+        }
+        let Some(cua_vmm::network::EgressVia::Space(name)) = &settings.via else {
+            return Ok(settings.clone());
+        };
+        let exit = self.resolve(name)?.to_string();
+        if exit == key {
+            return Err(Error::invalid("a Space can't exit through itself"));
+        }
+        let root_of = |id: &str| {
+            self.inner
+                .registry
+                .meta(id)
+                .and_then(|m| m.root)
+                .unwrap_or_else(|| id.to_string())
+        };
+        if root_of(&exit) != root_of(key) {
+            return Err(Error::invalid(format!(
+                "{name} is not in this Space's tree: a Space exits through its own tree's Spaces"
+            )));
+        }
+        let mut s = settings.clone();
+        s.via = Some(cua_vmm::network::EgressVia::Space(exit));
+        Ok(s)
+    }
+
+    /// What a Space on this computer tried to reach and its network refused,
+    /// most recent first (`cua network log`). A Space another computer runs
+    /// is `WrongProvider`.
+    pub async fn network_events(&self, space: &str) -> Result<Vec<cua_vmm::egress::NetworkEvent>> {
+        let id = self.resolve(space)?;
+        let crate::SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Listing blocked connections".into(),
+                provider: format!(
+                    "{} (only a Space on this computer; ask the computer that runs it)",
+                    id.provider()
+                ),
+            });
+        };
+        self.inner
+            .sandboxes
+            .network_events(name)
+            .await
+            .map_err(crate::egress::sandbox_error)
     }
 
     /// A Space's network as `cua network show` says it.
@@ -668,6 +840,15 @@ impl Spaces {
             notice_pending: meta
                 .as_ref()
                 .is_some_and(|m| m.network_notice_pending || m.network.is_none()),
+            tree_address: match &id {
+                crate::SpaceId::Local { name } => tree_address(name),
+                _ => None,
+            },
+            topology_json: self
+                .network_status(&key)
+                .await
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             settings,
         })
     }
@@ -709,8 +890,11 @@ mod tests {
             (c.preset, c.custom_base),
             (NetworkPreset::Custom, NetworkPreset::None)
         );
-        let e = parse_network("internet", &["pypi.org".into()], &[]).unwrap_err();
-        assert!(e.to_string().contains("by IP/CIDR"), "{e}");
+        // Names are rules too (the gateway's resolver enforces them).
+        let n = parse_network("internet", &["pypi.org".into()], &[]).unwrap();
+        assert_eq!(n.preset, NetworkPreset::Custom);
+        assert_eq!(n.custom.allow, ["pypi.org"]);
+        assert!(parse_network("internet", &["bad name!".into()], &[]).is_err());
     }
 
     #[test]
@@ -728,8 +912,7 @@ mod tests {
         let one = parse_network("custom", &["1.1.1.1".into()], &["all".into()]).unwrap();
         assert!(
             refuse_widening_by_agent(&one, Some(&internet)).is_ok(),
-            "tighter: {:?}",
-            refuse_widening_by_agent(&one, Some(&internet))
+            "tighter"
         );
         assert!(
             refuse_widening_by_agent(&internet, Some(&one)).is_err(),
@@ -753,7 +936,8 @@ mod tests {
         assert_eq!(note_for("docker", &internet), None);
         assert_eq!(note_for("unknown", &internet), None);
         if cfg!(target_os = "macos") {
-            assert_eq!(note_for("vz", &internet).as_deref(), Some(NO_NETWORK_NOTE));
+            // Behind the Cua network gateway: enforced, so no note.
+            assert_eq!(note_for("vz", &internet), None);
         }
         let open = NetworkSettings::preset(NetworkPreset::Unprotected);
         assert_eq!(
@@ -879,7 +1063,7 @@ mod tests {
         );
         assert_eq!(
             bad(dpb::NetworkSettings {
-                deny: vec!["example.com".into()],
+                deny: vec!["bad name!".into()],
                 ..Default::default()
             }),
             "invalid_argument"

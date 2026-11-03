@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
+import sparkle_feed
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
@@ -36,7 +38,9 @@ def fetch(url, method="GET", follow=True, headers=None):
 
 
 FEEDS = {
-    "sparkle": ("cua-spaces-appcast.xml", r"<sparkle:shortVersionString>([^<]+)<"),
+    # Sparkle: the newest item with no channel (what Stable apps get), not the
+    # first item: a beta item sits on top of the feed (CUA-3131).
+    "sparkle": ("cua-spaces-appcast.xml", None),
     "electron-win": ("latest.yml", r"(?m)^version:\s*(\S+)"),
     "electron-linux": ("latest-linux.yml", r"(?m)^version:\s*(\S+)"),
 }
@@ -72,9 +76,18 @@ def mismatches(repo, ver, tag, feeds, token):
     for name in feeds:
         fname, rx = FEEDS[name]
         s, _, b = fetch(base + fname)
-        m = re.search(rx, b.decode("utf-8", "replace"))
-        if not m or m.group(1) != ver:
-            bad.append("updater feed %s advertises %s (status %s)" % (name, m.group(1) if m else None, s))
+        text = b.decode("utf-8", "replace")
+        if rx is None:
+            try:
+                fv = sparkle_feed.stable_version(text)
+                bad += ["updater feed %s: %s" % (name, v) for v in sparkle_feed.violations(text)]
+            except Exception as e:  # noqa: BLE001 - unparsable feed
+                fv = "unparsable (%s)" % str(e)[:40]
+        else:
+            m = re.search(rx, text)
+            fv = m.group(1) if m else None
+        if fv != ver:
+            bad.append("updater feed %s advertises %s (status %s)" % (name, fv, s))
     return bad
 
 

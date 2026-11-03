@@ -2331,6 +2331,11 @@ jobs:
         with:
           name: sparkle-appcast
           path: sparkle
+      # Every item on its channel before the feed goes live: a prerelease
+      # without <sparkle:channel> would update every Stable Mac (CUA-3131).
+      - name: Check the Sparkle appcast channels
+        if: needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'
+        run: python3 .github/scripts/sparkle_feed.py check sparkle/cua-spaces-appcast.xml
       - name: Upload the Sparkle appcast to cua-spaces-latest
         if: needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'
         env:

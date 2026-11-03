@@ -9,6 +9,8 @@
 //! The default test in this binary sets the process environment, so the
 //! opt-in real-repository test below is run alone.
 
+#![cfg(unix)]
+
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex};

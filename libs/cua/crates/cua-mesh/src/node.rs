@@ -668,12 +668,14 @@ impl Mesh {
         } else {
             OFFLINE_CONNECT_TIMEOUT.min(self.inner.connect_timeout)
         };
+        let mut timed_out = false;
         let dialed = tokio::time::timeout(
             within,
             quic::connect(&self.inner.endpoint, peer.addr(), &peer.quic_pin),
         )
         .await
         .unwrap_or_else(|_| {
+            timed_out = true;
             Err(Error::Unreachable(if peer.online {
                 format!("{} did not answer on the mesh", peer.name)
             } else {
@@ -706,11 +708,17 @@ impl Mesh {
                 Ok(c)
             }
             Err(e) => {
-                self.inner
-                    .failed_dials
-                    .lock()
-                    .expect("failed dials")
-                    .insert(peer.node_key, (Instant::now(), e.to_string()));
+                // Only a dial that held its connection for the whole timeout
+                // is remembered: one that failed at once (the peer not yet
+                // listening) costs nothing to retry, and holding it made the
+                // next caller fail for no reason.
+                if timed_out {
+                    self.inner
+                        .failed_dials
+                        .lock()
+                        .expect("failed dials")
+                        .insert(peer.node_key, (Instant::now(), e.to_string()));
+                }
                 Err(e)
             }
         }

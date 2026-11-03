@@ -3,7 +3,7 @@
 
 import { core } from "../core";
 import type { CreatePlan } from "../components/desktop/NewSpaceWizard";
-import type { FleetSync } from "./cloud";
+import type { SpacesSync } from "./cloud";
 
 /**
  * Turns a New Space plan into the SDK call that creates it: one
@@ -12,7 +12,7 @@ import type { FleetSync } from "./cloud";
  * the Space id; until then the Space shows as `pendingId`'s row.
  */
 export function createFromPlan(
-  sync: Pick<FleetSync, "createSpace">,
+  sync: Pick<SpacesSync, "createSpace">,
   plan: CreatePlan,
   pendingId?: string,
 ): Promise<string> {

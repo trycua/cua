@@ -175,6 +175,7 @@ pub async fn target() -> Target {
                     path: t.scratch.clone(),
                     parents: true,
                     mode: 0,
+                    ..Default::default()
                 })
                 .await
             {
@@ -297,6 +298,7 @@ impl Target {
                     path: self.scratch.clone(),
                     recursive: true,
                     missing_ok: true,
+                    ..Default::default()
                 })
                 .await;
         }
@@ -448,4 +450,27 @@ pub async fn run_sh(client: &SpacesdClient, script: &str) -> (Option<i32>, Vec<u
         }
     }
     panic!("process stream ended without ProcessEnd");
+}
+
+/// Seeds the pinned `uv` a host's job members get (`<tools>/job-tools/<this
+/// machine's target>/uv`), so a test needs no download: a stand-in that
+/// prints its version.
+pub fn seed_uv(dirs: &cua_cluster::jobdir::JobDirs) {
+    let target = cua_host::uv::uv_target().expect("a pinned uv target");
+    // The executor's own tools directory: under the cua home, or the
+    // shared one when it runs each run as its own user (root on Linux).
+    let dir = dirs.tools_dir(target);
+    std::fs::create_dir_all(&dir).unwrap();
+    let uv = dir.join("uv");
+    std::fs::write(&uv, "#!/bin/sh\necho uv stand-in\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::write(
+        dir.join(".uv-version"),
+        format!("{} {target}\n", cua_host::uv::UV_VERSION),
+    )
+    .unwrap();
 }

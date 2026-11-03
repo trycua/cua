@@ -684,15 +684,6 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
-/// Return the current active macOS Space (desktop) ID.
-///
-/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
-/// when the symbol is unavailable (future macOS version that removes it).
-pub fn get_active_space() -> Option<u64> {
-    let cid = main_connection_id()?;
-    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
-}
-
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
     space_id.filter(|id| *id != 0)
 }

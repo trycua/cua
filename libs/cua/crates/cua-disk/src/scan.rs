@@ -368,9 +368,19 @@ impl Scanner {
             return used;
         };
         let mut layer_files = Vec::new();
+        let mut goldens = Vec::new();
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let dir = e.path();
+            if name == "_golden" {
+                // Warm-start memory snapshots (one per configuration); a
+                // cache: the next cold boot of that configuration records
+                // it again.
+                if let Ok(g) = std::fs::read_dir(&dir) {
+                    goldens.extend(g.flatten().map(|f| f.path()).filter(|p| p.is_dir()));
+                }
+                continue;
+            }
             if name == "_layers" {
                 if let Ok(l) = std::fs::read_dir(&dir) {
                     layer_files.extend(l.flatten().map(|f| f.path()));
@@ -406,6 +416,38 @@ impl Scanner {
                 created: Some(st.created_at),
                 status: Some(if running { "running" } else { "stopped" }.into()),
                 ephemeral: st.name.starts_with("cua-eph-"),
+                ..Default::default()
+            });
+        }
+        for g in goldens {
+            // A fork or a warm start of it may still read its disk.
+            let mut by: Vec<String> = Vec::new();
+            if let Ok(files) = std::fs::read_dir(&g) {
+                for f in files.flatten() {
+                    let canon = std::fs::canonicalize(f.path()).unwrap_or_else(|_| f.path());
+                    for n in used.get(&canon).into_iter().flatten() {
+                        if !by.contains(n) {
+                            by.push(n.clone());
+                        }
+                    }
+                }
+            }
+            // Cache, not a user checkpoint: it counts against the cache
+            // budget and is evicted least recently used first, never while
+            // a sandbox's disk is backed by it.
+            items.push(Item {
+                category: Category::Images,
+                kind: "qemu-golden".into(),
+                name: g
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                location: g.display().to_string(),
+                bytes: disk::allocated_size(&g),
+                last_used: disk::last_used(&g).map(unix),
+                referenced_by: by,
+                evictable: true,
+                target: Target::Path(g.clone()),
                 ..Default::default()
             });
         }
@@ -784,7 +826,7 @@ impl Scanner {
         // A base is in use while a sandbox or checkpoint cloned from it exists
         // (`source` names the clone source; a record whose VM is gone does
         // not count).
-        let mut clones: HashMap<String, Vec<String>> = HashMap::new();
+        let mut clones: std::collections::HashMap<String, Vec<String>> = Default::default();
         let exists = |name: &str| !listed || vms.iter().any(|v| v.name == name);
         for r in records
             .iter()
@@ -794,6 +836,25 @@ impl Scanner {
                 clones.entry(src.clone()).or_default().push(r.name.clone());
             }
         }
+        // A warm state (`prepare_warm`) is in use while Spaces of its image
+        // exist (cold, resumed from it, or warm-pool members): it is kept
+        // for them, whatever its age.
+        let mut spaces_of: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for r in records.iter().filter(|r| r.kind == OwnedKind::Instance) {
+            if let Some(base) = &r.source {
+                spaces_of
+                    .entry(base.clone())
+                    .or_default()
+                    .push(r.name.clone());
+            }
+        }
+        let users_of_warm = |name: &str| -> Vec<String> {
+            spaces_of
+                .iter()
+                .filter(|(base, _)| cua_vmm::lume::warm_vm_names(base).iter().any(|w| w == name))
+                .flat_map(|(_, spaces)| spaces.iter().cloned())
+                .collect()
+        };
         for r in records {
             let vm = vms.iter().find(|v| v.name == r.name);
             if vm.is_none() && listed {
@@ -829,7 +890,13 @@ impl Scanner {
                 in_progress: r.kind == OwnedKind::Base && busy,
                 ephemeral: r.name.starts_with("cua-eph-"),
                 referenced_by: if r.kind == OwnedKind::Base {
-                    clones.remove(&r.name).unwrap_or_default()
+                    let mut by = clones.remove(&r.name).unwrap_or_default();
+                    for user in users_of_warm(&r.name) {
+                        if !by.contains(&user) {
+                            by.push(user);
+                        }
+                    }
+                    by
                 } else {
                     vec![]
                 },

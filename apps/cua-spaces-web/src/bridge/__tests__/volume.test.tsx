@@ -129,6 +129,6 @@ describe.skipIf(!wasmBuilt)("the first run's Cua Volume page", () => {
     act(() => probe.flow.send({ type: "mode-chosen", mode: "client" }));
     const volume = probe.flow.view?.todos?.find((t) => t.id === "volume");
     expect(volume?.done).toBe(true);
-    expect(volume?.note).toBe("Shared folder: files your agents can share across your computers. In Finder.");
+    expect(volume?.note).toBe("Shared folder: files your agents can share across your machines. In Finder.");
   });
 });

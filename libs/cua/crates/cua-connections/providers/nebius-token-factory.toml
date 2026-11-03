@@ -1,0 +1,22 @@
+id = "nebius-token-factory"
+name = "Nebius Token Factory"
+icon = "nebius-token-factory"
+tier = "more"
+rank = 170
+kind = "hosted"
+aliases = ["nebius"]
+wire = "openai-chat"
+base_url = "https://api.tokenfactory.nebius.com/v1"
+base_url_env = "NEBIUS_BASE_URL"
+default_model = "Qwen/Qwen3.5-397B-A17B-fast"
+hermes_id = "nebius-token-factory"
+key_help = "Create a key at tokenfactory.nebius.com."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "NEBIUS_API_KEY"
+aliases = ["NEBIUS_TOKEN_FACTORY_API_KEY"]
+
+[delivery]
+hermes = ["NEBIUS_API_KEY"]

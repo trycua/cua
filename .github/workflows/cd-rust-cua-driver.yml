@@ -77,7 +77,7 @@ on:
 permissions:
   contents: write
   id-token: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:
@@ -435,6 +435,8 @@ jobs:
       - name: Sign Windows binaries
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
@@ -1240,6 +1242,35 @@ jobs:
   # the GitHub release (and therefore the PyPI/npm SDK packages) never becomes
   # public before that evidence exists. Nightly and manual build-only runs skip
   # it.
+  # Start the staging smoke for this tag (CUA-1993): trycua/cloud's
+  # spaces-staging-smoke workflow runs it and posts the commit status that
+  # `staging-gate` waits for. Needs the release app installed on trycua/cloud
+  # (RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY). Never fails the run: without it
+  # the gate times out and the smoke is started by hand as before.
+  request-staging-smoke:
+    name: Request the staging smoke
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint a token to dispatch on trycua/cloud
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+      - name: Send the cua-release-candidate dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: .github/scripts/request_staging_smoke.sh cua-driver "$GITHUB_SHA"
+
   # Staging first (CUA-1907): a release publishes only when the staging smoke
   # is recorded green for this exact commit as the commit status
   # "staging-smoke/cua-driver" (description carries the artifact digest).
@@ -1250,7 +1281,8 @@ jobs:
     name: staging smoke is green
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
+    timeout-minutes: 40
     permissions:
       contents: read
       statuses: read
@@ -1259,6 +1291,7 @@ jobs:
       - name: Require a green staging smoke for this commit
         env:
           GH_TOKEN: ${{ github.token }}
+          WAIT_MINUTES: "30"
         run: .github/scripts/require_staging_smoke.sh cua-driver "$GITHUB_SHA"
 
   release:
@@ -1508,6 +1541,7 @@ jobs:
             --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --asset-dir release-upload \
+            --report-issue \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft

@@ -1,0 +1,176 @@
+---
+title: Link a cloud without a key
+description: Link Google Cloud or Azure to Cua with no stored key, through workload identity federation. What the trust creates, the commands, and gcloud, az and Terraform equivalents.
+---
+
+`cua cloud connect` can link AWS, Google Cloud and Azure with no key stored
+anywhere. Cua's issuer (`oidc.cua.ai`) signs a 15-minute token for your Cua
+account each time a machine needs the cloud, and your cloud trusts those
+tokens. AWS is in [Use your own cloud](/cua-sdk/guides/your-cloud#link-aws-without-a-key);
+Google Cloud and Azure are below. An agent can do all of it for you: see
+[Connect a cloud (for agents)](/spaces/guides/connect-a-cloud).
+
+## Google Cloud
+
+With `--oidc`, Google Cloud works the same way: your project trusts Cua's
+tokens through
+[workload identity federation](https://cloud.google.com/iam/docs/workload-identity-federation),
+with no service account and no key.
+
+```bash test="cli-shape" id="cua-cloud-connect-gcp-oidc"
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16
+```
+
+The first run returns `needs-trust`, a link that opens Google Cloud Shell with
+Cua's trust script (`cua-trust.sh`), and the command to paste there. Run it as
+someone who can manage IAM in the project. It is safe to run again, and it
+creates:
+
+- the workload identity pool `cua` with the OIDC provider `cua`. The provider
+  trusts your Cua account's issuer (`https://oidc.cua.ai/a/<account>`), allows
+  only its own name as the audience, and has the condition
+  `assertion.sub=='account:<account>'`. It maps `google.subject` and
+  `attribute.account` to the subject, and `attribute.device` and
+  `attribute.purpose` to the machine and purpose of each token, which Cloud
+  Audit Logs show;
+- the custom role `cuaSpaces` with the
+  [15 Compute Engine permissions](/cua-sdk/guides/your-cloud-safety#google-cloud)
+  Cua uses;
+- one binding of that role on the project to
+  `principalSet://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/attribute.account/account:<account>`.
+
+The script prints the project number. Run the command again with it and
+`--check`. Google's Security Token Service exchanges a check token for a
+15-minute access token, and `testIamPermissions` checks the role:
+
+```bash test="cli-shape" id="cua-cloud-connect-gcp-oidc-check"
+cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16 --project-number 123456789012 --check
+```
+
+The same trust with `gcloud` (it is what the script runs, with a describe
+before each create so it can run again):
+
+```bash skip="third-party-cli"
+gcloud iam workload-identity-pools create cua --location=global --project=my-project
+gcloud iam workload-identity-pools providers create-oidc cua --workload-identity-pool=cua \
+  --location=global --project=my-project --issuer-uri="https://oidc.cua.ai/a/<account>" \
+  --allowed-audiences="//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/providers/cua" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.account=assertion.sub,attribute.device=assertion.cua_device,attribute.purpose=assertion.cua_purpose" \
+  --attribute-condition="assertion.sub=='account:<account>'"
+gcloud iam roles create cuaSpaces --project=my-project --title="Cua Spaces" \
+  --permissions="<the 15 permissions, comma-separated>"
+gcloud projects add-iam-policy-binding my-project --role=projects/my-project/roles/cuaSpaces \
+  --member="principalSet://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/cua/attribute.account/account:<account>"
+```
+
+Or with Terraform:
+
+```hcl skip="third-party-cli"
+resource "google_iam_workload_identity_pool" "cua" {
+  workload_identity_pool_id = "cua"
+}
+
+resource "google_iam_workload_identity_pool_provider" "cua" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.cua.workload_identity_pool_id
+  workload_identity_pool_provider_id = "cua"
+  attribute_condition                = "assertion.sub=='account:${var.cua_account}'"
+  attribute_mapping = {
+    "google.subject"    = "assertion.sub"
+    "attribute.account" = "assertion.sub"
+    "attribute.device"  = "assertion.cua_device"
+    "attribute.purpose" = "assertion.cua_purpose"
+  }
+  oidc {
+    issuer_uri        = "https://oidc.cua.ai/a/${var.cua_account}"
+    allowed_audiences = ["//iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/cua/providers/cua"]
+  }
+}
+
+resource "google_project_iam_custom_role" "cua" {
+  role_id     = "cuaSpaces"
+  title       = "Cua Spaces"
+  permissions = var.cua_permissions # the 15 in Least privilege in your cloud
+}
+
+resource "google_project_iam_member" "cua" {
+  project = data.google_project.this.project_id
+  role    = google_project_iam_custom_role.cua.id
+  member  = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.cua.name}/attribute.account/account:${var.cua_account}"
+}
+```
+
+Compute Engine labels cannot be used in IAM conditions, so the binding has
+none. The role holds only those permissions, and Cua stops, starts and
+deletes only what carries its labels. To act as a service account instead,
+grant the Cua identities `roles/iam.workloadIdentityUser` on it and add
+`--service-account <email>`. To remove the trust, delete the `cua` pool.
+
+## Azure
+
+Azure is always linked without a key. A user-assigned managed identity,
+`cua-spaces`, trusts Cua's tokens through a federated credential, and holds
+Virtual Machine Contributor and Network Contributor on one resource group
+only (`cua-spaces`, or `--resource-group`). Cua creates everything in that
+group.
+
+```bash test="cli-shape" id="cua-cloud-connect-azure"
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
+```
+
+The first run returns `needs-trust` and a Deploy to Azure link for the
+template `cua-spaces.json` (print it with `cua cloud trust azure`). It is
+deployed at resource group scope: pick or create the group in the region,
+enter your Cua account id, and deploy. You need Owner or User Access
+Administrator on the group, because it assigns roles. It creates:
+
+- the managed identity `cua-spaces`;
+- its federated credential: issuer `https://oidc.cua.ai/a/<account>`, subject
+  `account:<account>`, audience `api://AzureADTokenExchange`;
+- the two role assignments, on that resource group only.
+
+Its outputs are `subscriptionId`, `tenantId` and `clientId`. Run the command
+again with them and `--check`. Microsoft Entra exchanges a check token for a
+15-minute Azure Resource Manager token, and the check reads the group and its
+permissions and validates a machine deployment:
+
+```bash test="cli-shape" id="cua-cloud-connect-azure-check"
+cua cloud connect azure --region westus2 --budget 200 --max-size 4x16 --subscription 00000000-0000-0000-0000-000000000000 --tenant 11111111-1111-1111-1111-111111111111 --client-id 22222222-2222-2222-2222-222222222222 --check
+```
+
+The same trust with the `az` CLI:
+
+```bash skip="third-party-cli"
+az group create --name cua-spaces --location westus2
+cua cloud trust azure > cua-spaces.json
+az deployment group create --name cua-spaces --resource-group cua-spaces \
+  --template-file cua-spaces.json --parameters cuaAccount=<account> \
+  --query properties.outputs
+```
+
+Or with Terraform:
+
+```hcl skip="third-party-cli"
+resource "azurerm_user_assigned_identity" "cua" {
+  name                = "cua-spaces"
+  resource_group_name = azurerm_resource_group.cua.name
+  location            = azurerm_resource_group.cua.location
+}
+
+resource "azurerm_federated_identity_credential" "cua" {
+  name                = "cua"
+  resource_group_name = azurerm_resource_group.cua.name
+  parent_id           = azurerm_user_assigned_identity.cua.id
+  issuer              = "https://oidc.cua.ai/a/${var.cua_account}"
+  subject             = "account:${var.cua_account}"
+  audience            = ["api://AzureADTokenExchange"]
+}
+
+resource "azurerm_role_assignment" "cua" {
+  for_each             = toset(["Virtual Machine Contributor", "Network Contributor"])
+  scope                = azurerm_resource_group.cua.id
+  role_definition_name = each.value
+  principal_id         = azurerm_user_assigned_identity.cua.principal_id
+}
+```
+
+To remove the trust, delete the `cua-spaces` identity.

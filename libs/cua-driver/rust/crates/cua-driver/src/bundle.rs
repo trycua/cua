@@ -60,15 +60,6 @@ pub fn user_home_subdirectory() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
-pub fn uia_executable_name() -> &'static str {
-    if is_local_installation() {
-        "cua-driver-uia-local.exe"
-    } else {
-        "cua-driver-uia.exe"
-    }
-}
-
-#[cfg(target_os = "windows")]
 pub fn autostart_task_name() -> &'static str {
     if is_local_installation() {
         "cua-driver-local-serve"

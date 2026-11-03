@@ -183,6 +183,7 @@ export function SpaceWindowList({
             <span className="ssr-label" title={row.help}>
               {row.label}
             </span>
+            {row.resolution ? <span className="ssr-resolution">{row.resolution}</span> : null}
             {row.actions.map((action) => (
               <button
                 key={action.id}

@@ -1,6 +1,7 @@
 {
   "title": "Spacesd client and processes",
   "pages": [
+    "shell",
     "files",
     "computer"
   ]

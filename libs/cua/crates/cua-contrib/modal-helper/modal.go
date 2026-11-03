@@ -200,6 +200,8 @@ func wrap(err error) kinded {
 			return kinded{"invalid", err}
 		case codes.DeadlineExceeded:
 			return kinded{"timeout", err}
+		case codes.Unavailable, codes.ResourceExhausted:
+			return kinded{"unavailable", err}
 		}
 	}
 	return kinded{"other", err}

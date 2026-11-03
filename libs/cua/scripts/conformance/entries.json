@@ -1,0 +1,937 @@
+{
+  "cases": [
+    {
+      "case": "ready",
+      "what": "time from create to a Space that answers"
+    },
+    {
+      "case": "policy",
+      "what": "the default network holds: internet yes; host, LAN, cloud metadata, other trees no"
+    },
+    {
+      "case": "dns",
+      "what": "names resolve in the guest, IPv4 and IPv6"
+    },
+    {
+      "case": "download",
+      "what": "the guest downloads the coding app's package"
+    },
+    {
+      "case": "registry",
+      "what": "a private image is pulled with the host-held registry credential"
+    },
+    {
+      "case": "children",
+      "what": "a home creates, lists, uses and deletes a child Space, audited"
+    },
+    {
+      "case": "agent",
+      "what": "a coding agent session starts and answers"
+    },
+    {
+      "case": "lifecycle",
+      "what": "stop and resume, and the declared pause, checkpoint and fork"
+    },
+    {
+      "case": "teardown",
+      "what": "delete leaves no Space, process, container or network"
+    }
+  ],
+  "entries": [
+    {
+      "backend": "managed",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "builtin-gvisor",
+      "kind": "container",
+      "needs": "the built-in Linux runtime (downloaded on first use)",
+      "not_runnable": null,
+      "runtime": "gvisor"
+    },
+    {
+      "backend": "managed",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "builtin-runc",
+      "kind": "container",
+      "needs": "the built-in Linux runtime (downloaded on first use)",
+      "not_runnable": null,
+      "runtime": "runc"
+    },
+    {
+      "backend": "container",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "engine-gvisor",
+      "kind": "container",
+      "needs": "Docker or containerd with gVisor (runsc) and nftables",
+      "not_runnable": null,
+      "runtime": "gvisor"
+    },
+    {
+      "backend": "container",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "engine-runc",
+      "kind": "container",
+      "needs": "Docker or containerd and nftables",
+      "not_runnable": null,
+      "runtime": "runc"
+    },
+    {
+      "backend": "firecracker",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": true,
+        "nested_virt": true,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "firecracker-microvm",
+      "kind": "microvm",
+      "needs": "Linux with /dev/kvm and Firecracker",
+      "not_runnable": null,
+      "runtime": "firecracker"
+    },
+    {
+      "backend": "vz",
+      "capabilities": {
+        "archs": [
+          "aarch64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "Apple's microVM network can't be filtered per Space yet"
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "vz-microvm",
+      "kind": "microvm",
+      "needs": "an Apple silicon Mac with cua-vz and cua-microvm-init next to `cua`",
+      "not_runnable": null,
+      "runtime": "vz"
+    },
+    {
+      "backend": "containerization",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": false,
+        "fork": false,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "Apple's Containerization can't protect your network yet. Use the standard microVM (the default) or choose No protection."
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "containerization-microvm",
+      "kind": "microvm",
+      "needs": "macOS 26 on Apple silicon (Cua installs Apple's container itself)",
+      "not_runnable": null,
+      "runtime": "containerization"
+    },
+    {
+      "backend": "qemu",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "fork": true,
+        "guests": [
+          "linux",
+          "windows",
+          "android",
+          "macos"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "QEMU on this system can't filter one VM's connections yet"
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "QEMU on this system can't filter one VM's connections yet"
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "qemu-vm",
+      "kind": "vm",
+      "needs": "qemu-system and a Linux VM image (a containerDisk)",
+      "not_runnable": null,
+      "runtime": "qemu"
+    },
+    {
+      "backend": "lume",
+      "capabilities": {
+        "archs": [
+          "aarch64"
+        ],
+        "checkpoint": false,
+        "fork": true,
+        "guests": [
+          "macos"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false
+      },
+      "guest": "macos",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "macOS VMs can't protect your network yet, and Cua reaches a macOS VM over its network, so it can't start without one. Choose No protection to start it."
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "lume-macos-vm",
+      "kind": "vm",
+      "needs": "an Apple silicon Mac with Lume and a macOS image",
+      "not_runnable": null,
+      "runtime": "lume"
+    },
+    {
+      "backend": "qemu-docker",
+      "capabilities": {
+        "archs": [],
+        "checkpoint": false,
+        "fork": false,
+        "guests": [],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false
+      },
+      "guest": "linux",
+      "hosts": [],
+      "id": "qemu-docker",
+      "kind": "vm",
+      "needs": "nothing: no runtime of this build starts QEMU inside a container",
+      "not_runnable": "no runtime of this build starts QEMU inside a container",
+      "runtime": ""
+    }
+  ]
+}

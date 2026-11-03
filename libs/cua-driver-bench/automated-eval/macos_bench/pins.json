@@ -24,7 +24,9 @@
     "tree_sha256": {
       "shared/cdb-s02": "07018de7f2c8fec2b604f11749800477e56981f4b1c19312e2350851de9a280b",
       "shared/cdb-s03": "095f8be9ee022ca0005dd428d2872d1347e6a1e766c767dff9592841018bb719",
-      "shared/cdb-s04": "0c5f559573b0a3e0b1726bd44d4d6f1c75231ab4cbdcc1d0d229c4c6d223fbc6"
+      "shared/cdb-s04": "0c5f559573b0a3e0b1726bd44d4d6f1c75231ab4cbdcc1d0d229c4c6d223fbc6",
+      "shared/web-01": "82853053f6fd546b022d18b857c8bc370538cb1111636cf905a78db55fc44a95",
+      "shared/web-02": "78f504225bc2943881582bfcece129c525c589aa3d3f5483090769f2fe12ff89"
     },
     "mit_release_tree_sha256": {
       "shared/cdb-s02": "844dbbd2b247395303b901cbd328dee092adfa0e592b511ce6900c69e92073c9",
@@ -38,14 +40,14 @@
     }
   },
   "cua_main": {
-    "note": "Bench v2 runs: main at the commit of the latest registered run (A17.3 rerun: 984e5f9c5). Built in the VM with tools/vm_main_build. Earlier registered runs used other main commits; see the dated amendment commits.",
-    "git_sha": "984e5f9c5c5a39185e7d0e03f3d6937e44503c31",
-    "version": "0.34.0",
-    "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "3657e899b14f734f71b4aa52af3f9bbf44c2a97a62947ea9c40cbf0e0a5c1098",
-    "skills_tree_sha256": "7f1c0fd0f22cb4a3dd0ae04256a3e78c9f4d51194e92284765cc554381249504",
+    "note": "Bench v2 uses main at 1fa2247ae built in the VM with tools/vm_main_build.",
+    "git_sha": "1fa2247ae745f5029211573ad4f5c3087efcf641",
+    "version": "0.38.0",
+    "version_string": "cua-driver 0.38.0",
+    "binary_sha256": "f53304e429ca0c2a3fc3f0fd5699d273251b2ef847eaa728949c3260b6da8969",
+    "skills_tree_sha256": "e1ea6ffdabfef1cf1757283ae281dd75ab0a7a3b179b14bb50d9869b9f8e6eb7",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "8d5dc83f23e7ff0f95bcade4fff67e25cd7309bf02d67a5ca31e86ca5059cce4"
+    "script_binary_sha256": "3398da9e53a2fc7980c58ae9d45060c7befecb9eebd7e602f97f5d9b4f8a2f56"
   },
   "codex_1007": {
     "_note": "Arm cc-codex-cu-1007-browser (Amendment 10): the ChatGPT/Codex app 26.1007.21159 (build 20052) from the public appcast, installed in a clone of the bench VM only and never launched. The Computer Use service is not in the app bundle (the app installs it at run time), so it stays 26.929.1001365.",
@@ -64,14 +66,14 @@
     "_signature": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2), notarized"
   },
   "claude_cu_helper": {
-    "_note": "Amendment 11: arm cc-claude-cu-helper, \"Claude Desktop 2.31226.0 computer-use helper via a minimal adapter\". Claude Desktop 2.31226.0 downloaded and unpacked in a clone of the bench VM only (never launched, never moved to /Applications). The helper is used unmodified in place; tools/claude_cu_helper/install_cu_helper.sh checks the archive and helper hashes and the signature. The helper's Accessibility grant was given in System Settings (Privacy & Security > Accessibility > +), through the VM's UI. Public copy: adapter_sha256 is the published cu_helper_mcp.py with its licence header (the registered runs used the same adapter without it, d3f7797bee7b).",
+    "_note": "Amendment 11: arm cc-claude-cu-helper, \"Claude Desktop 2.31226.0 computer-use helper via a minimal adapter\". Claude Desktop 2.31226.0 downloaded and unpacked in a clone of the bench VM only (never launched, never moved to /Applications). The helper is used unmodified in place; tools/claude_cu_helper/install_cu_helper.sh checks the archive and helper hashes and the signature. The helper's Accessibility grant was given in System Settings (Privacy & Security > Accessibility > +), through the VM's UI. Public copy: adapter_sha256 is the published cu_helper_mcp.py with its licence header (the registered runs used the same adapter without it, d3f7797bee7b). The previous published adapter_sha256 was ed0da1fc5d00da2d8a3f8a43e3b18df9a41150e97a41632107eb8f82bcd058eb; the new hash is for launcher-wrapped screencapture. Grant Apple's /usr/sbin/screencapture Screen Recording via System Settings > Privacy & Security > Screen Recording > + > Go to /usr/sbin/screencapture. The helper retains its separate Accessibility grant; Terminal, the adapter and launcher receive no new grants.",
     "desktop_version": "2.31226.0",
     "desktop_zip_url": "https://downloads.claude.ai/releases/darwin/universal/2.31226.0/Claude-eb794d1033f2a59c2cd89aa29ed1f8b5de12aa73.zip",
     "desktop_zip_bytes": 383954641,
     "desktop_zip_sha256": "bd38f1051a14cabd893c7422e106ad6318e8785f19472c8064eafa64ce235820",
     "helper_sha256": "7bd631e8b5ae36941ac551c474055e2eff32163db6684628eac5cfcabcb3dc14",
     "helper_signature": "Developer ID Application: Anthropic PBC (Q6L2SF6YDW), identifier app-cu-helper",
-    "adapter_sha256": "ed0da1fc5d00da2d8a3f8a43e3b18df9a41150e97a41632107eb8f82bcd058eb",
+    "adapter_sha256": "1a75682aea7d524455e3f1a159149090184cc536b21d277e8d0df916b3716b3f",
     "winlist_sha256": "d150737bd4a3f7995a2abe7a615b951da8189236da7e3cb969e0de670d9614d4",
     "launcher_sha256": "c9dd836899692149e0a7d2bf144aa5f1180b359661016fddd267140c77e0057f",
     "actions": [
@@ -114,6 +116,16 @@
       "key",
       "type"
     ]
+  },
+  "browser_use_cli": {
+    "version": "0.13.11",
+    "python": "3.12",
+    "wheel_sha256": "50b0d16efc44215f99ed1c9197f05e2519bb79fa1501eed7371aff450cc56045",
+    "skill_path": "browser_use/skills/browser-use/SKILL.md",
+    "skill_sha256": "fee8f320d0bdcad3695393663b5defa6e5fc1e22ff7ac6ffb6f04f6997b93c36",
+    "_requires_python": ">=3.11,<4.0",
+    "_wheel": "browser_use-0.13.11-py3-none-any.whl",
+    "_url": "https://files.pythonhosted.org/packages/cd/e6/8fb8ce81894afcc7626837232a4d284843d1c1fb4fd757aa00c54ce40d8e/browser_use-0.13.11-py3-none-any.whl"
   },
   "codex_native": {
     "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6.1-sol (Amendment 23) at its catalog default effort (low); A20's smoke used gpt-6-astra (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",

@@ -162,7 +162,21 @@ def build(args: argparse.Namespace) -> dict:
         if previous.get("schema") != SCHEMA:
             raise SystemExit(f"{args.merge}: unsupported schema {previous.get('schema')!r}")
     ours = scan(args.component, args.version, Path(args.dir), args.base_url)
-    kept = [a for a in previous.get("artifacts", []) if a.get("component") != args.component]
+    if args.carry_forward_platforms:
+        # A partial release (CUA-2068): platforms this release did not build
+        # keep the artifacts of the build that is current for them, each with
+        # its own version, so the installers pick the newest build per platform.
+        built = {a["platform"] for a in ours}
+        kept = [a for a in previous.get("artifacts", []) if a.get("component") != args.component or a.get("platform") not in built]
+        carried = {a["platform"] for a in kept if a.get("component") == args.component}
+        missing = [p for p in PLATFORMS if p not in built and p not in carried]
+        if missing:
+            raise SystemExit(
+                f"--carry-forward-platforms: no previous {args.component} artifact for {', '.join(missing)}; "
+                "a platform with nothing to carry forward must be built"
+            )
+    else:
+        kept = [a for a in previous.get("artifacts", []) if a.get("component") != args.component]
     versions = dict(previous.get("versions", {}))
     versions[args.component] = args.version
     artifacts = sorted(kept + ours, key=lambda a: (a["component"], a["platform"], a["kind"]))
@@ -177,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", help="download URL prefix (default: names relative to the manifest)")
     parser.add_argument("--merge", help="existing manifest; its other components are kept")
     parser.add_argument("--repo", default="trycua/cua")
+    parser.add_argument(
+        "--carry-forward-platforms",
+        action="store_true",
+        help="partial release: keep the --merge file's artifacts for platforms this release has none for "
+        "(default: replace every artifact of the component)",
+    )
     parser.add_argument("--out", help="output path (default stdout)")
     args = parser.parse_args(argv)
     text = render(build(args))

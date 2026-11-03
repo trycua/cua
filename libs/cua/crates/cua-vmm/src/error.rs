@@ -47,6 +47,12 @@ pub enum VmmError {
     #[error("{reason}")]
     UnsupportedImage { image: String, reason: String },
 
+    /// This host has no room for another VM now: its VMs are at their
+    /// memory or CPU limit ([`crate::density`]), or the machine is low on
+    /// memory. The message says which, by how much, and what to do.
+    #[error("{0}")]
+    HostCapacity(String),
+
     /// The request was malformed (bad name, missing disk, conflicting options).
     #[error("invalid request: {0}")]
     Invalid(String),

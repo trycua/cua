@@ -1,34 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { useBridge, useExperiments } from "@/bridge";
-import { CoreSettingsSection } from "@/components/settings/core-section";
-import { toastError } from "@/components/ui/toast";
-
-export const Route = createFileRoute("/settings/experiments")({ component: ExperimentsPage });
-
-/** "Use classic UI" switches the SwiftUI app between its native window and this UI: the Electron app is only this UI, so it has no such switch. */
-const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
-
-/**
- * Settings, Experiments: one switch per experiment with its one line
- * (`experiments::page`), and "Use classic UI" on the Mac. Off only hides an experiment's
- * entry points; nothing set up is undone.
- */
-function ExperimentsPage() {
-  const { data, unsupported, isLoading, chooseExperiment } = useExperiments();
-  const { mode } = useBridge();
-  if (unsupported) return <p className="px-1 text-[13px] text-muted-foreground">Experiments are not available in this app yet.</p>;
-  if (isLoading || !data?.page) return null;
-  const shown = (id: string) => mode !== "electron" || !WEB_UI_ROWS.has(id);
-  return data.page.sections.map((section) => (
-    <CoreSettingsSection
-      key={section.id}
-      section={{ ...section, rows: section.rows.filter((r) => shown(r.id)) }}
-      foldNotes
-      onChoose={(row, option) => void chooseExperiment(row.id, option).catch(toastError("Couldn't change the experiment"))}
-    />
-  ));
-}
+/** Settings, Experiments folded into Advanced. */
+export const Route = createFileRoute("/settings/experiments")({
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/advanced", replace: true });
+  },
+});

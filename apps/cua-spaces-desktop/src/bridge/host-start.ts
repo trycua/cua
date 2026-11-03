@@ -10,6 +10,7 @@
 // whether the keychain prompt is on screen. (The refresh after an update is
 // `refreshAfterUpdate`, started in main.ts.)
 // Also the menu bar item's and the tray's menu (`menuItems`).
+import { readCliPlan } from "./cli";
 import type { AppMenuItem, AppSpace } from "../native/generated/index";
 import { LocalNetworkPermission } from "../model/local-network";
 import { SecurityAgentWatcher } from "../model/security-agent";
@@ -92,6 +93,8 @@ export function startHost(ctx: BridgeContext, o: { onboarded: () => boolean }): 
   whenReady(() => {
     if (stopped) return;
     stops.push(parts.notifications.startPolling());
+    // Whether the bundled CLI is on PATH, for the pages' terminal hints (`settings.get`'s `cli`).
+    void readCliPlan(ctx).catch(() => {});
     void (async () => {
       // What the rule reads: whether this machine provides Spaces.
       await model.host.refresh();

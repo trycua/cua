@@ -2,29 +2,34 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! The persistent-agent tools: agents, routines, notifications, pause and
-//! resume, and per-agent computer access (`crate::persistent`).
+//! resume, and per-agent computer access (`crate::persistent`). Their
+//! records are agent members of their Spaces; `persistent_agent_send` is
+//! also recorded in the Space's thread.
 
 use serde_json::{Value, json};
 
 use crate::persistent::{AgentRecord, AgentSpec, SpacesPersistent as _, parse_schedule};
 use cua_spaces::Spaces;
 use cua_spaces::error::{Error, Result};
+use cua_spaces::extension::Caller;
 use cua_spaces::mcp::ToolOutcome;
 use cua_spaces_contract::inputs as i;
 
-/// The tools this module answers.
+/// The tools this module answers, by their current names (a call by a
+/// former name, `persistent_agent_send` or `routine_add`, arrives here
+/// resolved by `cua_spaces_contract::canonical`).
 pub(crate) const TOOLS: &[&str] = &[
-    "persistent_agent_create",
+    "agent_add",
     "persistent_agent_list",
-    "persistent_agent_remove",
-    "persistent_agent_send",
+    "agent_remove",
+    "agent_send",
     "persistent_agent_save",
     "agent_pause",
     "agent_resume",
-    "routine_add",
-    "routine_list",
-    "routine_remove",
-    "routine_set_enabled",
+    "agent_schedule_add",
+    "agent_schedule_list",
+    "agent_schedule_remove",
+    "agent_schedule_set_enabled",
     "notify_user",
     "notifications_list",
     "notifications_ack",
@@ -33,14 +38,14 @@ pub(crate) const TOOLS: &[&str] = &[
     "computer_access_list",
 ];
 
-fn row(r: &AgentRecord) -> Value {
+pub(crate) fn row(r: &AgentRecord) -> Value {
     json!({"name": r.name, "harness": r.harness, "space": r.space, "model": r.model,
         "base_url": r.base_url, "env_from_host": r.env_from_host, "paused": r.paused,
         "space_state": r.space_state, "run_id": r.run_id, "saved_ms": r.saved_ms,
         "created_ms": r.created_ms, "last_error": r.last_error})
 }
 
-fn routine_row(r: &cua_spaces::routines::Routine) -> Value {
+pub(crate) fn routine_row(r: &cua_spaces::routines::Routine) -> Value {
     let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
     v["label"] = json!(r.schedule.label());
     v["next_fire"] = json!(
@@ -54,30 +59,35 @@ fn routine_row(r: &cua_spaces::routines::Routine) -> Value {
 /// counted).
 fn telemetry_action(tool: &str) -> Option<&'static str> {
     Some(match tool {
-        "persistent_agent_create" => "create",
-        "persistent_agent_remove" => "remove",
-        "persistent_agent_send" => "send",
+        "agent_add" => "create",
+        "agent_remove" => "remove",
+        "agent_send" => "send",
         "agent_pause" => "pause",
         "agent_resume" => "resume",
-        "routine_add" => "routine_add",
-        "routine_set_enabled" => "routine_toggle",
-        "routine_remove" => "routine_remove",
+        "agent_schedule_add" => "routine_add",
+        "agent_schedule_set_enabled" => "routine_toggle",
+        "agent_schedule_remove" => "routine_remove",
         "computer_access_grant" => "computer_allow",
         "computer_access_revoke" => "computer_revoke",
         _ => return None,
     })
 }
 
-pub(crate) async fn call(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+pub(crate) async fn call(
+    spaces: &Spaces,
+    caller: &Caller,
+    tool: &str,
+    a: Value,
+) -> Result<ToolOutcome> {
     let Some(action) = telemetry_action(tool) else {
-        return call_inner(spaces, tool, a).await;
+        return call_inner(spaces, caller, tool, a).await;
     };
     // Only the harness id of a new agent (a catalog id, else `other`);
     // never its name, Space, model, endpoint or prompt.
     let harness = (action == "create")
         .then(|| a.get("agent").and_then(Value::as_str).map(str::to_string))
         .flatten();
-    let r = call_inner(spaces, tool, a).await;
+    let r = call_inner(spaces, caller, tool, a).await;
     let ok = r.as_ref().is_ok_and(|o| !o.is_error);
     if let Some(e) = cua_telemetry::events::persistent_agent(
         action,
@@ -94,35 +104,58 @@ pub(crate) async fn call(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOu
     r
 }
 
-async fn call_inner(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+async fn call_inner(spaces: &Spaces, caller: &Caller, tool: &str, a: Value) -> Result<ToolOutcome> {
     let p = spaces.persistent();
+    // Who may call it at all (a relay caller by role); the agent's own
+    // rights are checked where the tool acts.
+    crate::thread::policy::gate(
+        caller,
+        p.role_of(caller),
+        tool,
+        crate::thread::policy::need(tool),
+    )?;
     match tool {
-        "persistent_agent_create" => {
+        "agent_add" => {
+            // An agent member of its Space (persistent_agent_create is an
+            // alias): the record's fields as before, plus the member's.
             let a: i::PersistentAgentCreate = crate::args(tool, a)?;
-            let r = p.create(AgentSpec {
-                name: a.name,
-                harness: a.agent,
-                space: a.space,
-                model: a.model,
-                base_url: a.base_url,
-                env_from_host: a.env_from_host,
-                env: a.env,
-            })?;
-            Ok(ToolOutcome::json(&row(&r)))
+            Ok(ToolOutcome::json(
+                &crate::thread_tools::agent_add(&p, caller, a).await?,
+            ))
         }
         "persistent_agent_list" => {
             let _: i::PersistentAgentList = crate::args(tool, a)?;
-            let rows: Vec<Value> = p.list()?.iter().map(row).collect();
+            // Agents connected from a computer are members, not persistent
+            // agents (agent_members lists them).
+            let rows: Vec<Value> = p
+                .list()?
+                .iter()
+                .filter(|r| !crate::persistent::identity::is_external(r))
+                .map(row)
+                .collect();
             Ok(ToolOutcome::json(&json!({"agents": rows})))
         }
-        "persistent_agent_remove" => {
-            let a: i::PersistentAgentName = crate::args(tool, a)?;
-            let r = p.remove(&a.name).await?;
-            Ok(ToolOutcome::json(&json!({"removed": row(&r)})))
+        "agent_remove" => {
+            let a: i::AgentRemove = crate::args(tool, a)?;
+            Ok(ToolOutcome::json(
+                &crate::thread_tools::agent_remove(&p, caller, a).await?,
+            ))
         }
-        "persistent_agent_send" => {
+        "agent_send" => {
             let a: i::PersistentAgentSend = crate::args(tool, a)?;
-            Ok(ToolOutcome::json(&p.send(&a.name, &a.text).await?))
+            if let Some(space) = a.space.as_deref() {
+                let id = spaces.resolve(space)?.to_string();
+                if p.get(&a.name)?.space != id {
+                    return Err(Error::invalid(format!(
+                        "{} is not a member of {id}",
+                        a.name
+                    )));
+                }
+            }
+            // Also recorded in the agent's Space thread, as the caller.
+            Ok(ToolOutcome::json(
+                &p.send_as(caller, &a.name, &a.text).await?,
+            ))
         }
         "persistent_agent_save" => {
             let a: i::PersistentAgentName = crate::args(tool, a)?;
@@ -130,15 +163,27 @@ async fn call_inner(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome
         }
         "agent_pause" => {
             let a: i::PersistentAgentName = crate::args(tool, a)?;
+            p.check_control(caller, &p.get(&a.name)?)?;
             Ok(ToolOutcome::json(&p.pause(&a.name).await?))
         }
         "agent_resume" => {
             let a: i::AgentResume = crate::args(tool, a)?;
+            // Gives control back when someone took it (a member that was
+            // only held keeps its Space and run as they are); else resumes.
+            let rec = p.get(&a.name)?;
+            p.check_control(caller, &rec)?;
+            if p.give_back_control(caller, &a.name)? && !rec.paused && a.prompt.is_none() {
+                return Ok(ToolOutcome::json(&crate::persistent::ResumeReport {
+                    space: rec.space,
+                    run_id: rec.run_id,
+                    ..Default::default()
+                }));
+            }
             Ok(ToolOutcome::json(
                 &p.resume(&a.name, a.prompt.as_deref()).await?,
             ))
         }
-        "routine_add" => {
+        "agent_schedule_add" => {
             let a: i::RoutineAdd = crate::args(tool, a)?;
             let schedule = parse_schedule(
                 a.every_minutes,
@@ -156,7 +201,7 @@ async fn call_inner(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome
                 .await?;
             Ok(ToolOutcome::json(&routine_row(&r)))
         }
-        "routine_list" => {
+        "agent_schedule_list" => {
             let a: i::RoutineList = crate::args(tool, a)?;
             let rows: Vec<Value> = p
                 .routines(a.agent.as_deref())
@@ -166,12 +211,12 @@ async fn call_inner(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome
                 .collect();
             Ok(ToolOutcome::json(&json!({"routines": rows})))
         }
-        "routine_remove" => {
+        "agent_schedule_remove" => {
             let a: i::RoutineId = crate::args(tool, a)?;
             p.routine_remove(&a.id).await?;
             Ok(ToolOutcome::json(&json!({"removed": a.id})))
         }
-        "routine_set_enabled" => {
+        "agent_schedule_set_enabled" => {
             let a: i::RoutineSetEnabled = crate::args(tool, a)?;
             Ok(ToolOutcome::json(&routine_row(
                 &p.routine_set_enabled(&a.id, a.enabled).await?,

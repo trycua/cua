@@ -29,6 +29,8 @@ on:
       - "libs/cua/crates/cua-image/schema/**"
       - "**/*.md"
       - ".github/workflows/ci-check-docs-links.yml"
+      - "scripts/ci/lychee-ignore-unreleased.sh"
+      - ".lycheeignore"
 
 env:
   # Cua programs and packages run here never send usage telemetry.
@@ -143,6 +145,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # A trycua/cua link to a path this repo has but trycua/cua does not yet
+      # (it lands there at release) would 404; skip exactly those.
+      - name: Skip links to paths not released to trycua/cua yet
+        run: scripts/ci/lychee-ignore-unreleased.sh >> .lycheeignore
 
       - name: Check external links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2

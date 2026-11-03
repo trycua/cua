@@ -3,17 +3,20 @@
 
 import type { UpdateState } from "@/bridge";
 
-/** What the in-app update indicator shows for the host's updater. It is quiet:
- * only a found, a downloading or a downloaded update shows anything. */
+/** What the sidebar's update button shows for the host's updater. It is
+ * quiet: idle and checking show nothing. */
 export type UpdateView =
   | { kind: "downloading"; label: string; percent: number | null }
-  | { kind: "ready"; label: string; detail: string };
+  | { kind: "ready"; label: string; detail: string }
+  | { kind: "installing"; label: string }
+  | { kind: "error"; label: string };
 
 const versionText = (version: string | null) => (version ? ` ${version}` : "");
 
-/** The indicator for `state`; null when there is nothing to show (idle,
- * checking, or a failed background step: the next check tries again). */
-export function updateView(state: UpdateState | undefined): UpdateView | null {
+/** The button for `state` (`installing`: "Restart to update" is running);
+ * null when there is nothing to show. A failed step shows a muted icon:
+ * the next check tries again on its own. */
+export function updateView(state: UpdateState | undefined, installing = false): UpdateView | null {
   if (!state) return null;
   switch (state.status) {
     case "available":
@@ -22,10 +25,18 @@ export function updateView(state: UpdateState | undefined): UpdateView | null {
       return { kind: "downloading", label: `Downloading update${versionText(state.version)}${percent === null ? "…" : ` (${percent}%)`}`, percent };
     }
     case "downloaded":
+      if (installing) return { kind: "installing", label: `Installing update${versionText(state.version)}…` };
       return { kind: "ready", label: "Update ready", detail: state.version ? `Cua Spaces ${state.version}` : "A new version of Cua Spaces" };
+    case "error":
+      return { kind: "error", label: `Couldn't update${state.message ? `: ${state.message.replace(/\.$/, "")}` : ""}. Cua Spaces tries again later.` };
     default:
       return null;
   }
+}
+
+/** The button's tooltip. */
+export function updateTooltip(view: UpdateView): string {
+  return view.kind === "ready" ? `${view.label}: restart to install` : view.label;
 }
 
 /** Work a restart would cut short: the runs still working. */

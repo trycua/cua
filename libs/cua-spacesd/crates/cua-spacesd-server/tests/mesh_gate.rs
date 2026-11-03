@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The machine side of the mesh is off unless allowed (`CUA_MESH`, or the
-//! app's channel with the Beta switch on): while it is off the machine
-//! never asks its relay about the mesh, and it starts asking once the
-//! policy allows it, without a restart.
+//! The machine side of the mesh is on unless `CUA_MESH=off`: while it is off
+//! the machine never asks its relay about the mesh, and it starts asking once
+//! the policy allows it, without a restart.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -54,6 +53,7 @@ fn config(relay: &str, dir: &std::path::Path, on: Arc<AtomicBool>) -> MeshHostCo
         dir: dir.join("mesh"),
         local: "127.0.0.1:9".parse().unwrap(),
         quic: None,
+        media_udp_port: cua_mesh::MEDIA_UDP_PORT,
         account: Arc::default(),
         env_token: Arc::new(|| None),
         name: "test".into(),
@@ -65,6 +65,8 @@ fn config(relay: &str, dir: &std::path::Path, on: Arc<AtomicBool>) -> MeshHostCo
             }
         }),
         recheck: Duration::from_millis(50),
+        gang_home: None,
+        gang_wait: cua_spacesd_server::mesh_host::GANG_WAIT,
     }
 }
 
@@ -98,7 +100,7 @@ async fn an_off_machine_never_asks_its_relay_about_the_mesh() {
         "an off machine made a node"
     );
 
-    // Allowed (CUA_MESH=prefer, or the Beta switch): the next recheck asks,
+    // Allowed (CUA_MESH no longer off): the next recheck asks,
     // with no restart. This relay has no mesh, so it asks once and waits.
     on.store(true, Ordering::SeqCst);
     assert!(wait_for(&count, 1).await, "an allowed machine never asked");
@@ -117,13 +119,9 @@ async fn an_off_machine_never_asks_its_relay_about_the_mesh() {
 }
 
 #[tokio::test]
-async fn the_default_policy_is_off() {
-    // No CUA_MESH and no app channel: the machine stays on the relay path.
-    let dir = tempfile::tempdir().unwrap();
+async fn the_default_policy_is_prefer() {
+    // No CUA_MESH: the machine joins the mesh when the relay has one.
     if std::env::var(cua_mesh::policy::ENV).is_err() {
-        assert_eq!(Policy::current(Some(dir.path())), Policy::Off);
-        std::fs::write(dir.path().join(cua_mesh::policy::CHANNEL_FILE), "beta").unwrap();
-        // The Beta switch is off in this release.
-        assert_eq!(Policy::current(Some(dir.path())), Policy::Off);
+        assert_eq!(Policy::current(), Policy::Prefer);
     }
 }

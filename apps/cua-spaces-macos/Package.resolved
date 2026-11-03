@@ -1,6 +1,24 @@
 {
-  "originHash" : "c5511707dd25b9c6c310b371466e6064a8fa5397690a090025d44b3817c90ec2",
+  "originHash" : "375f1a9bef85c2a7a5ea7bfa19f2ca07f3ebed0b16ce2e9963709809fb38cda5",
   "pins" : [
+    {
+      "identity" : "permissionflow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jaywcjlove/PermissionFlow",
+      "state" : {
+        "revision" : "65434c9ae04dba97cf52c1dffbe3e4e62b547c82",
+        "version" : "2.11.4"
+      }
+    },
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa",
+      "state" : {
+        "revision" : "2f64c77f77514acd01780d1aac86ae75b7fccd04",
+        "version" : "9.31.0"
+      }
+    },
     {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",

@@ -10,7 +10,7 @@ import { Switcher } from "./Switcher";
 
 const spaces: Space[] = [
   { id: "this-mac", name: "This machine", os: "macos", status: "local", detail: "Local", lastUsedAt: 2, scene: "blank" },
-  { id: "cloud:aurora", name: "Aurora", os: "linux", status: "running", detail: "Agent testing", lastUsedAt: 1, scene: "blank" },
+  { id: "direct:aurora", name: "Aurora", os: "linux", status: "running", detail: "Agent testing", lastUsedAt: 1, scene: "blank" },
 ];
 
 function fakeSpacesList(): SpacesListBridge {
@@ -31,7 +31,7 @@ function renderSwitcher() {
   render(
     <Switcher
       spaces={spaces}
-      selectedId="cloud:aurora"
+      selectedId="direct:aurora"
       focusIndex={0}
       notice={null}
       onFocus={() => {}}
@@ -50,7 +50,7 @@ describe("Switcher (the notch panel)", () => {
   it("a Space tile switches to that Space; nothing drills in inside the notch", () => {
     const { onSelect } = renderSwitcher();
     fireEvent.click(screen.getByRole("option", { name: /Aurora/ }));
-    expect(onSelect).toHaveBeenCalledWith("cloud:aurora");
+    expect(onSelect).toHaveBeenCalledWith("direct:aurora");
     expect(screen.queryByRole("button", { name: "Back to Spaces" })).toBeNull();
     expect(screen.getByRole("searchbox")).toBeInTheDocument();
   });
@@ -78,7 +78,7 @@ describe("Switcher (the notch panel)", () => {
   it("the list button opens the main window on the current Space", () => {
     const { spacesList } = renderSwitcher();
     fireEvent.click(screen.getByRole("button", { name: "List view" }));
-    expect(spacesList.open).toHaveBeenCalledWith(expect.objectContaining({ selectedId: "cloud:aurora" }));
+    expect(spacesList.open).toHaveBeenCalledWith(expect.objectContaining({ selectedId: "direct:aurora" }));
   });
 
   it("the gear opens Settings in the main window, not a panel in the notch", () => {

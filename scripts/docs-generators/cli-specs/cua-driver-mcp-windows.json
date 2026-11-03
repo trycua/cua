@@ -764,7 +764,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" activates the target and refuses with foreground_unavailable, sending nothing, when another window still covers the start point. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" activates the target and refuses with foreground_unavailable, sending nothing, when another window still covers the start point. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". `modifier` holds keys from press to release in delivery_mode:\"foreground\" and scope:\"desktop\" via SendInput. Background drags with modifiers return background_unavailable because posted messages and pen injection cannot carry live modifier-key state. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -1817,7 +1817,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1836,6 +1836,33 @@
       "enum": [
        "minimal",
        "verbose",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.float": {
+      "description": "Agent cursor float: a slow four-second sway, bob and slight tilt, at rest and while moving, that eases to zero on every arrival and holds there for the click, drag, drop, scroll or typing, so they land exactly upright on the hotspot. on (default). off: the cursor never floats and a resting overlay stops redrawing. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.halo": {
+      "description": "Agent cursor halo: a soft glow in the cursor's colour behind the arrow, so it is easier to follow on any background. on (default). off: no halo. Applies immediately to every cursor.",
+      "enum": [
+       "on",
+       "off",
+       "default"
+      ],
+      "type": "string"
+     },
+     "cursor.marks": {
+      "description": "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+      "enum": [
+       "on",
        "off",
        "default"
       ],
@@ -1918,12 +1945,33 @@
       ],
       "type": "string"
      },
+     "cursor.rotate": {
+      "description": "Agent cursor rotation while it moves: heading (default) points the tip along the path; lean tilts the arrow at most 30 degrees toward where it is going (on is the same as heading). Both return upright before arrival, so clicks, typing and scrolling stay upright. off: the arrow always stays upright. Applies immediately to every cursor.",
+      "enum": [
+       "off",
+       "lean",
+       "heading",
+       "on",
+       "default"
+      ],
+      "type": "string"
+     },
      "experimental_pip": {
       "description": "Enables PiP preview (applies next restart).",
       "type": "boolean"
      },
      "experimental_pip_geometry": {
       "description": "PiP window size + optional position.",
+      "type": "string"
+     },
+     "fast_path": {
+      "description": "Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start.",
+      "enum": [
+       "off",
+       "shadow",
+       "guard",
+       "on"
+      ],
       "type": "string"
      },
      "max_image_dimension": {

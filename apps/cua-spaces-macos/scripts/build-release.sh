@@ -15,18 +15,39 @@
 #                                          Updater.app, then the framework
 #   Contents/Frameworks/libcua_sdk.dylib   (no entitlements)
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
-#   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
+#   Contents/MacOS/cua-vz                  ai.cua.vz, libs/cua/vz/cua-vz.entitlements
+#                                          (the microVM monitor; arm64 builds)
+#   Contents/Resources/cua-microvm-init    the microVMs' Linux guest init (data)
+#   Contents/Helpers/cua-spacesd           com.trycua.cua-env-driver (the host service,
+#                                          which the app's own executable runs as its
+#                                          login item; never in Contents/MacOS, where
+#                                          it would register as the app)
+#   Contents/Helpers/cua-cursor-theme      cua-cursor-theme (Cua Driver's cursor themes)
+#   Contents/Helpers/cua-driver            cua-driver, its own entitlements kept (Cua
+#                                          Driver, pinned in cua-driver.release.json;
+#                                          the host service runs it as its child)
+#   Cua Spaces.app                        com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
-#   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
-#       [--arch universal|arm64|x86_64] [--sign IDENTITY] [--out DIR]
-#       [--feed-url URL] [--channel stable|beta] [--skip-cargo]
+#   scripts/build-release.sh --version 0.2.0[-suffix][+build] [--build-number N]
+#       [--bundle-version A.B.C.D[.E]] [--arch universal|arm64|x86_64]
+#       [--sign IDENTITY] [--out DIR] [--feed-url URL] [--skip-cargo]
 #
-# --channel beta builds the beta channel: it talks to Cua staging by default
-# (Info.plist CuaEnv=staging, and the bundled cua is compiled with
-# CUA_DEFAULT_ENV=staging), with a staging session and home
-# (~/.cua/envs/staging). CUA_ENV=prod at launch still selects production.
-# stable (the default) is production. With --skip-cargo, build the reused
-# binaries with CUA_DEFAULT_ENV=staging yourself.
+# Every release build, a beta included, is a production build: it talks to
+# Cua production unless CUA_ENV=staging is set at launch. The script keeps
+# the build default empty: no CuaEnv in Info.plist, and the Rust build runs
+# with CUA_DEFAULT_ENV empty (with --skip-cargo, the reused binaries must
+# have been built that way, as the release workflow's slices are). A beta
+# (--version X.Y.Z-suffix) is the same build with a prerelease version:
+# scripts/make-appcast.sh puts its item on Sparkle's beta channel, so only
+# apps set to "Update to: Beta" are offered it, and they keep their
+# production session and home. A build that defaults to staging is a local
+# build, not a release.
+#
+# A nightly (nightly-cua-spaces.yml, --version X.Y.Z-nightly.YYYYMMDD+sha)
+# is the same build again. It names its own CFBundleVersion with
+# --bundle-version (numbers and dots), which Sparkle compares: it sorts
+# above every release of the version it was built from and below the next
+# one, so a nightly app on Stable takes the next stable release.
 #
 # --feed-url sets the updater's appcast (SUFeedURL; default Support/Info.plist's,
 # trycua/cua's rolling cua-spaces-latest release). The release workflow passes
@@ -54,23 +75,23 @@ cua="$repo/libs/cua"
 
 version=""
 build_number=""
+bundle_override=""
 arch=universal
 identity="-"
 out="$here/.build/release-app"
 skip_cargo=0
 feed_url=""
-channel=stable
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="$2"; shift ;;
     --build-number) build_number="$2"; shift ;;
+    --bundle-version) bundle_override="$2"; shift ;;
     --arch) arch="$2"; shift ;;
     --sign) identity="$2"; shift ;;
     --out) out="$2"; shift ;;
     --skip-cargo) skip_cargo=1 ;;
     --feed-url) feed_url="$2"; shift ;;
-    --channel) channel="$2"; shift ;;
-    -h | --help) sed -n '5,45p' "$0"; exit 0 ;;
+    -h | --help) sed -n '5,52p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -79,8 +100,8 @@ done
 # CFBundleShortVersionString is X.Y.Z (numbers only); a prerelease suffix
 # (0.2.0-staging.4) goes in CuaVersion. CFBundleVersion is X.Y.Z plus the
 # build number when there is one (the release workflow's run number).
-if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "--version must look like 1.2.3 or 1.2.3-suffix" >&2
+if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+  echo "--version must look like 1.2.3, 1.2.3-suffix or 1.2.3-suffix+build" >&2
   exit 2
 fi
 short="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
@@ -89,16 +110,16 @@ if [ -n "$build_number" ]; then
   [[ "$build_number" =~ ^[0-9]+$ ]] || { echo "--build-number must be a number" >&2; exit 2; }
   bundle_version="$short.$build_number"
 fi
+if [ -n "$bundle_override" ]; then
+  [[ "$bundle_override" =~ ^[0-9]+(\.[0-9]+){2,4}$ ]] ||
+    { echo "--bundle-version must be 3 to 5 numbers joined by dots" >&2; exit 2; }
+  bundle_version="$bundle_override"
+fi
 
 case "$arch" in
   universal) archs="arm64 x86_64" ;;
   arm64 | x86_64) archs="$arch" ;;
   *) echo "--arch must be universal, arm64 or x86_64" >&2; exit 2 ;;
-esac
-case "$channel" in
-  stable) default_env="" ;;
-  beta) default_env=staging ;;
-  *) echo "--channel must be stable or beta" >&2; exit 2 ;;
 esac
 triple() { [ "$1" = arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin; }
 
@@ -106,8 +127,23 @@ target="${CARGO_TARGET_DIR:-$cua/target}"
 case "$target" in /*) ;; *) target="$cua/$target" ;; esac
 if [ "$skip_cargo" = 0 ]; then
   for a in $archs; do
-    (cd "$cua" && CUA_DEFAULT_ENV="$default_env" cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
+    (cd "$cua" && CUA_DEFAULT_ENV="" cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
   done
+fi
+
+# microVMs (Apple silicon): the monitor and the static aarch64 guest init.
+microvm_env=()
+if [[ " $archs " == *" arm64 "* ]]; then
+  if [ "$skip_cargo" = 0 ]; then
+    (cd "$cua" && RUSTFLAGS="-C target-feature=+crt-static" \
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+      cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl)
+  fi
+  init_bin="$target/aarch64-unknown-linux-musl/release/cua-microvm-init"
+  [ -f "$init_bin" ] || { echo "missing $init_bin (build it, or drop --skip-cargo)" >&2; exit 1; }
+  file "$init_bin" | grep -q "statically linked" || { echo "$init_bin is not static" >&2; exit 1; }
+  "$cua/vz/build.sh" "$out/.vz" >/dev/null
+  microvm_env=(CUA_VZ_BIN="$out/.vz/cua-vz" CUA_MICROVM_INIT_BIN="$init_bin")
 fi
 
 # One library and one CLI with every architecture, where stage-library.sh
@@ -126,7 +162,7 @@ for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
 done
 CARGO_TARGET_DIR="$joined" "$repo/libs/spaces-app-swift/scripts/stage-library.sh"
 
-CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
+env ${microvm_env[@]+"${microvm_env[@]}"} CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
   "$here/scripts/build-app.sh" release "$out" >/dev/null
 app="$out/Cua Spaces.app"
 [ -x "$app/Contents/MacOS/cua" ] || { echo "$app has no bundled cua CLI" >&2; exit 1; }
@@ -136,13 +172,24 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$plist"
 /usr/libexec/PlistBuddy -c "Delete :CuaVersion" "$plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CuaVersion string $version" "$plist"
+# A release never defaults to staging.
 /usr/libexec/PlistBuddy -c "Delete :CuaEnv" "$plist" 2>/dev/null || true
-if [ -n "$default_env" ]; then
-  /usr/libexec/PlistBuddy -c "Add :CuaEnv string $default_env" "$plist"
-fi
 if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
+fi
+[ -x "$app/Contents/Helpers/cua-spacesd" ] || { echo "$app has no Contents/Helpers/cua-spacesd" >&2; exit 1; }
+for f in cua-driver cua-cursor-theme; do
+  [ -x "$app/Contents/Helpers/$f" ] || { echo "$app has no Contents/Helpers/$f" >&2; exit 1; }
+done
+[ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
+  { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
+# The symbols build-app.sh took out of the binaries, for symbolicating crash
+# reports (the release workflow keeps it as an artifact; not shipped).
+if [ -d "$out/dSYMs" ]; then
+  rm -f "$out/cua-spaces-$version-dSYMs.zip"
+  (cd "$out" && ditto -c -k --keepParent dSYMs "cua-spaces-$version-dSYMs.zip")
+  rm -rf "$out/dSYMs"
 fi
 for key in SUFeedURL SUPublicEDKey; do
   /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1 || { echo "Info.plist has no $key" >&2; exit 1; }
@@ -175,6 +222,22 @@ done
 "${sign[@]}" "$app/Contents/Frameworks/libcua_sdk.dylib"
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
+vz_parts=()
+if [ -e "$app/Contents/MacOS/cua-vz" ]; then
+  # Virtualization.framework refuses a monitor without its entitlement.
+  "${sign[@]}" --identifier ai.cua.vz \
+    --entitlements "$cua/vz/cua-vz.entitlements" "$app/Contents/MacOS/cua-vz"
+  vz_parts=("$app/Contents/MacOS/cua-vz")
+fi
+# The host service. The app's own executable runs it, so its permissions
+# are the app's (designated requirement: identifier and team, checked
+# below), and they stay granted across updates.
+"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/Helpers/cua-spacesd"
+# Cua Driver, which the host service runs as its child. Same identifiers as
+# the standalone release, and the driver keeps its entitlements.
+driver_parts=("$app/Contents/Helpers/cua-cursor-theme" "$app/Contents/Helpers/cua-driver")
+"${sign[@]}" --identifier cua-cursor-theme "$app/Contents/Helpers/cua-cursor-theme"
+"${sign[@]}" --identifier cua-driver --preserve-metadata=entitlements "$app/Contents/Helpers/cua-driver"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -185,7 +248,8 @@ fi
 [ "$identity" = "-" ] && rm -f "$app_entitlements"
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
-for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}"; do
+for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
+  "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}" ${vz_parts[@]+"${vz_parts[@]}"}; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -228,7 +292,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done
@@ -239,6 +303,8 @@ for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Cont
     grep -vE '^(/usr/lib/|/System/Library/|@rpath/libcua_sdk\.dylib$|@rpath/Sparkle\.framework/Versions/B/Sparkle$)' || true)"
   [ -z "$bad" ] || { echo "$f links outside the bundle and the OS: $bad" >&2; exit 1; }
 done
+# The host service is outside Contents/MacOS (see build-app.sh).
+"$here/scripts/check-bundle-layout.sh" "$app" >&2
 # It launches: every library resolves inside the bundle and passes library
 # validation, and the app starts and exits (--check-launch-only).
 "$here/scripts/check-launch.sh" "$app" >&2

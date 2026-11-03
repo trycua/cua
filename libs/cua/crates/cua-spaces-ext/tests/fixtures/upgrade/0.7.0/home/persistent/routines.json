@@ -1,0 +1,41 @@
+[
+  {
+    "id": "FF1A5555-8883-46C8-90E1-943E960D2136",
+    "botID": "ada",
+    "title": "Inbox sweep",
+    "prompt": "Triage new issues",
+    "schedule": {
+      "kind": "everyMinutes",
+      "minutes": 60
+    },
+    "isEnabled": true,
+    "createdAt": "2026-10-24T16:25:58Z"
+  },
+  {
+    "id": "7EDDD0EB-5408-49F6-8890-F89AA12532A1",
+    "botID": "ada",
+    "title": "Morning",
+    "prompt": "Plan the day",
+    "schedule": {
+      "kind": "dailyAt",
+      "hour": 8,
+      "minute": 0
+    },
+    "isEnabled": true,
+    "createdAt": "2026-10-24T16:25:58Z"
+  },
+  {
+    "id": "B99ED264-C4E9-41F4-863E-296F3D12EDE0",
+    "botID": "scout",
+    "title": "Weekly report",
+    "prompt": "Summarise the week",
+    "schedule": {
+      "kind": "weeklyOn",
+      "weekday": 2,
+      "hour": 9,
+      "minute": 0
+    },
+    "isEnabled": false,
+    "createdAt": "2026-10-24T16:25:58Z"
+  }
+]

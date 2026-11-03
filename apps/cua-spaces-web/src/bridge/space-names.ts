@@ -3,7 +3,7 @@
 
 /** "macos-1", "linux-2": the first name of that system's not taken yet
  * (Space names are DNS labels). */
-export function extraName(os: "macos" | "linux", taken: { name: string }[]): string {
+export function extraName(os: "macos" | "linux" | "omarchy", taken: { name: string }[]): string {
   const names = new Set(taken.map((t) => t.name.toLowerCase()));
   let n = 1;
   while (names.has(`${os}-${n}`)) n++;
@@ -12,6 +12,7 @@ export function extraName(os: "macos" | "linux", taken: { name: string }[]): str
 
 /** How the card says a name: "macos-1" is "macOS 1". */
 export function spokenName(name: string): string {
-  const m = /^(macos|linux)-(\d+)$/.exec(name);
-  return m ? `${m[1] === "macos" ? "macOS" : "Linux"} ${m[2]}` : name;
+  const m = /^(macos|linux|omarchy)-(\d+)$/.exec(name);
+  const spoken: Record<string, string> = { macos: "macOS", linux: "Linux", omarchy: "Omarchy" };
+  return m ? `${spoken[m[1]!]} ${m[2]}` : name;
 }

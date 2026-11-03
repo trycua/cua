@@ -90,6 +90,15 @@ to a relay change. Every other area lists every workflow whose own `paths:` reac
 or add a path to one, add it to the matching areas in `.github/ci-areas.json`. Changing the map or the gate
 is a `.github/**` change, so it waits for every workflow, and it takes effect only once it is on `main`.
 
+## Flaky checks
+
+Known flakes are listed in [`.github/flaky/quarantine.json`](../../.github/flaky/quarantine.json) and
+[`.github/workflows/FLAKY.md`](../../.github/workflows/FLAKY.md). When every failed job of a workflow run
+matches a `job` entry and its log contains the entry's `signature`, the gate reruns the failed jobs once. If
+they pass, the run passes. If they fail again the same way, the gate reports a quarantined flake and does not
+fail. The gate reads the list from the base commit. Every entry has an owner, an issue and an expiry date.
+The nightly **Flaky job scan** files a `flaky` issue for each job that failed and then passed on a rerun.
+
 ## Urgent-fix lane
 
 Label a pull request `urgent` for a production fix that cannot wait for the full suite:

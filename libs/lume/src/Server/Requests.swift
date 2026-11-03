@@ -23,6 +23,10 @@ struct RunVMRequest: Codable {
     /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
     /// always starting a VNC server.
     let vnc: String?
+    /// Guest ports to publish on host loopback ports over vsock (the VM
+    /// gets a virtio socket device; the guest needs Cua's vsock agent).
+    /// `get` reports the host ports under `forwards` once the agent answers.
+    var forwards: [UInt16]? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String

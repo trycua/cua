@@ -41,6 +41,10 @@ let
     version = (pkgs.lib.importTOML "${rustSrc}/Cargo.toml").workspace.package.version;
     inherit src;
     strictDeps = true;
+    # Test binaries here are never debugged; skipping debuginfo cuts compile
+    # and link time. Dependencies and workspace share the setting so the
+    # dependency artifacts stay reusable.
+    CARGO_PROFILE_DEV_DEBUG = "0";
     cargoVendorDir = craneLib.vendorCargoDeps { cargoLock = "${rustSrc}/Cargo.lock"; };
     nativeBuildInputs = with pkgs; [
       pkg-config

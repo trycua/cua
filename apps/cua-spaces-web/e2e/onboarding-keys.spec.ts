@@ -20,8 +20,8 @@ for (const [width, height] of [[720, 560], [980, 660], [1200, 780]] as const) {
     await expect(keys).toHaveCount(2);
     for (const key of await keys.all()) {
       await expect(key).toBeVisible();
-      // Laid out is not loaded: the image can still be fetching when it turns visible, so wait
-      // for its pixels. A broken image never gets a width, so this still fails on it.
+      // Visible is not loaded: the image can still be fetching when it lays out, so wait for its
+      // pixels. A broken image fails the visible check above and never gets a width here.
       await expect.poll(() => key.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
     }
     // The keys sit beside the words, never over them.

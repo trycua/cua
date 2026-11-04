@@ -1013,7 +1013,11 @@ impl EisState {
                 // keycode + modifiers and emit press/release. A string with any
                 // character the keymap cannot produce is refused before the first
                 // key, so the field never receives a silently shortened string.
-                if let Some(device) = self.device_with_interface("ei_text") {
+                let text_device = self.device_with_interface("ei_text").filter(|_| {
+                    self.device_with_interface("ei_keyboard").is_none()
+                        || prefers_ei_text(text, &self.keymap_chars, self.keymap_level3)
+                });
+                if let Some(device) = text_device {
                     let serial = self.last_serial;
                     let text_iface =
                         require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
@@ -1026,6 +1030,10 @@ impl EisState {
                     if let Some((kbd, kb)) = keyboard {
                         use reis::ei::keyboard::KeyState;
                         const KEY_ENTER: u32 = 28;
+                        // Text and keys reach an app by separate paths, so each
+                        // part gets time to land before the next one is sent.
+                        const PART_SETTLE: std::time::Duration =
+                            std::time::Duration::from_millis(50);
                         for part in text_parts(text) {
                             match part {
                                 TextPart::Text(line) => {
@@ -1039,6 +1047,10 @@ impl EisState {
                                     kbd.frame(serial, event_time_us());
                                 }
                             }
+                            if let Some(context) = &self.context {
+                                let _ = context.flush();
+                            }
+                            std::thread::sleep(PART_SETTLE);
                         }
                     } else {
                         text_iface.utf8(text);
@@ -1390,6 +1402,13 @@ fn plan_keycode_typing(
          Use set_value on the element, or clipboard_write and then hotkey ctrl+v."
     );
     Ok(plan)
+}
+
+/// Whether `text` goes through `ei_text` rather than as key presses. `ei_text` is
+/// layout independent, but it reaches apps by a different path from key presses
+/// and the two can swap, so text with a line break goes as keys when it can.
+fn prefers_ei_text(text: &str, table: &HashMap<char, TypedKey>, level3: Option<u32>) -> bool {
+    !text.contains(['\n', '\r']) || plan_keycode_typing(text, table, level3).is_err()
 }
 
 /// A piece of text for the `ei_text` route.
@@ -1848,6 +1867,15 @@ mod keycode_typing_tests {
         let plan = plan_keycode_typing("a\r\nn", &t, level3).expect("typable");
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].code, 28);
+    }
+
+    #[test]
+    fn a_line_break_goes_as_keys_when_the_layout_can_type_it_all() {
+        let (t, _, level3) = table();
+        assert!(prefers_ei_text("añ", &t, level3));
+        assert!(!prefers_ei_text("a\nñ", &t, level3));
+        assert!(!prefers_ei_text("a\r\nñ", &t, level3));
+        assert!(prefers_ei_text("日\nñ", &t, level3));
     }
 
     #[test]

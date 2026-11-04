@@ -250,7 +250,10 @@ jobs:
           -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
-          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli --test-threads 4
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
+          -p cua-auth -p cua-bindgen -p cua-connections -p cua-crash -p cua-create-failure -p cua-disk -p cua-home
+          -p cua-hotspot -p cua-machine-seal -p cua-mock-llm -p cua-push -p cua-repo-cache -p cua-share
+          -p cua-snapshot-sync -p cua-spaces-contract -p cua-spaces-transcript --test-threads 4
         env:
           # Teleport send acts only on fake hosts in tests; anything that
           # reaches the real host fails closed.

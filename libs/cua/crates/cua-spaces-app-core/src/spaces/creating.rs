@@ -938,8 +938,11 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
         return Some(FailureCause::LocalNetwork);
     }
     // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
-    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
+    // of virtual machines exceeds the limit"), or Lume's own refusal ("VM
+    // start rejected: host limit of 2 running macOS guests reached"):
+    // Apple's two macOS VMs per Mac.
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || ((l.contains("virtual machine") || l.contains("vms"))
             && l.contains("limit")
             && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
@@ -1124,7 +1127,7 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
             ),
             "cua runtime doctor",
         ),
-        "runtime_missing" | "runtime_permission" => copy(
+        "runtime_missing" | "vm_runtime_missing" | "runtime_permission" => copy(
             format!(
                 "It failed twice for the same reason: Cua can't use a container engine or VM \
                  runtime{on}. Run `cua runtime doctor` in Terminal to see what to install or \
@@ -2180,6 +2183,7 @@ mod tests {
             "insufficient_disk",
             "runtime_not_running",
             "runtime_missing",
+            "vm_runtime_missing",
             "runtime_permission",
             "virtualization_unavailable",
             "vm_limit",
@@ -3192,9 +3196,11 @@ mod tests {
                 Some(FailureCause::RuntimeMissing),
                 "{raw}"
             );
+            // QEMU is a VM runtime: its own word in telemetry, while the
+            // person still reads the same "runtime missing" message.
             assert_eq!(
                 failure_variant(raw, Some("pulling"), false, "Other"),
-                "runtime_missing"
+                "vm_runtime_missing"
             );
         }
         // Local Network privacy on the Mac that runs the VM.
@@ -3225,6 +3231,7 @@ mod tests {
             "lume API 500: The number of virtual machines exceeds the limit.",
             "Error Domain=VZErrorDomain Code=6 virtualMachineLimitExceeded",
             "booting: the maximum number of VMs has been reached (limit 2)",
+            "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
         ] {
             assert!(
                 failure_text(raw, Some("booting"), Some(SpaceProvider::Local), false)

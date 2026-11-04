@@ -1135,9 +1135,10 @@ pub fn failed_step(
         "vm_never_started" => Some("start_vm"),
         "vm_config_invalid" => Some("configure_vm"),
         _ => match kind {
-            "runtime_missing" | "runtime_not_running" | "runtime_permission" => {
-                Some("start_runtime")
-            }
+            "runtime_missing"
+            | "vm_runtime_missing"
+            | "runtime_not_running"
+            | "runtime_permission" => Some("start_runtime"),
             "virtualization_unavailable" | "host_capacity" => Some("check_host"),
             // The checks before anything starts refuse these in `preparing`.
             "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),

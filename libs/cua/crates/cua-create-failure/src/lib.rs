@@ -141,6 +141,7 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         return Some(local_network::DENIED);
     }
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || (has(&l, &["virtual machine", "vms"])
             && l.contains("limit")
             && has(&l, &["exceed", "maximum", "reached"]))
@@ -203,7 +204,19 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         if (l.contains(" is not available: ") && !l.contains("network route"))
             || (l.contains("qemu") && l.contains("not found on path"))
         {
-            return Some("runtime_missing");
+            // What is missing is the text before " is not available: "
+            // (behind any `local runtime: [local] `): QEMU, Lume, UEFI
+            // firmware or Homebrew is a VM runtime; anything else (the
+            // container engine, gVisor) is the container runtime.
+            let what = l
+                .split_once(" is not available: ")
+                .map_or(l.as_str(), |(w, _)| w);
+            let vm = has(what, &["qemu", "lume", "uefi firmware", "homebrew"]);
+            return Some(if vm {
+                "vm_runtime_missing"
+            } else {
+                "runtime_missing"
+            });
         }
     }
     if let Some(kind) = image_pull(&l, phase) {
@@ -290,6 +303,19 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     let timed_out = has(&l, &["timed out", "timeout", "not ready after", "deadline"]);
     if timed_out {
         return Some(timeout_in(phase));
+    }
+    // The rest of a local `runtime` failure, by cause (the same words as
+    // `cua_vmm::error::failure_kind`, which names them for the app).
+    if local {
+        if has(&l, &["exited right after start", "' exited (code "]) {
+            return Some("container_exited");
+        }
+        if has(&l, &["lume api ", "qmp: ", "could not launch "]) {
+            return Some("vm_error");
+        }
+        if has(&l, &["container engine: ", "did not answer ping"]) {
+            return Some("engine_error");
+        }
     }
     None
 }
@@ -408,6 +434,10 @@ pub const TEXT_KINDS: &[&str] = &[
     "runtime_permission",
     "runtime_not_running",
     "runtime_missing",
+    "vm_runtime_missing",
+    "container_exited",
+    "vm_error",
+    "engine_error",
     "unauthenticated",
     "out_of_memory",
     "port_in_use",
@@ -424,6 +454,73 @@ mod tests {
 
     fn kind<'a>(message: &'a str, phase: &'a str, variant: &'a str) -> &'a str {
         create_failure_kind(message, phase, variant, true)
+    }
+
+    /// The rest of a local `runtime` failure is named by cause, and the
+    /// words agree with `cua_vmm::error::failure_kind` (the app's own).
+    #[test]
+    fn the_rest_of_a_local_runtime_failure_is_named_by_cause() {
+        for (message, want) in [
+            (
+                "local runtime: [local] QEMU is not available: download QEMU for Windows",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] lume serve at http://127.0.0.1:7777 is not available: start it",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] UEFI firmware for x86_64 is not available: install edk2",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] a container engine is not available: no socket",
+                "runtime_missing",
+            ),
+            (
+                "local runtime: [local] gVisor (runsc) is not available: install it",
+                "runtime_missing",
+            ),
+            (
+                "local runtime: [local] container 'a' exited right after start (status Stopped)",
+                "container_exited",
+            ),
+            (
+                "local runtime: [local] container 'a' exited (code 1) before Tcp(8000) passed",
+                "container_exited",
+            ),
+            ("local runtime: [local] lume API 500: boom", "vm_error"),
+            ("local runtime: [local] qmp: closed", "vm_error"),
+            (
+                "local runtime: [local] container engine: create: conflict",
+                "engine_error",
+            ),
+        ] {
+            assert_eq!(
+                create_failure_kind(message, "", "Runtime", true),
+                want,
+                "{message}"
+            );
+            assert!(
+                cua_telemetry::schema::ERROR_KINDS.contains(&want),
+                "{want} missing from ERROR_KINDS"
+            );
+        }
+        // An earlier, more specific cause still wins over these.
+        assert_eq!(
+            create_failure_kind(
+                "local runtime: [local] container engine: pull ghcr.io/x/y:1: manifest unknown",
+                "pulling",
+                "Runtime",
+                true
+            ),
+            "image_pull_not_found"
+        );
+        assert_eq!(
+            create_failure_kind("lume API 500: boom", "", "Runtime", false),
+            "Runtime",
+            "a cloud create has no local runtime to name"
+        );
     }
 
     #[test]
@@ -624,6 +721,14 @@ mod tests {
             "vm_limit"
         );
         assert_eq!(
+            kind(
+                "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
+                "booting",
+                ""
+            ),
+            "vm_limit"
+        );
+        assert_eq!(
             kind("sandbox quota reached for this org", "", "Fleet"),
             "quota_exceeded"
         );
@@ -692,7 +797,7 @@ mod tests {
                 "pulling",
                 ""
             ),
-            "runtime_missing"
+            "vm_runtime_missing"
         );
         assert_eq!(
             kind(

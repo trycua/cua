@@ -329,6 +329,26 @@ pub(crate) mod tests {
         }
     }
 
+    /// `sh` keeps the name the kernel gives it at exec, so a copy named
+    /// `gnome-shell` reports that `comm`. A multi-call `sleep` (Nix coreutils)
+    /// renames itself after its applet and cannot stand in for a compositor.
+    fn blocking_program() -> PathBuf {
+        std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|dir| dir.join("sh"))
+            .find(|candidate| candidate.is_file())
+            .expect("sh on PATH")
+    }
+
+    /// The child blocks until its stdin closes, which happens when the test
+    /// kills it or exits.
+    fn block_on_stdin(command: &mut std::process::Command) {
+        command
+            .args(["-c", "read _"])
+            .stdin(std::process::Stdio::piped());
+    }
+
     fn wait_for_exec(pid: u32) {
         let ours = std::fs::read_link("/proc/self/exe").expect("our image");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -354,22 +374,16 @@ pub(crate) mod tests {
         super::RunningExecutable,
     )> {
         use std::os::unix::process::CommandExt;
-        let sleep = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|dir| dir.join("sleep"))
-            .find(|candidate| candidate.is_file())
-            .expect("sleep on PATH");
+        let shell = blocking_program();
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join(name);
-        std::fs::copy(&sleep, &path).expect("copy sleep");
+        std::fs::copy(&shell, &path).expect("copy the shell");
         std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .expect("chmod copy");
         let mut attempts = 0;
         let child = loop {
             let mut command = std::process::Command::new(&path);
-            command.arg0("sleep");
-            command.arg("30").stdin(std::process::Stdio::null());
+            block_on_stdin(&mut command);
             if own_mount_namespace {
                 unsafe {
                     command.pre_exec(|| {
@@ -443,15 +457,10 @@ pub(crate) mod tests {
         use std::os::fd::AsRawFd;
         use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::process::CommandExt;
-        let sleep = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|dir| dir.join("sleep"))
-            .find(|candidate| candidate.is_file())
-            .expect("sleep on PATH");
+        let shell = blocking_program();
         let dir = tempfile::tempdir().expect("temp dir");
         let program = dir.path().join("program");
-        std::fs::copy(&sleep, &program).expect("copy sleep");
+        std::fs::copy(&shell, &program).expect("copy the shell");
         std::fs::set_permissions(
             &program,
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
@@ -464,8 +473,7 @@ pub(crate) mod tests {
         let mut attempts = 0;
         let child = Reaped(loop {
             let mut command = std::process::Command::new(&alias);
-            command.arg0("sleep");
-            command.arg("30").stdin(std::process::Stdio::null());
+            block_on_stdin(&mut command);
             unsafe {
                 command.pre_exec(move || {
                     if libc::fcntl(fd, libc::F_SETFD, 0) != 0
@@ -523,17 +531,12 @@ pub(crate) mod tests {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         use std::os::unix::process::CommandExt;
-        let sleep = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|dir| dir.join("sleep"))
-            .find(|candidate| candidate.is_file())
-            .expect("sleep on PATH");
+        let shell = blocking_program();
         let dir = tempfile::tempdir().expect("temp dir");
         let trusted = dir.path().join("gnome-shell");
         let impostor = dir.path().join("impostor");
         for path in [&trusted, &impostor] {
-            std::fs::copy(&sleep, path).expect("copy sleep");
+            std::fs::copy(&shell, path).expect("copy the shell");
             std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
                 .expect("chmod copy");
         }
@@ -543,8 +546,7 @@ pub(crate) mod tests {
         let child = Reaped(loop {
             let (target, source) = (target.clone(), source.clone());
             let mut command = std::process::Command::new(&trusted);
-            command.arg0("sleep");
-            command.arg("30").stdin(std::process::Stdio::null());
+            block_on_stdin(&mut command);
             unsafe {
                 command.pre_exec(move || {
                     let root = b"/\0";
@@ -598,17 +600,12 @@ pub(crate) mod tests {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         use std::os::unix::process::CommandExt;
-        let sleep = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|dir| dir.join("sleep"))
-            .find(|candidate| candidate.is_file())
-            .expect("sleep on PATH");
+        let shell = blocking_program();
         let dir = tempfile::tempdir().expect("temp dir");
         let named = dir.path().join("gnome-shell");
         let program = dir.path().join("program");
         for path in [&named, &program] {
-            std::fs::copy(&sleep, path).expect("copy sleep");
+            std::fs::copy(&shell, path).expect("copy the shell");
             std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
                 .expect("chmod copy");
         }
@@ -631,8 +628,7 @@ pub(crate) mod tests {
             CString::new(program.as_os_str().as_bytes()).unwrap(),
         );
         let mut helper = std::process::Command::new(&named);
-        helper.arg0("sleep");
-        helper.arg("30").stdin(std::process::Stdio::null());
+        block_on_stdin(&mut helper);
         unsafe {
             helper.pre_exec(move || {
                 let root = b"/\0";
@@ -667,8 +663,7 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink(format!("/proc/{}/exe", helper.0.id()), &alias)
             .expect("symlink");
         let mut runner = std::process::Command::new(&alias);
-        runner.arg0("sleep");
-        runner.arg("30").stdin(std::process::Stdio::null());
+        block_on_stdin(&mut runner);
         let runner = Reaped(spawn(&mut runner).expect("run through the helper's mount"));
         let pid = runner.0.id();
         wait_for_exec(pid);

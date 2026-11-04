@@ -28,6 +28,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Check dependency licence direction
@@ -46,7 +50,7 @@ jobs:
       - name: Check licence direction
         id: check
         # --include-dev: an FSL-1.1-MIT package must not be even a dev
-        # dependency of an MIT one (LICENSING.md).
+        # dependency of an MIT one (legal/LICENSING.md).
         run: python3 scripts/check-license-direction.py --include-dev
 
       - name: Flag violations

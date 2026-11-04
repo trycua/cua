@@ -19,7 +19,8 @@
 // - The defaults domain com.trycua.spaces.macos: the window frame
 //   ("NSWindow Frame CuaSpacesWebUI") becomes `windowBounds`; Sparkle's
 //   SUEnableAutomaticChecks / SUAutomaticallyUpdate are recorded in the
-//   marker (the cutover reads them) but turn nothing on. The rest is the
+//   marker, and the updater follows them until the user chooses in this app
+//   (update-prefs.ts: checks stay on unless they were off). The rest is the
 //   Swift window's colour cache (WebUIBackground*), its native video switch
 //   (WebUINativeVideo) and Sparkle's bookkeeping, none of which applies here.
 // - ~/.cua is shared by both apps and needs nothing.

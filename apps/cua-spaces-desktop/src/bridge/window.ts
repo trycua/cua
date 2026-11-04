@@ -2,12 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // The window the page is in (`window.*`): its background as the page's
-// appearance changes, and its drag regions. Chromium reads where the window
-// drags from the page's CSS (`app-region`), so the Electron page never sends
-// them (the webkit adapter skips it here); the rects are checked and the
-// CSS stays in charge.
+// appearance changes, its drag regions, and where its Space tiles are.
+// Chromium reads where the window drags from the page's CSS (`app-region`),
+// so the Electron page never sends them (the webkit adapter skips it here);
+// the rects are checked and the CSS stays in charge. The tiles are targets
+// for a real window dragged onto one (macOS; window-drop.ts).
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
+import { dropTargetsOf } from "../window-drop";
 
 const APPEARANCES = ["system", "light", "dark"] as const;
 
@@ -26,6 +28,12 @@ export function windowMethods({ ui }: BridgeContext): Handlers {
     },
     "window.setDragRegions": (args) => {
       if (!Array.isArray(args.rects) || !args.rects.every(isRect)) throw Failure.badArgs("rects: [{x,y,width,height}]");
+      return null;
+    },
+    "window.setDropTargets": (args, caller) => {
+      const targets = dropTargetsOf(args.targets);
+      if (!targets) throw Failure.badArgs("targets: [{spaceId,x,y,width,height}]");
+      ui.setDropTargets?.(caller.window, targets);
       return null;
     },
   };

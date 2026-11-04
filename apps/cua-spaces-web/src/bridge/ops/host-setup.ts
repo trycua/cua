@@ -11,13 +11,15 @@
  * | Operation | Tauri | SwiftUI |
  * |---|---|---|
  * | `host.setUp {request}` | `host_setup` | `HostModel.submit` |
+ * | `host.joinWithCode {code, relay?}` | none | runs the bundled `cua host setup --pair` |
  * | `host.action {action}` | `host_stop_sharing`, `host_start_sharing`, `host_remove`, `host_configure` | `HostModel.run(action)` (`sign-in`: the inline sign-in, then sharing follows it) |
+ * | `host.limits {maxSpaces?, maxMemoryGb?, maxDiskGb?, maxRunMinutes?}` | none | `HostModel.setLimits` |
  * | `host.openSettings {url}` | `host_open_settings` | `PermissionRows.open` |
  */
 
 import { HostError } from "../adapter";
 import type { OpCoverage } from "../coverage";
-import type { HostActionId, HostStatus } from "../contracts/host";
+import type { HostActionId, HostLimits, HostStatus } from "../contracts/host";
 
 /** What host setup receives (`host::HostSetupRequest`). */
 export interface HostSetupRequest {
@@ -63,8 +65,16 @@ export type HostRunAction = Exclude<HostActionId, "set-up">;
 export interface HostSetupOps {
   /** Sets this machine up for access; answers its status after. */
   "host.setUp": { args: { request: HostSetupRequest }; result: HostStatus };
+  /**
+   * Joins the account that made a one-time pairing code (or add-machine
+   * link) by running the bundled `cua host setup --pair`; answers the status
+   * after. `relay` names a relay other than the production one.
+   */
+  "host.joinWithCode": { args: { code: string; relay?: string | null }; result: HostStatus };
   /** Runs a This machine button; answers the status after. */
   "host.action": { args: { action: HostRunAction }; result: HostStatus };
+  /** Changes the limits on the Spaces other machines create here (a missing field keeps its value, 0 is no limit); answers the status after. */
+  "host.limits": { args: HostLimits; result: HostStatus };
   /** Opens a System Settings privacy pane (`x-apple.systempreferences:` only). */
   "host.openSettings": { args: { url: string }; result: null };
 }
@@ -113,9 +123,19 @@ export function tauriHostSetupOps(invoke: Invoke) {
 
 export const HOST_SETUP_COVERAGE = {
   "host.setUp": { webkit: { methods: ["host.setUp"] }, tauri: ["host_setup"] },
+  "host.joinWithCode": {
+    webkit: { methods: ["host.joinWithCode"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app has no bundled `cua` to run, and its Windows and Linux builds are not shipped" },
+  },
   "host.action": {
     webkit: { methods: ["host.action"] },
     tauri: ["host_stop_sharing", "host_start_sharing", "host_remove", "host_status", "host_configure"],
+  },
+  "host.limits": {
+    webkit: { methods: ["host.limits"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app's host settings carry the two switches only, and its Windows and Linux builds are not shipped" },
   },
   "host.openSettings": {
     webkit: { methods: ["host.openSettings"] },

@@ -140,6 +140,8 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
+    /// True when nodes past `max_depth` were omitted, independently of budget `truncated`.
+    pub depth_truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
@@ -201,6 +203,21 @@ pub fn walk_tree_bounded(
     )
 }
 
+pub(crate) fn walk_native_chrome_bounded(
+    pid: i32,
+    window_id: u32,
+    max_elements: usize,
+) -> TreeWalkResult {
+    walk_tree_with_web_content(
+        pid,
+        Some(window_id),
+        None,
+        DEFAULT_MAX_DEPTH,
+        WalkBudget::nodes_only(max_elements),
+        false,
+    )
+}
+
 /// [`walk_tree_bounded`] under a caller's [`WalkBudget`]: the walk also stops
 /// when the budget's `timeout_ms` runs out, returning the partial tree. Each
 /// AX call is bounded by the per-element messaging timeout, so the walk
@@ -210,11 +227,23 @@ pub fn walk_tree_budgeted(
     window_id: Option<u32>,
     query: Option<&str>,
     max_depth: usize,
+    budget: WalkBudget,
+) -> TreeWalkResult {
+    walk_tree_with_web_content(pid, window_id, query, max_depth, budget, true)
+}
+
+fn walk_tree_with_web_content(
+    pid: i32,
+    window_id: Option<u32>,
+    query: Option<&str>,
+    max_depth: usize,
     mut budget: WalkBudget,
+    include_web_content: bool,
 ) -> TreeWalkResult {
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
+    let mut depth_truncated = false;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -224,6 +253,7 @@ pub fn walk_tree_budgeted(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                depth_truncated: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
@@ -296,7 +326,9 @@ pub fn walk_tree_budgeted(
                 &mut lines,
                 &mut index_counter,
                 &mut budget,
+                &mut depth_truncated,
                 max_depth,
+                include_web_content,
             );
         }
 
@@ -324,6 +356,7 @@ pub fn walk_tree_budgeted(
         tree_markdown,
         nodes,
         truncated: walk.truncated(),
+        depth_truncated,
         walk,
         window_scope,
     }
@@ -411,9 +444,12 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     budget: &mut WalkBudget,
+    depth_truncated: &mut bool,
     max_depth: usize,
+    include_web_content: bool,
 ) {
     if depth > max_depth {
+        *depth_truncated = true;
         return;
     }
     // Node and time budget: a refused node is counted as discovered but not
@@ -429,6 +465,9 @@ unsafe fn walk_element(
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
     let in_web_content = in_web_content || is_web_content_role(&role);
+    if in_web_content && !include_web_content {
+        return;
+    }
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
@@ -446,7 +485,9 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
+                include_web_content,
             );
             CFRelease(child as CFTypeRef);
         }
@@ -512,7 +553,9 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
+                include_web_content,
             );
             CFRelease(child as CFTypeRef);
         }
@@ -647,7 +690,9 @@ unsafe fn walk_element(
             lines,
             counter,
             budget,
+            depth_truncated,
             max_depth,
+            include_web_content,
         );
         CFRelease(child as CFTypeRef);
     }

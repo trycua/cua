@@ -10,7 +10,7 @@
 // instead of quitting; use Quit in the menu (or File > Exit) to stop the
 // app. Linux keeps quit-on-close, because many desktops (GNOME without the
 // AppIndicator extension) show no tray at all.
-import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
+import { app, Menu, nativeImage, nativeTheme, Tray, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 
@@ -20,15 +20,38 @@ let quitting = false;
 export const isQuitting = () => quitting;
 export const closesToTray = () => tray !== null && process.platform === "win32";
 
-// Packaged: Resources/tray/. Dev: the Cua Spaces icons, used in place.
+/**
+ * The Linux tray icon's file: a one-colour glyph (the Mac's template icon)
+ * that has to contrast with the panel behind it. GNOME's top bar (and
+ * Unity's, Pantheon's and Budgie's) is dark whatever the app theme is, so
+ * it gets the light glyph; other desktops draw the panel in the system
+ * theme's colour.
+ */
+export function linuxTrayIconName(desktop: string | undefined, darkTheme: boolean): "tray-light.png" | "tray-dark.png" {
+  const darkPanel = /gnome|unity|pantheon|budgie|ubuntu|cosmic/i.test(desktop ?? "");
+  return darkPanel || darkTheme ? "tray-light.png" : "tray-dark.png";
+}
+
+const linuxTrayName = () => linuxTrayIconName(process.env.XDG_CURRENT_DESKTOP, nativeTheme.shouldUseDarkColors);
+
+// Packaged: Resources/tray/. Dev: the Cua Spaces icons, used in place (the
+// Linux glyphs are in the packaging folder).
 function iconPath(): string | null {
-  const name = process.platform === "darwin" ? "tray-template.png" : process.platform === "win32" ? "icon.ico" : "32x32.png";
-  const dirs = app.isPackaged ? [path.join(process.resourcesPath, "tray")] : [path.join(__dirname, "../../cua-spaces/src-tauri/icons")];
+  const name = process.platform === "darwin" ? "tray-template.png" : process.platform === "win32" ? "icon.ico" : linuxTrayName();
+  const dev = process.platform === "linux" ? path.join(__dirname, "../packaging/linux-tray") : path.join(__dirname, "../../cua-spaces/src-tauri/icons");
+  const dirs = app.isPackaged ? [path.join(process.resourcesPath, "tray")] : [dev];
   for (const dir of dirs) {
     const file = path.join(dir, name);
     if (existsSync(file)) return file;
   }
   return null;
+}
+
+/** The icon as the tray draws it; Linux shells show 22 to 24 px, so the 36 px glyph is scaled down once, here. */
+function trayImage(file: string) {
+  const image = nativeImage.createFromPath(file);
+  if (process.platform === "darwin") image.setTemplateImage(true);
+  return process.platform === "linux" ? image.resize({ width: 24, height: 24, quality: "best" }) : image;
 }
 
 /** What the tray lists of a Space. */
@@ -112,9 +135,7 @@ export function installTray(o: {
   const icon = iconPath();
   if (!icon) return;
 
-  const image = nativeImage.createFromPath(icon);
-  if (process.platform === "darwin") image.setTemplateImage(true);
-  tray = new Tray(image);
+  tray = new Tray(trayImage(icon));
   tray.setToolTip("Cua Spaces");
 
   const fallback: TrayMenuItem[] = [
@@ -129,6 +150,13 @@ export function installTray(o: {
   // Read again each time the menu could open, and when what it shows changed.
   tray.on("right-click", rebuild);
   o.onChange?.(rebuild);
+  // A desktop's theme switch can swap the panel's colour under the glyph.
+  if (process.platform === "linux") {
+    nativeTheme.on("updated", () => {
+      const next = iconPath();
+      if (next) tray?.setImage(trayImage(next));
+    });
+  }
   rebuild();
   setInterval(rebuild, 60_000).unref();
 }

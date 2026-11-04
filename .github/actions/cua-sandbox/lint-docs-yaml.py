@@ -22,8 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 PAGES = [
     "docs/content/docs/cua-sdk/guides/test-in-ci.mdx",
-    "docs/content/docs/cua-driver/guides/test-in-a-sandbox.mdx",
-    "docs/content/docs/start-here/run-in-github-actions.mdx",
+    "docs/content/docs/cua-driver/guides/vms-and-remote.mdx",
 ]
 FENCE = re.compile(r"^```yaml[^\n]*\n(.*?)^```", re.M | re.S)
 REMOTE = re.compile(r"trycua/cua/\.github/actions/cua-sandbox@\S+")

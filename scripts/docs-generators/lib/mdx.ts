@@ -271,7 +271,7 @@ const EXAMPLE_ATTRS = new Set(['test', 'prelude', 'env']);
 
 /**
  * Parses one example file. Its first line declares how CI runs it, in the
- * docs code-block policy's terms: `# docs: test="docs" prelude="fakefleet"`.
+ * docs code-block policy's terms: `# docs: test="docs" prelude="spacesd"`.
  */
 export function parseExample(file: string, text: string): Example {
   const ext = path.extname(file);

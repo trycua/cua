@@ -118,7 +118,7 @@ OpenClaw validates missing pull requests, missing human attribution, invalid iss
 
 OpenClaw's full process is larger than we need for two products. We should adopt its PR-first source of truth and validation rules without copying its complete release system.
 
-The OpenClaw checkout was not available under `/Users/administrator/repo` during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
+The OpenClaw checkout was not available under the local repo directory during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
 
 ## Goals
 

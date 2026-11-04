@@ -146,6 +146,16 @@ pub struct ShareRowView {
     pub connected: bool,
 }
 
+/// A button with somewhere to go.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareActionView {
+    /// The button's words.
+    pub label: String,
+    /// Where it opens.
+    pub url: String,
+}
+
 /// The sheet as drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,13 +213,20 @@ fn validate_who_with(who: &str, teams: bool) -> Result<String, String> {
     }
     if let Some(team) = w.strip_prefix("team:") {
         // A team (`team:<id>` as `cua team ls` or the Teams page shows it):
-        // every member gets the Space, from a device an admin approved.
-        let ok = team.starts_with("team-")
+        // an organization's id or alias. Every member gets the Space, from
+        // a device an admin approved. The relay's old `team-<16 hex>` ids
+        // are refused.
+        let legacy = team
+            .strip_prefix("team-")
+            .is_some_and(|h| h.len() == 16 && h.chars().all(|c| c.is_ascii_hexdigit()));
+        let ok = !team.is_empty()
             && team.len() <= 64
             && team
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-        return if ok {
+        return if legacy {
+            Err("That team ID is from the old Teams. Use the team ID `cua team ls` shows.".into())
+        } else if ok {
             Ok(format!("team:{team}"))
         } else {
             Err("Enter a team as team:<id>, as `cua team ls` shows it.".into())
@@ -240,13 +257,126 @@ fn role_of(role: &str) -> &'static str {
     if role == "editor" { "editor" } else { "viewer" }
 }
 
-/// A team always gets full use (teams have no view-only members).
-fn role_for(who: &str, role: &str) -> &'static str {
-    if who.starts_with("team:") {
-        "editor"
+/// A role, for a person or a whole team: "Can view" or "Can edit".
+fn role_for(_who: &str, role: &str) -> &'static str {
+    role_of(role)
+}
+
+/// Why a Free or Pro account without a team cannot share (CUA-1883).
+pub const NO_TEAM: &str = "Sharing is for teams. Start a team to share this Space.";
+
+/// Where Teams starts, at one seat.
+pub const TEAMS_URL: &str = "https://app.cua.ai/buy/teams?from=app_share";
+
+/// Where an owner invites people to their team.
+pub const INVITE_URL: &str = "https://app.cua.ai/team";
+
+/// Why the sheet cannot share, and what to do about it: sharing is for
+/// teams (CUA-1883).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareGate {
+    /// "Sharing is for teams. Start a team to share this Space."
+    pub reason: String,
+    /// "See Teams": where Teams starts, at one seat.
+    pub action: ShareActionView,
+}
+
+/// The gate for an account, from whether it is in a team that can share:
+/// `Some(false)` closes the sheet; `Some(true)`, or `None` (the host could
+/// not say, so the server decides), leaves it open.
+pub fn share_gate(has_team: Option<bool>) -> Option<ShareGate> {
+    (has_team == Some(false)).then(|| ShareGate {
+        reason: NO_TEAM.into(),
+        action: ShareActionView {
+            label: "See Teams".into(),
+            url: TEAMS_URL.into(),
+        },
+    })
+}
+
+/// What a refused share says, in plain words, from the server's code or
+/// message (`share_outside_team`, `sharing_needs_team`). `None` for any
+/// other error: the caller shows its own.
+pub fn share_error_words(error: &str, who: &str) -> Option<String> {
+    let e = error.to_ascii_lowercase();
+    if e.contains("sharing_needs_team") {
+        Some(NO_TEAM.into())
+    } else if e.contains("share_outside_team") {
+        let who = who.trim();
+        let name = if who.is_empty() { "That person" } else { who };
+        Some(format!(
+            "{name} isn't in your team. Invite them to your team first."
+        ))
     } else {
-        role_of(role)
+        None
     }
+}
+
+/// Someone who lost access to a computer when sharing became team-only.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRemovalInput {
+    /// The person (an email or account id).
+    pub who: String,
+    /// The computer's name.
+    #[serde(default)]
+    pub machine_name: String,
+}
+
+/// The one-line note for an owner whose shares were removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRemovalNote {
+    /// One line: who can no longer open what, and why.
+    pub text: String,
+    /// "Invite to your team".
+    pub action: ShareActionView,
+    /// Dismiss.
+    pub dismiss: String,
+}
+
+/// The note for `removals`, or nothing when there are none. It names up to
+/// three people, then counts the rest, and names the computer only when
+/// there is one.
+pub fn share_removal_note(removals: &[ShareRemovalInput]) -> Option<ShareRemovalNote> {
+    let mut people: Vec<&str> = Vec::new();
+    for r in removals {
+        let w = r.who.trim();
+        if !w.is_empty() && !people.iter().any(|p| p.eq_ignore_ascii_case(w)) {
+            people.push(w);
+        }
+    }
+    if people.is_empty() {
+        return None;
+    }
+    let mut computers: Vec<&str> = removals
+        .iter()
+        .map(|r| r.machine_name.trim())
+        .filter(|n| !n.is_empty())
+        .collect();
+    computers.sort_unstable();
+    computers.dedup();
+    let shown: Vec<String> = people.iter().take(3).map(|p| p.to_string()).collect();
+    let rest = people.len() - shown.len();
+    let who = match (shown.as_slice(), rest) {
+        ([a], 0) => a.clone(),
+        ([a, b], 0) => format!("{a} and {b}"),
+        ([a, b, c], 0) => format!("{a}, {b} and {c}"),
+        (_, n) => format!("{}, and {n} more", shown.join(", ")),
+    };
+    let what = match computers.as_slice() {
+        [one] => format!("\u{201c}{one}\u{201d}"),
+        _ => "your shared Spaces".to_string(),
+    };
+    Some(ShareRemovalNote {
+        text: format!("{who} can no longer open {what}, because they're not in your team."),
+        action: ShareActionView {
+            label: "Invite to your team".into(),
+            url: INVITE_URL.into(),
+        },
+        dismiss: "Dismiss".into(),
+    })
 }
 
 /// The roles, in menu order.
@@ -448,22 +578,35 @@ mod tests {
     }
 
     #[test]
-    fn teams_are_shared_with_only_while_teams_are_on() {
-        // On (CUA_EXPERIMENTAL_TEAMS=1): a team id, always for full use.
+    fn teams_are_shared_with_unless_turned_off() {
+        // On (the default): a team id, for either role.
         assert_eq!(
-            validate_who_with("team:design", true).unwrap_err(),
+            validate_who_with("team:Design Team", true).unwrap_err(),
             "Enter a team as team:<id>, as `cua team ls` shows it."
         );
+        // An organization, by id or alias.
         assert_eq!(
-            validate_who_with(" team:team-0a1b ", true).unwrap(),
-            "team:team-0a1b"
+            validate_who_with(" team:0f1e2d3c-0000-4000-8000-000000000001 ", true).unwrap(),
+            "team:0f1e2d3c-0000-4000-8000-000000000001"
         );
-        assert_eq!(role_for("team:team-0a1b", "viewer"), "editor");
-        // Off: refused, whatever the id.
+        assert_eq!(
+            validate_who_with("team:design", true).unwrap(),
+            "team:design"
+        );
+        // Not the old relay team ids.
+        assert!(
+            validate_who_with("team:team-0a1b2c3d4e5f6a7b", true)
+                .unwrap_err()
+                .contains("old Teams")
+        );
+        // A whole team can be shared with as "Can view" or "Can edit".
+        assert_eq!(role_for("team:design", "viewer"), "viewer");
+        assert_eq!(role_for("team:design", "editor"), "editor");
+        // Off (CUA_EXPERIMENTAL_TEAMS=0): refused, whatever the id.
         for who in ["team:team-0a1b", "team:design", "org:acme"] {
             assert_eq!(
                 validate_who_with(who, false).unwrap_err(),
-                "Teams isn't available yet. Share with people, one at a time."
+                "Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0). Share with people, one at a time."
             );
         }
         assert_eq!(
@@ -502,5 +645,95 @@ mod tests {
                 .unwrap()
                 .contains("too old")
         );
+    }
+
+    #[test]
+    fn no_team_means_the_sheet_explains_and_links_to_teams() {
+        // Unknown, or in a team: the sheet stays open.
+        assert!(share_gate(None).is_none());
+        assert!(share_gate(Some(true)).is_none());
+        let g = share_gate(Some(false)).expect("closed without a team");
+        assert_eq!(
+            g.reason,
+            "Sharing is for teams. Start a team to share this Space."
+        );
+        assert_eq!(g.action.label, "See Teams");
+        assert_eq!(g.action.url, "https://app.cua.ai/buy/teams?from=app_share");
+    }
+
+    #[test]
+    fn team_shares_keep_the_role_chosen() {
+        let i = input();
+        let mut s = share_reduce(
+            &i,
+            &share_initial(),
+            &ShareSheetAction::SetWho {
+                who: "team:design".into(),
+            },
+        );
+        s = share_reduce(
+            &i,
+            &s,
+            &ShareSheetAction::SetRole {
+                role: "viewer".into(),
+            },
+        );
+        s = share_reduce(&i, &s, &ShareSheetAction::Submit);
+        assert_eq!(
+            s.request,
+            Some(ShareRequest::Share {
+                space: "local:studio".into(),
+                who: "team:design".into(),
+                role: "viewer".into()
+            })
+        );
+    }
+
+    #[test]
+    fn refused_shares_read_in_plain_words() {
+        assert_eq!(
+            share_error_words("HTTP 403: share_outside_team", "alex@x.test").as_deref(),
+            Some("alex@x.test isn't in your team. Invite them to your team first.")
+        );
+        assert_eq!(
+            share_error_words("sharing_needs_team", "").as_deref(),
+            Some(NO_TEAM)
+        );
+        assert_eq!(
+            share_error_words("share_outside_team", " ").as_deref(),
+            Some("That person isn't in your team. Invite them to your team first.")
+        );
+        assert!(share_error_words("HTTP 500", "a@b.c").is_none());
+    }
+
+    #[test]
+    fn removal_note_is_one_line_with_an_invite_button() {
+        let r = |who: &str, m: &str| ShareRemovalInput {
+            who: who.into(),
+            machine_name: m.into(),
+        };
+        assert!(share_removal_note(&[]).is_none());
+        let n =
+            share_removal_note(&[r("alex@x.test", "Design"), r("sam@x.test", "Design")]).unwrap();
+        assert_eq!(
+            n.text,
+            "alex@x.test and sam@x.test can no longer open \u{201c}Design\u{201d}, because they're not in your team."
+        );
+        assert_eq!(n.action.label, "Invite to your team");
+        assert_eq!(n.action.url, "https://app.cua.ai/team");
+        // Several computers, many people: still one line.
+        let n = share_removal_note(&[
+            r("a@x.test", "One"),
+            r("b@x.test", "Two"),
+            r("c@x.test", "One"),
+            r("d@x.test", "One"),
+            r("A@x.test", "One"),
+        ])
+        .unwrap();
+        assert_eq!(
+            n.text,
+            "a@x.test, b@x.test, c@x.test, and 1 more can no longer open your shared Spaces, because they're not in your team."
+        );
+        assert!(!n.text.contains('\n'));
     }
 }

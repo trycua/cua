@@ -7,6 +7,7 @@ use tokio::net::TcpStream;
 
 use crate::error::{Result, VmmError};
 use crate::types::{Endpoints, Probe};
+use cua_create_failure::preflight::IssueKind;
 
 /// How long a freshly accepted TCP connection must stay open (or produce data)
 /// to count as a real listener. QEMU slirp and Docker's userland proxy accept on
@@ -22,6 +23,33 @@ const HOLD_OPEN: Duration = Duration::from_millis(400);
 /// ([`APP_UNREACHABLE_GRACE`]).
 pub const UNREACHABLE_GRACE: Duration = Duration::from_secs(20);
 
+/// The wait between readiness attempts: short at first, since a fast guest
+/// is ready within a second or two and every interval rounds its readiness
+/// up, then longer for a slow one (50 ms, growing by half to 250 ms). An
+/// attempt is a local connect, so a fine cadence costs nothing; a coarse
+/// one cost a sub-second microVM about half a second of its start.
+#[derive(Debug, Clone)]
+pub struct Backoff {
+    next: Duration,
+}
+
+impl Default for Backoff {
+    fn default() -> Self {
+        Self {
+            next: Duration::from_millis(50),
+        }
+    }
+}
+
+impl Backoff {
+    /// The wait before the next attempt.
+    pub fn step(&mut self) -> Duration {
+        let now = self.next;
+        self.next = (self.next * 3 / 2).min(Duration::from_millis(250));
+        now
+    }
+}
+
 /// [`UNREACHABLE_GRACE`] for a process that runs from a macOS `.app` (the
 /// Spaces app's daemon): there the block lifts as soon as the person clicks
 /// Allow on the "find devices on local networks" prompt, which macOS shows
@@ -34,11 +62,23 @@ pub const APP_UNREACHABLE_GRACE: Duration = Duration::from_secs(120);
 /// The grace this process gets ([`UNREACHABLE_GRACE`],
 /// [`APP_UNREACHABLE_GRACE`]).
 pub fn unreachable_grace() -> Duration {
-    grace_for(std::env::current_exe().ok().as_deref())
+    grace_for(
+        std::env::current_exe().ok().as_deref(),
+        crate::screen::unattended(),
+    )
 }
 
-fn grace_for(exe: Option<&std::path::Path>) -> Duration {
-    if cfg!(target_os = "macos") && exe.and_then(app_bundle).is_some() {
+/// The grace on a Mac nobody is at: no prompt can be answered, so waiting
+/// longer only delays the message that says what to do.
+pub const UNATTENDED_GRACE: Duration = Duration::from_secs(5);
+
+fn grace_for(
+    exe: Option<&std::path::Path>,
+    unattended: Option<crate::screen::Unattended>,
+) -> Duration {
+    if cfg!(target_os = "macos") && unattended.is_some() {
+        UNATTENDED_GRACE
+    } else if cfg!(target_os = "macos") && exe.and_then(app_bundle).is_some() {
         APP_UNREACHABLE_GRACE
     } else {
         UNREACHABLE_GRACE
@@ -88,9 +128,9 @@ pub async fn wait_all(
     timeout: Duration,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
-    let grace = unreachable_grace();
     for probe in probes {
-        let mut unreachable = UnreachableWatch::default();
+        let mut unreachable = UnreachableGate::default();
+        let mut backoff = Backoff::default();
         loop {
             let now = tokio::time::Instant::now();
             match attempt(ep, probe).await? {
@@ -100,11 +140,12 @@ pub async fn wait_all(
                 }
                 Attempt::NotYet => unreachable.reset(),
                 Attempt::Unreachable { addr, error } => {
-                    // Still unroutable when the budget ends: say why, not
-                    // that nothing answered.
-                    if unreachable.observe(now) >= grace || tokio::time::Instant::now() >= deadline
-                    {
-                        return Err(unreachable_error(&addr, &error));
+                    // A VPN, missing access past the grace, or still
+                    // unroutable when the budget ends: say why, not that
+                    // nothing answered.
+                    let passed = tokio::time::Instant::now() >= deadline;
+                    if let Some(e) = unreachable.observe(now, &addr, &error, passed).await {
+                        return Err(e);
                     }
                 }
             }
@@ -120,10 +161,91 @@ pub async fn wait_all(
                     },
                 });
             }
-            tokio::time::sleep(Duration::from_millis(750)).await;
+            tokio::time::sleep(backoff.step()).await;
         }
     }
     Ok(())
+}
+
+/// How long every attempt to a macOS VM must have had no route before a
+/// check tells a VPN or firewall from missing Local Network access
+/// ([`UnreachableGate`]): a guest that just got its address can be
+/// unroutable for a moment.
+pub const VPN_CHECK_AFTER: Duration = Duration::from_secs(5);
+
+/// When a wait for a guest that has no route stops, and why: a VPN or
+/// firewall stops it after [`VPN_CHECK_AFTER`] (waiting never helps);
+/// missing Local Network access after [`unreachable_grace`] (someone may
+/// allow it meanwhile) or at the deadline. The error says which
+/// ([`local_network_error`]).
+#[derive(Debug)]
+pub struct UnreachableGate {
+    watch: UnreachableWatch,
+    grace: Duration,
+    checked: bool,
+}
+
+impl Default for UnreachableGate {
+    fn default() -> Self {
+        Self::with_grace(unreachable_grace())
+    }
+}
+
+impl UnreachableGate {
+    /// A gate that gives missing access `grace`.
+    pub fn with_grace(grace: Duration) -> Self {
+        Self {
+            watch: UnreachableWatch::default(),
+            grace,
+            checked: false,
+        }
+    }
+
+    /// An attempt got further (refused, timed out, passed).
+    pub fn reset(&mut self) {
+        self.watch.reset();
+    }
+
+    /// An attempt at `now` to `addr` (`ip:port`) had no route (`error`):
+    /// the error to stop with, or `None` to keep waiting.
+    /// `deadline_passed`: the wait's budget is spent.
+    pub async fn observe(
+        &mut self,
+        now: tokio::time::Instant,
+        addr: &str,
+        error: &(dyn std::fmt::Display + Sync),
+        deadline_passed: bool,
+    ) -> Option<VmmError> {
+        let unreachable_for = self.watch.observe(now);
+        let give_up = unreachable_for >= self.grace || deadline_passed;
+        if !give_up && (self.checked || unreachable_for < VPN_CHECK_AFTER) {
+            return None;
+        }
+        self.checked = true;
+        let cause = unreachable_cause(addr).await;
+        if cause == Some(IssueKind::LocalNetworkVpn) || give_up {
+            return Some(local_network_error(
+                cause.unwrap_or(IssueKind::LocalNetwork),
+                addr,
+                error,
+            ));
+        }
+        None
+    }
+}
+
+/// Why `addr` (`ip:port`) has no route from this process, when it is a
+/// macOS VM on this Mac's VM network ([`crate::local_network::diagnose_unreachable`]).
+async fn unreachable_cause(addr: &str) -> Option<IssueKind> {
+    let ip = addr
+        .rsplit_once(':')
+        .map_or(addr, |(h, _)| h)
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    if !cfg!(target_os = "macos") || !ip.starts_with("192.168.64.") {
+        return None;
+    }
+    crate::local_network::diagnose_unreachable(ip).await
 }
 
 /// How long consecutive attempts have been unreachable.
@@ -158,29 +280,73 @@ pub fn is_unreachable(e: &std::io::Error) -> bool {
 /// The error for a guest this process cannot reach: on macOS, what to allow
 /// in Local Network privacy and for which app (the `.app` bundle this
 /// process runs from, by name and path, since two builds can share a name).
-pub fn unreachable_error(addr: &str, error: &std::io::Error) -> VmmError {
-    unreachable_error_for(addr, error, std::env::current_exe().ok().as_deref())
+///
+/// A bare executable (not in an `.app`) is named by the app macOS holds
+/// responsible for it when that is an app
+/// ([`crate::local_network::ResponsibleApp`]): the daemon a shell app
+/// started reads as that app, not as "cua".
+pub fn unreachable_error(addr: &str, error: &dyn std::fmt::Display) -> VmmError {
+    local_network_error(IssueKind::LocalNetwork, addr, error)
 }
 
+/// The error for a macOS VM this process cannot reach, for the cause a
+/// check found ([`crate::local_network::diagnose_unreachable`]): missing
+/// Local Network access ([`IssueKind::LocalNetwork`], as
+/// [`unreachable_error`]) or a VPN or firewall
+/// ([`IssueKind::LocalNetworkVpn`]). Both start with the fixed sentence of
+/// `cua_create_failure::preflight`, which the apps read back as the same
+/// cause (`IssueKind::of_text`).
+pub fn local_network_error(kind: IssueKind, addr: &str, error: &dyn std::fmt::Display) -> VmmError {
+    if kind == IssueKind::LocalNetworkVpn {
+        return VmmError::Missing {
+            what: "Local Network access".into(),
+            hint: format!(
+                "{} (the VM at {addr}: {error})",
+                cua_create_failure::preflight::LOCAL_NETWORK_VPN
+            ),
+        };
+    }
+    let exe = std::env::current_exe().ok();
+    let bundle = exe.as_deref().and_then(app_bundle).or_else(|| {
+        crate::local_network::ResponsibleApp::of_this_process()
+            .filter(|a| a.bundle)
+            .map(|a| (a.name, a.path))
+    });
+    unreachable_error_named(addr, error, bundle, crate::screen::unattended())
+}
+
+#[cfg(test)]
 fn unreachable_error_for(
     addr: &str,
-    error: &std::io::Error,
+    error: &dyn std::fmt::Display,
     exe: Option<&std::path::Path>,
 ) -> VmmError {
+    unreachable_error_named(addr, error, exe.and_then(app_bundle), None)
+}
+
+fn unreachable_error_named(
+    addr: &str,
+    error: &dyn std::fmt::Display,
+    bundle: Option<(String, std::path::PathBuf)>,
+    unattended: Option<crate::screen::Unattended>,
+) -> VmmError {
     if cfg!(target_os = "macos") {
+        if let Some(why) = unattended {
+            return VmmError::Missing {
+                what: "Local Network access".into(),
+                hint: unattended_hint(addr, error, why),
+            };
+        }
         // macOS asks once per boot, on this Mac's own screen, the first time
         // the app reaches the local network, and lists the app under Local
         // Network only after it has asked. Someone using this Mac from
         // another device may never see the prompt, so say all three ways.
-        let bundle = exe.and_then(app_bundle);
         let hint = match &bundle {
+            // The app's fixed sentence (`IssueKind::of_text` reads it back),
+            // then what failed and which copy of the app it is.
             Some((name, path)) => format!(
-                "{name} ({}) cannot reach the VM at {addr} ({error}). macOS blocks {name}'s \
-                 local network connections until they are allowed: on this Mac's screen macOS \
-                 asks \"Allow \"{name}\" to find devices on local networks?\"; click Allow \
-                 there. If {name} is listed under System Settings > Privacy & Security > Local \
-                 Network, turn it on; if it isn't listed, quit and reopen {name} on this Mac \
-                 (macOS asks again). Then try again",
+                "{} (the VM at {addr}: {error}; {})",
+                cua_create_failure::preflight::local_network_denied(name),
                 path.display()
             ),
             None => format!(
@@ -192,6 +358,7 @@ fn unreachable_error_for(
                  listed, quit and reopen it on this Mac (macOS asks again). Then try again"
             ),
         };
+        let hint = format!("{hint}. {NO_SCREEN_FIX}");
         VmmError::Missing {
             what: "Local Network access".into(),
             hint,
@@ -205,6 +372,34 @@ fn unreachable_error_for(
             ),
         }
     }
+}
+
+/// What to do on a Mac nobody sits at (a Mac used over SSH or from another
+/// computer): Apple's documented setting (TN3179) lets the VM network
+/// through with no prompt. It applies to every app on the Mac and needs a
+/// restart.
+pub const NO_SCREEN_FIX: &str = "If nobody sits at this Mac, run these three commands on it \
+    instead (they let every app on this Mac reach its virtual computers, and the Mac restarts): \
+    sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses \
+    -array 192.168.64.0/24 ; sudo defaults write com.apple.network.local-network \
+    AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24 ; sudo shutdown -r now";
+
+fn unattended_hint(
+    addr: &str,
+    error: &dyn std::fmt::Display,
+    why: crate::screen::Unattended,
+) -> String {
+    format!(
+        "cua cannot reach the VM at {addr} ({error}). macOS only asks to allow this on the \
+         Mac's own screen, and {}, so nobody can click Allow. Either unlock or sign in at this \
+         Mac and try again, or set it up once with no screen: run these three commands on this \
+         Mac (they let every app on it reach its virtual computers, and the Mac restarts): \
+         sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses \
+         -array 192.168.64.0/24 ; sudo defaults write com.apple.network.local-network \
+         AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24 ; sudo shutdown -r now. Then \
+         try again",
+        why.reason()
+    )
 }
 
 /// The `.app` bundle `exe` runs from: its name (without `.app`) and path.
@@ -330,6 +525,13 @@ mod tests {
     use std::collections::BTreeMap;
     use tokio::net::TcpListener;
 
+    #[test]
+    fn readiness_is_polled_quickly_first_then_backs_off() {
+        let mut b = Backoff::default();
+        let waits: Vec<u128> = (0..8).map(|_| b.step().as_millis()).collect();
+        assert_eq!(waits, vec![50, 75, 112, 168, 250, 250, 250, 250]);
+    }
+
     fn ep(guest: u16, host: u16) -> Endpoints {
         Endpoints {
             host: "127.0.0.1".into(),
@@ -404,24 +606,18 @@ mod tests {
         assert!(text.contains("192.168.64.140:3211"), "{text}");
         if cfg!(target_os = "macos") {
             assert!(
-                text.starts_with("Local Network access is not available: Cua Spaces (/Applications/Cua Spaces.app) cannot reach"),
-                "{text}"
-            );
-            assert!(
-                text.contains(
-                    "on this Mac's screen macOS asks \"Allow \"Cua Spaces\" to find devices on local networks?\"; click Allow there"
+                text.starts_with(
+                    "Local Network access is not available: Cua Spaces can't connect to macOS \
+                     Spaces on this Mac. Allow Cua Spaces in System Settings \u{203a} Privacy & \
+                     Security \u{203a} Local Network, then try again. (the VM at \
+                     192.168.64.140:3211: "
                 ),
                 "{text}"
             );
-            assert!(
-                text.contains(
-                    "If Cua Spaces is listed under System Settings > Privacy & Security > Local Network, turn it on"
-                ),
-                "{text}"
-            );
-            assert!(
-                text.contains("if it isn't listed, quit and reopen Cua Spaces on this Mac (macOS asks again). Then try again"),
-                "{text}"
+            assert!(text.contains("/Applications/Cua Spaces.app"), "{text}");
+            assert_eq!(
+                cua_create_failure::preflight::IssueKind::of_text(&text),
+                Some(IssueKind::LocalNetwork)
             );
             // Outside a bundle (a terminal's `cua`) it says what to allow.
             let bare = unreachable_error_for(
@@ -440,6 +636,19 @@ mod tests {
     }
 
     #[test]
+    fn a_vpn_reads_as_a_vpn_not_as_missing_access() {
+        let e = std::io::Error::from(std::io::ErrorKind::HostUnreachable);
+        let err = local_network_error(IssueKind::LocalNetworkVpn, "192.168.64.7:3211", &e);
+        let text = err.to_string();
+        assert!(text.contains("Turn off the VPN"), "{text}");
+        assert!(text.contains("192.168.64.7:3211"), "{text}");
+        assert_eq!(
+            cua_create_failure::preflight::IssueKind::of_text(&text),
+            Some(IssueKind::LocalNetworkVpn)
+        );
+    }
+
+    #[test]
     fn only_an_app_waits_long_for_local_network() {
         let app = std::path::Path::new("/Applications/Cua Spaces.app/Contents/MacOS/cua");
         let want = if cfg!(target_os = "macos") {
@@ -447,12 +656,60 @@ mod tests {
         } else {
             UNREACHABLE_GRACE
         };
-        assert_eq!(grace_for(Some(app)), want);
+        assert_eq!(grace_for(Some(app), None), want);
         assert_eq!(
-            grace_for(Some(std::path::Path::new("/usr/local/bin/cua"))),
+            grace_for(Some(std::path::Path::new("/usr/local/bin/cua")), None),
             UNREACHABLE_GRACE
         );
-        assert_eq!(grace_for(None), UNREACHABLE_GRACE);
+        assert_eq!(grace_for(None, None), UNREACHABLE_GRACE);
+    }
+
+    #[test]
+    fn a_mac_nobody_is_at_gives_up_fast_and_names_the_no_screen_fix() {
+        use crate::screen::Unattended;
+        let app = std::path::Path::new("/Applications/Cua Spaces.app/Contents/MacOS/cua");
+        let e = std::io::Error::from(std::io::ErrorKind::HostUnreachable);
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                grace_for(Some(app), Some(Unattended::Locked)),
+                UNATTENDED_GRACE
+            );
+            let err = unreachable_error_named(
+                "192.168.64.2:3211",
+                &e,
+                None,
+                Some(Unattended::NobodySignedIn),
+            );
+            let text = err.to_string();
+            assert!(
+                text.starts_with("Local Network access is not available: cua cannot reach"),
+                "{text}"
+            );
+            assert!(
+                text.contains("nobody is signed in at this Mac's screen"),
+                "{text}"
+            );
+            assert!(
+                text.contains("AllowedEthernetLocalNetworkAddresses"),
+                "{text}"
+            );
+            assert!(text.contains("192.168.64.0/24") && text.contains("shutdown -r now"));
+            assert!(!text.contains('\u{2014}'), "{text}");
+            // With someone at the screen the on-screen steps lead, and the
+            // no-screen fix follows for a Mac used from elsewhere.
+            let at_screen =
+                unreachable_error_named("192.168.64.2:3211", &e, None, None).to_string();
+            assert!(at_screen.contains("click Allow"), "{at_screen}");
+            assert!(
+                at_screen.contains("If nobody sits at this Mac"),
+                "{at_screen}"
+            );
+        } else {
+            assert_eq!(
+                grace_for(Some(app), Some(Unattended::Locked)),
+                UNREACHABLE_GRACE
+            );
+        }
     }
 
     #[test]

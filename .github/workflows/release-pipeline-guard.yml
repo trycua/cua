@@ -1,0 +1,78 @@
+name: "Release: Pipeline guard"
+
+# Fails and keeps ONE tracking issue up to date when the release pipeline is
+# stuck: a merged release PR still labelled `autorelease: pending` for more
+# than 30 minutes (release-please refuses to open the next release PR), or a
+# draft release with no assets older than 24 hours (empty duplicate drafts).
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_run:
+    workflows: ["Release: Prepare component releases"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: release-pipeline-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release pipeline state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TITLE="Release pipeline stuck (automated guard)"
+          now=$(date +%s)
+          problems=""
+
+          pending=$(gh api --paginate "repos/$REPO/issues?state=closed&labels=autorelease:%20pending&per_page=100" \
+            --jq '.[]|select(.pull_request!=null and .pull_request.merged_at!=null)|[.number,.pull_request.merged_at,.title]|@tsv')
+          while IFS=$'\t' read -r num merged title; do
+            [ -n "${num:-}" ] || continue
+            age=$(( now - $(date -d "$merged" +%s) ))
+            if [ "$age" -gt 1800 ]; then
+              problems+="- Merged PR #$num ($title) still has \`autorelease: pending\` ($((age/60)) min after merge). release-please will not open the next release PR until it is \`autorelease: tagged\`."$'\n'
+            fi
+          done <<< "$pending"
+
+          drafts=$(gh api --paginate "repos/$REPO/releases?per_page=100" \
+            --jq '.[]|select(.draft and (.assets|length)==0)|[.id,.tag_name,.created_at]|@tsv')
+          while IFS=$'\t' read -r id tag created; do
+            [ -n "${id:-}" ] || continue
+            age=$(( now - $(date -d "$created" +%s) ))
+            if [ "$age" -gt 86400 ]; then
+              problems+="- Empty draft release \`$tag\` (id $id) is $((age/3600)) h old with 0 assets."$'\n'
+            fi
+          done <<< "$drafts"
+
+          existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "[.[]|select(.title==\"$TITLE\")][0].number // empty")
+
+          if [ -z "$problems" ]; then
+            echo "Release pipeline healthy."
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" -R "$REPO" -c "Release pipeline is healthy again."
+            fi
+            exit 0
+          fi
+
+          body="Found by the release pipeline guard ($(date -u +%FT%TZ)):"$'\n\n'"$problems"$'\n'"Fix: relabel the merged PR \`autorelease: tagged\` if its release exists, and delete empty drafts. Check the latest \"Release: Prepare component releases\" run on main."
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" -R "$REPO" --body "$body"
+          else
+            gh issue create -R "$REPO" --title "$TITLE" --body "$body"
+          fi
+          echo "$problems"
+          echo "::error::Release pipeline is stuck"
+          exit 1

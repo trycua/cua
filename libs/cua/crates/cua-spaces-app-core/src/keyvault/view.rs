@@ -895,6 +895,7 @@ mod sharing_tests {
         let row = crate::model::SpaceRow {
             id: id.into(),
             name: name.into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -915,6 +916,8 @@ mod sharing_tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
+            sharing: None,
         };
         crate::spaces::row_to_space(&row, 0)
     }
@@ -986,6 +989,7 @@ mod host_words_tests {
         KeyvaultOverview {
             availability: "locked".into(),
             status: Some(KvStatus {
+                features: vec![],
                 version: "1".into(),
                 initialized: true,
                 unlocked: false,
@@ -1024,11 +1028,11 @@ mod host_words_tests {
         let win = page_on(&locked(), 0, SpaceOs::Windows);
         assert_eq!(
             win.labels.confirm_note,
-            "Windows Hello confirms in the Cua daemon."
+            "Windows Hello or your password confirms in the Cua daemon."
         );
         assert_eq!(
             win.kill_switch_help,
-            "Turning it back on asks for Windows Hello"
+            "Turning it back on asks for Windows Hello or your password"
         );
         assert!(win.protection.iter().any(|f| f.value == "Windows sign-in"));
         assert_eq!(

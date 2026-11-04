@@ -180,7 +180,7 @@ def test_macos_direct_lume_registration_is_manual_and_not_pr_event_chained() -> 
         for path in (ROOT / ".github/workflows").glob("*.yml")
         if "uses: ./.github/workflows/e2e-rust-macos.yml" in path.read_text(encoding="utf-8")
     )
-    assert callers == ["cd-rust-cua-driver.yml"]
+    assert callers == ["cd-rust-cua-driver.yml", "e2e-cua-driver-release-gate.yml"]
     assert "pull_request:" not in entry_text and "pull_request_target" not in entry_text
     assert "live-jev-perception" not in entry_workflow["jobs"]
     assert "authorized-live-jev-macos-evidence.yml" not in entry_text

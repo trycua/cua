@@ -9,6 +9,7 @@
 //!    the activity-monitor tickle required for live-input detection.
 
 pub mod ax_actions;
+pub mod electron_drag;
 pub mod hover;
 pub mod interactive;
 pub mod keyboard;

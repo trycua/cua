@@ -60,6 +60,11 @@ concurrency:
   group: cd-images-spacesd-release
   cancel-in-progress: false
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   resolve:
     # Registry names belong to trycua/cua (staging builds no images); only a
@@ -176,18 +181,11 @@ jobs:
           ref: main
           token: ${{ steps.app-token.outputs.token }}
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Tools (crane, oras, jq, zstd) and Rust
         run: |
           scripts/images/install-release-tools.sh --push-only
           cd libs/cua && (rustup show active-toolchain || rustup toolchain install)
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: libs/cua
-          key: images-pins
       - name: Commit as the App's bot user (contributor-attribution resolves it)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

@@ -100,6 +100,15 @@ pub enum Request {
         #[serde(default)]
         profile: Option<String>,
     },
+    /// Whether a teleport of a host app can work now (OS permissions and
+    /// profiles; reads no secret, asks for no presence).
+    Readiness {
+        /// Provider id.
+        app: String,
+        /// Profile to check; the last used one when omitted.
+        #[serde(default)]
+        profile: Option<String>,
+    },
     /// Import into the vault.
     Import(ImportSpec),
     /// Import a browser's saved passwords (sealed; used only to sign in).
@@ -377,6 +386,9 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::EndBrowse => reply!(broker.end_browse(caller).await),
         Request::Inventory { app, profile } => {
             reply!(broker.inventory(caller, &app, profile.as_deref()).await)
+        }
+        Request::Readiness { app, profile } => {
+            reply!(broker.readiness(caller, &app, profile.as_deref()).await)
         }
         Request::Import(spec) => reply!(broker.import(caller, spec).await),
         Request::ImportPasswords(spec) => reply!(broker.import_passwords(caller, spec).await),
@@ -1059,6 +1071,18 @@ impl KeyvaultClient {
         })
         .await
     }
+    /// Whether a teleport of `app` can work now.
+    pub async fn readiness(
+        &mut self,
+        app: &str,
+        profile: Option<&str>,
+    ) -> Result<crate::broker::Readiness> {
+        self.typed(&Request::Readiness {
+            app: app.into(),
+            profile: profile.map(Into::into),
+        })
+        .await
+    }
     /// Import.
     pub async fn import(&mut self, spec: ImportSpec) -> Result<ImportReport> {
         self.typed(&Request::Import(spec)).await
@@ -1390,6 +1414,38 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn the_default_socket_follows_cua_env() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().to_str().unwrap();
+        temp_env(
+            &[
+                ("CUA_HOME", None),
+                ("HOME", Some(h)),
+                ("USERPROFILE", Some(h)),
+                ("CUA_ENV", Some("staging")),
+            ],
+            || {
+                let sock = crate::default_socket().unwrap();
+                assert_eq!(sock, d.path().join(".cua/envs/staging/keyvault.sock"));
+            },
+        );
+        temp_env(
+            &[
+                ("CUA_HOME", None),
+                ("HOME", Some(h)),
+                ("USERPROFILE", Some(h)),
+                ("CUA_ENV", None),
+            ],
+            || {
+                assert_eq!(
+                    crate::default_socket().unwrap(),
+                    d.path().join(".cua/keyvault.sock")
+                )
+            },
+        );
     }
 
     #[test]

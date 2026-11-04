@@ -60,8 +60,8 @@ fn clamp_amount(requested: u64) -> usize {
 
 const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
      this Electron/Chromium window on macOS: it drops background wheel events and keystrokes, \
-     and no scroll container under the target moved through accessibility, so nothing \
-     scrolled. Retry with delivery_mode:\"foreground\" (and the same window_id, element_token \
+     and background scroll movement could not be established through accessibility. \
+     Retry with delivery_mode:\"foreground\" (and the same window_id, element_token \
      or x,y); the driver briefly fronts that window, scrolls, and restores the prior frontmost \
      app.";
 
@@ -145,7 +145,12 @@ impl Tool for ScrollTool {
                 ScrollDirection::Right => (0, -step),
                 ScrollDirection::Left => (0, step),
             };
-            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let (x, y) = super::desktop_screenshot_point(x, y);
+            if let Some(refusal) =
+                super::desktop_pointer_guard::check("scroll", &args, vec![(x, y)]).await
+            {
+                return refusal;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
             })
@@ -744,17 +749,6 @@ async fn electron_reveal_scroll(
     })
     .await;
     match outcome {
-        Ok(Some(outcome)) if outcome.at_end => ToolResult::text(format!(
-            "Nothing to scroll {direction}: the {} under the target is already at its end \
-             (checked through accessibility; this Electron/Chromium window drops background \
-             wheel events).",
-            outcome.container_role
-        ))
-        .with_structured(serde_json::json!({
-            "path": "ax",
-            "verified": false,
-            "effect": "unverifiable",
-        })),
         Ok(Some(outcome)) => ToolResult::text(format!(
             "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
              (revealed the content just past the {}'s edge; this Electron/Chromium window drops \

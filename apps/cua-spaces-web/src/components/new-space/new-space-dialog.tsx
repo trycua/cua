@@ -4,18 +4,26 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
+import { GroupedSection } from "@/components/ui/grouped";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PromptLine } from "@/components/prompt-line";
 import { toastError } from "@/components/ui/toast";
+import { createCommand, openCommand } from "@/lib/cli-commands";
 import { macosLimitText } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { useCreateFromWizard } from "@/hooks/use-new-space";
 import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
+import { RuntimeFixRow } from "./runtime-fix";
+import { PRESETS, presetInfo } from "@/components/network/presets";
+import { useNetworkPreview } from "@/components/network/use-network";
+import type { NetworkPreset } from "@/bridge/contracts/network";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -43,8 +51,9 @@ export function NewSpaceDialog() {
         open={wizard.open && view !== null}
         onOpenChange={(open) => {
           if (open) return;
-          // Escape closes the image suggestions first.
+          // Escape closes the image suggestions, or a typed value, first.
           if (view?.imageField.open) return send({ type: "dismiss-image-suggestions" });
+          if (view?.resourceEdit) return send({ type: "cancel-resource" });
           wizard.close();
         }}
       >
@@ -81,7 +90,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         if (address ? v.address.canSubmit : !macosLimit && (v.step >= 3 || v.canContinue)) primary();
       }}
     >
-      <header className="flex items-center justify-between gap-4 border-b px-6 pt-5 pb-4">
+      <header /* design-ok: full-width dialog header rule */ className="flex items-center justify-between gap-4 border-b px-6 pt-5 pb-4">
         <DialogTitle className="text-[15px] font-semibold" data-wizard-title="">
           {v.title}
         </DialogTitle>
@@ -107,14 +116,14 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-2 border-t px-6 py-3">
-        <Button variant="outline" data-wizard-cancel="" onClick={wizard.close}>
+      <footer /* design-ok: full-width dialog footer */ className="flex items-center gap-2 border-t px-6 py-3">
+        <Button variant="secondary" data-wizard-cancel="" onClick={wizard.close}>
           {v.labels.cancel}
         </Button>
         <span className="flex-1" />
         {address ? (
           <>
-            <Button variant="outline" data-wizard-back="" onClick={() => send({ type: "hide-address" })}>
+            <Button variant="secondary" data-wizard-back="" onClick={() => send({ type: "hide-address" })}>
               {v.labels.back}
             </Button>
             <Button type="submit" data-wizard-primary="" disabled={!v.address.canSubmit}>
@@ -124,7 +133,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : (
           <>
             {v.showBack ? (
-              <Button variant="outline" data-wizard-back="" onClick={() => send({ type: "back" })}>
+              <Button variant="secondary" data-wizard-back="" onClick={() => send({ type: "back" })}>
                 {v.labels.back}
               </Button>
             ) : null}
@@ -162,10 +171,11 @@ function Steps({ steps }: { steps: WizardView["steps"] }) {
 /* ---- Layout ---------------------------------------------------------------- */
 
 function Group({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+  // Not clipped: the image field's suggestions float over the rows below the card's edge.
   return (
-    <div className={cn("divide-y rounded-xl border bg-card shadow-xs", className)} {...rest}>
+    <GroupedSection className={className} contentClassName="overflow-visible" {...rest}>
       {children}
-    </div>
+    </GroupedSection>
   );
 }
 
@@ -193,7 +203,7 @@ function RuntimeSwitchButton({ change }: { change: RuntimeSwitch }) {
     <span title={change.detail} className="mt-1 inline-flex shrink-0">
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         data-runtime-switch={change.setting}
         disabled={switching}
         onClick={() => {
@@ -228,7 +238,7 @@ function Note({ children, ...rest }: { children: ReactNode } & Record<`data-${st
 
 function Tiles({ id, label, tiles, onPick }: { id: string; label: string; tiles: WizardTile[]; onPick: (id: string) => void }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex h-7 items-center gap-0.5 rounded-md bg-muted p-0.5">
+    <div role="group" aria-label={label} className="inline-flex h-7 items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {tiles.map((t) => (
         <button
           key={t.id}
@@ -240,7 +250,7 @@ function Tiles({ id, label, tiles, onPick }: { id: string; label: string; tiles:
           onClick={() => onPick(t.id)}
           // The chosen tile is filled (the native segmented control's
           // selection), not only outlined by focus.
-          className="inline-flex h-6 items-center rounded-[5px] px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 disabled:hover:text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-xs aria-pressed:hover:text-primary-foreground"
+          className="inline-flex h-6 items-center rounded-lg px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 disabled:hover:text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-xs aria-pressed:hover:text-primary-foreground"
         >
           {t.title}
         </button>
@@ -254,7 +264,8 @@ const labelOf = (v: WizardView, id: string) => fieldOf(v, id)?.label ?? "";
 
 /* ---- System ---------------------------------------------------------------- */
 
-const LINKS = new Set(["connect-cloud", "connect-by-address"]);
+// "Add your cloud account" is the last entry of Run on, not a row of its own.
+const LINKS = new Set(["connect-cloud"]);
 
 function SystemStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
@@ -263,7 +274,6 @@ function SystemStep({ v }: { v: WizardView }) {
   const advanced = v.fields.filter((f) => f.advanced);
   const rest = firstAdvanced < 0 ? [] : v.fields.slice(firstAdvanced).filter((f) => !f.advanced);
   const rows = (fields: WizardField[]) => fields.filter((f) => !LINKS.has(f.id));
-  const links = [...main, ...rest].filter((f) => LINKS.has(f.id));
 
   return (
     <div className="space-y-4">
@@ -289,6 +299,7 @@ function SystemStep({ v }: { v: WizardView }) {
               {advanced.map((f) => (
                 <SystemRow key={f.id} field={f} v={v} />
               ))}
+              <NetworkRow />
             </Group>
           ) : null}
         </div>
@@ -300,34 +311,15 @@ function SystemStep({ v }: { v: WizardView }) {
           ))}
         </Group>
       ) : null}
-      {links.length ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 px-1">
-          {links.map((f) => (
-            <LinkField key={f.id} field={f} />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function LinkField({ field }: { field: WizardField }) {
-  const { send } = useNewSpaceWizard();
-  const connect = useConnectCloud();
-  return (
-    <button
-      type="button"
-      data-field={field.id}
-      onClick={() => (field.id === "connect-cloud" ? connect.show() : send({ type: "show-address" }))}
-      className="text-[13px] text-brand-strong outline-none hover:underline focus-visible:underline"
-    >
-      {field.label}
-    </button>
-  );
-}
+const ADD_CLOUD = "add:cloud";
 
 function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
   const { send } = useNewSpaceWizard();
+  const connect = useConnectCloud();
   const error = f.error ? <FieldError id={f.id}>{f.error}</FieldError> : null;
   switch (f.id) {
     case "os":
@@ -357,6 +349,8 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
               ) : (
                 error
               )}
+              {error && v.placementPrompt ? <PromptLine id="add-machine" label="Or ask your agent" text={v.placementPrompt} /> : null}
+              {error && !v.runtimeSwitch && v.plan.placement === "local" ? <RuntimeFixRow /> : null}
               {v.placementHint ? <Note data-placement-hint="">{v.placementHint}</Note> : null}
             </>
           }
@@ -365,14 +359,22 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
             aria-label={f.label}
             dataName="run-on"
             value={v.placementId}
-            items={v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group }))}
-            onValueChange={(on) => send({ type: "choose-placement", on })}
+            items={[
+              ...v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group })),
+              // Only with the Your cloud experiment (the core offers the field); it opens the connect sheet.
+              ...(v.fields.some((x) => x.id === "connect-cloud") ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }] : []),
+            ]}
+            onValueChange={(on) => (on === ADD_CLOUD ? connect.show() : send({ type: "choose-placement", on }))}
           />
         </Row>
       );
     case "kind":
       return (
-        <Row id="kind" label={f.label} below={error}>
+        <Row
+          id="kind"
+          label={f.label}
+          below={error}
+        >
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>
       );
@@ -394,9 +396,98 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
   }
 }
 
+/** What the new Space may reach; Internet only by default (the host's
+ * create takes it as `config.network`). */
+function NetworkRow() {
+  const store = useNetworkPreview();
+  if (!store) return null;
+  return (
+    <Row id="network" label="Network">
+      <MenuSelect
+        aria-label="Network"
+        dataName="network"
+        side="top"
+        value={store.wizardPreset}
+        items={PRESETS.map((p) => ({ value: p.id, label: p.title, detail: p.description, group: p.id === "custom" ? "custom" : "preset" }))}
+        onValueChange={(p) => store.setWizardPreset(p as NetworkPreset)}
+      />
+    </Row>
+  );
+}
+
 /* ---- Resources ------------------------------------------------------------- */
 
-function Slider({ id, label, value, min, max, text, title, onChange }: { id: string; label: string; value: number; min: number; max: number; text: string; title?: string; onChange: (n: number) => void }) {
+/** The slider's number: click it to type a value. The core checks it against
+ * the slider's own limits (`edit-resource` / `set-resource-text` /
+ * `commit-resource`); Return or leaving the field uses it, Escape keeps the
+ * slider's value. */
+function SliderValue({ id, label, text, edit }: { id: "cpus" | "memory" | "disk"; label: string; text: string; edit: WizardView["resourceEdit"] }) {
+  const { send } = useNewSpaceWizard();
+  if (edit?.field === id) {
+    return (
+      <input
+        id={`ns-${id}-value`}
+        data-value-input={id}
+        autoFocus
+        inputMode="numeric"
+        spellCheck={false}
+        autoComplete="off"
+        aria-label={label}
+        aria-invalid={Boolean(edit.error)}
+        aria-describedby={edit.error ? `ns-${id}-error` : undefined}
+        value={edit.text}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => send({ type: "set-resource-text", text: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            send({ type: "commit-resource" });
+          } else if (e.key === "Escape") {
+            // Keeps the sheet open: only the typed value is dropped.
+            e.preventDefault();
+            e.stopPropagation();
+            send({ type: "cancel-resource" });
+          }
+        }}
+        onBlur={() => send({ type: "commit-resource" })}
+        className="h-6 w-16 rounded-lg border border-input bg-transparent px-1.5 text-right text-[13px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive" // design-ok: inline number field outline, matches Input
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-value-text={id}
+      title={`Type a value for ${label.toLowerCase()}`}
+      onClick={() => send({ type: "edit-resource", field: id })}
+      className="w-16 cursor-text rounded-lg px-1.5 text-right text-[13px] tabular-nums hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+    >
+      {text}
+    </button>
+  );
+}
+
+function Slider({
+  id,
+  label,
+  value,
+  min,
+  max,
+  text,
+  title,
+  edit,
+  onChange,
+}: {
+  id: "cpus" | "memory" | "disk";
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  text: string;
+  title?: string;
+  edit: WizardView["resourceEdit"];
+  onChange: (n: number) => void;
+}) {
   return (
     <div className="flex w-72 items-center gap-3" title={title}>
       <input
@@ -411,11 +502,19 @@ function Slider({ id, label, value, min, max, text, title, onChange }: { id: str
         onChange={(e) => onChange(Number(e.target.value))}
         className="h-1 flex-1 accent-brand"
       />
-      <output htmlFor={`ns-${id}`} data-value-text={id} className="w-16 text-right text-[13px] tabular-nums">
-        {text}
-      </output>
+      <SliderValue id={id} label={label} text={text} edit={edit} />
     </div>
   );
+}
+
+/** Why a typed value cannot be used, under its slider (the field's error). */
+function typedError(v: WizardView, id: string): ReactNode {
+  const error = v.resourceEdit?.field === id ? v.resourceEdit.error : null;
+  return error ? (
+    <p role="alert" id={`ns-${id}-error`} data-field-error={id} className="mt-1.5 text-right text-xs text-destructive">
+      {error}
+    </p>
+  ) : null;
 }
 
 function ResourcesStep({ v }: { v: WizardView }) {
@@ -429,12 +528,21 @@ function ResourcesStep({ v }: { v: WizardView }) {
       {sized ? (
         <Group>
           {fieldOf(v, "cpus") ? (
-            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus">
-              <Slider id="cpus" label={labelOf(v, "cpus")} value={v.cpus} min={v.minCpus} max={v.maxCpus} text={v.cpusText} onChange={(cpus) => send({ type: "set-cpus", cpus })} />
+            <Row id="cpus" label={labelOf(v, "cpus")} htmlFor="ns-cpus" below={typedError(v, "cpus")}>
+              <Slider
+                id="cpus"
+                label={labelOf(v, "cpus")}
+                value={v.cpus}
+                min={v.minCpus}
+                max={v.maxCpus}
+                text={v.cpusText}
+                edit={v.resourceEdit}
+                onChange={(cpus) => send({ type: "set-cpus", cpus })}
+              />
             </Row>
           ) : null}
           {fieldOf(v, "memory") ? (
-            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory">
+            <Row id="memory" label={labelOf(v, "memory")} htmlFor="ns-memory" below={typedError(v, "memory")}>
               <Slider
                 id="memory"
                 label={labelOf(v, "memory")}
@@ -442,6 +550,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 min={v.minMemoryGb}
                 max={v.maxMemoryGb}
                 text={v.memoryText}
+                edit={v.resourceEdit}
                 onChange={(memoryGb) => send({ type: "set-memory", memoryGb })}
               />
             </Row>
@@ -452,7 +561,9 @@ function ResourcesStep({ v }: { v: WizardView }) {
               label={labelOf(v, "disk")}
               htmlFor="ns-disk"
               below={
-                v.diskNote || v.diskResetLabel ? (
+                v.resourceEdit?.field === "disk" && v.resourceEdit.error ? (
+                  typedError(v, "disk")
+                ) : v.diskNote || v.diskResetLabel ? (
                   <div className="mt-1.5 flex items-baseline justify-between gap-4">
                     {v.diskNote ? (
                       <p data-disk-note="" className="text-xs text-muted-foreground">
@@ -462,7 +573,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                       <span />
                     )}
                     {v.diskResetLabel ? (
-                      <Button variant="outline" size="sm" data-disk-reset="" onClick={() => send({ type: "reset-disk" })}>
+                      <Button variant="secondary" size="sm" data-disk-reset="" onClick={() => send({ type: "reset-disk" })}>
                         {v.diskResetLabel}
                       </Button>
                     ) : null}
@@ -478,6 +589,7 @@ function ResourcesStep({ v }: { v: WizardView }) {
                 max={v.maxDiskGb}
                 text={v.diskText}
                 title={v.diskHelp ?? undefined}
+                edit={v.resourceEdit}
                 onChange={(diskGb) => send({ type: "set-disk", diskGb })}
               />
             </Row>
@@ -582,17 +694,74 @@ function OptionsStep({ v }: { v: WizardView }) {
   );
 }
 
-function SummaryStep({ v }: { v: WizardView }) {
+/** The Summary rows only a developer needs (`wizard::SUMMARY_ADVANCED`): they
+ * sit under "Advanced", the same disclosure the System step uses. */
+const SUMMARY_ADVANCED = new Set(["Image", "Kind", "Architecture", "Runtime"]);
+
+function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
   return (
-    <Group data-summary="">
-      {v.summary.map((fact) => (
-        <div key={fact.label} data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
-          <span className="shrink-0 text-muted-foreground">{fact.label}</span>
-          <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
-        </div>
-      ))}
-    </Group>
+    <div data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
+      <span className="shrink-0 text-muted-foreground">{fact.label}</span>
+      <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
+    </div>
   );
+}
+
+function SummaryStep({ v }: { v: WizardView }) {
+  const { send } = useNewSpaceWizard();
+  const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
+  const network = useNetworkPreview();
+  const technical = [...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)), ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : [])];
+  return (
+    <>
+      <Group data-summary="">
+        {plain.map((fact) => (
+          <SummaryRow key={fact.label} fact={fact} />
+        ))}
+      </Group>
+      {technical.length ? (
+        <div className="mt-4">
+          <button
+            type="button"
+            data-advanced-toggle=""
+            aria-expanded={v.advanced}
+            onClick={() => send({ type: "toggle-advanced" })}
+            className="flex items-center gap-1 px-1 text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+          >
+            <ChevronRightIcon className={cn("size-3.5 transition-transform", v.advanced && "rotate-90")} />
+            {v.labels.advanced}
+          </button>
+          {v.advanced ? (
+            <Group className="mt-2" data-summary-advanced="">
+              {technical.map((fact) => (
+                <SummaryRow key={fact.label} fact={fact} />
+              ))}
+            </Group>
+          ) : null}
+        </div>
+      ) : null}
+      <SummaryCommands v={v} />
+    </>
+  );
+}
+
+/** What Create does, as terminal commands (the create the core would make,
+ * then opening it when "Open when it's ready" is on); only with the CLI
+ * installed. */
+function SummaryCommands({ v }: { v: WizardView }) {
+  const { core } = useBridge();
+  const cli = useCliName();
+  if (!cli) return null;
+  let args: CreateSpaceArgs | undefined;
+  try {
+    args = core.tryCall<CreateSpaceArgs>("wizard.createArgs", { plan: v.plan });
+  } catch {
+    args = undefined;
+  }
+  const create = args ? createCommand(cli, args) : null;
+  if (!args || !create) return null;
+  const open = v.plan.openWhenReady ? openCommand(cli, args) : null;
+  return <CliHintBlock commands={open ? [create, open] : [create]} />;
 }
 
 /* ---- Connect by address ---------------------------------------------------- */

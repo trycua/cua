@@ -31,8 +31,10 @@ export interface MenuActions {
 /** The menu for `platform`; `dev` (an unpackaged build) adds Reload and the developer tools. */
 export function menuTemplate(platform: NodeJS.Platform, actions: MenuActions, { dev = false, appName = "Cua Spaces" } = {}): MenuItemConstructorOptions[] {
   const mac = platform === "darwin";
-  const newSpace: MenuItemConstructorOptions = { label: "New Space", accelerator: "CmdOrCtrl+N", click: () => actions.newSpace() };
-  const settings: MenuItemConstructorOptions = { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => actions.settings() };
+  // Spelled out per platform (not `CmdOrCtrl`): the Windows and Linux menus
+  // drew the shortcut with no modifier ("+N") for the portable alias.
+  const newSpace: MenuItemConstructorOptions = { label: "New Space", accelerator: mac ? "CmdOrCtrl+N" : "Ctrl+N", click: () => actions.newSpace() };
+  const settings: MenuItemConstructorOptions = { label: "Settings…", accelerator: mac ? "CmdOrCtrl+," : "Ctrl+,", click: () => actions.settings() };
   const quit: MenuItemConstructorOptions = mac
     ? { label: `Quit ${appName}`, accelerator: "Command+Q", click: () => app.quit() }
     : { label: "Exit", click: () => app.quit() };

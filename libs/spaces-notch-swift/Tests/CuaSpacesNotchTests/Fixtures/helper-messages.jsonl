@@ -16,3 +16,5 @@
 {"action":"drop","paths":["/Applications/Notes.app","/Users/me/report.pdf"],"spaceId":"local:aurora","type":"action"}
 {"open":true,"type":"stage"}
 {"message":"Electron speaks notch protocol 2; this helper speaks 1","type":"error"}
+{"id":7,"type":"windowUnder","window":4242}
+{"id":8,"type":"windowUnder"}

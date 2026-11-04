@@ -166,7 +166,7 @@ _SAFE_ARG_KEYS = (
 )
 _ON_VALUES = frozenset({"local", "cloud"})
 _KIND_VALUES = frozenset({"auto", "container", "vm"})
-_RUNTIME_VALUES = frozenset({"auto", "gvisor", "runc", "qemu", "lume", "kubevirt"})
+_RUNTIME_VALUES = frozenset({"auto", "gvisor", "runc", "qemu", "lume"})
 
 
 def _strip_version(name: str) -> str:

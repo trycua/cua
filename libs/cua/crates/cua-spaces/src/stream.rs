@@ -139,7 +139,7 @@ pub struct StreamTicket {
     /// Initial frame size `[width, height]`.
     pub frame_size: [u32; 2],
     /// Whether attaching needs extra headers ([`Space::websocket_headers`];
-    /// Fleet gateway). A browser cannot set them; use the daemon's media
+    /// a relay gateway). A browser cannot set them; use the daemon's media
     /// bridge then.
     pub needs_gateway_headers: bool,
     /// The whole `OpenMediaResponse` minus the ticket.
@@ -147,11 +147,17 @@ pub struct StreamTicket {
     pub raw: pb::OpenMediaResponse,
 }
 
-/// Memory and storage use (`SystemService.Metrics`). A size is the guest's
-/// own limit only when its `*_limited` flag says so (a VM, a container's
-/// cgroup limit); otherwise it is the host's.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+/// Processor, memory and storage use (`SystemService.Metrics`). A size is
+/// the guest's own limit only when its `*_limited` flag says so (a VM, a
+/// container's cgroup limit); otherwise it is the host's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct Usage {
+    /// Cores the guest sees.
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    pub cpu_percent: f64,
+    /// 1-minute load average (0 on Windows).
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -160,7 +166,8 @@ pub struct Usage {
     pub memory_limited: bool,
     /// Home filesystem bytes in use.
     pub disk_used: u64,
-    /// Home filesystem size, bytes.
+    /// Home filesystem size, bytes; 0 when it has no size of its own
+    /// (gVisor's root overlay reports "unlimited"), never a sentinel.
     pub disk_total: u64,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
@@ -169,12 +176,22 @@ pub struct Usage {
 impl From<pb::MetricsResponse> for Usage {
     fn from(m: pb::MetricsResponse) -> Self {
         Usage {
+            cpu_count: m.cpu_count,
+            cpu_percent: m.cpu_percent.clamp(0.0, 100.0),
+            load_average_1m: m.load_average_1m.max(0.0),
             memory_used: m.memory_used_bytes,
             memory_total: m.memory_total_bytes,
             memory_limited: m.memory_limited,
-            disk_used: m.disk_used_bytes,
-            disk_total: m.disk_total_bytes,
-            disk_limited: m.disk_limited,
+            disk_used: if m.disk_total_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+                && m.disk_used_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+            {
+                0
+            } else {
+                m.disk_used_bytes
+            },
+            disk_total: crate::resources::known_size(m.disk_total_bytes).unwrap_or(0),
+            disk_limited: m.disk_limited
+                && crate::resources::known_size(m.disk_total_bytes).is_some(),
         }
     }
 }
@@ -269,7 +286,7 @@ impl Space {
         Ok(cache.put(&key, image).map(|p| p.as_ref().clone()))
     }
 
-    /// Memory and storage use now (`SystemService.Metrics`).
+    /// Processor, memory and storage use now (`SystemService.Metrics`).
     pub async fn usage(&self) -> Result<Usage> {
         Ok(self.spacesd()?.metrics().await?.into())
     }

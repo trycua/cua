@@ -386,6 +386,22 @@ pub trait BrowserPlatform: Send + Sync {
         None
     }
 
+    /// Guard a background existing-profile attachment that
+    /// [`Self::existing_profile_attach_background_limitation`] would refuse,
+    /// when the platform can keep it out of the user's way: while the returned
+    /// value is alive, every self-activation of `browser_pid` is reverted
+    /// within milliseconds. `None` (the default) keeps the refusal. macOS
+    /// returns a guard only when `window_id` is on another Space than the
+    /// user's active one, where the browser's consent window stays out of
+    /// sight.
+    fn guard_background_attach(
+        &self,
+        _browser_pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
     /// Pid of the app the user has in front, when the platform can tell.
     fn frontmost_app_pid(&self) -> Option<i64> {
         None

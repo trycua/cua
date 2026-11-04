@@ -104,7 +104,7 @@ describe("migrateFromSwiftApp", () => {
     expect(patch?.swiftMigration?.copied).toEqual(["onboarding.json"]);
   });
 
-  it("marks a Mac without the Swift app, and never turns updates on", () => {
+  it("marks a Mac without the Swift app, and writes no update choice", () => {
     const m = machine();
     const patch = migrateFromSwiftApp({ ...m, settings: {}, defaultsXml: null, primaryHeight: 1117, now });
     expect(patch).toEqual({ swiftMigration: { at: "2026-10-07T12:00:00.000Z", found: false, copied: [] } });

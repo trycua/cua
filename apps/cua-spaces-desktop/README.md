@@ -52,7 +52,7 @@ with `capturePage`, so the native traffic lights are not in the images.
 ## Measurements
 
 Measured on 2026-10-03 on an Apple silicon Mac (macOS 26.6) with Electron
-44.5.1, an unsigned build, and the placeholder page.
+44.9.1, an unsigned build, and the placeholder page.
 
 | | |
 |---|---|
@@ -97,7 +97,7 @@ numbers will grow once the real web UI replaces the placeholder.
 | `src/system.ts`, `src/login-item.ts` | The bridge's system services: links and settings panes, Show in Finder / Explorer, notifications, the owner check before approving a device, launch at login on each system |
 | `src/migrate-swift.ts` | macOS: takes over the Swift app's settings once (files, defaults domain) |
 | `src/notch.ts`, `src/notch/` | The macOS notch: the app core's notch model and the Swift helper that draws it (see "The macOS notch") |
-| `src/updater.ts` | electron-updater behind Settings → About (automatic checks and installs, the channel, Check Now with its own windows), beta channel only until the Sparkle cutover, off by default |
+| `src/updater.ts` | electron-updater behind Settings → About (checks on launch and every few hours, on by default; background download; the in-app "Restart to update" indicator through `update.get` and `update.install`; the channel; Check Now), beta channel only until the Sparkle cutover on macOS |
 | `scripts/sparkle/` | Sparkle's own update checks against an Electron build (`accepts.sh`, `selftest.sh`; [docs/sparkle-cutover.md](docs/sparkle-cutover.md)) |
 | `scripts/feed-urls.mjs` | Makes a feed's installer URLs absolute (CI) |
 | `scripts/smoke/` | Linux and Windows package checks in Docker |
@@ -379,8 +379,11 @@ chose, whether the keychain prompt is still on screen). Per system:
   Sparkle's relaunch prompt for a copy replaced on disk has no Electron
   counterpart (electron-updater installs on quit or relaunch).
 - **The first run** is the page's (`routes/onboarding`, the app core's
-  flow); `onboarding.json` is the Swift app's file, and Settings' Welcome
-  "Show again" makes it due again.
+  flow), the same page the SwiftUI app now opens for its own; `onboarding.json`
+  is the Swift app's file, and Settings' Welcome "Show again" makes it due
+  again. A Space it creates (`spaces.create` with `notifyWhenReady`) posts a
+  "<Space> is ready" notification with the Cua key (`cua-key-128.png` from the
+  web build); clicking it opens the Space's page.
 
 ## Live video
 
@@ -686,7 +689,7 @@ report is in `dist/smoke/windows/report.txt`. All checks pass.
   the overlay's titlebar area, and the WebCodecs path (above). Still
   untested on Windows: the window chrome and overlay colours as drawn, the
   tray icon and close-to-tray, the AppUserModelID in the taskbar,
-  SmartScreen for the unsigned installer, and the arm64 build on real ARM64
+  SmartScreen for the signed installer, and the arm64 build on real ARM64
   hardware.
 - **Linux desktops.** Xvfb with openbox in Docker, and XFCE (xfwm4, its
   panel and tray) on Xvfb on an Ubuntu 24.04 VM. On the VM the deb and the

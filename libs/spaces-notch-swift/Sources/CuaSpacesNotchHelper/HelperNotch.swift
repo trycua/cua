@@ -43,6 +43,14 @@ public final class HelperNotch: NotchSurface {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Tests and `--selftest` turn this off so nothing goes on screen.
     @ObservationIgnored public var makesPanel = true
+    /// The window at a global top-left point under window `below` (any
+    /// app's; the system's hit test, as the SwiftUI app's
+    /// `SidebarDropTargets.windowUnder`). Tests set their own.
+    @ObservationIgnored public var windowUnder: (Double, Double, Int?) -> Int? = { x, y, below in
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let n = NSWindow.windowNumber(at: NSPoint(x: x, y: primaryTop - y), belowWindowWithWindowNumber: below ?? 0)
+        return n > 0 ? n : nil
+    }
 
     public init(emit: @escaping (HelperMessage) -> Void) {
         self.emit = emit
@@ -80,6 +88,8 @@ public final class HelperNotch: NotchSurface {
             thumbnails[id] = image.flatMap(NSImage.init(data:))
         case .ghost(let image):
             ghost = image.flatMap(NSImage.init(data:))
+        case .windowUnder(let id, let x, let y, let below):
+            emit(.windowUnder(id: id, window: windowUnder(x, y, below)))
         case .quit:
             return false
         }

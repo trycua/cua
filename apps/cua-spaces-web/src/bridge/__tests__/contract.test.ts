@@ -71,10 +71,10 @@ describe("bridge shapes", () => {
 
   it("says what is wrong, and where", () => {
     const s: Schema = OP_SHAPES["spaces.createOptions"];
-    expect(validate(s, { local: null, gpus: null, cloudPricing: null, experiments: {}, maxCpus: 8 }, SHAPE_DEFS)).toEqual([]);
+    expect(validate(s, { local: null, gpus: null, experiments: {}, maxCpus: 8 }, SHAPE_DEFS)).toEqual([]);
     // An answer the wizard can't run on, against what the SwiftUI host must answer.
     const swift = WEBKIT_SHAPES["spaces.createOptions"]!;
-    expect(validate(swift, { local: null, gpus: null, cloudPricing: null, experiments: {}, maxCpus: 8 }, SHAPE_DEFS)).toEqual([
+    expect(validate(swift, { local: null, gpus: null, experiments: {}, maxCpus: 8 }, SHAPE_DEFS)).toEqual([
       "$.env: missing",
       "$.local: expected object, got null",
     ]);
@@ -82,7 +82,7 @@ describe("bridge shapes", () => {
       "$[0].spacesdVersion: missing",
       "$[0].features: missing",
       "$[0].reachable: missing",
-      '$[0].provider: "moon" is not one of "cloud", "local", "direct", "relay"',
+      '$[0].provider: "moon" is not one of "local", "direct", "relay"',
     ]);
   });
 });

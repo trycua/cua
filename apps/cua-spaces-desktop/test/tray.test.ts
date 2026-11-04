@@ -7,8 +7,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 const quit = vi.fn();
-vi.mock("electron", () => ({ app: { quit, on: () => {}, isPackaged: false }, Menu: {}, nativeImage: {}, Tray: class {} }));
-const { accelerator, trayTemplate } = await import("../src/tray");
+vi.mock("electron", () => ({ app: { quit, on: () => {}, isPackaged: false }, Menu: {}, nativeImage: {}, nativeTheme: { on: () => {}, shouldUseDarkColors: false }, Tray: class {} }));
+const { accelerator, linuxTrayIconName, trayTemplate } = await import("../src/tray");
 
 const items = [
   { id: "status", label: "2 Spaces", enabled: false },
@@ -58,5 +58,19 @@ describe("the menu bar item and the tray", () => {
     expect(accelerator("⌘,", "darwin")).toBe("Command+,");
     expect(accelerator("⌘Q", "win32")).toBeUndefined();
     expect(accelerator(undefined, "darwin")).toBeUndefined();
+  });
+});
+
+describe("the Linux tray glyph", () => {
+  it("is light on GNOME's dark top bar whatever the app theme", () => {
+    expect(linuxTrayIconName("ubuntu:GNOME", false)).toBe("tray-light.png");
+    expect(linuxTrayIconName("GNOME", false)).toBe("tray-light.png");
+    expect(linuxTrayIconName("Budgie:GNOME", true)).toBe("tray-light.png");
+  });
+
+  it("follows the system theme on desktops with a themed panel", () => {
+    expect(linuxTrayIconName("KDE", false)).toBe("tray-dark.png");
+    expect(linuxTrayIconName("XFCE", true)).toBe("tray-light.png");
+    expect(linuxTrayIconName(undefined, false)).toBe("tray-dark.png");
   });
 });

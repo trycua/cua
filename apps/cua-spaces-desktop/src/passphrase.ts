@@ -10,6 +10,7 @@
 // its labels, and `kvPassphraseCheck` for the hint and whether it can be sent.
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
+import { showWhenReady } from "./show-when-ready";
 import type { KvCredentialForm, KvFormMode, KvPassphraseCheck } from "./native/generated/index";
 import type { CredentialAnswer } from "./model/keyvault";
 
@@ -197,7 +198,7 @@ async function showForm(
   ipcMain.on(PASSPHRASE_CANCEL, onCancel);
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.once("ready-to-show", () => win.show());
+  showWhenReady(win, () => win.show());
   win.on("closed", () => session.cancel());
   void session.answer.then(() => {
     ipcMain.removeHandler(PASSPHRASE_CHECK);

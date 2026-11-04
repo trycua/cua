@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  cua-vz (the macOS microVM monitor), signed with the hardened runtime.
+  Virtualization.framework refuses to create a VM without this entitlement.
+  Nothing else: no JIT, no library exceptions, no network entitlement (the
+  guest's network is a user-mode stack, gvproxy, over a file handle).
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.virtualization</key>
+	<true/>
+</dict>
+</plist>

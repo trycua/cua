@@ -92,8 +92,9 @@ libs/cua-driver/scripts/uninstall-local.ps1
 ```
 
 The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
-release state, and release TCC grants untouched. On macOS it revokes only
-`com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
+release state, and release TCC grants untouched. It also keeps the
+`com.trycua.driver.local` macOS permissions; pass `--reset-permissions` to
+revoke that local grant.
 
 The release Unix uninstaller shuts down the release service before removing
 anything. It first requires the systemd/launchd supervisor to stop, then uses

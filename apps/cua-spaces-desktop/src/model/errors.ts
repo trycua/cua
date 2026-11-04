@@ -22,6 +22,18 @@ export function sdkErrorKind(error: unknown): string | null {
   return typeof tag === "string" ? tag : null;
 }
 
+/**
+ * The error enum case a failed create records (`error_kind`): the SDK's
+ * variant (`Runtime`, `DaemonNotRunning`, `ImagePull`, ...), as the SwiftUI
+ * app sends it, or "" for anything else (the app core then reads the cause
+ * from the text). Electron sent "" for every failure, so its creates showed
+ * almost only `other`.
+ */
+export function createErrorVariant(error: unknown): string {
+  const kind = sdkErrorKind(error);
+  return kind && /^[A-Za-z0-9_]{1,64}$/.test(kind) ? kind : "";
+}
+
 /** A create ended because it was cancelled (here, or `cua spaces cancel`), not because it failed. */
 export const isCancelled = (error: unknown) => sdkErrorKind(error) === "Cancelled";
 

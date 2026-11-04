@@ -30,7 +30,7 @@ while (($#)); do
 done
 
 case "$SUITE" in
-  shared|native|capture|all) ;;
+  shared|native|capture|all|verify) ;;
   s1-perception)
     # Model-backed perception decision row. It is not part of `all`: it needs
     # the published cua-perception catalog and the pinned Cua-S1-4B weights,
@@ -50,7 +50,7 @@ case "$SUITE" in
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
-ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/linux"
+ARTIFACT_DIR="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}"
 mkdir -p "${ARTIFACT_DIR}"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"
 rm -rf "${RECORDING_ROOT}"
@@ -143,7 +143,7 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
       fi
       ;;
     capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    s1-perception) FIXTURE_TARGETS="electron" ;;
+    s1-perception|verify) FIXTURE_TARGETS="electron" ;;
     *)
       FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
       if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
@@ -193,6 +193,11 @@ run_report() {
     --output "${SUMMARY_FILE}")
 }
 
+if [[ "${SUITE}" == verify ]]; then
+  "${CUA_TEST_DRIVER_BIN}" doctor --json > "${ARTIFACT_DIR}/doctor.json"
+  "${CUA_TEST_DRIVER_BIN}" --version > "${ARTIFACT_DIR}/version.txt"
+fi
+
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
 (cd "${RUST_ROOT}" && cargo test -p cua-driver-e2e \
@@ -210,14 +215,16 @@ if [[ "${PREFLIGHT_EXIT}" != 0 ]]; then
   exit 1
 fi
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=linux
+
 run_test() {
   local name="$1"
   shift
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
@@ -296,11 +303,17 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test private-worker-lifecycle \
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test private_worker_test -- --test-threads=1
+fi
+
+if [[ "${SUITE}" == shared || "${SUITE}" == all || "${SUITE}" == verify ]]; then
   run_test shared-behavior-matrix \
     cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
+fi
+
+if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test embedded-browser-routes \
     cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \

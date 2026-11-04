@@ -10,8 +10,8 @@
  */
 
 import { UnsupportedOperationError } from "../adapter";
-import type { LoginItemStatus } from "../contracts/host";
-import type { DevicesInput, EnrollResult, PairingCode } from "../contracts/devices";
+import type { LoginItemStatus, RuntimePathCheck } from "../contracts/host";
+import type { DevicesInput, EnrollResult, PairingCode, TeamsList } from "../contracts/devices";
 import type {
   AboutInput,
   DriveCacheInput,
@@ -20,9 +20,12 @@ import type {
   DriveStorageInput,
   Experiments,
   LoginItemReport,
+  RepoCacheChange,
+  RepoCacheView,
   StorageInput,
   StorageRequest,
   UpdateChannelId,
+  UpdateState,
 } from "../contracts/settings";
 
 type Empty = Record<string, never>;
@@ -35,6 +38,13 @@ export interface SettingsOperations {
   /** Check Now. */
   "about.checkNow": { args: Empty; result: AboutInput };
 
+  /** The in-app update indicator: where the host's updater is. */
+  "update.get": { args: Empty; result: UpdateState };
+  /** "Restart to update": installs the downloaded update and relaunches.
+   * Only a click calls it; the host never restarts on its own. With nothing
+   * downloaded it changes nothing and answers the state. */
+  "update.install": { args: Empty; result: UpdateState };
+
   /** Settings, Experiments: the switches as stored. */
   "experiments.get": { args: Empty; result: Experiments };
   "experiments.set": { args: { experiments: Experiments }; result: Experiments };
@@ -44,6 +54,19 @@ export interface SettingsOperations {
   "loginItem.set": { args: { on: boolean }; result: LoginItemReport };
   /** System Settings, Login Items (to approve it). */
   "loginItem.openSettings": { args: Empty; result: null };
+
+  /** What a binary is for one kind of Space (`container`, `vm`, `microvm`):
+   * Settings, Advanced checks a typed path with it before it is saved. */
+  "runtimes.check": { args: { kind: string; path: string }; result: RuntimePathCheck };
+  /** The host's file panel, to pick a kind's binary (null: cancelled). */
+  "runtimes.browse": { args: { kind: string }; result: { path: string | null } };
+
+  /** The repo cache (Settings, General): on or off, what it holds, what the last week saved. */
+  "repoCache.get": { args: Empty; result: RepoCacheView };
+  /** Turns it on or off and sets its size; answers the cache after. */
+  "repoCache.set": { args: RepoCacheChange; result: RepoCacheView };
+  /** Deletes every repository it holds; answers the cache after. */
+  "repoCache.clear": { args: Empty; result: RepoCacheView };
 
   /** The account's devices and access log (`devices_snapshot`). */
   "devices.get": { args: Empty; result: DevicesInput };
@@ -65,6 +88,9 @@ export interface SettingsOperations {
   "devices.pairingCodes": { args: Empty; result: PairingCode[] };
   /** Revokes an unused pairing code (`pc_…`). */
   "devices.revokePairingCode": { args: { id: string }; result: null };
+  /** The account's Teams (organizations of `GET /v1/me`) and the current one:
+   * "Add a computer" and "Share" offer them. */
+  "teams.list": { args: Empty; result: TeamsList };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */
   "storage.get": { args: Empty; result: StorageInput };
@@ -78,11 +104,18 @@ export const SETTINGS_OPERATIONS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "experiments.get",
   "experiments.set",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -93,6 +126,7 @@ export const SETTINGS_OPERATIONS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
 ] as const satisfies readonly SettingsOpName[];
@@ -152,6 +186,13 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "about.get": about,
     "about.set": () => Promise.reject(new UnsupportedOperationError("tauri", "about.set")),
     "about.checkNow": () => Promise.reject(new UnsupportedOperationError("tauri", "about.checkNow")),
+    "update.get": () => Promise.reject(new UnsupportedOperationError("tauri", "update.get")),
+    "update.install": () => Promise.reject(new UnsupportedOperationError("tauri", "update.install")),
+    "runtimes.check": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.check")),
+    "runtimes.browse": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.browse")),
+    "repoCache.get": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.get")),
+    "repoCache.set": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.set")),
+    "repoCache.clear": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.clear")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -195,6 +236,7 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       await invoke("devices_revoke_pairing_code", { id });
       return null;
     },
+    "teams.list": () => invoke<TeamsList>("teams_list"),
 
     "storage.get": storage,
     "storage.run": async ({ request }) => {
@@ -227,18 +269,25 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear"] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
   "about.get": ["plugin:app|version", "get_environment"],
   "about.set": [],
   "about.checkNow": [],
+  "update.get": [],
+  "update.install": [],
   "experiments.get": [],
   "experiments.set": ["ui_storage_set"],
   "loginItem.get": ["login_item_status", "host_status", "agents_tool"],
   "loginItem.set": ["login_item_set", "login_item_status", "host_status", "agents_tool"],
   "loginItem.openSettings": ["host_open_settings"],
+  "runtimes.check": [],
+  "runtimes.browse": [],
+  "repoCache.get": [],
+  "repoCache.set": [],
+  "repoCache.clear": [],
   "devices.get": ["devices_snapshot"],
   "devices.enroll": ["devices_enroll"],
   "devices.checkEnrolled": ["devices_check_enrolled"],
@@ -249,6 +298,7 @@ export const SETTINGS_TAURI_COMMANDS = {
   "devices.createPairingCode": ["devices_create_pairing_code"],
   "devices.pairingCodes": ["devices_pairing_codes"],
   "devices.revokePairingCode": ["devices_revoke_pairing_code"],
+  "teams.list": ["teams_list"],
   "storage.get": ["get_environment", "agents_tool"],
   "storage.run": ["agents_tool", "drive_reveal", "host_open_settings"],
 } as const satisfies Record<SettingsOpName, readonly string[]>;
@@ -268,6 +318,12 @@ const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   yourCloud: "experiment:your_cloud",
   sharing: "experiment:sharing",
   webUi: "experiment:web_ui",
+  secureSpaces: "experiment:secure_spaces",
+  childSpaces: "experiment:child_spaces",
+  askFirst: "experiment:ask_first",
+  ciRunners: "experiment:ci_runners",
+  tcpShares: "experiment:tcp_shares",
+  mobile: "experiment:mobile",
 };
 
 /**

@@ -349,6 +349,9 @@ struct BrowserFixture {
     cdp_port: u16,
     pid: u32,
     window_id: u64,
+    /// Sessions attached by `prepare_same_space_attachment` before the
+    /// background oracles started (macOS only).
+    attached_before_observation: Vec<String>,
 }
 
 fn browser_specs() -> Vec<BrowserSpec> {
@@ -623,8 +626,21 @@ fn navigate_initial_page(port: u16, server: &BrowserFixtureServer) {
     let mut last_error = None;
     let mut last_navigate = None;
     loop {
-        let targets = browser_http_json(port, "/json/list")
-            .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
+        // A freshly launched browser's DevTools HTTP server can stall or
+        // drop one request while it finishes first-run setup (seen on Windows
+        // Edge). Retry inside the same bounded deadline instead of failing the
+        // case on a single transient read.
+        let targets = match browser_http_json(port, "/json/list") {
+            Ok(targets) => targets,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "read harness CDP targets: {error}"
+                );
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+        };
         let pages = targets
             .as_array()
             .into_iter()
@@ -1290,6 +1306,7 @@ fn launch_browser_with_driver(
         cdp_port,
         pid,
         window_id,
+        attached_before_observation: Vec::new(),
     }
 }
 
@@ -1326,6 +1343,7 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
         cdp_port: 0,
         pid,
         window_id,
+        attached_before_observation: Vec::new(),
     }
 }
 
@@ -1434,11 +1452,30 @@ fn semantic_ref_by_name(snapshot: &ToolResponse, name: &str, action: &str) -> St
         .to_owned()
 }
 
-fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolResponse) {
+/// On macOS, attaching to an existing Chrome or Edge profile shows Chrome's
+/// "Allow remote debugging?" prompt, which brings the browser forward. When
+/// the browser shares the user's Space, the driver therefore attaches only
+/// while the browser is already in front (or with
+/// `delivery_mode:"foreground"`), and refuses a background attachment with
+/// `background_unavailable`. Attach here, before the background oracles
+/// start, while the test-owned browser is in front. `bind` then checks the
+/// refusal under the oracles and reuses this attachment.
+fn prepare_same_space_attachment(
+    fixture: &mut BrowserFixture,
+    session: &str,
+) -> Option<ToolResponse> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
     let started = fixture
         .driver
         .call("start_session", serde_json::json!({ "session": session }));
     assert!(!started.is_error(), "start_session failed: {}", started.raw);
+    let raised = fixture.driver.call(
+        "bring_to_front",
+        serde_json::json!({ "pid": fixture.pid, "window_id": fixture.window_id }),
+    );
+    assert!(!raised.is_error(), "bring_to_front failed: {}", raised.raw);
     let prepared = fixture.driver.call(
         "browser_prepare",
         serde_json::json!({
@@ -1455,6 +1492,64 @@ fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolRes
         "{}",
         prepared.raw
     );
+    fixture.attached_before_observation.push(session.to_owned());
+    Some(prepared)
+}
+
+/// A background existing-profile attachment while another app is in front
+/// on the same Space must refuse without visible effects (macOS).
+fn assert_same_space_background_refusal(prepared: &ToolResponse) {
+    assert_eq!(
+        prepared.structured()["refusal"]["code"],
+        "background_unavailable",
+        "{}",
+        prepared.raw
+    );
+    assert_eq!(
+        prepared.structured()["refusal"]["detail"]["visible_effects"],
+        false,
+        "{}",
+        prepared.raw
+    );
+    assert_eq!(
+        prepared.structured()["refusal"]["detail"]["alternative_delivery_mode"],
+        "foreground",
+        "{}",
+        prepared.raw
+    );
+}
+
+fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolResponse) {
+    let attached_before = fixture
+        .attached_before_observation
+        .iter()
+        .any(|attached| attached == session);
+    if !attached_before {
+        let started = fixture
+            .driver
+            .call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+    }
+    let prepared = fixture.driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "session": session,
+            "strategy": {"kind": "existing_profile"},
+        }),
+    );
+    if attached_before {
+        assert_same_space_background_refusal(&prepared);
+    } else {
+        assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+        assert_eq!(
+            prepared.structured()["action"],
+            "attached_existing_profile",
+            "{}",
+            prepared.raw
+        );
+    }
     // A newly mapped Wayland toplevel can briefly appear with a protocol-local
     // id before the compositor publishes its stable pid/geometry identity.
     // Model the real client preamble: re-list windows and bind only the id the
@@ -1768,8 +1863,9 @@ fn run_roundtrip(spec: &BrowserSpec) {
     execute_case(case(&spec.name, "browser_tool_roundtrip"), |evidence| {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-roundtrip-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-roundtrip-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let click_ref = ref_by_label(&snapshot, "id=btn-increment");
             let click = fixture.driver.call(
@@ -1782,7 +1878,19 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
+            assert_ne!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(
+                click.structured()["evidence"][0]["kind"],
+                "value_readback",
+                "{}",
+                click.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1822,8 +1930,9 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_trust_gated_click_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-trust-gated-dom-click-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-trust-gated-dom-click-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let click_ref = ref_by_label(&snapshot, "id=standalone-trust-gated");
             let click = fixture.driver.call(
@@ -1858,11 +1967,13 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 click.raw
             );
             assert!(
-                click.text().contains("application effect not verified")
-                    && click.text().contains("trust-gated controls"),
+                click.text().contains(
+                    "target state remained unchanged; application effect is unverifiable"
+                ),
                 "{}",
                 click.raw
             );
+            assert_eq!(click.structured()["evidence"][0]["kind"], "value_readback");
             wait_for_text(
                 &fixture.server,
                 "standalone-trust-gated-state",
@@ -1884,8 +1995,9 @@ fn run_semantic_state(spec: &BrowserSpec) {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_semantic_fixture_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-semantic-state-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-semantic-state-{}", fixture.pid);
             let (target, tab, _) = bind(fixture, &session);
             let snapshot = fixture.driver.call(
                 "get_browser_state",
@@ -1992,8 +2104,9 @@ fn run_background_type(spec: &BrowserSpec) {
     execute_case(case(&spec.name, "background_type"), |evidence| {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-background-type-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-background-type-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let input_ref = ref_by_label(&snapshot, "id=txt-input");
             let typed = fixture.driver.call(
@@ -2346,7 +2459,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    let case = if cfg!(any(target_os = "linux", target_os = "macos")) {
+    let case = if cfg!(target_os = "linux") {
         refusal_case(
             &spec.name,
             "trusted_click",
@@ -2358,8 +2471,9 @@ fn run_trusted_click(spec: &BrowserSpec) {
     execute_case(case, |evidence| {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-trusted-click-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-trusted-click-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let click_ref = ref_by_label(&snapshot, "id=btn-increment");
             let click = fixture.driver.call(
@@ -2372,7 +2486,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            if cfg!(any(target_os = "linux", target_os = "macos")) {
+            if cfg!(target_os = "linux") {
                 assert_eq!(click.action_effect(), Some("refused"), "{}", click.raw);
                 assert!(
                     click.text().contains("browser_input_trust_unavailable"),
@@ -2612,12 +2726,15 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
         |evidence| {
             let mut fixture = launch_browser(spec, &scenario);
             *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-existing-profile-{}", fixture.pid);
+            let attached_before = prepare_same_space_attachment(&mut fixture, &session);
             run_with_background_oracles(&mut fixture, |fixture| {
-                let session = format!("standalone-existing-profile-{}", fixture.pid);
-                let started = fixture
-                    .driver
-                    .call("start_session", serde_json::json!({ "session": session }));
-                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                if attached_before.is_none() {
+                    let started = fixture
+                        .driver
+                        .call("start_session", serde_json::json!({ "session": session }));
+                    assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                }
 
                 fixture.driver.start_behavior_recording();
                 let prepared = fixture.driver.call(
@@ -2629,50 +2746,62 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                         "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-                assert_eq!(
-                    prepared.structured()["action"],
-                    "attached_existing_profile",
-                    "{}",
-                    prepared.raw
-                );
-                assert_eq!(
-                    prepared.structured()["attachment"]["kind"],
-                    "existing_profile"
-                );
-                assert_eq!(
-                    prepared.structured()["attachment"]["capabilities_invalidated"],
-                    true
-                );
-                assert_eq!(
-                    prepared.structured()["attachment"]["next_action"],
-                    "get_browser_state"
-                );
-                assert_eq!(
-                    prepared.structured()["side_effects"]["launched_browser"],
-                    false
-                );
-                assert_eq!(
-                    prepared.structured()["side_effects"]["created_profile"],
-                    false
-                );
-                assert_eq!(
-                    prepared.structured()["side_effects"]["copied_profile_data"],
-                    false
-                );
+                // On macOS the attachment was made before observation, while
+                // the browser was in front; check its result, and that a
+                // background attachment now refuses without visible effects.
+                let prepared = match &attached_before {
+                    Some(attached) => {
+                        assert_same_space_background_refusal(&prepared);
+                        attached
+                    }
+                    None => &prepared,
+                };
+                {
+                    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                    assert_eq!(
+                        prepared.structured()["action"],
+                        "attached_existing_profile",
+                        "{}",
+                        prepared.raw
+                    );
+                    assert_eq!(
+                        prepared.structured()["attachment"]["kind"],
+                        "existing_profile"
+                    );
+                    assert_eq!(
+                        prepared.structured()["attachment"]["capabilities_invalidated"],
+                        true
+                    );
+                    assert_eq!(
+                        prepared.structured()["attachment"]["next_action"],
+                        "get_browser_state"
+                    );
+                    assert_eq!(
+                        prepared.structured()["side_effects"]["launched_browser"],
+                        false
+                    );
+                    assert_eq!(
+                        prepared.structured()["side_effects"]["created_profile"],
+                        false
+                    );
+                    assert_eq!(
+                        prepared.structured()["side_effects"]["copied_profile_data"],
+                        false
+                    );
 
-                let public_result = prepared.raw.to_string();
-                assert!(!public_result.contains("ws://"), "{}", prepared.raw);
-                assert!(
-                    !public_result.contains("webSocketDebuggerUrl"),
-                    "{}",
-                    prepared.raw
-                );
-                assert!(
-                    !public_result.contains(&fixture._profile.path().display().to_string()),
-                    "{}",
-                    prepared.raw
-                );
+                    let public_result = prepared.raw.to_string();
+                    assert!(!public_result.contains("ws://"), "{}", prepared.raw);
+                    assert!(
+                        !public_result.contains("webSocketDebuggerUrl"),
+                        "{}",
+                        prepared.raw
+                    );
+                    assert!(
+                        !public_result.contains(&fixture._profile.path().display().to_string()),
+                        "{}",
+                        prepared.raw
+                    );
+                }
 
                 let state = fixture.driver.call(
                     "get_browser_state",
@@ -2813,12 +2942,21 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
-            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
-                panic!(
-                    "existing-profile setup exposed no DevToolsActivePort in {}",
+            // The browser writes DevToolsActivePort when its listener comes up,
+            // which can trail the setup call's return (slow on Windows runners):
+            // poll for it instead of reading the file once.
+            let port_deadline = Instant::now() + Duration::from_secs(15);
+            let setup_port = loop {
+                if let Some(port) = devtools_active_port(fixture._profile.path()) {
+                    break port;
+                }
+                assert!(
+                    Instant::now() < port_deadline,
+                    "existing-profile setup exposed no DevToolsActivePort in {} within 15 s",
                     fixture._profile.path().display()
-                )
-            });
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            };
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
@@ -3054,8 +3192,9 @@ fn run_stale_ref(spec: &BrowserSpec) {
     execute_case(case(&spec.name, "browser_ref_stale"), |evidence| {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-stale-ref-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-stale-ref-{}", fixture.pid);
             let (target, tab, first) = bind(fixture, &session);
             let stale_ref = ref_by_label(&first, "id=btn-increment");
             let newer = fixture.driver.call(
@@ -3105,8 +3244,9 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
         wait_for_text(&fixture.server, "standalone-frame-state", "iframe=ready");
         wait_for_observed(&child_server, "WEB_HARNESS_MARKER_v1");
 
+        let session = format!("standalone-frame-roundtrip-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-frame-roundtrip-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             assert_eq!(
                 snapshot.structured()["oopif"]["status"],
@@ -3432,7 +3572,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            let trusted_clicks = if cfg!(target_os = "windows") {
+            let trusted_clicks = if !cfg!(target_os = "linux") {
                 assert_eq!(
                     trusted.action_effect(),
                     Some("unverifiable"),
@@ -3741,53 +3881,106 @@ fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u
         .count() as u64
 }
 
-fn browser_chrome_changed_pixel_center(
-    before: &image::RgbaImage,
-    after: &image::RgbaImage,
-    desktop: &ToolResponse,
+/// Screen-point centers of the top-chrome buttons that a permission request
+/// added or relabelled, read from two `get_window_state` trees of one window.
+///
+/// Edge 155 adds a "Notifications blocked" button right of the omnibox. Edge
+/// 156 turns the left site-information button into an unlabelled chip and
+/// shifts the URL text, so a pixel diff of the toolbar is dominated by the
+/// text shift rather than the indicator.
+fn quiet_permission_indicator_centers(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
     bounds: (f64, f64, f64, f64),
-) -> Option<(f64, f64)> {
-    assert_eq!(before.dimensions(), after.dimensions());
-    let screen_width = desktop.structured()["screen_width"].as_f64()?;
-    let screen_height = desktop.structured()["screen_height"].as_f64()?;
-    let scale_x = f64::from(before.width()) / screen_width;
-    let scale_y = f64::from(before.height()) / screen_height;
-    let left = (bounds.0 * scale_x).round().max(0.0) as u32;
-    let top = (bounds.1 * scale_y).round().max(0.0) as u32;
-    let right = ((bounds.0 + bounds.2) * scale_x)
-        .round()
-        .min(f64::from(before.width())) as u32;
-    // Browser permission indicators live in the top chrome. Limiting the
-    // search excludes any unrelated page repaint below the toolbar.
-    let bottom = ((bounds.1 + bounds.3.min(120.0)) * scale_y)
-        .round()
-        .min(f64::from(before.height())) as u32;
-    let mut changed = 0_u64;
-    let mut x_sum = 0_u64;
-    let mut y_sum = 0_u64;
-    for y in top..bottom {
-        for x in left..right {
-            let before = before.get_pixel(x, y);
-            let after = after.get_pixel(x, y);
-            if before
-                .0
-                .iter()
-                .zip(after.0.iter())
-                .take(3)
-                .any(|(before, after)| before.abs_diff(*after) >= 32)
-            {
-                changed += 1;
-                x_sum += u64::from(x);
-                y_sum += u64::from(y);
-            }
-        }
-    }
-    (changed > 0).then(|| {
-        (
-            (x_sum as f64 / changed as f64) / scale_x,
-            (y_sum as f64 / changed as f64) / scale_y,
-        )
-    })
+) -> Vec<(f64, f64)> {
+    let chrome_buttons = |tree: &serde_json::Value| -> Vec<(Option<String>, [f64; 4])> {
+        tree["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|element| element["role"] == "Button")
+            .filter_map(|element| {
+                let frame = &element["frame"];
+                let rect = [
+                    frame["x"].as_f64()?,
+                    frame["y"].as_f64()?,
+                    frame["w"].as_f64()?,
+                    frame["h"].as_f64()?,
+                ];
+                // Browser permission indicators live in the top chrome.
+                (rect[1] + rect[3] <= bounds.1 + bounds.3.min(120.0))
+                    .then(|| (element["label"].as_str().map(str::to_owned), rect))
+            })
+            .collect()
+    };
+    let unchanged = chrome_buttons(before);
+    chrome_buttons(after)
+        .into_iter()
+        .filter(|button| !unchanged.contains(button))
+        .map(|(_, [x, y, w, h])| (x + w / 2.0, y + h / 2.0))
+        .collect()
+}
+
+/// Toolbar trees from Windows CI recordings before and after
+/// `Notification.requestPermission()`: Edge 155 in run 41280330847 and Edge
+/// 156 in run 41332120340. Window bounds were (47, 40, 886, 633) in both.
+#[test]
+fn quiet_permission_indicator_follows_the_changed_toolbar_button() {
+    let button = |label: Option<&str>, x: f64, y: f64, w: f64, h: f64| {
+        serde_json::json!({
+            "role": "Button",
+            "label": label,
+            "frame": {"x": x, "y": y, "w": w, "h": h},
+        })
+    };
+    let tree = |site_information: serde_json::Value, extra: Option<serde_json::Value>| {
+        let mut elements = vec![
+            button(Some("Back"), 52.0, 84.0, 32.0, 32.0),
+            button(Some("Refresh"), 88.0, 84.0, 32.0, 32.0),
+            site_information,
+            serde_json::json!({
+                "role": "Edit",
+                "label": "Address and search bar",
+                "frame": {"x": 152.0, "y": 88.0, "w": 509.0, "h": 24.0},
+            }),
+            button(Some("Favorites"), 725.0, 84.0, 32.0, 32.0),
+            serde_json::json!({
+                "role": "Document",
+                "label": "cua-driver Web Harness",
+                "frame": {"x": 52.0, "y": 120.0, "w": 876.0, "h": 548.0},
+            }),
+        ];
+        elements.extend(extra);
+        serde_json::json!({ "elements": elements })
+    };
+    let bounds = (47.0, 40.0, 886.0, 633.0);
+    let before = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        None,
+    );
+
+    let edge_155 = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        Some(button(
+            Some("Notifications blocked"),
+            637.0,
+            88.0,
+            24.0,
+            24.0,
+        )),
+    );
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_155, bounds),
+        [(649.0, 100.0)]
+    );
+
+    let edge_156 = tree(button(None, 128.0, 88.0, 24.0, 24.0), None);
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_156, bounds),
+        [(140.0, 100.0)]
+    );
+
+    assert!(quiet_permission_indicator_centers(&before, &before, bounds).is_empty());
 }
 
 /// Screen-point center of the pixels that changed in the top browser chrome of
@@ -4026,28 +4219,38 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
         let initial_desktop_changed_pixels =
             changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let minimum_desktop_to_window_ratio = 2_u64;
         let mut quiet_prompt_expanded = false;
         let mut quiet_prompt_indicator = None;
 
         // Edge can collapse the notification request to a quiet indicator in
-        // browser chrome. Expand the region that actually changed, then assess
-        // the resulting browser-owned surface with the same pixel oracle.
+        // browser chrome. Expand it, then assess the resulting browser-owned
+        // surface with the same pixel oracle.
+        // On Windows the prompt is collapsed when the desktop shows no
+        // material change or nothing materially beyond the window: Edge 156's
+        // collapsed chip shifts the URL text by ~1650 px in both captures. The
+        // indicator is the toolbar button the request added or relabelled.
         // macOS locates the indicator in the window capture and gates on its
         // change count: a system notification banner can cover the toolbar in
         // the desktop capture.
         let quiet_indicator = if spec.name != "edge" {
             None
         } else if cfg!(target_os = "windows")
-            && initial_desktop_changed_pixels < minimum_prompt_pixels
+            && (initial_desktop_changed_pixels < minimum_prompt_pixels
+                || changed_pixel_count(&window_before, &window_after)
+                    .saturating_mul(minimum_desktop_to_window_ratio)
+                    >= initial_desktop_changed_pixels)
         {
-            let full_desktop_before = load_capture(&desktop_before_path);
-            let full_desktop_after = load_capture(&desktop_after_path);
-            Some(browser_chrome_changed_pixel_center(
-                &full_desktop_before,
-                &full_desktop_after,
-                &desktop,
+            let centers = quiet_permission_indicator_centers(
+                before.structured(),
+                window.structured(),
                 bounds,
-            ))
+            );
+            assert!(
+                centers.len() <= 1,
+                "permission request changed more than one browser chrome button: {centers:?}"
+            );
+            Some(centers.first().copied())
         } else if cfg!(target_os = "macos")
             && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
         {
@@ -4120,7 +4323,6 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
 
         let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
-        let minimum_desktop_to_window_ratio = 2_u64;
         let desktop_has_materially_more_prompt_pixels = window_changed_pixels
             .saturating_mul(minimum_desktop_to_window_ratio)
             < desktop_changed_pixels;
@@ -4398,8 +4600,9 @@ fn run_dialog_background_refusal(spec: &BrowserSpec) {
             let mut fixture =
                 launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
             *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-dialog-refusal-{}", fixture.pid);
+            prepare_same_space_attachment(&mut fixture, &session);
             run_with_background_oracles(&mut fixture, |fixture| {
-                let session = format!("standalone-dialog-refusal-{}", fixture.pid);
                 let (target_id, tab_id, _) = bind(fixture, &session);
                 let refused = fixture.driver.call(
                     "browser_dialog",
@@ -4568,8 +4771,9 @@ fn run_upload(spec: &BrowserSpec) {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-upload-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-upload-{}", fixture.pid);
             let (target, tab, _) = bind(fixture, &session);
             let snapshot = fixture.driver.call(
                 "get_browser_state",
@@ -4618,11 +4822,15 @@ fn run_upload(spec: &BrowserSpec) {
 fn run_pointer_actions(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-pointer", std::env::consts::OS, spec.name);
     execute_case(case(&spec.name, "browser_pointer_actions"), |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        let html = standalone_browser_completeness_html().replace(
+            "</head>",
+            "<style>#scroll-tall { scroll-behavior: smooth; }</style></head>",
+        );
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-pointer-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-pointer-{}", fixture.pid);
             let (target, tab, _) = bind(fixture, &session);
             let snapshot = fixture.driver.call(
                 "get_browser_state",
@@ -4686,12 +4894,41 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 "last_action=double_click",
             );
 
+            let scroll_ref = semantic_ref_by_name(&snapshot, "scroll-tall", "scroll");
+            let exhausted = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": scroll_ref,
+                    "action": "scroll",
+                    "input_route": "dom_event",
+                    "delta_y": -240,
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                exhausted.action_effect(),
+                Some("refused"),
+                "{}",
+                exhausted.raw
+            );
+            assert!(
+                exhausted.text().contains("browser_action_unavailable"),
+                "{}",
+                exhausted.raw
+            );
+            assert_eq!(
+                fixture.server.text("lbl-scroll-offset").as_deref(),
+                Some("scroll_offset=0")
+            );
+
             let scrolled = fixture.driver.call(
                 "browser_pointer",
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "scroll"),
+                    "ref": scroll_ref,
                     "action": "scroll",
                     "input_route": "dom_event",
                     "delta_y": 240,
@@ -4747,8 +4984,9 @@ fn run_download(spec: &BrowserSpec) {
         let mut fixture =
             launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-download-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-download-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             // Sandboxed browser packages such as Ubuntu's Chromium snap use a
             // private /tmp namespace. A temporary directory under HOME remains
@@ -4823,12 +5061,15 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                 launch_additional_window(&mut fixture);
             assert_eq!(second_pid, fixture.pid);
             assert_ne!(second_window_id, fixture.window_id);
+            let session = format!("standalone-two-window-{}", fixture.pid);
+            let attached_before = prepare_same_space_attachment(&mut fixture, &session).is_some();
             run_with_background_oracles(&mut fixture, |fixture| {
-                let session = format!("standalone-two-window-{}", fixture.pid);
-                let started = fixture
-                    .driver
-                    .call("start_session", serde_json::json!({ "session": session }));
-                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                if !attached_before {
+                    let started = fixture
+                        .driver
+                        .call("start_session", serde_json::json!({ "session": session }));
+                    assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                }
                 let prepared = fixture.driver.call(
                     "browser_prepare",
                     serde_json::json!({
@@ -4838,13 +5079,17 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                         "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-                assert_eq!(
-                    prepared.structured()["action"],
-                    "attached_existing_profile",
-                    "{}",
-                    prepared.raw
-                );
+                if attached_before {
+                    assert_same_space_background_refusal(&prepared);
+                } else {
+                    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                    assert_eq!(
+                        prepared.structured()["action"],
+                        "attached_existing_profile",
+                        "{}",
+                        prepared.raw
+                    );
+                }
                 let refused = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({
@@ -4886,8 +5131,9 @@ fn run_type_replace(spec: &BrowserSpec) {
     execute_case(case(&spec.name, "browser_type_replace"), |evidence| {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-type-replace-{}", fixture.pid);
+        prepare_same_space_attachment(&mut fixture, &session);
         run_with_background_oracles(&mut fixture, |fixture| {
-            let session = format!("standalone-type-replace-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
             let input_ref = ref_by_label(&snapshot, "id=txt-input");
             let number_input_ref = ref_by_label(&snapshot, "id=number-input");

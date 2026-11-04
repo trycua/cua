@@ -94,11 +94,17 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
 /// documents. `SCShareableContent::get()` does a live query: it only
 /// returns displays when the answering process can genuinely capture. When
 /// it disagrees with the preflight boolean, the preflight one is lying.
+///
+/// Listing content alone does not make macOS ask for its direct-capture
+/// consent (measured on macOS 26.5), so the probe also takes one tiny frame:
+/// the consent then appears during this explicit grant, not over the user's
+/// window during later background work (CUA-1792).
 fn screen_recording_capturable() -> bool {
     use screencapturekit::prelude::SCShareableContent;
-    SCShareableContent::get()
+    let listed = SCShareableContent::get()
         .map(|c| !c.displays().is_empty())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    listed && crate::capture::capture_probe_frame()
 }
 
 const DIRECT_CAPTURE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -389,9 +395,9 @@ impl Tool for CheckPermissionsTool {
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
         // (A) Authoritative live probe — see `screen_recording_capturable`.
-        // SCShareableContent::get() can itself raise Tahoe's separate
-        // private-window-picker bypass consent. A status/read-only call must
-        // therefore never execute it. The explicit grant path opts in with
+        // The probe's capture raises Tahoe's separate private-window-picker
+        // bypass consent. A status/read-only call must therefore never
+        // execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
         let direct_capture_probe =
             if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture) {

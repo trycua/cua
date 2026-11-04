@@ -186,6 +186,12 @@ pub fn spaces_cli() -> Option<PathBuf> {
     if std::env::var_os("CUA_ENV_TEST_SANDBOX").is_some() {
         return None;
     }
+    // A `cua` inside an app bundle is that app's: it runs its own daemon and
+    // never borrows another install's (a copy of the app outside
+    // /Applications, beside an installed one, keeps to its own build).
+    if me.as_deref().is_some_and(in_app_bundle) {
+        return None;
+    }
     app_bundle_candidates()
         .into_iter()
         .find_map(not_me)
@@ -197,6 +203,69 @@ pub fn spaces_cli() -> Option<PathBuf> {
             })
             .and_then(not_me)
         })
+}
+
+/// What `cua --version` of `helper` prints as a version (`None` when it does
+/// not run in five seconds or prints none).
+fn helper_version(helper: &Path) -> Option<String> {
+    let mut child = std::process::Command::new(helper)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    text.lines().next().map(|l| l.trim().to_string())
+}
+
+/// The Cua Spaces `cua` a `cua daemon start` may hand the daemon to: the
+/// one [`spaces_cli`] finds, unless it is older than this `cua` (an app
+/// not updated yet), whose daemon would be a downgrade of the CLI the user
+/// upgraded. `Err` says why, so the caller can tell the user. A helper whose
+/// version cannot be read is used, as before.
+pub fn spaces_cli_not_older() -> Result<Option<PathBuf>, String> {
+    let Some(helper) = spaces_cli() else {
+        return Ok(None);
+    };
+    Ok(match helper_version(&helper) {
+        Some(v) if cua_home::version::is_newer(cua_daemon::VERSION, &v) => {
+            return Err(format!(
+                "the Cua Spaces app's cua at {} is {v}, older than this cua {}; starting this cua's daemon \
+                 instead. Update Cua Spaces to use its features",
+                helper.display(),
+                cua_daemon::VERSION
+            ));
+        }
+        _ => Some(helper),
+    })
+}
+
+/// Whether `exe` is an app bundle's executable (`<X>.app/Contents/MacOS/<exe>`).
+fn in_app_bundle(exe: &Path) -> bool {
+    let mut parts = exe
+        .components()
+        .rev()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    matches!(
+        (parts.next().as_deref(), parts.next().as_deref(), parts.next()),
+        (Some("MacOS"), Some("Contents"), Some(app)) if app.ends_with(".app")
+    )
 }
 
 fn app_bundle_candidates() -> Vec<PathBuf> {
@@ -252,31 +321,182 @@ pub(crate) async fn missing_daemon_extensions() -> Vec<String> {
         .collect()
 }
 
+/// The running daemon's version when it is strictly newer than this
+/// `cua` (so it is never replaced by it), else `None`.
+pub(crate) async fn newer_daemon_version() -> Option<String> {
+    let info = cua_daemon::client::existing_daemon()
+        .await
+        .ok()?
+        .info()
+        .await
+        .ok()?;
+    cua_home::version::is_newer(&info.version, cua_daemon::VERSION).then_some(info.version)
+}
+
 /// How long [`stop_daemon`] waits for the daemon to go: one with Spaces
 /// running unmounts their volumes and lets go of their VMs first, which
 /// took 12 s on a Mac with one running macOS Space (10 s was too short:
 /// the app updated to 0.7.0 was left without its daemon).
 pub(crate) const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long [`stop_daemon`] waits after each signal to a daemon that did
+/// not exit when asked.
+#[cfg(unix)]
+const TERMINATE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Asks the running daemon to stop and waits (bounded by [`STOP_WAIT`])
-/// for it to go.
+/// for it to go; a cua daemon still running then is ended (SIGTERM, then
+/// SIGKILL).
 pub(crate) async fn stop_daemon(discovery: &Path, pid: u32) -> Result<(), CuaError> {
+    stop_daemon_within(discovery, pid, STOP_WAIT).await
+}
+
+async fn stop_daemon_within(
+    discovery: &Path,
+    pid: u32,
+    wait: std::time::Duration,
+) -> Result<(), CuaError> {
     if let Ok(client) = cua_daemon::client::existing_daemon().await {
         let _ = client.shutdown().await;
     }
     let tick = std::time::Duration::from_millis(100);
-    for _ in 0..(STOP_WAIT.as_millis() / tick.as_millis()) {
+    for _ in 0..(wait.as_millis() / tick.as_millis()) {
         let gone = match cua_daemon::Discovery::read(discovery) {
             Some(d) => d.pid != pid,
             None => true,
         };
-        if gone && cua_daemon::client::live_address().is_none() {
+        // Removing discovery and closing listeners does not prove process exit.
+        if gone && !cua_daemon::pid_alive(pid) && cua_daemon::client::live_address().is_none() {
             return Ok(());
         }
         tokio::time::sleep(tick).await;
     }
+    // Asked and waited for, it still runs: after an app update such a
+    // daemon (its listeners closed, its process idle) kept holding the
+    // Keyvault socket (#4950). End it, so this build's daemon replaces it.
+    #[cfg(unix)]
+    if tokio::task::spawn_blocking(move || cua_daemon::terminate_daemon(pid, TERMINATE_WAIT))
+        .await
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "{}: the running {} daemon (pid {pid}) did not exit when asked; ended it",
+            crate::util::cli(),
+            crate::util::cli()
+        );
+        if cua_daemon::client::live_address().is_none() {
+            return Ok(());
+        }
+    }
     Err(CuaError::Timeout(format!(
         "the running cua daemon (pid {pid}) did not stop within {} s",
-        STOP_WAIT.as_secs()
+        wait.as_secs()
     )))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    struct Process(Child);
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_discovery_does_not_mean_the_old_process_exited() {
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        let discovery = home.path().join("daemon.json");
+        let mut process = Process(Command::new("sleep").arg("60").spawn().unwrap());
+        let pid = process.0.id();
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(250), stop_daemon(&discovery, pid)).await;
+        assert!(result.is_err(), "must wait for the old process to exit");
+        assert!(process.0.try_wait().unwrap().is_none());
+
+        process.0.kill().unwrap();
+        process.0.wait().unwrap();
+        stop_daemon(&discovery, pid).await.unwrap();
+    }
+
+    /// The daemon of #4950: asked to stop, it closed its listeners but its
+    /// process never exited. It ignores SIGTERM here, so SIGKILL ends it.
+    #[tokio::test]
+    async fn a_daemon_that_never_exits_is_ended() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        let exe = home.path().join("cua");
+        std::fs::write(&exe, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = Command::new(&exe)
+            .args(["daemon", "start", "--foreground"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        // Reaped as soon as it dies, so a killed one is not left a zombie.
+        let reaper = std::thread::spawn(move || child.wait().unwrap());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let discovery = home.path().join("daemon.json");
+        stop_daemon_within(&discovery, pid, Duration::from_millis(300))
+            .await
+            .expect("the stuck daemon is ended");
+        assert!(!reaper.join().unwrap().success());
+        assert!(!cua_daemon::pid_alive(pid));
+    }
+
+    /// UL2: a `cua daemon start` does not hand the daemon to an app's cua
+    /// that is older than itself.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_older_than_this_cua_is_not_handed_the_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::util::test_env::isolated();
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("helper-cua");
+        let write = |version: &str| {
+            let _ = std::fs::remove_file(&helper);
+            std::fs::write(&helper, format!("#!/bin/sh\necho 'cua {version}'\n")).unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        // SAFETY: the test holds the environment lock.
+        unsafe { std::env::set_var(ENV_SPACES_CLI, &helper) };
+        write("0.0.1-old");
+        let err = spaces_cli_not_older().unwrap_err();
+        assert!(err.contains("older than this cua"), "{err}");
+        write("99.0.0");
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        write(cua_daemon::VERSION);
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        // SAFETY: as above.
+        unsafe { std::env::remove_var(ENV_SPACES_CLI) };
+    }
+}
+
+#[cfg(test)]
+mod app_bundle_tests {
+    use super::in_app_bundle;
+    use std::path::Path;
+
+    #[test]
+    fn a_cua_inside_any_app_bundle_is_that_apps() {
+        assert!(in_app_bundle(Path::new(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua"
+        )));
+        assert!(in_app_bundle(Path::new(
+            "/Users/ada/Downloads/Cua Spaces Copy.app/Contents/MacOS/cua"
+        )));
+        assert!(!in_app_bundle(Path::new("/Users/ada/.local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/usr/local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/opt/Contents/MacOS/cua")));
+    }
 }

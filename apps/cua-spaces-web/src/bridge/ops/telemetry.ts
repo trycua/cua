@@ -12,9 +12,23 @@
  * - SwiftUI: `telemetry.track`, which checks the switch, then records
  *   through `TelemetryRunning.record` (`appTelemetryRecord`).
  * - Electron: the same method, recorded the same way.
+ *
+ * `telemetry.linkNotice` and `telemetry.acknowledgeLinkNotice`: the one-time
+ * notice for machines that saw the older "anonymous" wording (CUA-1881).
+ * Usage data is linked to the signed-in account through a random ID, and
+ * nothing links before this notice is closed. The host owns whether it is
+ * due and the words (`cua_telemetry::link`), so every shell says the same.
+ *
+ * - Tauri: `telemetry_link_notice`, `telemetry_acknowledge_link_notice`.
+ * - SwiftUI and Electron: the same method names, answered from the SDK's
+ *   `telemetryLinkNotice`, `telemetryLinkNoticeDue` and
+ *   `telemetryAcknowledgeLinkNotice`.
+ * - Demo: no notice (`null`).
  */
 
+import { UnsupportedOperationError, type BridgeMode } from "../adapter";
 import type { OpCoverage } from "../coverage";
+import type { CrashReportingConfig } from "../contracts/host";
 
 /** One usage event (`telemetry::TelemetrySignal`): fixed words, flags and
  * durations, never names, paths, URLs, emails or anything typed. */
@@ -36,25 +50,103 @@ export type TelemetrySignal =
       elapsedMs: number;
       gpu: boolean;
       errorVariant: string;
+      /** 1 when the app ran the create again by itself, else 0 (absent
+       * from cores before it). */
+      retryAttempt?: number;
+      /** The finer cause (`error_subclass`), or `none`. */
+      errorSubclass?: string;
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | { type: "volume-setup"; surface: string; storage: string; addToFinder: boolean; mountMethod: string; outcome: string }
-  | { type: "share"; action: string; role: string; outcome: string }
+  | { type: "share"; action: string; role: string; outcome: string; errorKind: string; failedStage: string }
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: string; experiment: string }
-  | { type: "experiments-on"; experiments: string[] };
+  | { type: "experiments-on"; experiments: string[] }
+  /** A plan limit shown (`cua_plan_limit_shown`). */
+  | { type: "plan-limit-shown"; surface: string; kind: string; plan: string }
+  /** An upgrade or plan link opened (`cua_upgrade_link_opened`). */
+  | { type: "upgrade-link-opened"; surface: string; kind: string; plan: string };
+
+/** The one-time linking notice: the host's words, and whether it is due now. */
+export interface TelemetryLinkNotice {
+  /** Show it now: usage data is on, the account offered linking, and this
+   * machine has not shown it. */
+  due: boolean;
+  title: string;
+  body: string;
+  /** "Got it": keeps usage data on. */
+  okLabel: string;
+  /** "Turn off usage data". */
+  turnOffLabel: string;
+  /** The link to what is collected. */
+  detailsLabel: string;
+  docsUrl: string;
+}
 
 export interface TelemetryOps {
   /** Records the signals on the host's telemetry, which drops them while
    * usage data is off or before the first-run notice. */
   "telemetry.track": { args: { signals: TelemetrySignal[] }; result: null };
+  /** The one-time linking notice, or null when the host has none. */
+  "telemetry.linkNotice": { args: Record<string, never>; result: TelemetryLinkNotice | null };
+  /** The notice was closed (either button): linking may start at the next launch. */
+  "telemetry.acknowledgeLinkNotice": { args: Record<string, never>; result: null };
+  /** Whether the page may report its own errors, and the settings to do it with (never null: a host that can't says `allowed: false` or is `unsupported`). */
+  "crashReporting.config": { args: Record<string, never>; result: CrashReportingConfig };
+}
+
+export const TELEMETRY_OPERATIONS = [
+  "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
+] as const satisfies readonly (keyof TelemetryOps)[];
+
+const text = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
+/** A host's answer as a notice; anything malformed reads as none. */
+export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
+  const n = raw as Partial<TelemetryLinkNotice> | null | undefined;
+  if (!n || typeof n !== "object") return null;
+  if (!text(n.title) || !text(n.body) || !text(n.okLabel) || !text(n.turnOffLabel) || !text(n.detailsLabel) || !text(n.docsUrl)) return null;
+  return {
+    due: n.due === true,
+    title: n.title,
+    body: n.body,
+    okLabel: n.okLabel,
+    turnOffLabel: n.turnOffLabel,
+    detailsLabel: n.detailsLabel,
+    docsUrl: n.docsUrl,
+  };
 }
 
 
+const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "", };
+
+/** A host's answer as crash settings; anything malformed, or without a DSN, reads as off. */
+export function crashConfigFromHost(raw: unknown): CrashReportingConfig {
+  const c = raw as Partial<CrashReportingConfig> | null | undefined;
+  if (!c || typeof c !== "object" || c.allowed !== true) return OFF;
+  if (!text(c.dsn) || !text(c.release) || !text(c.environment) || !text(c.shell)) return OFF;
+  return {
+    allowed: true,
+    dsn: c.dsn,
+    release: c.release,
+    environment: c.environment,
+    shell: c.shell,
+    ...(c.crashTest === "ui" && c.environment === "local" ? { crashTest: "ui" as const } : {}),
+  };
+}
+
+/** Tauri and the demo host have no crash reporting. */
+export function unsupportedCrashReportingOps(mode: BridgeMode) {
+  return { "crashReporting.config": (): Promise<never> => Promise.reject(new UnsupportedOperationError(mode, "crashReporting.config")) };
+}
+
 /* ---- What may cross the bridge ------------------------------------------------ */
 
-type Field = "word" | "flag" | "maybe-flag" | "ms" | "words" | "variant";
+type Field = "word" | "flag" | "maybe-flag" | "ms" | "words" | "variant" | "maybe-attempt" | "maybe-word";
 
 /** Every signal's fields and what each may hold. */
 const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
@@ -74,14 +166,18 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
     elapsedMs: "ms",
     gpu: "flag",
     errorVariant: "variant",
+    retryAttempt: "maybe-attempt",
+    errorSubclass: "maybe-word",
   },
   "space-create-started": { location: "word", guestOs: "word", kind: "word", gpu: "flag" },
   "volume-setup": { surface: "word", storage: "word", addToFinder: "flag", mountMethod: "word", outcome: "word" },
-  share: { action: "word", role: "word", outcome: "word" },
+  share: { action: "word", role: "word", outcome: "word", errorKind: "word", failedStage: "word" },
   "app-update": { action: "word", channel: "word", trigger: "word" },
   "device-enroll": { method: "word", outcome: "word" },
   experiment: { action: "word", experiment: "word" },
   "experiments-on": { experiments: "words" },
+  "plan-limit-shown": { surface: "word", kind: "word", plan: "word" },
+  "upgrade-link-opened": { surface: "word", kind: "word", plan: "word" },
 };
 
 /** A fixed word from the schema (`space_create_local`, `this_mac`). Names,
@@ -103,6 +199,10 @@ function valid(kind: Field, v: unknown): boolean {
       return Array.isArray(v) && v.length <= 16 && v.every((w) => typeof w === "string" && WORD.test(w));
     case "variant":
       return typeof v === "string" && VARIANT.test(v);
+    case "maybe-attempt":
+      return v === undefined || v === 0 || v === 1;
+    case "maybe-word":
+      return v === undefined || (typeof v === "string" && WORD.test(v));
   }
 }
 
@@ -126,7 +226,7 @@ export function sanitizeSignals(signals: readonly unknown[]): TelemetrySignal[] 
         ok = false;
         break;
       }
-      clean[key] = Array.isArray(v) ? [...v] : v;
+      if (v !== undefined) clean[key] = Array.isArray(v) ? [...v] : v;
     }
     if (ok) out.push(clean as TelemetrySignal);
   }
@@ -143,6 +243,31 @@ export function tauriTelemetryOps(invoke: Invoke) {
       await invoke("telemetry_record_signals", { signals });
       return null;
     },
+    "telemetry.linkNotice": async () => linkNoticeFromHost(await invoke("telemetry_link_notice")),
+    "telemetry.acknowledgeLinkNotice": async () => {
+      await invoke("telemetry_acknowledge_link_notice");
+      return null;
+    },
+  };
+}
+
+type WebkitRequest = <T>(
+  method: "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config",
+  args?: Record<string, unknown>,
+  wait?: number | null,
+) => Promise<T>;
+
+/** SwiftUI and Electron: both methods go to the host. An older build
+ * (`unimplemented`) or any failure reads as no notice, so nothing links. */
+export function webkitTelemetryNoticeOps(request: WebkitRequest) {
+  return {
+    "telemetry.linkNotice": () => request<unknown>("telemetry.linkNotice", {}, 5_000).then(linkNoticeFromHost, () => null),
+    "telemetry.acknowledgeLinkNotice": async () => {
+      await request("telemetry.acknowledgeLinkNotice", {});
+      return null;
+    },
+    // An older host (`unimplemented`) or any failure reads as off.
+    "crashReporting.config": () => request<unknown>("crashReporting.config", {}, 5_000).then(crashConfigFromHost, () => OFF),
   };
 }
 
@@ -150,5 +275,18 @@ export const TELEMETRY_COVERAGE = {
   "telemetry.track": {
     webkit: { methods: ["telemetry.track"] },
     tauri: ["telemetry_record_signals"],
+  },
+  "telemetry.linkNotice": {
+    webkit: { methods: ["telemetry.linkNotice"] },
+    tauri: ["telemetry_link_notice"],
+  },
+  "telemetry.acknowledgeLinkNotice": {
+    webkit: { methods: ["telemetry.acknowledgeLinkNotice"] },
+    tauri: ["telemetry_acknowledge_link_notice"],
+  },
+  "crashReporting.config": {
+    webkit: { methods: ["crashReporting.config"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app reports crashes from its own Rust process, not the page" },
   },
 } as const satisfies Record<keyof TelemetryOps, OpCoverage>;

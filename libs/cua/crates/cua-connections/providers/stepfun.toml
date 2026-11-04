@@ -1,0 +1,21 @@
+id = "stepfun"
+name = "StepFun"
+icon = "stepfun"
+tier = "more"
+rank = 260
+kind = "hosted"
+aliases = ["step"]
+wire = "openai-chat"
+base_url = "https://api.stepfun.ai/step_plan/v1"
+base_url_env = "STEPFUN_BASE_URL"
+default_model = "step-3.5-flash"
+hermes_id = "stepfun"
+key_help = "Create a key at platform.stepfun.ai (Step Plan)."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "STEPFUN_API_KEY"
+
+[delivery]
+hermes = ["STEPFUN_API_KEY"]

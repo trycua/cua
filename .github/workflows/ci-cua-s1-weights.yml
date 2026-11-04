@@ -41,6 +41,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   CUA_TELEMETRY_ENABLED: "false"
   HF_HUB_DISABLE_TELEMETRY: "1"
   PYTHONHASHSEED: "0"
@@ -318,7 +321,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         if: steps.cpu.outputs.supported == 'true'
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         if: steps.cpu.outputs.supported == 'true'
         with:
           workspaces: "libs/cua-driver/rust -> target"

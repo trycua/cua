@@ -44,6 +44,9 @@ describe("without the core", () => {
       ["qa-windows", "running"],
       ["ubuntu-build", "running"],
       ["windows-legacy", "suspended"],
+      ["qa-shared", "running"],
+      ["checkout-flow", "suspended"],
+      ["qa-regression", "running"],
     ]);
     expect(settingsPage(noCore, { values: DEFAULT_SETTINGS, defaultLocation: null, telemetry: null }, undefined, undefined)).toBeNull();
   });
@@ -142,7 +145,7 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
       core,
       { values: DEFAULT_SETTINGS, defaultLocation: null, telemetry: null },
       {
-        fleet: { configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" },
+        account: { configured: true, authMode: "user", identity: "ada@example.com" },
         onboarding: { completed: true },
         daemon: null,
       },
@@ -236,7 +239,7 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
       ["dev_lap", "Laptop", false, true],
     ]);
     expect(machines[1]).toMatchObject({ detail: "macOS · Enrolled", lastSeen: 1791044974 });
-    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", cloudAvailable: false, machines });
+    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", machines });
     expect(env.hosts?.map((h) => [h.id, h.online])).toEqual([["96fedb7e", true]]);
   });
 
@@ -271,13 +274,11 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const core = await testCore();
     const guide = hostSetupGuide(core);
     expect(guide.choices.map((c) => c.id)).toEqual(["desktop", "spare"]);
-    expect(guide.intro).toMatch(/no port forwarding/);
+    expect(guide.intro).toMatch(/no network setup/);
     expect(guide.form?.fields.map((f) => [f.id, f.advanced])).toEqual([
       ["name", false],
       ["profile", false],
       ["allow", false],
-      ["direct", true],
-      ["relay", true],
     ]);
     expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: guide.intro });
   });

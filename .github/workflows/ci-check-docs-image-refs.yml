@@ -5,7 +5,7 @@ name: "CI: Check Docs Image Refs"
 # passing image-doctor ledger entry (the image-doctor-ledger branch, written
 # only by the image workflows). Refs published before the gate existed live in
 # scripts/images/docs-image-refs-baseline.json, which may only shrink. Also
-# runs nightly: a nightly Fleet regression flips a ledger entry and turns this
+# runs nightly: a nightly image regression flips a ledger entry and turns this
 # red until the image is fixed or the guide changes.
 
 on:
@@ -27,6 +27,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   image-refs:

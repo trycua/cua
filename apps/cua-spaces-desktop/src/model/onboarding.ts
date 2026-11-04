@@ -7,8 +7,10 @@
 // the Swift app writes (taken over on macOS, `migrate-swift.ts`). The pages
 // themselves are the web UI's (`routes/onboarding`, on the app core's
 // flow); this host says whether they are due and records the end.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+
+import { keepDamaged } from "../damaged";
 
 export type OnboardingMode = "client" | "host";
 
@@ -23,12 +25,21 @@ export class OnboardingStore {
 
   constructor(readonly file: string) {}
 
-  /** What the file says (a missing or damaged file: the first run is due). */
+  /** What the file says (a missing or damaged file: the first run is due; a damaged one is kept as `.damaged`). */
   read(): OnboardingState {
+    let text: string;
     try {
-      const raw = JSON.parse(readFileSync(this.file, "utf8")) as { completed?: unknown; mode?: unknown };
-      return { completed: raw.completed === true && !this.shownAgain, mode: raw.mode === "host" ? "host" : "client" };
+      text = readFileSync(this.file, "utf8");
     } catch {
+      return { completed: false, mode: "client" };
+    }
+    try {
+      const raw: unknown = JSON.parse(text);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+      const { completed, mode } = raw as { completed?: unknown; mode?: unknown };
+      return { completed: completed === true && !this.shownAgain, mode: mode === "host" ? "host" : "client" };
+    } catch {
+      keepDamaged(this.file);
       return { completed: false, mode: "client" };
     }
   }
@@ -49,6 +60,18 @@ export class OnboardingStore {
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify({ completed: true, mode }));
     renameSync(tmp, this.file);
+    this.changed();
+  }
+
+  /**
+   * Settings, About, "Reset & Show": the saved first run is forgotten (the
+   * file removed, as the core's reset plan says: `onboarding_reset.rs`), so
+   * it is due from its first step. Safe to run twice. A `.damaged` copy
+   * kept earlier is left alone.
+   */
+  reset(): void {
+    this.shownAgain = false;
+    rmSync(this.file, { force: true });
     this.changed();
   }
 

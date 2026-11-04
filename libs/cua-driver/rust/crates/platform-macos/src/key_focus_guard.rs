@@ -25,24 +25,37 @@
 //! visible for at most a frame or two.
 //!
 //! Theft ids come from one session-wide counter that only the thief learns.
-//! [`protect`] therefore calibrates before each guarded action: it steals and
-//! releases key focus on the driver's own connection (the tap drops that
-//! notice too) and expects the target's theft to take the next id. If another
-//! app steals in between, the tap tries the next few ids.
+//! The guard learns the target's id only after the tap has seen the theft:
+//! it steals and releases key focus on the driver's own connection, which
+//! takes the next id, and then releases the newest live theft below it. By
+//! then the target's menu already holds the keyboard, so the round trip costs
+//! the user nothing. Arming the guard never moves key focus: a steal on every
+//! action used to route a user keystroke that arrived in that instant to the
+//! driver, which dropped it.
+//!
+//! The driver's steal tells the current key-focus holder, the target whose
+//! menu is open, that it lost key focus, and AppKit ends menu tracking on that
+//! notice. So the guard also taps each guarded target and drops the notices
+//! whose thief is the driver itself; the menu stays open through the lookup.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::input::skylight;
 
+/// How long a guarded target's tap hides the driver's own theft after an id
+/// lookup starts. Outside that window the notice passes: the target may be the
+/// frontmost app by then, and dropping a key-focus change there leaves AppKit
+/// with a stale key window.
+const LOOKUP_WINDOW: Duration = Duration::from_millis(500);
 /// How long a target stays guarded after the action that armed it ends.
 /// AppKit opens a pressed popup's menu from a delayed perform that runs just
 /// after the accessibility call returns.
 const TAIL: Duration = Duration::from_secs(3);
-/// Ids tried after the expected one when another app stole in between.
+/// Older ids tried after the newest one when another app stole in between.
 const ID_SLACK: i32 = 3;
 /// Longest wait for the thief's menu window before releasing the theft.
 const MENU_WAIT: Duration = Duration::from_millis(150);
@@ -53,8 +66,9 @@ const POPUP_MENU_LAYER: i32 = 101;
 /// normal-level window of `front` in the on-screen order.
 fn target_above_front(target: i32, front: i32) -> bool {
     // Every layer, without the Space queries of `visible_windows`: this runs
-    // while the raise is on screen, so it has to be quick.
-    let windows = crate::windows::all_windows_any_layer();
+    // while the raise is on screen, so it has to be quick. On-screen windows
+    // only: the all-windows list did not show a Chromium raise.
+    let windows = crate::windows::on_screen_windows_any_layer();
     target_above_front_in(&windows, target, front)
 }
 
@@ -73,21 +87,47 @@ fn target_above_front_in(windows: &[crate::windows::WindowInfo], target: i32, fr
     }
 }
 
-/// Put the user's front app back above a background target that raised its
+/// Put the user's window back above a background target that raised its
 /// window (AppKit orders a popup menu's window group to the front, which
-/// lifts its parent window). Re-activating the already-active front app with
-/// all its windows restores the order without moving key status; the
-/// target's menu stays open.
+/// lifts its parent window). The user's app raises its own focused window,
+/// which restores the order without an activation or a key change; the
+/// target's menu stays open. See [`put_front_window_back`].
+pub fn restore_order_now(target: i32, front: i32) -> bool {
+    // NSWorkspace's frontmost reading can lag inside the daemon; the caller
+    // has already checked WindowServer's front process.
+    if !target_above_front(target, front) {
+        return false;
+    }
+    put_front_window_back(front)
+}
+
+/// Order the user's window back above a raised target without activating
+/// anything: the user's app raises its own focused window (`AXRaise`). Only
+/// if that fails, re-activate the user's app with all its windows, which is a
+/// request the system may ignore and, when honoured, re-activates the app.
+fn put_front_window_back(front: i32) -> bool {
+    if crate::ax::bindings::raise_focused_window_of_pid(front) {
+        return true;
+    }
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    unsafe {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(front).is_some_and(|app| {
+            app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
+        })
+    }
+}
+
+/// Whether a normal-level window of `target` sits above `front`'s frontmost
+/// normal-level window.
+pub fn target_window_above_front(target: i32, front: i32) -> bool {
+    target_above_front(target, front)
+}
+
 fn restore_front_if_raised(target: i32, front: i32) -> bool {
     if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
         return false;
     }
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
-    let restored = unsafe {
-        NSRunningApplication::runningApplicationWithProcessIdentifier(front).is_some_and(|app| {
-            app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
-        })
-    };
+    let restored = put_front_window_back(front);
     RESTORED.fetch_add(1, Ordering::Relaxed);
     tracing::debug!(
         target,
@@ -110,6 +150,12 @@ fn target_self_activated(front_process: Option<i32>, target: i32, front: i32) ->
 /// and hand key focus back to its window. Reads WindowServer's front process
 /// directly; `NSWorkspace` only learns of the activation once the daemon's run
 /// loop processes the notice, which took about a second in Bench v2 CDB-G04.
+/// Revert `target`'s self-activation right now, giving `front` its key
+/// window back (see [`revert_self_activation`]).
+pub fn revert_now(target: i32, front: i32) -> bool {
+    revert_self_activation(target, front)
+}
+
 fn revert_self_activation(target: i32, front: i32) -> bool {
     if !target_self_activated(skylight::front_process_pid(), target, front) {
         return false;
@@ -330,7 +376,8 @@ pub struct Stats {
 }
 
 struct Tap {
-    front_pid: i32,
+    /// The process the tap sits on.
+    pid: i32,
     port: usize,
     run_loop: usize,
 }
@@ -338,8 +385,15 @@ struct Tap {
 #[derive(Default)]
 struct State {
     tap: Option<Tap>,
-    /// Guarded pid -> (live leases, end of the tail after the last lease).
-    guarded: HashMap<i32, (usize, Instant)>,
+    /// Taps on guarded targets that hide the driver's own id lookup from
+    /// them (see [`target_tap_callback`]).
+    target_taps: HashMap<i32, Tap>,
+    /// Guarded pid -> (live leases, end of the tail after the last lease,
+    /// intentional-activation epoch when last armed).
+    guarded: HashMap<i32, (usize, Instant, u64)>,
+    /// End of the window in which target taps drop the driver's own theft
+    /// notice (see [`release_target_theft`]).
+    lookup_until: Option<Instant>,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -353,12 +407,6 @@ fn lock() -> std::sync::MutexGuard<'static, State> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The id the next theft is expected to take (0 = unknown).
-static NEXT_THEFT_ID: AtomicI32 = AtomicI32::new(0);
-/// Calibration notices the tap has dropped.
-static OWN_NOTICES: AtomicU64 = AtomicU64::new(0);
-/// A front app whose tap missed a calibration notice (0 = none).
-static UNVERIFIED_FRONT: AtomicI32 = AtomicI32::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
 static MISSED: AtomicU64 = AtomicU64::new(0);
 static RESTORED: AtomicU64 = AtomicU64::new(0);
@@ -396,7 +444,7 @@ impl Drop for Lease {
         }
         watch_order_after_action(self.pid, self.front, !self.above_before, self.epoch);
         let mut st = lock();
-        if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {
+        if let Some((leases, until, _)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
             *until = Instant::now() + TAIL;
         }
@@ -426,16 +474,18 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     if holder != front || front == target_pid || front == own {
         return None;
     }
-    if UNVERIFIED_FRONT.load(Ordering::SeqCst) == front {
-        return None;
-    }
-    // Register first, so an idle teardown cannot remove the tap between
-    // ensure_tap and the calibration below.
+    // Register first, so an idle teardown cannot remove the tap right after
+    // ensure_tap.
     {
         let mut st = lock();
-        let entry = st.guarded.entry(target_pid).or_insert((0, Instant::now()));
+        let epoch = crate::window_change_detector::intentional_epoch();
+        let entry = st
+            .guarded
+            .entry(target_pid)
+            .or_insert((0, Instant::now(), epoch));
         entry.0 += 1;
         entry.1 = Instant::now() + TAIL;
+        entry.2 = epoch;
     }
     let lease = Lease {
         pid: target_pid,
@@ -443,70 +493,67 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         above_before: target_above_front(target_pid, front),
         epoch: crate::window_change_detector::intentional_epoch(),
     };
+    // Do not touch key focus here. This runs before every background action
+    // while the user may be typing, and any key event that reaches
+    // WindowServer while focus is away from their app is lost.
     if !ensure_tap(front) {
         return None;
     }
-    if !calibrate() {
-        // The tap did not see the calibration notice, so it would not see a
-        // menu's either. Stop calibrating against this app.
-        UNVERIFIED_FRONT.store(front, Ordering::SeqCst);
-        tracing::warn!(
-            front,
-            "key-focus guard: tap did not observe the calibration notice"
-        );
-        return None;
+    // Arming this tap does not move key focus either. Without it, the
+    // driver's id lookup would close the target's menu.
+    if !ensure_target_tap(target_pid) {
+        tracing::warn!(target_pid, "key-focus guard: target event tap unavailable");
     }
     Some(lease)
 }
 
-/// Learn the id the next theft will take: steal and release key focus on the
-/// driver's own connection. The tap drops the notice this sends to the user's
-/// app, so it never sees the round trip. Returns whether the tap saw it.
-fn calibrate() -> bool {
-    let seen_before = OWN_NOTICES.load(Ordering::SeqCst);
-    let Some(id) = skylight::steal_key_focus() else {
+/// Whether key-focus thefts by `pid` are background menu thefts to release.
+/// Not once the driver itself has activated an app since the guard was armed
+/// (bring_to_front, launch_app, foreground delivery): the target taking key
+/// focus then is that activation, and releasing it would leave the target
+/// active without a key window (0.35.4 gate: bring_to_front within the tail
+/// of a refused background invoke_menu, then the foreground invoke_menu found
+/// its key-window-gated item disabled).
+fn is_guarded(pid: i32) -> bool {
+    let epoch = crate::window_change_detector::intentional_epoch();
+    let st = lock();
+    st.guarded.get(&pid).is_some_and(|&(leases, until, armed)| {
+        guard_applies(leases, until, armed, Instant::now(), epoch)
+    })
+}
+
+/// Pure part of [`is_guarded`], for tests.
+fn guard_applies(leases: usize, until: Instant, armed: u64, now: Instant, epoch: u64) -> bool {
+    armed == epoch && (leases > 0 || now < until)
+}
+
+/// Release the theft a guarded target just made. Only called once the tap
+/// has seen that theft, so the target's menu holds the keyboard already: a
+/// steal on the driver's own connection takes the next id, and the target's
+/// theft is the newest live one below it.
+fn release_target_theft() -> bool {
+    lock().lookup_until = Some(Instant::now() + LOOKUP_WINDOW);
+    let Some(own) = skylight::steal_key_focus() else {
         return false;
     };
-    skylight::release_key_focus(id);
-    NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
-    let deadline = Instant::now() + Duration::from_millis(150);
-    while OWN_NOTICES.load(Ordering::SeqCst) == seen_before {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    true
+    skylight::release_key_focus(own);
+    release_newest_theft_below(own, skylight::release_key_focus).is_some()
 }
 
-fn is_guarded(pid: i32) -> bool {
-    let st = lock();
-    st.guarded
-        .get(&pid)
-        .is_some_and(|(leases, until)| *leases > 0 || Instant::now() < *until)
-}
-
-/// Release the theft a guarded target just made. Tries the expected id first,
-/// then a few later ones in case another app stole in between.
-fn release_target_theft() -> bool {
-    let expected = NEXT_THEFT_ID.load(Ordering::SeqCst);
-    if expected == 0 {
-        return false;
-    }
-    for id in expected..=expected.wrapping_add(ID_SLACK) {
-        if skylight::release_key_focus(id) == 0 {
-            NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
-            return true;
-        }
-    }
-    false
+/// Release the newest live theft older than `own`, trying [`ID_SLACK`] older
+/// ids too in case another app stole in between. `release` returns 0 when the
+/// id was live. Pure apart from `release`, for tests.
+fn release_newest_theft_below(own: i32, mut release: impl FnMut(i32) -> i32) -> Option<i32> {
+    (1..=ID_SLACK + 1)
+        .map(|back| own.wrapping_sub(back))
+        .find(|&id| id != 0 && release(id) == 0)
 }
 
 /// What the tap does with one focus notice. Pure, for tests.
 #[derive(Debug, PartialEq, Eq)]
 enum NoticeAction {
     Pass,
-    /// The driver's own calibration theft: swallow it.
+    /// The driver's own theft while it looks up a target's id: swallow it.
     DropOwn,
     /// A guarded target stole key focus: release it, then swallow the notice.
     ReleaseAndDrop,
@@ -563,10 +610,7 @@ extern "C" fn tap_callback(
         is_guarded,
     ) {
         NoticeAction::Pass => event,
-        NoticeAction::DropOwn => {
-            OWN_NOTICES.fetch_add(1, Ordering::SeqCst);
-            std::ptr::null_mut()
-        }
+        NoticeAction::DropOwn => std::ptr::null_mut(),
         NoticeAction::ReleaseAndDrop => {
             // Swallow the notice now, so the user's window never resigns key,
             // but release the theft only once the menu window is on screen.
@@ -577,7 +621,7 @@ extern "C" fn tap_callback(
                 .name("cua-key-focus-release".into())
                 .spawn(move || {
                     wait_for_menu_window(thief_pid, MENU_WAIT);
-                    let front = lock().tap.as_ref().map(|tap| tap.front_pid);
+                    let front = lock().tap.as_ref().map(|tap| tap.pid);
                     if let Some(front) = front {
                         restore_front_if_raised(thief_pid, front);
                     }
@@ -602,25 +646,94 @@ extern "C" fn tap_callback(
 fn ensure_tap(front_pid: i32) -> bool {
     {
         let mut st = lock();
-        if st
-            .tap
-            .as_ref()
-            .is_some_and(|tap| tap.front_pid == front_pid)
-        {
+        if st.tap.as_ref().is_some_and(|tap| tap.pid == front_pid) {
             return true;
         }
         if let Some(old) = st.tap.take() {
             stop_tap(old);
         }
     }
+    let Some(tap) = spawn_tap(front_pid, tap_callback) else {
+        tracing::warn!(front_pid, "key-focus guard: event tap unavailable");
+        return false;
+    };
+    if let Some(old) = lock().tap.replace(tap) {
+        stop_tap(old);
+    }
+    true
+}
+
+/// Make sure a guarded target has a tap that hides the driver's own theft.
+fn ensure_target_tap(target_pid: i32) -> bool {
+    if lock().target_taps.contains_key(&target_pid) {
+        return true;
+    }
+    let Some(tap) = spawn_tap(target_pid, target_tap_callback) else {
+        return false;
+    };
+    if let Some(old) = lock().target_taps.insert(target_pid, tap) {
+        stop_tap(old);
+    }
+    true
+}
+
+/// Tap on a guarded target: drop the "lost key focus" notice the driver's id
+/// lookup sends it while its menu holds the keyboard. AppKit ends menu
+/// tracking on that notice, which closed popups and context menus the action
+/// had just opened. Every other event passes, including the driver's own
+/// key-focus changes outside a lookup: the tap outlives the action by the
+/// tail, and a foreground action that follows (bring_to_front, then
+/// invoke_menu) needs AppKit to see them, or its menu items validate against
+/// a stale key window (0.35.4 gate, harness_appkit_invoke_menu_live_path).
+extern "C" fn target_tap_callback(
+    _proxy: *mut c_void,
+    event_type: u32,
+    event: *mut c_void,
+    _user_info: *mut c_void,
+) -> *mut c_void {
+    if event_type == TAP_DISABLED_BY_TIMEOUT || event_type == TAP_DISABLED_BY_USER_INPUT {
+        let st = lock();
+        for tap in st.target_taps.values() {
+            unsafe { CGEventTapEnable(tap.port as *mut c_void, true) };
+        }
+        return event;
+    }
+    if event.is_null() {
+        return event;
+    }
+    let (subtype, thief) = unsafe {
+        (
+            CGEventGetIntegerValueField(event, FIELD_SUBTYPE),
+            CGEventGetIntegerValueField(event, FIELD_THIEF_PID),
+        )
+    };
+    let in_lookup = lock()
+        .lookup_until
+        .is_some_and(|until| Instant::now() < until);
+    if in_lookup && is_own_theft_notice(event_type, subtype, thief, std::process::id() as i32) {
+        std::ptr::null_mut()
+    } else {
+        event
+    }
+}
+
+/// Whether a notice tells its receiver that the driver itself took key focus.
+fn is_own_theft_notice(event_type: u32, subtype: i64, thief_pid: i64, own_pid: i32) -> bool {
+    classify_notice(event_type, subtype, thief_pid, own_pid, |_| false) == NoticeAction::DropOwn
+}
+
+/// Install a focus-notice tap on `pid` on its own run-loop thread.
+fn spawn_tap(
+    pid: i32,
+    callback: extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void,
+) -> Option<Tap> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<(usize, usize)>>();
     let spawned = std::thread::Builder::new()
         .name("cua-key-focus-guard".into())
         .spawn(move || unsafe {
             let mask = 1u64 << FOCUS_NOTICE_TYPE;
             // kCGHeadInsertEventTap = 0, kCGEventTapOptionDefault = 0.
-            let port =
-                CGEventTapCreateForPid(front_pid, 0, 0, mask, tap_callback, std::ptr::null_mut());
+            let port = CGEventTapCreateForPid(pid, 0, 0, mask, callback, std::ptr::null_mut());
             if port.is_null() {
                 let _ = tx.send(None);
                 return;
@@ -642,24 +755,15 @@ fn ensure_tap(front_pid: i32) -> bool {
             CFRelease(port);
         });
     if spawned.is_err() {
-        return false;
+        return None;
     }
     match rx.recv_timeout(Duration::from_secs(2)) {
-        Ok(Some((port, run_loop))) => {
-            let mut st = lock();
-            if let Some(old) = st.tap.replace(Tap {
-                front_pid,
-                port,
-                run_loop,
-            }) {
-                stop_tap(old);
-            }
-            true
-        }
-        _ => {
-            tracing::warn!(front_pid, "key-focus guard: event tap unavailable");
-            false
-        }
+        Ok(Some((port, run_loop))) => Some(Tap {
+            pid,
+            port,
+            run_loop,
+        }),
+        _ => None,
     }
 }
 
@@ -680,7 +784,18 @@ fn schedule_idle_teardown() {
             let mut st = lock();
             let now = Instant::now();
             st.guarded
-                .retain(|_, (leases, until)| *leases > 0 || now < *until);
+                .retain(|_, (leases, until, _)| *leases > 0 || now < *until);
+            let idle: Vec<i32> = st
+                .target_taps
+                .keys()
+                .filter(|pid| !st.guarded.contains_key(pid))
+                .copied()
+                .collect();
+            for pid in idle {
+                if let Some(tap) = st.target_taps.remove(&pid) {
+                    stop_tap(tap);
+                }
+            }
             if st.guarded.is_empty() {
                 if let Some(tap) = st.tap.take() {
                     stop_tap(tap);
@@ -749,8 +864,36 @@ mod tests {
         assert!(!target_above_front_in(&[win(42, 0, 9)], 42, 7));
     }
 
+    /// The target's tap hides only the driver's own id lookup: AppKit closes
+    /// an open menu when its app is told it lost key focus (0.35.3 release
+    /// gate: popup click, popup set_value and context menu all closed).
     #[test]
-    fn the_drivers_own_calibration_theft_is_swallowed() {
+    fn the_target_tap_drops_only_the_drivers_own_theft_notice() {
+        assert!(is_own_theft_notice(21, 0x4000, OWN as i64, OWN));
+        // Another app taking key focus still closes the menu, as it should.
+        assert!(!is_own_theft_notice(21, 0x4000, 42, OWN));
+        // Other notices and event types pass.
+        assert!(!is_own_theft_notice(21, 0x2000, OWN as i64, OWN));
+        assert!(!is_own_theft_notice(10, 0x4000, OWN as i64, OWN));
+    }
+
+    #[test]
+    fn an_intentional_activation_ends_the_guard() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(3);
+        // Live lease or tail, same epoch: guarded.
+        assert!(guard_applies(1, now, 5, now, 5));
+        assert!(guard_applies(0, later, 5, now, 5));
+        // The driver activated an app since (bring_to_front in the tail):
+        // the target's key-focus change is that activation, not a menu.
+        assert!(!guard_applies(0, later, 5, now, 6));
+        assert!(!guard_applies(1, later, 5, now, 6));
+        // Tail over.
+        assert!(!guard_applies(0, now, 5, later, 5));
+    }
+
+    #[test]
+    fn the_drivers_own_theft_is_swallowed() {
         assert_eq!(
             classify_notice(21, 0x4000, OWN as i64, OWN, |_| false),
             NoticeAction::DropOwn
@@ -779,5 +922,65 @@ mod tests {
             classify_notice(21, 0x4000, i64::MAX, OWN, |_| true),
             NoticeAction::Pass
         );
+    }
+
+    #[test]
+    fn the_targets_theft_is_the_newest_live_one_below_the_drivers() {
+        // The target stole id 41 and the driver's lookup took 42.
+        let mut tried = Vec::new();
+        let released = release_newest_theft_below(42, |id| {
+            tried.push(id);
+            if id == 41 {
+                0
+            } else {
+                1010
+            }
+        });
+        assert_eq!(released, Some(41));
+        assert_eq!(tried, vec![41]);
+
+        // Another app stole in between and already let go: skip its id.
+        assert_eq!(
+            release_newest_theft_below(42, |id| if id == 40 { 0 } else { 1010 }),
+            Some(40)
+        );
+
+        // Nothing live within reach: nothing is released, and the search
+        // never goes further back than the slack allows.
+        let mut tried = Vec::new();
+        let released = release_newest_theft_below(42, |id| {
+            tried.push(id);
+            1010
+        });
+        assert_eq!(released, None);
+        assert_eq!(tried, vec![41, 40, 39, 38]);
+
+        // Id 0 means "no theft" and is never released.
+        let mut tried = Vec::new();
+        release_newest_theft_below(2, |id| {
+            tried.push(id);
+            1010
+        });
+        assert!(!tried.contains(&0));
+    }
+
+    /// Arming the guard runs before every background action, while the user
+    /// may be typing. It must not steal key focus: a key event that reached
+    /// WindowServer in that instant went to the driver and was lost (0.35.2,
+    /// one keystroke in about 600 to 2500 during an agent run).
+    #[test]
+    fn arming_the_guard_never_steals_key_focus() {
+        let source = include_str!("key_focus_guard.rs");
+        let body = |name: &str| {
+            let start = source
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} not found"));
+            let end = source[start..].find("\n}\n").expect("end of fn") + start;
+            &source[start..end]
+        };
+        let protect = body("protect");
+        for call in ["steal_key_focus", "calibrate", "release_target_theft"] {
+            assert!(!protect.contains(call), "protect() must not call {call}");
+        }
     }
 }

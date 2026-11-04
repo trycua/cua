@@ -128,11 +128,15 @@ fn export_state(output: &Path, state: GalleryState) {
             ..CursorConfig::default()
         };
         let mut core = RenderStateCore::new(config);
+        // The gallery documents every badge combination, which only the
+        // verbose badge shows.
+        core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         core.motion.idle_hide_ms = 0.0;
         core.pos = (
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
         );
+        core.placed = true;
         core.heading = f64::from(std::f32::consts::FRAC_PI_4);
         if let Some(session_label) = state.session_label {
             core.apply_command_base(

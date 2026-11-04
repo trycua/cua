@@ -48,6 +48,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Reviewed OmniParser icon-detect ONNX conversion. The bytes are verified
   # against the icon-detect entry in artifacts.lock.json before use.
   REVIEWED_MODEL_ASSET_ID: "571471639"

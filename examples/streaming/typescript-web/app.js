@@ -5,7 +5,7 @@
 //
 // Interactive: fill in the form. Headless (headless.mjs, Playwright): the
 // runner injects `window.__CUA_CONFIG` and `window.cuaReport(kind, data)`.
-import { Cua, CuaConfig, initialize } from "/sdk/index.js"
+import { Cua, initialize } from "/sdk/index.js"
 
 import { RGBA, fnv1a64, readTimecode, unixNs, wavBytes } from "./pixels.js"
 
@@ -472,7 +472,7 @@ async function clickCell(env, s, win) {
 
 async function run(cfg) {
   await initialize()
-  const cua = Cua.embedded(CuaConfig.create({ fleetFromEnv: false }))
+  const cua = Cua.embedded()
   const env = await cua.spacesd(cfg.env, cfg.token)
 
   if (cfg.bench) {

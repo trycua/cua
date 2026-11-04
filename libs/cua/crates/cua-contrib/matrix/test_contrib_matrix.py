@@ -1,5 +1,5 @@
 """The support-matrix generator against doctor reports recorded from real
-runs (fixtures/, trimmed; see each file's ``_recorded``): a Fleet gVisor
+runs (fixtures/, trimmed; see each file's ``_recorded``): a gVisor
 desktop that passed, the same image with a broken display, and a sandbox
 whose cua-spacesd never answered. Stdlib + pytest; no network."""
 

@@ -18,7 +18,8 @@
 use std::time::Duration;
 
 use crate::ax::bindings::{
-    copy_element_attr, copy_string_attr, AXUIElementRef, AXUIElementSetAttributeValue,
+    copy_element_attr, copy_string_attr, kAXValueCFRangeType, AXUIElementRef,
+    AXUIElementSetAttributeValue, AXValueCreate,
 };
 
 /// What the document's edited mark showed after an AX text write.
@@ -59,12 +60,6 @@ impl DocumentEdited {
         }
     }
 }
-
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXValueCreate(the_type: u32, value_ptr: *const std::ffi::c_void) -> *const std::ffi::c_void;
-}
-const AX_VALUE_CF_RANGE: u32 = 4;
 
 #[repr(C)]
 struct CfRange {
@@ -116,9 +111,69 @@ pub unsafe fn ensure_marked_after_ax_write(
     if !in_document_window(element) {
         return DocumentEdited::NotADocument;
     }
-    if !keys_reach_element_window(pid, element) {
+    if keys_reach_element_window(pid, element) {
+        return send_net_zero_edit(pid, element, caret_to_end);
+    }
+    // With several windows open, the app's key window is another document,
+    // and pid-routed keys go there. Make this window key inside the app
+    // through its focus record (no activation, no raise; the user's window
+    // keeps key status), send the net-zero edit, and hand key back. The
+    // app's AXFocusedWindow does not follow a focus record, so the proof is
+    // the document's own modified flag, read through the app's scripting
+    // interface (only when Automation is already allowed).
+    let Some(own) = element_window_id(element) else {
+        return DocumentEdited::NotMarked;
+    };
+    let Some(path) = document_path(element) else {
+        return DocumentEdited::NotMarked;
+    };
+    let Some(bundle_id) = crate::apps::bundle_id_for_pid(pid) else {
+        return DocumentEdited::NotMarked;
+    };
+    // A document that already has unsaved changes autosaves its whole text,
+    // the accessibility write included; no keys are needed.
+    match crate::apple_events::document_modified(&bundle_id, &path) {
+        Some(true) => return DocumentEdited::Marked,
+        // Without the readback the edit cannot be proven; send nothing.
+        None => return DocumentEdited::NotMarked,
+        Some(false) => {}
+    }
+    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    if !crate::input::skylight::activate_without_raise_with(pid, own, false) {
         return DocumentEdited::NotMarked;
     }
+    std::thread::sleep(Duration::from_millis(120));
+    let sent = send_net_zero_edit(pid, element, caret_to_end);
+    if let Some(previous) = previous {
+        crate::input::skylight::activate_without_raise_with(pid, previous, false);
+    }
+    if sent == DocumentEdited::Marked
+        && crate::apple_events::document_modified(&bundle_id, &path) == Some(true)
+    {
+        DocumentEdited::Marked
+    } else {
+        DocumentEdited::NotMarked
+    }
+}
+
+/// The file behind the element's document window.
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn document_path(element: AXUIElementRef) -> Option<std::path::PathBuf> {
+    let window = copy_element_attr(element, "AXWindow")?;
+    let url = copy_string_attr(window, "AXDocument");
+    core_foundation::base::CFRelease(window as _);
+    crate::apple_events::file_url_to_path(&url?)
+}
+
+/// Type a space and a backspace into `element` and check the text did not
+/// move.
+unsafe fn send_net_zero_edit(
+    pid: i32,
+    element: AXUIElementRef,
+    caret_to_end: bool,
+) -> DocumentEdited {
     if caret_to_end {
         caret_to_end_of(element);
     }
@@ -138,6 +193,17 @@ pub unsafe fn ensure_marked_after_ax_write(
     }
 }
 
+/// The CGWindowID of the window `element` sits in.
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
+    let window = copy_element_attr(element, "AXWindow")?;
+    let id = crate::ax::bindings::ax_get_window_id(window);
+    core_foundation::base::CFRelease(window as _);
+    id
+}
+
 /// Collapse the selection to the end of the text.
 ///
 /// # Safety
@@ -150,7 +216,7 @@ unsafe fn caret_to_end_of(element: AXUIElementRef) {
         location: len as isize,
         length: 0,
     };
-    let value = AXValueCreate(AX_VALUE_CF_RANGE, &range as *const CfRange as *const _);
+    let value = AXValueCreate(kAXValueCFRangeType, &range as *const CfRange as *const _);
     if !value.is_null() {
         use core_foundation::{base::TCFType, string::CFString};
         let attr = CFString::new("AXSelectedTextRange");

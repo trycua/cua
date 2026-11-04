@@ -58,6 +58,9 @@ public final class PersistentModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
     }
     public private(set) var feed: [AppNotificationInput] = []
+    /// The Space each feed entry is about, by id (the core's input has no
+    /// Space; the web page's Open Space reads it).
+    private var feedSpaces: [String: String] = [:]
     /// Cua Volume's sync status (the menu bar's sync line), when read.
     public private(set) var driveSync: AppDriveSyncInput?
     /// `volume_storage`'s backend (the menu hides sync on this Mac's store
@@ -144,6 +147,27 @@ public final class PersistentModel {
         var args: [String: Any] = ["space": space, "run_id": runId, "cursor": cursor]
         if let max { args["max"] = max }
         return try await call("agent_events", args)
+    }
+
+    /// Starts a coding agent in a Space (`agent_start`): its answer as is
+    /// (`run_id`, `agent`, `space`, ...). Saved provider keys the harness
+    /// reads are forwarded by the daemon without being named here.
+    func startRun(space: String, agent: String, prompt: String, repo: String?, branch: String?, model: String?,
+                  envFromHost: [String]) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "agent": agent, "prompt": prompt]
+        if let repo { args["repo"] = repo }
+        if let branch { args["branch"] = branch }
+        if let model { args["model"] = model }
+        if !envFromHost.isEmpty { args["env_from_host"] = envFromHost }
+        return try await call("agent_start", args)
+    }
+
+    /// Sends a reply to a run (`agent_message`): queued while a turn runs,
+    /// or the turn is interrupted first with `force`.
+    func sendMessage(space: String, runId: String, text: String, force: Bool) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "run_id": runId, "text": text]
+        if force { args["force"] = true }
+        return try await call("agent_message", args)
     }
 
     /// The selected agent's home (`agents/<name>/`, recursively, files only),
@@ -295,6 +319,10 @@ public final class PersistentModel {
         }
         guard let typed = try? appNotificationsFromJson(json: json(rows)) else { return }
         feed = typed
+        feedSpaces = Dictionary(r.arr("notifications").compactMap { n -> (String, String)? in
+            guard let id = n["id"] as? String, let space = n["space"] as? String, !space.isEmpty else { return nil }
+            return (id, space)
+        }, uniquingKeysWith: { a, _ in a })
         let seen = seenMs()
         let plan = appNotificationsPlan(feed: typed, seenMs: seen)
         plan.post.forEach { post?($0) }
@@ -304,6 +332,24 @@ public final class PersistentModel {
     public func markAllRead() async {
         _ = try? await call("notifications_ack", ["ids": [String]()])
         await pollNotifications()
+    }
+
+    /// Marks these entries read (one was opened); none marks nothing, never
+    /// all (the daemon reads an empty list as every entry).
+    public func markRead(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        _ = try? await call("notifications_ack", ["ids": ids])
+        await pollNotifications()
+    }
+
+    /// The feed as the web page reads it (`NotificationInput`): the core's
+    /// entries, each with the Space it is about when it has one.
+    func feedRows() -> [[String: Any]] {
+        feed.map { n in
+            var row = (BridgeValue.encode(n) as? [String: Any]) ?? [:]
+            row["space"] = feedSpaces[n.id] ?? NSNull()
+            return row
+        }
     }
 
     /// Polls every `seconds` while the app runs (the daemon owns the feed).
@@ -323,7 +369,6 @@ public final class PersistentModel {
 @MainActor
 final class AgentNotifier {
     static let shared = AgentNotifier()
-    private var authorized: Bool?
 
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
@@ -335,10 +380,7 @@ final class AgentNotifier {
         content.body = note.body
         let request = UNNotificationRequest(identifier: "agent-\(note.id)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

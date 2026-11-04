@@ -64,7 +64,7 @@ build_app() {
     # shellcheck disable=SC2086  # word-splitting on $frameworks is intentional
     xcrun swiftc \
         -O \
-        -target arm64-apple-macos13.0 \
+        -target "$(uname -m)-apple-macos13.0" \
         $frameworks \
         -parse-as-library \
         -o "$exe_path" \

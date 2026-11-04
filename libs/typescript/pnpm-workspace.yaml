@@ -1,7 +1,6 @@
 packages:
   - "core"
   - "agent"
-  - "fleet"
   - "playground"
   - "cursor-motion"
 

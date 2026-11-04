@@ -47,6 +47,12 @@ pub enum VmmError {
     #[error("{reason}")]
     UnsupportedImage { image: String, reason: String },
 
+    /// This host has no room for another VM now: its VMs are at their
+    /// memory or CPU limit ([`crate::density`]), or the machine is low on
+    /// memory. The message says which, by how much, and what to do.
+    #[error("{0}")]
+    HostCapacity(String),
+
     /// The request was malformed (bad name, missing disk, conflicting options).
     #[error("invalid request: {0}")]
     Invalid(String),
@@ -58,6 +64,14 @@ pub enum VmmError {
         secs: u64,
         detail: String,
     },
+
+    /// An image download ended before it finished: Lume's pull failed, was
+    /// cancelled outside the SDK, or `lume serve` stopped under it. Lume
+    /// keeps the layers it finished, so another try picks up from there.
+    #[error(
+        "The image download stopped before it finished ({reason}). Try again; it picks up where it stopped."
+    )]
+    PullStopped { name: String, reason: String },
 
     /// A spawned host command failed.
     #[error("`{cmd}` failed (exit {code:?}): {stderr}")]
@@ -108,6 +122,7 @@ pub fn failure_kind(message: &str) -> Option<&'static str> {
         || m.contains("manifest unknown")
         || m.contains("pull access denied")
         || m.contains("toomanyrequests")
+        || m.contains("the image download stopped before it finished")
     {
         Some("image_pull")
     } else if m.contains("permission denied") {
@@ -165,8 +180,57 @@ mod tests {
         assert_eq!(failure_kind(&wrap(pull)), Some("image_pull"));
         let denied_pull = VmmError::Engine("pull x: pull access denied for x".into());
         assert_eq!(failure_kind(&denied_pull.to_string()), Some("image_pull"));
+        let stopped = VmmError::PullStopped {
+            name: "cua-base-x".into(),
+            reason: "Lume stopped running".into(),
+        };
+        assert_eq!(failure_kind(&wrap(stopped)), Some("image_pull"));
         assert_eq!(failure_kind(&VmmError::other("boom").to_string()), None);
         let lan = VmmError::missing("Local Network access", "click Allow");
         assert_eq!(failure_kind(&lan.to_string()), None);
+    }
+
+    /// The create-failure subclass each error the macOS and Linux VM start
+    /// path raises gets (`cua_create_failure::retry::subclass`), built from
+    /// the typed errors so a reworded message fails here.
+    #[test]
+    fn typed_errors_get_a_fixed_subclass_word() {
+        use cua_create_failure::retry::{Subclass, subclass};
+        let word = |e: VmmError| subclass("runtime", &format!("local runtime: {e}"));
+        assert_eq!(
+            word(VmmError::Lume {
+                status: 500,
+                message: "boom".into()
+            }),
+            Subclass::RuntimeApiError
+        );
+        assert_eq!(
+            word(VmmError::Command {
+                cmd: "lume".into(),
+                code: Some(1),
+                stderr: "x".into()
+            }),
+            Subclass::HostCommandFailed
+        );
+        assert_eq!(
+            word(VmmError::invalid("bad name")),
+            Subclass::VmConfigInvalid
+        );
+        assert_eq!(
+            word(VmmError::other(
+                "lume VM 'a' stopped while booting (it exited)"
+            )),
+            Subclass::VmNeverStarted
+        );
+        assert_eq!(
+            word(VmmError::other(
+                "the built-in Lume is not validly signed: boom"
+            )),
+            Subclass::RuntimeNotSigned
+        );
+        assert_eq!(
+            word(VmmError::other("download the built-in Lume: boom")),
+            Subclass::RuntimeInstallFailed
+        );
     }
 }

@@ -177,6 +177,94 @@ pub fn desktop_state() -> DesktopState {
     }
 }
 
+/// Why this session's desktop can't be seen or driven right now, in words
+/// a person can act on. `None` when it can (or when the cause is unknown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopUnavailable {
+    /// The Remote Desktop session is disconnected: Windows draws nothing.
+    Disconnected,
+    /// The PC is locked (or on another secure desktop such as UAC).
+    Locked,
+}
+
+impl DesktopUnavailable {
+    /// The sentence a remote viewer or agent sees.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Disconnected => {
+                "This PC's desktop isn't on screen: its Remote Desktop session is disconnected, \
+                 so Windows stopped drawing it. Reconnect, or sign in at the PC itself. To leave \
+                 a remote PC reachable, end Remote Desktop with \
+                 `tscon %sessionname% /dest:console` (as administrator) instead of closing the window."
+            }
+            Self::Locked => {
+                "This PC is locked, and Windows doesn't let apps see or use its lock screen. \
+                 Unlock it at the PC. For unattended access, turn off automatic locking \
+                 (Settings > Accounts > Sign-in options, and the screen saver's \"On resume, \
+                 display logon screen\")."
+            }
+        }
+    }
+}
+
+/// Decides from the session's connect state and its input desktop.
+pub fn classify_desktop_unavailable(
+    disconnected: bool,
+    input_desktop_name: Option<&str>,
+) -> Option<DesktopUnavailable> {
+    if disconnected {
+        return Some(DesktopUnavailable::Disconnected);
+    }
+    match input_desktop_name {
+        Some(name) if name.eq_ignore_ascii_case("Default") => None,
+        // Winlogon (locked, Ctrl+Alt+Del) or no access to the input desktop
+        // at all, which is what a locked session gives a user process.
+        _ => Some(DesktopUnavailable::Locked),
+    }
+}
+
+/// Whether this process's session is a disconnected Remote Desktop session.
+#[cfg(target_os = "windows")]
+pub fn session_disconnected() -> bool {
+    use windows::core::PWSTR;
+    use windows::Win32::System::RemoteDesktop::{
+        WTSConnectState, WTSDisconnected, WTSFreeMemory, WTSQuerySessionInformationW,
+        WTS_CONNECTSTATE_CLASS, WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+    };
+    unsafe {
+        let mut buffer = PWSTR::null();
+        let mut bytes = 0u32;
+        if WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            WTS_CURRENT_SESSION,
+            WTSConnectState,
+            &mut buffer,
+            &mut bytes,
+        )
+        .is_err()
+            || buffer.is_null()
+        {
+            return false;
+        }
+        let state = if bytes as usize >= std::mem::size_of::<WTS_CONNECTSTATE_CLASS>() {
+            *(buffer.0 as *const WTS_CONNECTSTATE_CLASS)
+        } else {
+            WTS_CONNECTSTATE_CLASS(-1)
+        };
+        WTSFreeMemory(buffer.0 as *mut std::ffi::c_void);
+        state == WTSDisconnected
+    }
+}
+
+/// Why the desktop can't be captured or driven now (`None`: it can, or the
+/// cause is unknown). Called after a capture fails, to say why.
+#[cfg(target_os = "windows")]
+pub fn desktop_unavailable() -> Option<DesktopUnavailable> {
+    let disconnected = session_disconnected();
+    let state = desktop_state();
+    classify_desktop_unavailable(disconnected, state.input_desktop_name.as_deref())
+}
+
 /// Whether the calling process has an attached interactive desktop.
 ///
 /// Two-step check:
@@ -390,5 +478,38 @@ mod error_classification_tests {
             "FindAll(TreeScope_Children): operation timed out"
         ));
         assert!(!is_degraded_ui_automation_error("provider is busy"));
+    }
+}
+
+#[cfg(test)]
+mod desktop_unavailable_tests {
+    use super::{classify_desktop_unavailable, DesktopUnavailable};
+
+    #[test]
+    fn a_disconnected_session_says_so_first() {
+        assert_eq!(
+            classify_desktop_unavailable(true, Some("Default")),
+            Some(DesktopUnavailable::Disconnected)
+        );
+        assert!(DesktopUnavailable::Disconnected.message().contains("tscon"));
+    }
+
+    #[test]
+    fn a_locked_session_is_the_winlogon_desktop_or_none() {
+        assert_eq!(
+            classify_desktop_unavailable(false, Some("Winlogon")),
+            Some(DesktopUnavailable::Locked)
+        );
+        assert_eq!(
+            classify_desktop_unavailable(false, None),
+            Some(DesktopUnavailable::Locked)
+        );
+        assert!(DesktopUnavailable::Locked.message().contains("locked"));
+    }
+
+    #[test]
+    fn the_default_desktop_is_available() {
+        assert_eq!(classify_desktop_unavailable(false, Some("Default")), None);
+        assert_eq!(classify_desktop_unavailable(false, Some("default")), None);
     }
 }

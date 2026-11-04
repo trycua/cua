@@ -171,7 +171,7 @@
       {
         "content": [
           {
-            "text": "{\"spaces\": [{\"id\": \"local:cua-space-fixture01\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\", \"ip\": \"192.168.64.7\"}, {\"id\": \"fleet:cua-spaces-demo:claim-77\", \"provider\": \"fleet\", \"phase\": \"Bound\", \"os\": \"linux\", \"ip\": \"10.1.2.3\"}, {\"id\": \"local:cua-space-scratch\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\"}]}",
+            "text": "{\"spaces\": [{\"id\": \"local:cua-space-fixture01\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\", \"ip\": \"192.168.64.7\"}, {\"id\": \"direct:10.1.2.3:3211\", \"provider\": \"direct\", \"phase\": \"Bound\", \"os\": \"linux\", \"ip\": \"10.1.2.3\"}, {\"id\": \"local:cua-space-scratch\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\"}]}",
             "type": "text"
           }
         ]

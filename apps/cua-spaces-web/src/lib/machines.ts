@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { Machine, SpaceOs } from "@/bridge";
+import { machineSpacesLabel } from "@/bridge/derive";
 import { OS_NAME } from "@/components/os-icon";
 import { plural } from "@/lib/plural";
 import { relativeTime } from "@/lib/utils";
@@ -26,43 +27,56 @@ export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
   direct: "Direct",
 };
 
-/** How other devices reach it, in words. */
+/** A row that is only a signed-in machine (`machines_view::DEVICE_LINE`). */
+export const DEVICE_LINE = "Signed in, not sharing";
+
+/** How other machines reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
   if (m.connection) return CONNECTION_LABEL[m.connection];
-  return m.current || m.device ? "Not set up for access" : "Unknown";
+  if (m.device) return DEVICE_LINE;
+  return m.current ? "Not set up for access" : "Unknown";
 }
 
 /** The list row's second line: OS, then how it is reached. */
 export function machineSubtitle(m: Pick<Machine, "os" | "connection" | "current" | "model"> & Pick<Partial<Machine>, "device">): string {
-  return [m.model ?? osName(m), connectionLabel(m)].join(" · ");
+  return [m.model ?? osName(m), connectionLabel(m)].join(", ");
 }
 
-/** The core's word for a machine its owner stopped sharing: it cannot be
- * reached from here (`sidebar::detail_live`'s preview line). */
-export const NOT_REACHABLE = "Not reachable";
+/** The core's word for a machine its owner stopped sharing
+ * (`machines::NOT_SHARING`): connected to the relay, but it refuses every
+ * call. */
+export const NOT_SHARING = "Not sharing";
 
 /** Usable from here: online and shared (a machine whose owner stopped
  * sharing it is connected, but nothing here can reach it). */
 export const reachable = (m: Pick<Machine, "online" | "notSharing">): boolean => m.online && !m.notSharing;
 
-/** "Online", "Not reachable" (its owner stopped sharing it; `reach` is the
- * core's word for its Space, as the SwiftUI detail shows it), or "Offline"
- * with when it was last seen. */
-export function presenceLabel(m: Pick<Machine, "online" | "lastSeen" | "notSharing">, now: number, reach?: string | null): string {
-  if (m.online) return m.notSharing ? (reach ?? NOT_REACHABLE) : "Online";
-  return m.lastSeen ? `Offline, last seen ${relativeTime(m.lastSeen * 1000, now)}` : "Offline";
+/** The detail's line: the row's word, and when an offline machine was
+ * last seen. */
+export function presenceLabel(m: Pick<Machine, "online" | "lastSeen" | "notSharing" | "status">, now: number): string {
+  if (m.online || !m.lastSeen) return presenceWord(m);
+  return `Offline, last seen ${relativeTime(m.lastSeen * 1000, now)}`;
 }
 
-/** The list row's one word: "Online", "Not reachable" or "Offline". */
-export function presenceWord(m: Pick<Machine, "online" | "notSharing">, reach?: string | null): string {
+/** The list row's one word: the core's (`machines::status_word`, the same
+ * the SwiftUI Machines list shows): "Online", "Not sharing" or "Offline". */
+export function presenceWord(m: Pick<Machine, "online" | "notSharing" | "status">): string {
+  if (m.status) return m.status;
   if (!m.online) return "Offline";
-  return m.notSharing ? (reach ?? NOT_REACHABLE) : "Online";
+  return m.notSharing ? NOT_SHARING : "Online";
 }
 
 /** "1 Space", "3 Spaces", "No Spaces". */
 export function spaceCount(n: number): string {
-  if (n === 0) return "No Spaces";
-  return `${n} ${n === 1 ? "Space" : "Spaces"}`;
+  return machineSpacesLabel(false, n);
+}
+
+/** The row's Spaces count: the core's (`machines::spaces_label`, the same
+ * the SwiftUI Machines list shows), else `n` counted here. Empty for a
+ * device of its own (it runs no Spaces). `desktop`: the machine shares its
+ * own desktop ("Desktop shared", "Desktop and 2 Spaces"). */
+export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number, desktop = false): string {
+  return m.spacesLabel ?? machineSpacesLabel(desktop, n);
 }
 
 /** The selected machine: the chosen one if it is still listed, else the first. */

@@ -207,6 +207,22 @@ struct HelperNotchTests {
         #expect(n.query == "", "the core cleared it (the panel closed)")
     }
 
+    /// A window dragged over the app's own window: the window under the
+    /// dragged one at that point goes back with the request's id.
+    @Test func windowUnderIsAnsweredWithTheRequestsId() throws {
+        let (n, sink) = try notch()
+        var asked: (Double, Double, Int?)?
+        n.windowUnder = { x, y, below in
+            asked = (x, y, below)
+            return x < 1000 ? 4242 : nil
+        }
+        sink.messages = []
+        #expect(n.receive(.windowUnder(id: 7, x: 640.5, y: 412, below: 5120)))
+        #expect(n.receive(.windowUnder(id: 8, x: 2000, y: 10, below: nil)))
+        #expect(sink.messages == [.windowUnder(id: 7, window: 4242), .windowUnder(id: 8, window: nil)])
+        #expect(asked?.0 == 2000 && asked?.2 == nil)
+    }
+
     @Test func theSelftestPasses() {
         #expect(NotchHelperRunner.selftest() == 0)
     }

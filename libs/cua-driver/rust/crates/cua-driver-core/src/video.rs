@@ -7,8 +7,11 @@
 //! - **macOS:** native ScreenCaptureKit via `platform_macos::video_sckit`
 //!   (no extra TCC grant — inherits cua-driver's own Screen Recording
 //!   permission, no subprocess).
-//! - **Windows + Linux:** ffmpeg subprocess via `video_ffmpeg`
+//! - **Windows + Linux X11:** ffmpeg subprocess via `video_ffmpeg`
 //!   (`gdigrab` / `x11grab` input + libx264 encode).
+//! - **Linux Wayland:** compositor-routed capture via
+//!   `platform_linux::video_wayland` (GNOME Shell helper frames, wlroots
+//!   `wf-recorder`, or xdg-desktop-portal ScreenCast over PipeWire).
 //!
 //! The factory is registered with `set_video_backend_factory` from each
 //! platform's `main.rs` startup block, mirroring how `SCREENSHOT_FN` /

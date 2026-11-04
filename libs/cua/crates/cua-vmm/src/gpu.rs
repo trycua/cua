@@ -57,7 +57,7 @@ pub struct GpuOption {
 /// What one runtime offers.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct GpuSupport {
-    /// The runtime (`lume`, `qemu`, `container`, `gvisor`, `fleet`, a
+    /// The runtime (`lume`, `qemu`, `container`, `gvisor`, a
     /// contrib or cloud provider's name).
     pub runtime: String,
     /// Its options (empty: none).

@@ -17,6 +17,7 @@
 //   that window's app in that Space, the same way as its bundle dropped there.
 import { basename } from "node:path";
 import { fileOffers, sendOffered } from "./bridge/files";
+import { refreshDaemonExperiments } from "./bridge/settings";
 import type { AppModel } from "./model/app-model";
 import { words } from "./model/errors";
 import type { TeleportLike } from "./native/generated/index";
@@ -106,17 +107,23 @@ export function notchTeleport(handle: () => TeleportLike | null): NotchTeleport 
   };
 }
 
+/** How often the Spaces exiting through this machine are read. */
+const EXITS_POLL_MS = 15_000;
+
 /**
  * Feeds the notch the Spaces, the "Spaces tab in the notch" setting, the live
  * Keyvault sign-ins (less the copies dismissed from the notch: the SwiftUI
- * app's `syncNotchKeyvault`) and the activity, now and on every change.
+ * app's `syncNotchKeyvault`), the pinned Spaces and desktops and the
+ * activity, now and on every change.
  * Returns the stop.
  */
-export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActivity" | "setKeyvault">, model: AppModel): () => void {
+export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActivity" | "setKeyvault" | "setPinned">, model: AppModel): () => void {
   const keyvault = () => notch.setKeyvault(model.keyvault.notchLabel, model.keyvault.signedIn(model.spaces, true));
   const spaces = () => {
     notch.setSpaces(model.spaces);
     notch.setShown(!model.settings.menuBar);
+    // Pinned tiles come first; the pins follow the settings file.
+    notch.setPinned(model.settings.notchPinned);
     // The tiles' key follows the Spaces too.
     keyvault();
   };
@@ -130,5 +137,41 @@ export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActi
     }),
     model.activity.subscribe(activity),
   ];
+  // Spaces exiting through this machine light the hotspot indicator too (Labs: Secure Spaces; off, nothing is read).
+  const exits = async () => {
+    refreshDaemonExperiments(model);
+    if (!model.settings.experiments.secureSpaces) {
+      model.activity.setExits([]);
+      return;
+    }
+    const ids = await model.backend.exitsThroughThisMachine?.().catch(() => null);
+    if (ids) model.activity.setExits(ids);
+  };
+  void exits();
+  const timer = setInterval(() => void exits(), EXITS_POLL_MS);
+  stops.push(() => clearInterval(timer));
   return () => stops.forEach((s) => s());
+}
+
+/** What `followDragReadiness` reads of the launch (`StartupModel`). */
+export interface DragReadiness {
+  readonly isReady: boolean;
+  /** Called on every change; returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/**
+ * Window-drag tracking needs the SDK (the launch's end) and the notch (its
+ * helper connecting). Either may come first, so this checks now, once the
+ * notch is connected, and again on every launch change while it is ready;
+ * the helper's own (re)connects check again too (`startNotch`). The check
+ * is idempotent: a running monitor stays as it is. Returns the stop.
+ */
+export function followDragReadiness(notch: Pick<Notch, "recheckPermission">, startup: DragReadiness): () => void {
+  const check = () => {
+    if (startup.isReady) notch.recheckPermission();
+  };
+  const stop = startup.subscribe(check);
+  check();
+  return stop;
 }

@@ -22,7 +22,7 @@
 import { HostError } from "../adapter";
 import type { HostStatus } from "../contracts/host";
 import type { SpaceRow } from "../contracts/spaces";
-import type { CatalogEntry, KvInventory, RunEvent, TeleportPlan } from "../contracts/teleport";
+import type { CatalogEntry, KvInventory, KvReadiness, RunEvent, TeleportPlan } from "../contracts/teleport";
 import type { HostEvent, OpArgs, OpName, OpResult } from "../protocol";
 import type { WebkitMethod, WkHostState, WkSpace } from "../webkit-protocol";
 import { isSettingsPane } from "./host-setup";
@@ -39,6 +39,7 @@ export const WEBKIT_PAGE_OPS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -48,11 +49,14 @@ export const WEBKIT_PAGE_OPS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -67,9 +71,16 @@ export const WEBKIT_PAGE_OPS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -80,10 +91,12 @@ export const WEBKIT_PAGE_OPS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",
@@ -93,7 +106,9 @@ export const WEBKIT_PAGE_OPS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
 
@@ -204,6 +219,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "clouds.status": async () => (await request<OpResult<"clouds.status"> | null>("clouds.status")) ?? { providers: [] },
     "clouds.test": call("clouds.test"),
     "clouds.connect": call("clouds.connect"),
+    "clouds.disconnect": call("clouds.disconnect"),
 
     "teleport.catalog": async ({ spaceId }) => arr(await request("teleport.catalog", { spaceId })).map((e) => entryFromWk(e as Json)),
     "teleport.entryForPath": async ({ path }) => entryFromWk(await request<Json>("teleport.entryForPath", { path })),
@@ -216,13 +232,17 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     // As long as the run takes (an install downloads the app); it reports
     // progress as it goes (teleport.progress) and answers when it is done.
     "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }, null),
-    "teleport.sites": async ({ providerId }) => snake(await request("teleport.sites", { providerId })) as KvInventory,
+    "teleport.sites": async ({ providerId, profile }) => snake(await request("teleport.sites", { providerId, profile: profile ?? null })) as KvInventory,
+    "teleport.readiness": async ({ providerId, profile }) =>
+      snake(await request("teleport.readiness", { providerId, profile: profile ?? null })) as KvReadiness,
     "teleport.remembered": async ({ providerId, spaceId }) => (await request<string[] | null>("teleport.remembered", { providerId, spaceId })) ?? null,
     "teleport.streamWindow": none("teleport.streamWindow"),
 
     "sharing.list": list("sharing.list"),
     "sharing.share": list("sharing.share"),
     "sharing.unshare": list("sharing.unshare"),
+    "sharing.removals": list("sharing.removals"),
+    "sharing.ackRemovals": none("sharing.ackRemovals"),
 
     "volume.overview": call("volume.overview"),
     "volume.storage": call("volume.storage"),
@@ -239,23 +259,39 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "about.get": call("about.get"),
     "about.set": call("about.set"),
     "about.checkNow": call("about.checkNow"),
+    "update.get": call("update.get"),
+    "update.install": call("update.install"),
     "loginItem.get": call("loginItem.get"),
     "loginItem.set": call("loginItem.set"),
     "loginItem.openSettings": none("loginItem.openSettings"),
+    "runtimes.check": call("runtimes.check"),
+    // The file panel waits for the person: no timeout.
+    "runtimes.browse": async (args) => (await request("runtimes.browse", { ...args }, null)) as { path: string | null },
+    "repoCache.get": call("repoCache.get"),
+    "repoCache.set": call("repoCache.set"),
+    "repoCache.clear": call("repoCache.clear"),
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
-    "devices.approve": none("devices.approve"),
+    // The host asks for Touch ID or the login password first: no timeout,
+    // or a slow answer reads as "the app did not answer" while the prompt
+    // is still up, and the relay's own answer is lost.
+    "devices.approve": async (args) => {
+      await request("devices.approve", { ...args }, null);
+      return null;
+    },
     "devices.rename": none("devices.rename"),
     "devices.revoke": none("devices.revoke"),
     "devices.confirmMachine": none("devices.confirmMachine"),
     "devices.createPairingCode": ({ team }) => request("devices.createPairingCode", { team: team ?? null }),
     "devices.pairingCodes": list("devices.pairingCodes"),
     "devices.revokePairingCode": none("devices.revokePairingCode"),
+    "teams.list": call("teams.list"),
     "storage.get": call("storage.get"),
     "storage.run": call("storage.run"),
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
+    "notifications.markRead": none("notifications.markRead"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.
@@ -273,7 +309,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "spaces.sendFiles": list("spaces.sendFiles"),
 
     "host.setUp": host("host.setUp"),
+    "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
+    "host.limits": host("host.limits"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
       await request("host.openSettings", { url });

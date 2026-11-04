@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Firefox's profile data as Keyvault items, from the profile's own files
-//! (formats in `~/projects/.cua-work/keyvault-v2/browser-formats.md`):
+//! Firefox's profile data as Keyvault items, from the profile's own files:
 //!
 //! * profile discovery: `profiles.ini` and `installs.ini`;
 //! * cookies: `cookies.sqlite` (`moz_cookies`, schema 16), plaintext values;
@@ -80,6 +79,19 @@ pub fn profiles(app_data: &Path) -> Vec<FirefoxProfile> {
             }
         })
         .collect()
+}
+
+/// The Firefox application-data directory under `home` on `platform`: the
+/// first location with a `profiles.ini` (Linux has several, see
+/// [`cua_teleport_bundle::layout::firefox::source_roots_for`]), else the
+/// first one.
+pub fn app_data_dir(home: &Path, platform: cua_teleport_bundle::Platform) -> PathBuf {
+    let roots = cua_teleport_bundle::layout::firefox::source_roots_for(platform);
+    roots
+        .iter()
+        .map(|r| home.join(r))
+        .find(|dir| dir.join("profiles.ini").is_file())
+        .unwrap_or_else(|| home.join(roots[0]))
 }
 
 /// The profile Firefox opens: the install's `Default=` in `installs.ini`,

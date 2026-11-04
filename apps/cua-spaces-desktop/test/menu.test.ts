@@ -89,7 +89,8 @@ describe("the Windows and Linux menu", () => {
       expect(names(t)).toEqual(["File", "editMenu", "View", "windowMenu", "help"]);
       const file = sub(t, "File");
       expect(names(file)).toEqual(["New Space", "---", "Settings…", "---", "Exit"]);
-      expect(file.find((i) => i.label === "Settings…")!.accelerator).toBe("CmdOrCtrl+,");
+      expect(file.find((i) => i.label === "Settings…")!.accelerator).toBe("Ctrl+,");
+      expect(file[0]!.accelerator).toBe("Ctrl+N");
       for (const i of file) (i.click as (() => void) | undefined)?.();
       expect(log).toEqual(["new", "settings"]);
       expect(names(sub(t, "View"))).toEqual(["togglefullscreen"]);

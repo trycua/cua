@@ -89,6 +89,19 @@ element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
 menu bars” below.
 
+For unattended use, start `cua-driver serve --no-automation-prompts` before
+connecting `cua-driver mcp --socket <path>`. MCP's auto-started daemon does not
+enable this protection, and the flag is serve-only. Only explicitly granted
+Automation targets may receive scripting actions: background Save (including
+hotkeys), Finder rename, browser Apple Events JavaScript and browser quit for
+JavaScript setup, and Safari select updates. Ungranted or unknown consent
+refuses immediately with `automation_consent_required`, naming the app and
+System Settings > Privacy & Security > Automation; no scripting action or
+keyboard fallback is sent. Grant consent with the user's authorization before
+retrying. This does not suppress Accessibility/Screen Recording onboarding or
+other unrelated OS prompts. By default, macOS may prompt for Automation
+consent on first use; unanswered prompts can recur.
+
 **"Open \<app\>" in user speech means launch, not activate.**
 `cua-driver launch_app` is the one correct path for process
 startup: it's idempotent (no-op on a running app), returns the
@@ -216,10 +229,11 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form: goes through LaunchServices so TCC attributes
-   the process to CuaDriver.app). `cua-driver serve &` also works;
-   the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
+2. Start the daemon with `cua-driver permissions grant` (the
+   recommended form: it launches the installed CuaDriver.app by its
+   exact path through LaunchServices, so TCC attributes the process to
+   that app). `cua-driver serve &` also works;
+   the CLI auto-relaunches the installed app by path when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
 3. Run `cua-driver permissions status --json`. This
@@ -479,11 +493,11 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
+CDP's trusted pointer route (the `browser_click` and `browser_pointer`
+default) stays in the background on macOS Chrome: it delivers trusted events
+to the bound tab, even an inactive one, without activating or raising the
+browser window. Use `input_route:"dom_event"` only when synthetic events are
+acceptable; controls that check `event.isTrusted` ignore it. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate
@@ -513,6 +527,7 @@ starting point for new browser workflows.
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
 | `set_value refused (file_name_needs_rename)`                  | A file's name as Finder lists it: an AXValue write changes only the list, never the file                          | `click` the item, then with Finder frontmost send `press_key` return, `hotkey` cmd+a, `type_text` the full new name, `press_key` return, each with `scope:"desktop"`; re-read to confirm                                            |
 | `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | foreground `click` at the field's centre in screenshot pixels (with its `capture_id`), then `hotkey` cmd+a, `type_text` the full new name with its extension, `press_key` return, each with `delivery_mode:"foreground"`; a changed extension asks for confirmation first; check the folder listing |
+| `automation_consent_required` | With `serve --no-automation-prompts`, Automation consent is not explicitly granted for the named app; no scripting action was sent | With the user's authorization, grant access in System Settings > Privacy & Security > Automation |
 
 ## Example end-to-end task (macOS)
 

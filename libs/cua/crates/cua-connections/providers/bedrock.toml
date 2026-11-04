@@ -1,0 +1,20 @@
+id = "bedrock"
+name = "Amazon Bedrock"
+icon = "aws"
+tier = "more"
+rank = 390
+kind = "cloud"
+hidden = true
+hidden_reason = "Not built yet: needs the AWS credential chain method with a region."
+aliases = ["aws", "amazon"]
+wire = "bedrock"
+base_url = "https://bedrock-runtime.us-east-1.amazonaws.com"
+default_model = ""
+hermes_id = "bedrock"
+key_help = "Use your AWS credentials with a region."
+
+[[method]]
+id = "adc"
+kind = "adc"
+label = "Use your AWS credentials"
+help = "Uses the AWS profile or environment on this machine."

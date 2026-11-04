@@ -261,18 +261,21 @@ async fn e2e_macos_desktop_stream_double_click_selects_a_word() {
 
     // A plain-text document of one repeated word: a double-click anywhere in
     // the text selects it. The clipboard starts as a sentinel so a stale copy
-    // cannot pass. No AppleScript (it raises an Automation consent prompt);
-    // `open` and `pkill` need none.
+    // cannot pass. TextEdit is quit first so its only window is this
+    // document (window titles are not relied on: a Space without the Screen
+    // Recording grant reports none). No AppleScript (it raises an Automation
+    // consent prompt); `open` and `pkill` need none.
     let path = "/tmp/cua-e2e-double-click.txt";
     bash(
         &space,
         &format!(
-            "yes 'cuaword cuaword cuaword cuaword cuaword cuaword' | head -200 > {path}; \
+            "pkill -x TextEdit; \
+             yes 'cuaword cuaword cuaword cuaword cuaword cuaword' | head -200 > {path}; \
              printf sentinel | pbcopy; open -a TextEdit {path}"
         ),
     )
     .await;
-    let window = textedit_window(&space, "cua-e2e-double-click").await;
+    let window = textedit_window(&space).await;
     let display = space
         .displays()
         .await
@@ -373,14 +376,17 @@ async fn bash(space: &Space, command: &str) -> String {
     out.stdout
 }
 
-/// TextEdit's on-screen window whose title contains `title`, within 15 s.
-async fn textedit_window(space: &Space, title: &str) -> cua_spaces::stream::WindowTarget {
+/// TextEdit's on-screen window (the focused one when it has several),
+/// within 15 s of opening a document.
+async fn textedit_window(space: &Space) -> cua_spaces::stream::WindowTarget {
     let mut seen = Vec::new();
     for _ in 0..150 {
         seen = space.windows(Some("TextEdit")).await.unwrap_or_default();
-        if let Some(window) = seen
-            .iter()
-            .find(|w| w.on_screen && w.title.contains(title))
+        let on_screen = seen.iter().filter(|w| w.on_screen);
+        if let Some(window) = on_screen
+            .clone()
+            .find(|w| w.focused)
+            .or_else(|| on_screen.clone().next())
         {
             // Let the document finish laying out before it is clicked.
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -390,9 +396,9 @@ async fn textedit_window(space: &Space, title: &str) -> cua_spaces::stream::Wind
     }
     let seen: Vec<_> = seen
         .iter()
-        .map(|w| (w.app_name.as_str(), w.title.as_str(), w.on_screen, w.bounds))
+        .map(|w| (w.title.as_str(), w.on_screen, w.focused, w.bounds))
         .collect();
-    panic!("TextEdit did not open {title} within 15 s; its windows: {seen:?}");
+    panic!("TextEdit showed no window within 15 s; its windows: {seen:?}");
 }
 
 /// The SwiftUI viewer sends its batches as raw text in the v1 envelope; the

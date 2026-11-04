@@ -4645,6 +4645,10 @@ pub fn build_registry_with_provider(
         },
         &pid_window_candidates,
     ));
+    // select_text is macOS-only today; refuse explicitly (unsupported_platform).
+    r.register(Box::new(
+        cua_driver_core::text_selection::UnsupportedSelectTextTool::new("Linux"),
+    ));
     r.register(pid_window_guarded(
         ScrollTool {
             state: state.clone(),

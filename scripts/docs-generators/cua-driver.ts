@@ -253,8 +253,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'keyboard',
     title: 'Typing tools',
-    summary: 'Type text into a field or window',
-    tools: ['type_text', 'type_text_chars'],
+    summary: 'Type text into a field or window, or select text in it',
+    tools: ['type_text', 'type_text_chars', 'select_text'],
   },
   {
     slug: 'keys-and-shortcuts',

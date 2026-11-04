@@ -118,11 +118,12 @@ Drag, scroll, move the pointer, and press or release buttons. [Reference](/cua-d
 
 ## Typing tools
 
-Type text into a field or window. [Reference](/cua-driver/reference/mcp-tools/click-and-type#typing-tools).
+Type text into a field or window, or select text in it. [Reference](/cua-driver/reference/mcp-tools/click-and-type#typing-tools).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="type_text"></span>[`type_text`](/cua-driver/reference/mcp-tools/click-and-type#type_text) | Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. | macOS, Linux, Windows |
+| <span id="select_text"></span>[`select_text`](/cua-driver/reference/mcp-tools/click-and-type#select_text) | Select text inside a text element by `element_token`, or place the caret next to it, without typing or fronting the app. | macOS, Linux, Windows |
 
 ## Key and shortcut tools
 

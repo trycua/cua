@@ -204,6 +204,7 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
         // never require `pid` in the schema (validated in code for x/y).
         "double_click" | "right_click" => &[],
         "set_value" => &["value"],
+        "select_text" => &["text"],
         "scroll" => &["direction"],
         "zoom" => &["window_id", "x1", "y1", "x2", "y2"],
         _ => return None,

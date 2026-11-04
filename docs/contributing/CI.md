@@ -106,7 +106,9 @@ stops in about a minute instead of spending runner minutes on builds. The jobs u
 `if: ${{ !failure() && !cancelled() }}` so they still run on pushes and manual runs, where `quick` is
 skipped. `ci-quick.yml` also runs on its own on every pull request, so the gate sees a quick failure even
 when no heavy workflow starts. A failed `quick` fails its workflow run; the jobs it skipped are not read as
-passed. When you add a heavy workflow, add the `quick` job and the `needs` the same way.
+passed. It runs once per commit: the first `quick` that passes saves a cache marker (`ci-quick-pass-<sha>`) and the
+others restore it and finish in seconds. Jobs that start before the marker exists run the checks themselves.
+When you add a heavy workflow, add the `quick` job and the `needs` the same way.
 
 ## Path-scoped gate
 

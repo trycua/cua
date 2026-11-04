@@ -378,3 +378,18 @@ def test_local_ci_is_report_only_until_the_switch_is_on():
         assert '::warning' in done.stdout
         assert 'Run bin/ci and bin/ci --signoff on this head commit.' in done.stdout
     assert run_local_ci(author='cua-agents[bot]', state='success', require='').returncode == 0
+
+
+def test_quick_stage_runs_once_per_commit():
+    steps = yaml.safe_load((WORKFLOWS / 'ci-quick.yml').read_text())['jobs']['quick']['steps']
+    restore, *middle, save = [s for s in steps if s.get('id') == 'marker' or 'if' in s or 'cache' in str(s.get('uses', ''))]
+    key = 'ci-quick-pass-${{ github.sha }}'
+    assert restore['uses'].startswith('actions/cache/restore@') and restore['with']['key'] == key
+    assert save['uses'].startswith('actions/cache/save@') and save['with']['key'] == key
+    assert steps[0] is restore
+    # Every step after the restore is skipped on a hit; the save runs last, after the checks passed
+    # (a failing step stops the job before it, so a failure is never cached).
+    for step in steps[1:]:
+        assert step['if'] == "steps.marker.outputs.cache-hit != 'true'", step.get('name', step.get('uses'))
+    assert steps[-1] is save
+    assert any('bin/ci --quick' in str(s.get('run', '')) for s in middle)

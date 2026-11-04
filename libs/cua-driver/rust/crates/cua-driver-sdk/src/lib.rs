@@ -2043,6 +2043,16 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
+/// Test directory for Unix socket endpoints. sun_path holds 104 bytes on
+/// macOS and a long TMPDIR can use most of it, so tests bind under /tmp.
+#[cfg(all(test, unix))]
+fn socket_tempdir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("cd")
+        .tempdir_in("/tmp")
+        .unwrap()
+}
+
 #[cfg(test)]
 #[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
@@ -2092,13 +2102,9 @@ mod tests {
 
     #[cfg(unix)]
     fn serve_once(response: Value) -> (tempfile::TempDir, String, std::thread::JoinHandle<Value>) {
-        // Short path under /tmp: sun_path holds ~104 bytes on macOS and a CI
-        // TMPDIR can eat most of it. The listener is bound before returning,
-        // so the client needs no readiness wait.
-        let directory = tempfile::Builder::new()
-            .prefix("cd")
-            .tempdir_in("/tmp")
-            .unwrap();
+        // The listener is bound before returning, so the client needs no
+        // readiness wait.
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = std::thread::spawn(move || {
@@ -3073,7 +3079,7 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn daemon_version_mismatch_is_refused_before_action_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("incompatible.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let action_dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));

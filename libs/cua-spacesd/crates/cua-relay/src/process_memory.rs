@@ -30,6 +30,26 @@ pub fn stream_budget_for(limit: u64) -> u64 {
     (limit / 100 * STREAM_SHARE_PERCENT / STREAM_WORST_CASE_BYTES).clamp(MIN_STREAMS, MAX_STREAMS)
 }
 
+/// The client stream budget the relay runs with: the operator's explicit
+/// value as is (including one above the derived budget; that is their
+/// decision), else derived from the container memory limit, else the old
+/// fixed default of [`MAX_STREAMS`].
+pub fn resolve_stream_budget(explicit: Option<u64>, memory_limit: Option<u64>) -> u64 {
+    explicit.unwrap_or_else(|| {
+        memory_limit.map_or_else(
+            || {
+                #[cfg(target_os = "linux")]
+                tracing::warn!(
+                    max_global_streams = MAX_STREAMS,
+                    "no cgroup memory limit found at /sys/fs/cgroup; the client stream budget is the fixed default (set CUA_RELAY_MAX_GLOBAL_STREAMS to size it)"
+                );
+                MAX_STREAMS
+            },
+            stream_budget_for,
+        )
+    })
+}
+
 /// The memory limit of the relay's cgroup (v2 `memory.max`, or v1
 /// `memory.limit_in_bytes`), in bytes; `None` without one.
 pub fn cgroup_memory_limit() -> Option<u64> {
@@ -108,6 +128,20 @@ mod tests {
             "capped at the old default"
         );
         assert_eq!(stream_budget_for(16 << 20), 64, "floor");
+    }
+
+    #[test]
+    fn the_budget_is_explicit_then_derived_then_the_default() {
+        assert_eq!(resolve_stream_budget(Some(100), Some(4 << 30)), 100);
+        assert_eq!(
+            resolve_stream_budget(Some(9000), Some(4 << 30)),
+            9000,
+            "explicit is taken as is"
+        );
+        assert_eq!(resolve_stream_budget(Some(7), None), 7);
+        assert_eq!(resolve_stream_budget(None, Some(4 << 30)), 2730);
+        assert_eq!(resolve_stream_budget(None, Some(512 << 20)), 341);
+        assert_eq!(resolve_stream_budget(None, None), 4096, "no limit");
     }
 
     #[test]

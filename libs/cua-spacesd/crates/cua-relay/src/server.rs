@@ -413,6 +413,8 @@ pub struct Relay {
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
     pub(crate) global_streams: Arc<AtomicU64>,
+    /// Client streams refused at the global budget since start.
+    pub(crate) streams_refused: Arc<AtomicU64>,
     /// The mesh coordinator's registry and connections.
     pub(crate) mesh: Arc<crate::mesh::MeshState>,
     /// Each account's pool: coordinator lease, job log, mailbox.
@@ -585,6 +587,7 @@ impl Relay {
             pairing: Arc::new(pairing),
             key,
             global_streams: Arc::default(),
+            streams_refused: Arc::default(),
             mesh,
             pool,
             storage,
@@ -1608,9 +1611,6 @@ async fn readyz(State(relay): State<Relay>, headers: HeaderMap) -> Response {
     response
 }
 
-/// Client streams refused at the global budget since start.
-static STREAMS_REFUSED: AtomicU64 = AtomicU64::new(0);
-
 /// `GET /metrics`: the state counters in Prometheus text format (no
 /// account data).
 async fn metrics(State(relay): State<Relay>, headers: HeaderMap) -> Response {
@@ -1642,7 +1642,7 @@ async fn metrics(State(relay): State<Relay>, headers: HeaderMap) -> Response {
          cua_relay_client_streams_refused_total {}\n",
         relay.global_streams.load(Ordering::Relaxed),
         relay.config.max_global_streams,
-        STREAMS_REFUSED.load(Ordering::Relaxed),
+        relay.streams_refused.load(Ordering::Relaxed),
     ));
     #[cfg(feature = "hosted")]
     {
@@ -2921,13 +2921,29 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
     if relay.global_streams.fetch_add(1, Ordering::SeqCst) >= relay.config.max_global_streams {
         relay.global_streams.fetch_sub(1, Ordering::SeqCst);
         machine.active.fetch_sub(1, Ordering::SeqCst);
-        STREAMS_REFUSED.fetch_add(1, Ordering::Relaxed);
-        return refuse(
+        relay.streams_refused.fetch_add(1, Ordering::Relaxed);
+        let mut response = refuse(
             request.headers(),
             StatusCode::SERVICE_UNAVAILABLE,
             GrpcCode::ResourceExhausted,
             "the relay is at its concurrent-stream budget; retry shortly",
         );
+        // Like the join-limit refusals: a jittered 1 to 5 s, so clients that
+        // all reopen their streams after a relay restart do not return
+        // together (`transport.rs` honors it).
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(
+            Duration::from_secs(1),
+            Duration::from_secs(4),
+            unit,
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
     }
     if let Some(who) = &identity {
         machine.client_enter(who);

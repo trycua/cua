@@ -628,9 +628,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         push.as_ref().map(|p| p.phone_clients()),
     )?;
     let memory_limit = cua_relay::process_memory::cgroup_memory_limit();
-    let max_global_streams = args
-        .max_global_streams
-        .unwrap_or_else(|| memory_limit.map_or(4096, cua_relay::process_memory::stream_budget_for));
+    let max_global_streams =
+        cua_relay::process_memory::resolve_stream_budget(args.max_global_streams, memory_limit);
     tracing::info!(
         max_global_streams,
         memory_limit_mib = memory_limit.map(|b| b >> 20),

@@ -7,6 +7,11 @@
 //! churn every per-connection table is empty again, and the relay's live
 //! heap is back near where it started.
 //!
+//! Each round also opens proxied client streams (some aborted, some left
+//! for the machine's departure to end), so a leak in the stream counters
+//! (`global_streams`, the per-machine count, their guards) shows too: the
+//! open-stream gauge must be back at zero after every round.
+//!
 //! The heap is measured with jemalloc's `stats.allocated` (bytes in live
 //! allocations), which this test binary uses as its allocator on Linux, so
 //! allocator fragmentation does not blur a real leak. On other platforms
@@ -43,6 +48,18 @@ async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timed out waiting for {what}");
+}
+
+async fn open_streams(url: &str) -> u64 {
+    let text = reqwest::get(format!("{url}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    text.lines()
+        .find_map(|l| l.strip_prefix("cua_relay_client_streams ")?.trim().parse().ok())
+        .expect("cua_relay_client_streams in /metrics")
 }
 
 /// One round: `n` machines join (a third of them twice, so the second
@@ -85,12 +102,40 @@ async fn round(
             cua_mesh::static_auth(Vec::new()),
         );
         cfg.relay_only = true;
-        if let Ok(node) = Mesh::start(cfg).await {
-            nodes.push(node);
-        }
+        // A node that does not start would hollow the round out: fail.
+        nodes.push(Mesh::start(cfg).await.expect("mesh node starts"));
     }
     wait_until("machines online", || relay.machine_ids().len() == n).await;
+    // Proxied streams through the budget's counters: the backend holds each
+    // one open, half are dropped by the client mid-flight, the rest end when
+    // their machine leaves.
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
+    let streams: Vec<_> = (0..n.min(12))
+        .map(|i| {
+            let client = client.clone();
+            let url = format!("{url}/m/churn{i:04}{}/stream", "0".repeat(20));
+            tokio::spawn(async move {
+                client
+                    .get(&url)
+                    .header("x-cua-env-authorization", "Bearer t")
+                    .send()
+                    .await
+            })
+        })
+        .collect();
     tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        open_streams(url).await > 0,
+        "round {r}: proxied streams are open"
+    );
+    for (i, s) in streams.iter().enumerate() {
+        if i % 2 == 0 {
+            s.abort();
+        }
+    }
     for s in stops {
         s.cancel();
     }
@@ -98,6 +143,16 @@ async fn round(
         node.shutdown();
     }
     wait_until("machines gone", || relay.machine_ids().is_empty()).await;
+    for s in streams {
+        s.abort();
+    }
+    for _ in 0..400 {
+        if open_streams(url).await == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(open_streams(url).await, 0, "round {r}: stream slots leaked");
     wait_until("mesh nodes gone", || {
         let s = cua_relay::mesh::status(relay);
         s.connected == 0 && s.nodes == 0
@@ -110,6 +165,7 @@ async fn connect_disconnect_churn_leaves_no_state_and_no_heap_behind() {
     let dir = tempfile::tempdir().unwrap();
     let relay = Relay::new(RelayConfig {
         tokens: vec![TOKEN.into()],
+        require_client_credentials: false,
         max_machines_per_token: 1000,
         state_file: Some(dir.path().join("state.json")),
         ..RelayConfig::default()
@@ -122,7 +178,13 @@ async fn connect_disconnect_churn_leaves_no_state_and_no_heap_behind() {
     });
     let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local = backend.local_addr().unwrap();
-    tokio::spawn(async move { while backend.accept().await.is_ok() {} });
+    // Holds every connection open and silent, so proxied streams stay open.
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((conn, _)) = backend.accept().await {
+            held.push(conn);
+        }
+    });
 
     // Two warm-up rounds: lazily built tables, thread-local caches and the
     // runtime's pools reach their working size.
@@ -140,9 +202,11 @@ async fn connect_disconnect_churn_leaves_no_state_and_no_heap_behind() {
     if let (Some(before), Some(after)) = (before, after) {
         let grew = after.saturating_sub(before);
         eprintln!("CHURN live heap before {before} after {after} (+{grew} bytes over 10 rounds)");
-        // Ten rounds of 32 machine sessions (8 replaced) and 24 mesh
-        // connections (12 replaced): about 560 connections, so a leak of
-        // 2 KiB per connection crosses this.
+        // Ten rounds of 32 machine sessions (8 replaced), 24 mesh
+        // connections (12 replaced) and 12 proxied streams: about 680
+        // connections, so a leak of 2 KiB per connection crosses this.
+        // (The silent backend's held sockets add a few hundred bytes each in
+        // the test itself, well inside the margin.)
         assert!(grew < 1 << 20, "live heap grew {grew} bytes over the churn");
     }
 }

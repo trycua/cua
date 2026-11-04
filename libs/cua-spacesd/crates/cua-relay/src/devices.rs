@@ -36,7 +36,8 @@
 //!
 //! The strict policy ([`DevicePolicy::require_approval`],
 //! `--device-require-approval` / `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`, off by
-//! default) restores approval for brand-new devices: a fresh sign-in then
+//! default; `phones` limits it to phone-class devices, see
+//! [`DevicePolicy::approval_phones_only`]) restores approval for brand-new devices: a fresh sign-in then
 //! enrolls only an account's first device (or its only one, after it
 //! expired; while no device enrolled through a real second factor exists),
 //! a re-key of a machine that already has a live device on the account
@@ -1082,6 +1083,48 @@ pub struct DevicePolicy {
     /// sign-in proving MFA; other new devices need an approval. Off by
     /// default: a fresh sign-in enrolls any device of the account.
     pub require_approval: bool,
+    /// Narrows [`Self::require_approval`] to phone-class devices (a device
+    /// that reported a phone platform or whose sign-in token was issued to
+    /// a phone client): every other device keeps the default policy. Has no
+    /// effect unless `require_approval` is on.
+    pub approval_phones_only: bool,
+}
+
+impl DevicePolicy {
+    /// Reads `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`: `true`/`on`/`yes`/`1` (every
+    /// new device needs approval), `false`/`off`/`no`/`0` or empty (the
+    /// default policy), or `phones` (approval only for phone-class devices).
+    /// Returns `(require_approval, approval_phones_only)`; any other value is
+    /// an error, never a silent "off".
+    pub fn parse_approval(value: &str) -> Result<(bool, bool), String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" | "y" | "t" => Ok((true, false)),
+            "false" | "off" | "no" | "0" | "n" | "f" | "" => Ok((false, false)),
+            "phones" => Ok((true, true)),
+            other => Err(format!(
+                "CUA_RELAY_DEVICE_REQUIRE_APPROVAL={other:?}: use true, false or phones"
+            )),
+        }
+    }
+
+    /// Fails closed: the `phones` scope names no one unless phone support is
+    /// on (`phone_clients`: `None` when `CUA_RELAY_PUSH` is off) and at least
+    /// one phone client id is set, and a relay that would then approve
+    /// nothing must not start.
+    pub fn check_approval_scope(
+        phones_only: bool,
+        phone_clients: Option<&[String]>,
+    ) -> Result<(), String> {
+        if phones_only && phone_clients.is_none_or(<[String]>::is_empty) {
+            return Err("CUA_RELAY_DEVICE_REQUIRE_APPROVAL=phones needs CUA_RELAY_PUSH=on and a non-empty CUA_RELAY_PHONE_CLIENTS; without phone clients it would require approval for no device".into());
+        }
+        Ok(())
+    }
+
+    /// Whether the strict policy applies to a device of this class.
+    pub fn strict_for(&self, phone: bool) -> bool {
+        self.require_approval && (phone || !self.approval_phones_only)
+    }
 }
 
 impl Default for DevicePolicy {
@@ -1097,6 +1140,7 @@ impl Default for DevicePolicy {
             bootstrap_max_auth_age_secs: 600,
             session_ttl_secs: 3600,
             require_approval: false,
+            approval_phones_only: false,
         }
     }
 }
@@ -1803,7 +1847,7 @@ impl DeviceStore {
             let by = if !r.bootstrap {
                 None
             } else if fresh_sign_in.is_some()
-                && (!policy.require_approval
+                && (!policy.strict_for(device.is_phone())
                     || enrolled
                     || is_rekey
                     || !Self::has_enrolled(state, account, now, true)
@@ -1993,18 +2037,23 @@ impl DeviceStore {
         let until = match record.state(now) {
             DeviceState::Enrolled => record.enrolled_until.unwrap_or(now),
             DeviceState::Pending => {
-                return Err(DeviceError::Forbidden(if self.policy.require_approval {
-                    "this device is waiting for approval from an enrolled device".into()
-                } else {
-                    "this device is not enrolled yet: sign in again (`cua auth login`) to enroll it, or approve it from an enrolled device".into()
-                }))
+                return Err(DeviceError::Forbidden(
+                    if self.policy.strict_for(record.is_phone()) {
+                        "this device is waiting for approval from an enrolled device".into()
+                    } else {
+                        "this device is not enrolled yet: sign in again (`cua auth login`) to enroll it, or approve it from an enrolled device".into()
+                    },
+                ))
             }
             DeviceState::Expired => {
-                return Err(DeviceError::Forbidden(if self.policy.require_approval {
-                    "this device needs re-verification: approve it from an enrolled device".into()
-                } else {
-                    "this device's enrollment expired after a period without use: sign in again (`cua auth login`) to re-verify it, or approve it from an enrolled device".into()
-                }))
+                return Err(DeviceError::Forbidden(
+                    if self.policy.strict_for(record.is_phone()) {
+                        "this device needs re-verification: approve it from an enrolled device"
+                            .into()
+                    } else {
+                        "this device's enrollment expired after a period without use: sign in again (`cua auth login`) to re-verify it, or approve it from an enrolled device".into()
+                    },
+                ))
             }
             DeviceState::Revoked => {
                 return Err(DeviceError::Forbidden("this device was revoked".into()))
@@ -3496,6 +3545,198 @@ pub(crate) mod tests {
                 .unwrap()
                 .code
                 .is_some()
+        );
+    }
+
+    /// Registers `key` on a fresh sign-in (verified email) as a phone or a
+    /// computer, as the relay does for a token issued to a phone client.
+    fn register_class(
+        store: &DeviceStore,
+        account: &str,
+        key: &TestKey,
+        phone: bool,
+        mfa: bool,
+        platform: &str,
+    ) -> Registered {
+        let ts = now_secs();
+        let public = key.public();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        store
+            .register(&Registration {
+                account,
+                user: account,
+                public_key: &public,
+                name: "device",
+                platform,
+                machine_id: None,
+                ts,
+                sig: &sig,
+                bootstrap: true,
+                auth_time: Some(now_secs()),
+                email_verified: true,
+                mfa,
+                phone,
+                capabilities: None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_approval_value_is_parsed_strictly() {
+        for v in ["true", "TRUE", "on", "yes", "1", " true "] {
+            assert_eq!(DevicePolicy::parse_approval(v), Ok((true, false)), "{v}");
+        }
+        for v in ["false", "off", "no", "0", ""] {
+            assert_eq!(DevicePolicy::parse_approval(v), Ok((false, false)), "{v}");
+        }
+        assert_eq!(DevicePolicy::parse_approval("phones"), Ok((true, true)));
+        assert_eq!(DevicePolicy::parse_approval(" Phones "), Ok((true, true)));
+        for v in ["phone", "maybe", "2", "computers"] {
+            assert!(DevicePolicy::parse_approval(v).is_err(), "{v}");
+        }
+    }
+
+    #[test]
+    fn phones_scope_fails_closed_without_phone_clients() {
+        let some = vec!["cua-spaces-mobile".to_owned()];
+        assert!(DevicePolicy::check_approval_scope(true, Some(&some)).is_ok());
+        assert!(DevicePolicy::check_approval_scope(true, Some(&[])).is_err());
+        assert!(DevicePolicy::check_approval_scope(true, None).is_err());
+        // Other values never need phone clients.
+        assert!(DevicePolicy::check_approval_scope(false, None).is_ok());
+    }
+
+    /// {mode} x {phone, computer} x {account already has an enrolled device,
+    /// or not} x {MFA, or not}: whether a fresh sign-in enrolls the new
+    /// device at once (`true`) or leaves it waiting for an approval.
+    #[test]
+    fn approval_mode_matrix_for_a_new_device() {
+        // (require_approval, phones_only)
+        let modes = [
+            ("false", (false, false)),
+            ("true", (true, false)),
+            ("phones", (true, true)),
+        ];
+        for (name, (require, phones_only)) in modes {
+            for phone in [true, false] {
+                for has_device in [false, true] {
+                    for mfa in [false, true] {
+                        let store = DeviceStore::in_memory(DevicePolicy {
+                            require_approval: require,
+                            approval_phones_only: phones_only,
+                            ..enforcing()
+                        });
+                        if has_device {
+                            let first = TestKey::new();
+                            let r = register_class(&store, "acct", &first, false, false, "macos");
+                            assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+                        }
+                        let key = TestKey::new();
+                        let platform = if phone { "ios" } else { "macos" };
+                        let r = register_class(&store, "acct", &key, phone, mfa, platform);
+                        let strict = require && (phone || !phones_only);
+                        let expect = !has_device || !strict || mfa;
+                        let got = r.device.state(now_secs()) == DeviceState::Enrolled;
+                        assert_eq!(
+                            got, expect,
+                            "mode={name} phone={phone} has_device={has_device} mfa={mfa}"
+                        );
+                        assert_eq!(r.code.is_some(), !expect);
+                        assert_eq!(r.device.is_phone(), phone);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Under `phones` a phone must be approved by an enrolled device while a
+    /// computer still enrolls on its fresh sign-in, and the approval then
+    /// works as before.
+    #[test]
+    fn phones_scope_holds_a_new_phone_for_approval_but_not_a_computer() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            approval_phones_only: true,
+            ..enforcing()
+        });
+        let first = TestKey::new();
+        register_class(&store, "acct", &first, false, false, "macos");
+        let runner = TestKey::new();
+        let r = register_class(&store, "acct", &runner, false, false, "linux");
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert!(session(&store, "acct", &runner).is_ok());
+        let phone = TestKey::new();
+        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        let code = r.code.expect("waits for approval");
+        let err = session(&store, "acct", &phone).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
+            "{err:?}"
+        );
+        // A phone claim is sticky and registering again on a fresh sign-in
+        // does not skip the approval.
+        let again = register_class(&store, "acct", &phone, true, false, "macos");
+        assert_eq!(again.device.state(now_secs()), DeviceState::Pending);
+        assert_ne!(again.code.as_deref(), Some(code.as_str()), "a new code");
+        store
+            .approve("acct", &first.id(), again.code.as_deref(), None, true)
+            .unwrap();
+        assert!(session(&store, "acct", &phone).is_ok());
+    }
+
+    /// The 30-day idle rule applies per class: after the enrollment ran
+    /// out, a fresh sign-in re-verifies a computer under `phones` but not a
+    /// phone, and the messages say what is needed.
+    #[test]
+    fn phones_scope_applies_the_idle_rule_to_phones_only() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            approval_phones_only: true,
+            ttl_secs: 2,
+            ..enforcing()
+        });
+        let anchor = TestKey::new();
+        register_class(&store, "acct", &anchor, false, false, "macos");
+        let computer = TestKey::new();
+        let phone = TestKey::new();
+        register_class(&store, "acct", &computer, false, false, "linux");
+        // The phone enrolls through the anchor (approval), as in production.
+        let code = register_class(&store, "acct", &phone, true, false, "ios")
+            .code
+            .unwrap();
+        store
+            .approve("acct", &anchor.id(), Some(&code), None, false)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let now = now_secs();
+        for k in [&anchor, &computer, &phone] {
+            assert_eq!(store.get(&k.id()).unwrap().state(now), DeviceState::Expired);
+        }
+        // Keep one live strong device so "first device" cannot apply.
+        let live = TestKey::new();
+        assert_eq!(
+            register_class(&store, "acct", &live, false, false, "macos")
+                .device
+                .state(now_secs()),
+            DeviceState::Enrolled
+        );
+        let r = register_class(&store, "acct", &computer, false, false, "linux");
+        assert_eq!(
+            r.device.state(now_secs()),
+            DeviceState::Enrolled,
+            "computer re-verifies"
+        );
+        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        assert_eq!(
+            r.device.state(now_secs()),
+            DeviceState::Expired,
+            "phone needs approval"
+        );
+        assert!(r.code.is_some());
+        let err = session(&store, "acct", &phone).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("needs re-verification")),
+            "{err:?}"
         );
     }
 

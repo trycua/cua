@@ -658,8 +658,8 @@ fn main() {
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to, so without this the proxy path always served
-            // the full screenshot tool regardless of the client's request.
+            // the proxy talks to. The flag is currently surface-neutral but
+            // remains forwarded for compatibility with existing launch configs.
             let driver = match build_driver(
                 cursor_cfg.clone(),
                 claude_code_compat,
@@ -1046,9 +1046,9 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is accepted on every platform for CLI uniformity.
+            // On Windows / Linux the flag is accepted for CLI uniformity and
+            // ignored. The legacy Claude Code compatibility flag is accepted on
+            // every platform and has no current tool-surface effect.
             let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();

@@ -47,7 +47,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   decide:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: "E2E gate / decide"
     runs-on: ubuntu-latest
     timeout-minutes: 10

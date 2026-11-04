@@ -1728,7 +1728,7 @@ mod tests {
             for (values, expected) in [
                 (merge_safe_environment(inherited.clone(), &[]), "inherited"),
                 (
-                    merge_safe_environment(std::iter::empty(), &[host.clone()]),
+                    merge_safe_environment(std::iter::empty(), std::slice::from_ref(&host)),
                     "host",
                 ),
                 (merge_safe_environment(inherited, &[host]), "host"),
@@ -1763,7 +1763,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn endpoint_preflight_refuses_non_socket_paths() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let file = directory.path().join("important.txt");
         std::fs::write(&file, "keep").unwrap();
         let error = prepare_endpoint(file.to_str().unwrap()).unwrap_err();
@@ -1791,7 +1791,7 @@ mod tests {
             "com.example.cancel-stop".into(),
         )
         .unwrap();
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket_path = directory.path().join("driver.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
         std::fs::set_permissions(

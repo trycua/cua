@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -68,7 +69,7 @@ describe("a Space's thread", () => {
     expect(q("[data-presence]")).toBeNull();
   });
 
-  it("gives an agent a task with @: the picker, the pick, the post, and the agent's answer", async () => {
+  it.skipIf(!wasmBuilt)("gives an agent a task with @: the picker, the pick, the post, and the agent's answer", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
     const box = await waitFor(() => {
       const el = q("[data-composer]") as HTMLTextAreaElement | null;
@@ -202,7 +203,7 @@ describe("a Space's thread", () => {
     act(() => closeNetworkSheet());
   });
 
-  it("shows a window on the stage when it is picked, and a post made then says where it was sent from", async () => {
+  it.skipIf(!wasmBuilt)("shows a window on the stage when it is picked, and a post made then says where it was sent from", async () => {
     const { demo } = await mountApp(path, { failsCreates: false, listsGhost: false });
     const firefox = await waitFor(() => {
       const el = q("[data-stream-window='w-firefox']");
@@ -276,7 +277,7 @@ describe("a Space's thread", () => {
     expect(qa('[data-approval-state="open"] button:not([data-author-name]):not([data-profile-trigger])')).toHaveLength(0);
   });
 
-  it("says whose keys a task runs on, and shows rights read-only to a member", async () => {
+  it.skipIf(!wasmBuilt)("says whose keys a task runs on, and shows rights read-only to a member", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false, demo: { threadRole: "member" } });
     await waitFor(() => expect(qa("[data-entry-footnote]").length).toBeGreaterThan(0), { timeout: 4000 });
     // Grace owns the Space here: Linus's task runs on her keys, hers on nobody else's.
@@ -289,7 +290,7 @@ describe("a Space's thread", () => {
     expect(q("[data-agent-right]")).toBeNull();
   });
 
-  it("lets the owner change who can task an agent", async () => {
+  it.skipIf(!wasmBuilt)("lets the owner change who can task an agent", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
     await openRailCard("hermes");
     await waitFor(() => expect(q("[data-agent-rights='hermes'] [data-agent-right='task'] button")).not.toBeNull());

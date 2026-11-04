@@ -225,8 +225,17 @@ pub fn teleport_app(id: &str) -> String {
     }
 }
 
-/// A cua-agents harness id, else `other`.
+/// A cua-agents harness id, else `other`. The short names a person or an
+/// agent types (`codex`, `claude`: `cua_agents::harness::harness` accepts
+/// them) and ids in another case count as the harness they name; before,
+/// they all reported `other`.
 pub fn harness(id: &str) -> &'static str {
+    let id = id.trim().to_ascii_lowercase();
+    let id = match id.as_str() {
+        "codex" => "openai-codex",
+        "claude" => "claude-code",
+        other => other,
+    };
     pick(schema::HARNESSES, id, "other")
 }
 
@@ -649,7 +658,26 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
             .s("outcome", outcome.as_str())
             .s("onboarding_eligible", "unknown")
             .s("error_kind", "none")
+            .s("failed_step", "none")
     })
+}
+
+/// The step a failed sign-in stopped at (`schema::SIGN_IN_STEPS`), from its
+/// fixed kind only (`schema::ERROR_KINDS`, as `cua-spaces-app-core`
+/// `sign_in::error_kind` gives it), never from text: reaching Cua's
+/// sign-in service, confirming in the browser (it never came back, or was
+/// declined), the code exchange the service refused, saving the session on
+/// this computer, or stopped by the person. `unknown` when the kind says
+/// nothing about the step.
+pub fn sign_in_failed_step(error_kind: &str) -> &'static str {
+    match error_kind {
+        "transport" | "http" => "reach_service",
+        "timeout" | "permission_denied" => "confirm_in_browser",
+        "unauthenticated" => "exchange_code",
+        "internal" => "save_session",
+        "cancelled" => "cancelled",
+        _ => "unknown",
+    }
 }
 
 /// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
@@ -661,6 +689,7 @@ pub fn sign_in_failed(error_kind: &str) -> Event {
         .s("outcome", Outcome::Error.as_str())
         .s("onboarding_eligible", "unknown")
         .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+        .s("failed_step", sign_in_failed_step(error_kind))
 }
 
 /// `cua_onboarding_step` `app_launched`: the app started, with whether its
@@ -679,6 +708,7 @@ pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
             },
         )
         .s("error_kind", "none")
+        .s("failed_step", "none")
 }
 
 /// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else

@@ -42,7 +42,7 @@ const click = async (el: HTMLElement) => {
 const open = (search = "", demo: Record<string, unknown> = {}) => mountApp(`/agents${search}`, { failsCreates: false, listsGhost: false, demo });
 
 describe("the Agents tab", () => {
-  it("lists every agent once, Needs you pinned, running first, with owners and unread", async () => {
+  it.skipIf(!wasmBuilt)("lists every agent once, Needs you pinned, running first, with owners and unread", async () => {
     await open();
     await found(`[data-chat='${CODEX}']`);
     // Needs you: Hermes's tag, Codex's question, Claude Code's push.
@@ -60,7 +60,7 @@ describe("the Agents tab", () => {
     expect(q(`[data-chat='${CODEX}'] [data-owner-badge]`)?.dataset.ownerBadge).toBe("acct_ada");
   });
 
-  it("one agent in two Spaces: All merges them with Space labels; the switch narrows to one", async () => {
+  it.skipIf(!wasmBuilt)("one agent in two Spaces: All merges them with Space labels; the switch narrows to one", async () => {
     await open(`?agent=${encodeURIComponent(HERMES)}`);
     const dm = await found(`[data-dm='${HERMES}'][data-dm-space='all']`);
     await waitFor(() => expect(dm.querySelectorAll("[data-dm-space-label]").length).toBeGreaterThan(1));
@@ -79,7 +79,7 @@ describe("the Agents tab", () => {
     expect(q("[data-dm-target]")?.dataset.dmTarget).toBe("relay:linux-box/ubuntu-build");
   });
 
-  it("sending is an @mention task in the Space the composer names; members see it", async () => {
+  it.skipIf(!wasmBuilt)("sending is an @mention task in the Space the composer names; members see it", async () => {
     await open(`?agent=${encodeURIComponent(CODEX)}`);
     await found(`[data-dm='${CODEX}']`);
     expect(q("[data-dm-members-see]")?.textContent).toBe("Members see it");
@@ -100,7 +100,7 @@ describe("the Agents tab", () => {
     await waitFor(() => expect(task.dataset.taskState).toBe("done"), { timeout: 5000 });
   });
 
-  it("a teammate's agent at work: the working line with Watch, its push waiting for approval", async () => {
+  it.skipIf(!wasmBuilt)("a teammate's agent at work: the working line with Watch, its push waiting for approval", async () => {
     await open(`?agent=${encodeURIComponent(CLAUDE)}`);
     const line = await found("[data-dm-working]");
     expect(line.textContent).toContain("Bumping the retry timeout in ubuntu-build");
@@ -108,7 +108,7 @@ describe("the Agents tab", () => {
     expect(q("[data-dm-open-space]")?.textContent).toContain("ubuntu-build");
   });
 
-  it("when only its owner may task it, the composer says so and offers the Space", async () => {
+  it.skipIf(!wasmBuilt)("when only its owner may task it, the composer says so and offers the Space", async () => {
     await open(`?agent=${encodeURIComponent("acct_grace/hermes/hermes")}`, { threadRole: "member" });
     const locked = await found("[data-dm-locked]");
     expect(locked.textContent).toContain("can give Hermes tasks.");
@@ -124,7 +124,7 @@ describe("the Agents tab", () => {
     expect(q("[data-agents-show-all]")).not.toBeNull();
   });
 
-  it("Connect on the empty page shows the app's real mark and opens Connectors at its row, connecting nothing", async () => {
+  it.skipIf(!wasmBuilt)("Connect on the empty page shows the app's real mark and opens Connectors at its row, connecting nothing", async () => {
     const { router } = await open("", { noThread: true, agents: "unset" });
     const row = await found('[data-agents-empty-row^="connect-mac-"]');
     expect(row.querySelector("[data-app-mark]")).not.toBeNull();
@@ -145,7 +145,7 @@ describe("the Agents tab", () => {
     expect(q("[data-add-agent='pick'] [aria-label='Space']")).not.toBeNull();
   });
 
-  it("ⓘ shows who the agent is in each of its Spaces", async () => {
+  it.skipIf(!wasmBuilt)("ⓘ shows who the agent is in each of its Spaces", async () => {
     await open(`?agent=${encodeURIComponent(HERMES)}`);
     await click(await found("[data-dm-info]"));
     const page = await found(`[data-agent-page='${HERMES}']`);
@@ -154,7 +154,7 @@ describe("the Agents tab", () => {
     expect(page.querySelector("[data-agent-page-all]")).not.toBeNull();
   });
 
-  it("the thread's card links to the agent's DM (Activity, under Details)", async () => {
+  it.skipIf(!wasmBuilt)("the thread's card links to the agent's DM (Activity, under Details)", async () => {
     await mountApp(`/spaces/${encodeURIComponent("relay:linux-box/ubuntu-build")}`, { failsCreates: false, listsGhost: false });
     const name = await found("[data-author-name='claude']");
     await click(name);

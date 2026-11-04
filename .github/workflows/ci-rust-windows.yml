@@ -62,8 +62,14 @@ env:
 jobs:
   # Three shards of the same job. Each builds (the Rust cache key is shared)
   # and runs a third of the test steps; `unit` below keeps the check name.
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   shard:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: Rust Windows shard ${{ matrix.shard }}/3
     runs-on: windows-latest
     strategy:

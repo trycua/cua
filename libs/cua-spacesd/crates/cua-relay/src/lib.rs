@@ -53,6 +53,7 @@ pub mod phone;
 pub mod pool;
 pub mod proxies;
 pub mod push_api;
+pub mod route_marker;
 pub mod server;
 pub mod share_web;
 pub mod storage;

@@ -324,6 +324,7 @@ const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   ciRunners: "experiment:ci_runners",
   tcpShares: "experiment:tcp_shares",
   mobile: "experiment:mobile",
+  warmPools: "experiment:warm_pools",
 };
 
 /**

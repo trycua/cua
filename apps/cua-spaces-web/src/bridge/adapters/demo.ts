@@ -85,6 +85,8 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Machines that are only signed in (`?demo=signed-in-machines`): rows in the one list, "Signed in, not sharing", and the two that wait to be added. */
   signedInMachines?: boolean;
+  /** A sign-in that never finishes (`wait`: the browser never confirms) or fails at once as not confirmed in time (`timeout`). */
+  signIn?: "wait" | "timeout";
   /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
   rejectedKeys?: string[];
   /** Claude Code's sign-in on this Mac: imported already (`?demo=claude-signed-in`), imported and run out (`?demo=claude-expired`),
@@ -141,7 +143,7 @@ export interface DemoOptions {
    * built-in Linux runtime does not start; later attempts work,
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
-  failCreates?: "runtime-once" | "disk";
+  failCreates?: "runtime-once" | "disk" | "unsupported";
   /** The CLI the demo host reports: the released app's `cua` on PATH unless
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
@@ -194,6 +196,9 @@ export const DEMO_CREATING_ELSEWHERE: CreatingElsewhere[] = [
 /** The SDK's words for the failures `failCreates` plays. */
 export const DEMO_CREATE_FAILURES = {
   runtime: "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+  /** The daemon's refusal on a Mac that can't run virtual computers (#6323, `?demo=create-fail-unsupported`). */
+  unsupported:
+    "This Mac can't run Spaces itself, because it can't run virtual computers. That happens when the Mac is itself a virtual machine, or is an older Intel Mac. Add another computer to your account, or link your own cloud, and create the Space there.",
   disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
 } as const;
 
@@ -264,6 +269,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
+    ...(flags.has("signin-wait") ? { signIn: "wait" as const } : flags.has("signin-timeout") ? { signIn: "timeout" as const } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
     ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
@@ -325,7 +331,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow-create") ? { stepMs: 5000 } : {}),
     ...(flags.has("slow-home") ? { slowHome: true } : {}),
     creatingElsewhere: flags.has("creating-elsewhere"),
-    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
+    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : flags.has("create-fail-unsupported") ? "unsupported" : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -533,7 +539,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       try {
         // A failure the options ask for, after the create starts preparing.
         const failure =
-          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "unsupported" ? DEMO_CREATE_FAILURES.unsupported : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -813,6 +819,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
 
     "session.get": () => session(),
     "session.signIn": () => {
+      if (options.signIn === "timeout") throw Object.assign(new Error("The sign-in was not completed in time."), { tag: "Timeout" });
+      if (options.signIn === "wait") return { method: "browser", verificationUri: "https://cua.ai/signin" };
       later(step * 3, () => {
         state.identity = DEMO_IDENTITY;
         emit({ type: "session.signedIn", identity: DEMO_IDENTITY });

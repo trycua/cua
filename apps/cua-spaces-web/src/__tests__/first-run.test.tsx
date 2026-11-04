@@ -20,7 +20,7 @@ import { readFirstRun, resetFirstRunCache, useFirstRun, writeFirstRun } from "@/
 import { CLOSED_NEW_SPACE, updateNewSpaceSession } from "@/bridge/new-space";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { connectedAppsState, resetConnectedAppsState } from "@/hooks/use-connected-apps";
-import { getDriver, resetPrepare } from "@/lib/prepare/store";
+import { resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
@@ -40,7 +40,7 @@ afterEach(() => {
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object; intercept?: (op: string, args: unknown) => unknown } = {}) {
   await testCore();
   const calls: Calls = [];
   let lastRows: AgentSetupRow[] | null = null;
@@ -51,7 +51,7 @@ async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostS
     demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli, ...opts.demo },
     intercept: (op, args) => {
       calls.push({ op, args });
-      return undefined;
+      return opts.intercept?.(op, args);
     },
     answer: (op, out) => {
       if (op === "host.status" && opts.host) return opts.host(out as HostStatus);
@@ -222,68 +222,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
   });
 
-  it("with the new setup on there is no Try it screen: the last screen ends the run on Home while the Space is prepared", { timeout: 40_000 }, async () => {
-    setFlagOverride("spaces_ask_first_home", true);
-    setFlagOverride("spaces_new_onboarding", true);
-    resetPrepare();
-    const calls: Calls = [];
-    const { router } = await mountApp("/onboarding", {
-      failsCreates: false,
-      listsGhost: false,
-      demo: { signedIn: false, onboarded: false },
-      intercept: (op, args) => (calls.push({ op, args }), undefined),
-      answer: (op, out) => (op === "agents.setup" || op === "agents.signIn" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
-    });
-    // Preparing started with the app, before any screen was answered.
-    await waitFor(() => expect(getDriver()?.state?.wanted).toBe(true), { timeout: 15_000 });
-    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
-    click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
-    click("[data-first-run-set-up]");
-    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
-    click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Add your other computers."));
-    // The dots say three screens: Welcome, Pick your agent, Add your other computers.
-    expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 3 of 3");
-    click("[data-first-run-secondary]");
-    await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
-    // No "Try it" screen and no prompt to copy; the person lands on Home.
-    expect(document.body.textContent).not.toMatch(/Try it in/);
-    expect(document.querySelector("textarea[data-first-run-prompt]")).toBeNull();
-    await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
-    // The clock for "onboarding finished to ready" started when the last button was pressed.
-    expect(getDriver()?.state?.onboardingDoneMs).not.toBeNull();
-  });
-
-  it("every page of the run shows its buttons: Welcome, Pick your agent (Set up, Not now, Back), Add your other machines (Sign in, Not now, Back)", { timeout: 40_000 }, async () => {
-    setFlagOverride("spaces_ask_first_home", true);
-    setFlagOverride("spaces_new_onboarding", true);
-    resetPrepare();
-    await mountApp("/onboarding", {
-      failsCreates: false,
-      listsGhost: false,
-      demo: { signedIn: false, onboarded: false },
-      answer: (op, out) => (op === "agents.setup" || op === "agents.signIn" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
-    });
-    const buttons = () => [...document.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).filter(Boolean);
-    // Page 1.
-    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
-    expect(buttons()).toEqual(expect.arrayContaining(["Get started", "Skip for now"]));
-    expect(document.querySelector("[data-first-run-back]")).toBeNull();
-    click("[data-onboarding-primary]");
-    // Page 2: the agent rows with the one Set up and Not now, Back, and the page flow still going to Continue.
-    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
-    expect(document.querySelector("[data-first-run-agent=codex]")).not.toBeNull();
-    expect(buttons()).toEqual(expect.arrayContaining(["Set up", "Not now", "Back", "Skip for now"]));
-    click("[data-first-run-set-up]");
-    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
-    expect(document.querySelector("[data-first-run-agent=codex]")!.textContent).toContain("Ready");
-    expect(buttons()).toEqual(expect.arrayContaining(["Continue", "Back"]));
-    click("[data-onboarding-primary]");
-    // The last page.
-    await waitFor(() => expect(heading()).toBe("Add your other computers."));
-    expect(buttons()).toEqual(expect.arrayContaining(["Sign in", "Not now", "Back"]));
-  });
+  // With the new setup on, /onboarding is the new first run (CUA-3318): first-run-new.test.tsx.
 
   it("with the new setup off the Try it screen is still last", async () => {
     setFlagOverride("spaces_new_onboarding", false);
@@ -416,6 +355,51 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.body.textContent).toMatch(/You can sign in later\./);
     click('[data-first-run-devices-primary="sign-in"]');
     await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
+  });
+
+  it("a sign-in that didn't finish says why on the screen, with Try again and a code instead (CUA-3144)", async () => {
+    writeFirstRun({ step: "devices" });
+    // The first try: the browser never confirmed. Then a code that waits.
+    let tries = 0;
+    const calls = await mount({
+      intercept: (op) => {
+        if (op !== "session.signIn") return undefined;
+        tries += 1;
+        if (tries === 1) return Promise.reject(new Error("browser sign-in was not completed in time"));
+        return { method: "device", verificationUri: "https://cua.ai/device", userCode: "4F2-91K" };
+      },
+    });
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(document.querySelector('[data-first-run-status="account"]')).toBeNull();
+    click('[data-first-run-devices-primary="sign-in"]');
+    // Never silent: the reason on the screen itself (the first run has no sidebar), and Try again.
+    await waitFor(() => expect(document.querySelector('[data-first-run-status="account"]')?.getAttribute("data-state")).toBe("fix"));
+    const row = document.querySelector('[data-first-run-status="account"]')!;
+    expect(row.textContent).toMatch(/Sign-in didn't finish/);
+    expect(row.textContent).toMatch(/The browser didn't confirm in time\./);
+    expect(row.textContent).not.toMatch(/not completed in time|error/i);
+    expect(document.querySelector('[data-first-run-devices-primary="sign-in"]')!.textContent).toBe("Try again");
+    // A code works from any browser or phone: for a closed tab, or another browser.
+    click('[data-first-run-action="sign-in-code"]');
+    await waitFor(() => expect(calls.some((c) => c.op === "session.signIn" && (c.args as { code?: boolean }).code === true)).toBe(true));
+    await waitFor(() => expect(document.querySelector('[data-first-run-status="account"]')?.textContent).toMatch(/Enter the code 4F2-91K on the sign-in page\./));
+    expect(document.querySelector('[data-first-run-status="account"]')!.getAttribute("data-state")).toBe("checking");
+    expect(document.querySelector('[data-first-run-action="reopen-sign-in"]')).not.toBeNull();
+  });
+
+  it("while it waits for the browser, it reads the sign-in again when the window is back in front", async () => {
+    writeFirstRun({ step: "devices" });
+    const calls = await mount({
+      intercept: (op) => (op === "session.signIn" ? { method: "browser", verificationUri: "https://cua.ai/signin" } : undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    click('[data-first-run-devices-primary="sign-in"]');
+    await waitFor(() => expect(document.querySelector('[data-first-run-action="sign-in-code"]')).not.toBeNull());
+    const before = calls.filter((c) => c.op === "session.get").length;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(calls.filter((c) => c.op === "session.get").length).toBeGreaterThan(before));
   });
 
   it("a disk-image install offers the Cua CLI after Pick your agent: the exact file, then Install only when pressed", async () => {

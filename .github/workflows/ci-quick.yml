@@ -1,0 +1,84 @@
+name: "CI: Quick"
+
+# The fast first stage. It runs `bin/ci --quick` (formatting, lockfiles, SPDX headers, workflow lint and
+# the other checks that build nothing) on what the pull request changes. It is the same command a
+# contributor runs locally, so the two cannot drift; `bin/ci --verify-sync` keeps the commands aligned
+# with the workflows.
+#
+# Heavy workflows call this one as their first job (`quick`) and make their heavy jobs `needs: quick`, so
+# a pull request that fails a cheap check stops in about a minute instead of spending runner minutes on
+# builds. It also runs on its own, so the gate sees a quick failure even when no heavy workflow starts.
+# Nothing here builds, signs or reaches a service: only deterministic checks, so it cannot flake.
+#
+# It runs once per commit, not once per workflow: the first run that passes saves a marker in the cache
+# (key `ci-quick-pass-<sha>`); every other `quick` job restores it first and finishes in seconds. Jobs
+# that start before the marker exists simply run the checks themselves, so a race costs time, never
+# correctness. Only a pass is cached; a failure always fails the run that saw it.
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Called from another workflow, github.workflow is the caller's name; the prefix keeps this group
+  # apart from the caller's own concurrency group, so neither cancels the other.
+  group: ci-quick-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Skip when this commit already passed
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ci-quick-pass
+          key: ci-quick-pass-${{ github.sha }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          node-version: "22"
+      - name: Pin npm
+        if: steps.marker.outputs.cache-hit != 'true'
+        # The npm that wrote the committed package-lock.json files.
+        run: npm install -g npm@11.19.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          enable-cache: true
+      - name: Install actionlint
+        if: steps.marker.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          VERSION=1.7.12
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: bin/ci --quick
+        if: steps.marker.outputs.cache-hit != 'true'
+        # --no-install: a check that needs a package's node_modules is skipped here (its own workflow
+        # still runs it) instead of installing it, which would make this stage slow and network-bound.
+        run: python3 bin/ci --quick --no-install
+      - name: Write the pass marker
+        if: steps.marker.outputs.cache-hit != 'true'
+        run: echo "${{ github.sha }}" > "${{ runner.temp }}/ci-quick-pass"
+      - name: Remember that this commit passed
+        if: steps.marker.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ci-quick-pass
+          key: ci-quick-pass-${{ github.sha }}

@@ -170,7 +170,14 @@ without printing proxy credentials, relay URL queries or response bodies.
   `CUA_RELAY_DEVICE_REQUIRE_APPROVAL=true` restores the strict policy: a
   fresh sign-in then enrolls only the account's first device, a re-key of a
   machine it already has, or (verified email) a sign-in proving MFA; other
-  new devices wait for an approval. Devices report a machine id (a hash of
+  new devices wait for an approval. `CUA_RELAY_DEVICE_REQUIRE_APPROVAL=phones`
+  applies that strict rule to phone-class devices only (a device whose
+  sign-in token was issued to a `CUA_RELAY_PHONE_CLIENTS` client, or that
+  reports a phone platform, including the 30-day re-verification); every
+  other device (the CLI, the desktop app, per-browser devices of the account
+  app, unattended device-code installs) keeps the default policy. The relay
+  refuses to start with `phones` unless `CUA_RELAY_PUSH=on` and at least one
+  phone client is set. Devices report a machine id (a hash of
   the host's hardware or install identity, stored keyed per account): when
   a new key of the same machine enrolls, it replaces the machine's older
   records (revoked as superseded, audited as `device_rekeyed`, left out of
@@ -460,7 +467,7 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_DEVICE_TTL_DAYS` | `30` | Days an enrollment lasts without use (each device session renews it). |
 | `CUA_RELAY_DEVICE_GRACE_DAYS` | `0` (ended) | Days unenrolled devices keep access after enrollment is first on. Set this only for a time-boxed rollout window (S3): a stolen account token alone reaches every machine while it is open. |
 | `CUA_RELAY_DEVICE_BOOTSTRAP_MAX_AUTH_AGE_SECS` | `600` | Max sign-in age that enrolls a device without an approval. |
-| `CUA_RELAY_DEVICE_REQUIRE_APPROVAL` | off | Strict enrollment: a fresh sign-in enrolls only an account's first device, a re-key of a known machine, or (verified email) a sign-in proving MFA; other new devices need an approval from an enrolled device. |
+| `CUA_RELAY_DEVICE_REQUIRE_APPROVAL` | `false` | `true`: strict enrollment: a fresh sign-in enrolls only an account's first device, a re-key of a known machine, or (verified email) a sign-in proving MFA; other new devices need an approval from an enrolled device. `phones`: the same rule for phone-class devices only (token issued to a `CUA_RELAY_PHONE_CLIENTS` client, or a phone platform), every other device keeps the default; needs `CUA_RELAY_PUSH=on` and a non-empty `CUA_RELAY_PHONE_CLIENTS`, else the relay refuses to start. Any other value is an error. |
 | `CUA_RELAY_PUSH` | `off` | Push notifications for the phone app (`on` needs account mode). On also turns on the phone viewer rules below. Off, `/v1/push/...` answers 404 and the relay behaves exactly as before. See "The phone app". |
 | `CUA_RELAY_PUSH_FILE` | next to the state file | The account's registered phones and preferences (`machines.json` gives `machines.push.json`; in memory without a state file). Holds device tokens: 0600, back it up with the devices file. |
 | `CUA_PUSH_APNS_KEY_FILE`, `CUA_PUSH_APNS_KEY_ID`, `CUA_PUSH_APNS_TEAM_ID`, `CUA_PUSH_APNS_TOPIC` | unset | The APNs authentication key (a `.p8` file from the Apple Developer account), its ids and the app's bundle id (default `ai.cua.spaces.mobile`). With push on and no key, phones register and alerts wait; a key file that is named but unreadable, or without its ids, stops the relay at start. Never put the key in the image or the repository: mount it as a secret. |
@@ -587,6 +594,35 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   `error` for a relay-side failure). No other label values exist, and all
   seven series are present from process start.
 - `GET /v1/info` keeps `state_writable` (false while a store is failing).
+
+**Probe contract (`x-cua-relay-route`).** External probes match the
+status code and this header, never the wording of a refusal: the text a
+person reads changes with the relay's mode (phone support on answers an
+unknown id as an account computer) and with copy edits. Every response of
+`/healthz` (on every listener), `/readyz` and the client route
+(`/m/<id>/...`, host mode, any path forwarded to a computer) carries one of
+these values (`src/route_marker.rs`):
+
+| Value | Meaning |
+|---|---|
+| `ok` | `/healthz` (204), or `/readyz` ready (200) |
+| `not-ready` | `/readyz` 503 |
+| `forwarded` | the computer answered; status and body are its own (a computer cannot set this header itself) |
+| `refused-auth` | relay 401: no credential or one it does not accept |
+| `refused-denied` | relay 403: not shared, stopped sharing, revoked ticket |
+| `refused-limit` | relay 429 or 503: plan, rate or capacity limit |
+| `refused` | any other relay 4xx |
+| `offline` | the computer is not connected (502) |
+| `error` | any other relay 5xx |
+| `relay` | the relay answered itself without refusing (a redirect, a page it serves) |
+
+gRPC refusals (HTTP 200 with `grpc-status`) carry the marker of the
+relay's own status. An anonymous `GET /m/00000000-0000-0000-0000-000000000000/healthz`
+answers `401` with `refused-auth` in every mode (phone support on or off,
+admin token set or not, account sign-in on or off), and an edge or
+load-balancer error page carries no marker at all. The values are fixed:
+`tests/probe_contract.rs` fails if one changes or disappears. Changing them
+means changing the probes in trycua/cloud in the same release.
 
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and

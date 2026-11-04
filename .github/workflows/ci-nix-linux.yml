@@ -60,8 +60,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   rust-source:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: Nix / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60

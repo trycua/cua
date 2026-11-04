@@ -1047,9 +1047,9 @@ pub(crate) fn focus_cached_element_for_foreground(
     )
 }
 
-// `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
-// `get_window_state` (which now always returns a screenshot) is the single
-// canonical screenshot path. The underlying capture functions
+// The standalone screenshot tools were removed in PR #1692.
+// `get_window_state` is the canonical window-capture path and
+// `get_desktop_state` handles full-display capture. The underlying functions
 // (`crate::capture::screenshot_window_bytes_with_occlusion`,
 // `screenshot_display_bytes`, etc.) and the WGC backend
 // (`crate::wgc::screenshot_window_via_wgc`) are still in use by
@@ -1409,9 +1409,9 @@ pub fn build_registry_with_provider(
         &mut r,
         Arc::new(crate::clipboard::WindowsClipboard::new()),
     );
-    // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
-    // — `get_window_state` (which now always returns a screenshot) is the
-    // single canonical path for getting a window screenshot. Reasons:
+    // The standalone screenshot tools were removed from the tool surface.
+    // `get_window_state` is the canonical path for a window screenshot and
+    // `get_desktop_state` handles explicit full-display capture. Reasons:
     //   1. One entry point means callers always have a window_id context,
     //      which `screenshot` made ambiguous (whole-display fallback
     //      always picked the wrong thing for headless agent workflows).
@@ -1421,12 +1421,8 @@ pub fn build_registry_with_provider(
     //   3. Claude Code's vision pipeline can be retargeted at
     //      `get_window_state` via its tool-anchor config — no need for
     //      a dedicated "screenshot" name.
-    // The `ScreenshotTool` and `ScreenshotCompatTool` structs are kept in
-    // this file for now as private impl helpers — the `capture::*`
-    // functions they wrap are still the actual screenshot machinery.
-    // Delete the structs in a follow-up after confirming no callers
-    // depend on them via `Tool` trait reflection.
-    let _ = compat; // formerly drove the ScreenshotCompatTool branch
+    // The `capture::*` functions remain the underlying screenshot machinery.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool {
         state: state.clone(),

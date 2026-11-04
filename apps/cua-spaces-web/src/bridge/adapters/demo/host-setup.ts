@@ -18,7 +18,7 @@ export interface DemoHostSetupState {
 
 export const demoHostSetupState = (now: number, firstRun: boolean): DemoHostSetupState => ({ host: demoHostStatus(now, firstRun) });
 
-export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.openSettings"> {
+export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.limits" | "host.openSettings"> {
   const set = (host: HostStatus) => {
     state.host = host;
     emit({ type: "machines.changed" });
@@ -29,6 +29,9 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
       await wait(stepMs * 2);
       const spare = request.profile === "spare";
       const direct = request.mode === "direct";
+      // As cua-host decides when the request leaves it out: a machine set up
+      // before keeps its setting; a new relay setup provides Spaces.
+      const keep = state.host.configured ? state.host.provideSpaces : true;
       return set({
         ...demoHostStatus(now()),
         mode: direct ? "direct" : "relay",
@@ -36,7 +39,7 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
         directUrl: direct ? `http://${request.direct ?? "0.0.0.0:3211"}` : null,
         name: request.name?.trim() || "This Mac",
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: !direct && (request.provideSpaces ?? spare),
+        provideSpaces: !direct && (request.provideSpaces ?? (spare || keep)),
         permissions: state.host.permissions,
         clients: [],
         recentAccess: [],
@@ -51,7 +54,7 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     "host.action": async ({ action }) => {
       await wait(stepMs);
       const h = state.host;
-      if (!h.configured) throw new HostError("This computer is not set up for access", "not_configured");
+      if (!h.configured) throw new HostError("This machine is not set up for access", "not_configured");
       switch (action) {
         case "stop-sharing":
           return set({ ...h, sharing: false, clients: [] });
@@ -66,6 +69,19 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
       const change = HOST_SETTING_CHANGE[action];
       if (!change) throw new HostError(`${action} is not a host action`, "bad_args");
       return set({ ...h, ...change });
+    },
+    // The limits: what is given is kept, and use is counted from the Spaces provided here.
+    "host.limits": async (limits) => {
+      await wait(stepMs);
+      const h = state.host;
+      if (!h.configured) throw new HostError("This computer is not set up for access", "not_configured");
+      return set({
+        ...h,
+        maxSpaces: limits.maxSpaces ?? h.maxSpaces,
+        maxMemoryGb: limits.maxMemoryGb ?? h.maxMemoryGb,
+        maxDiskGb: limits.maxDiskGb ?? h.maxDiskGb,
+        maxRunMinutes: limits.maxRunMinutes ?? h.maxRunMinutes,
+      });
     },
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {

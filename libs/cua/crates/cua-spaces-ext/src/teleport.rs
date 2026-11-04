@@ -575,6 +575,8 @@ pub struct TeleportSelection {
     /// The sites whose saved passwords to send (the review's own choice of
     /// passwords); `None`: those of `cookie_domains`.
     pub password_domains: Option<Vec<String>>,
+    /// The browser profile to read (`Profile 1`); `None` reads `Default`.
+    pub profile: Option<String>,
 }
 
 /// Session teleport on a [`Space`]: what it can import, and the export and
@@ -744,7 +746,7 @@ impl SpaceTeleport for Space {
 
         let spec = cua_keyvault::broker::ImportSpec {
             app: approval.app.clone(),
-            profile: None,
+            profile: selection.profile.clone(),
             sites: vec![],
             whole_app: true,
             cookies: cua_keyvault::broker::CookieFilter::default(),

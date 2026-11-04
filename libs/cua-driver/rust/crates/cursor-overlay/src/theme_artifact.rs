@@ -651,6 +651,36 @@ fn resolved_color(mut color: [u8; 4], tint: Option<[u8; 4]>) -> [u8; 4] {
     color
 }
 
+/// The theme's accent: the most colourful fill or stroke of its idle frame,
+/// with `tint` applied like the artwork. `None` for a theme drawn only in
+/// greys.
+pub(crate) fn theme_accent_rgba(theme: &CompiledTheme, tint: Option<[u8; 4]>) -> Option<[u8; 4]> {
+    let animation = theme.animation_for_action(CursorAction::Idle)?;
+    let frame = animation
+        .frames
+        .get(usize::from(animation.still_frame))
+        .or_else(|| animation.frames.first())?;
+    frame
+        .commands
+        .iter()
+        .flat_map(|command| {
+            command
+                .fill
+                .into_iter()
+                .chain(command.stroke.map(|s| s.color))
+        })
+        .filter(|color| color[3] > 0)
+        .map(|color| resolved_color(color, tint))
+        .map(|color| {
+            let max = color[..3].iter().max().copied().unwrap_or(0);
+            let min = color[..3].iter().min().copied().unwrap_or(0);
+            (max - min, color)
+        })
+        .filter(|(chroma, _)| *chroma >= 24)
+        .max_by_key(|(chroma, _)| *chroma)
+        .map(|(_, color)| color)
+}
+
 fn vector_paint(color: [u8; 4], opacity: f32, tint: Option<[u8; 4]>) -> Paint<'static> {
     let color = resolved_color(color, tint);
     let alpha = (f32::from(color[3]) / 255.0 * opacity.clamp(0.0, 1.0)).clamp(0.0, 1.0);
@@ -780,17 +810,47 @@ pub fn paint_compiled_theme_with_tint(
     alpha: f32,
     tint: Option<[u8; 4]>,
 ) {
+    paint_compiled_theme_with_float(
+        target,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        tint,
+        0.0,
+        0.0,
+    );
+}
+
+/// [`paint_compiled_theme_with_tint`] moved by the float of the agent
+/// cursor (`cursor.float`): `float_dx`, `float_dy` points (negative is up).
+/// The float tilt is part of `heading`. See [`crate::cursor_pose`].
+#[allow(clippy::too_many_arguments)]
+pub fn paint_compiled_theme_with_float(
+    target: &mut tiny_skia::Pixmap,
+    theme: &CompiledTheme,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+    float_dx: f32,
+    float_dy: f32,
+) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
-    let (float_dx, float_dy, float_rotation) = if theme.id == crate::DEFAULT_THEME_ID {
-        crate::theme::shared_float_motion(visual)
-    } else {
-        (0.0, 0.0, 0.0)
-    };
     let transform =
         Transform::from_translate(-f32::from(theme.hotspot[0]), -f32::from(theme.hotspot[1]))
             .post_scale(scale, scale)
-            .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
-            .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
+            .post_rotate((heading - std::f32::consts::FRAC_PI_4).to_degrees())
+            .post_translate(
+                anchor_x + float_dx * backing_scale,
+                anchor_y + float_dy * backing_scale,
+            );
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(

@@ -1394,7 +1394,16 @@ impl MediaSession {
                 session: Arc::downgrade(self),
                 track: track.clone(),
             });
-            let lease = provider.start(&track_config, sink)?;
+            let lease = match provider.start(&track_config, sink) {
+                Ok(lease) => lease,
+                // The paired source was our pick, not the client's: a guest
+                // with no reachable sound server still streams its picture.
+                Err(error) if request.source_ids.is_empty() && self.video_enabled => {
+                    tracing::warn!(target: "cua_spacesd_client::media", session = %self.id, %error, "audio unavailable; streaming without it");
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
             track
                 .opus_pre_skip
                 .store(lease.opus_pre_skip(), Ordering::Relaxed);

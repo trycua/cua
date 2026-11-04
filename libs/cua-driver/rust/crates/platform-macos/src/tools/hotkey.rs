@@ -45,7 +45,9 @@ fn def() -> &'static ToolDef {
                front, that menu item runs through accessibility instead (a disabled \
                Save is saved through the app's scripting interface and verified on \
                disk); a menu item macOS keeps disabled in the background is refused \
-               with `background_unavailable`, and no keys are sent.\n\
+               with `background_unavailable`. With serve --no-automation-prompts, \
+               scripting without granted consent refuses with `automation_consent_required`, \
+               without keyboard fallback.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
@@ -572,27 +574,11 @@ impl Tool for HotkeyTool {
                             )?;
                             Ok(())
                         }
-                        // Screen Sharing is an input forwarder: modifier flags
-                        // on a PID-routed base-key event are not relayed to the
-                        // guest. Emit the physical modifier down/base/up
-                        // sequence through the guarded foreground HID path.
-                        (true, false, Some(wid), None)
-                            if crate::input::keyboard::is_screen_sharing_pid(pid) =>
-                        {
+                        (true, false, Some(wid), None) => {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
                                 || crate::input::keyboard::press_key_bare_global(&key, &m),
-                            )?;
-                            Ok(())
-                        }
-                        // foreground rung: briefly front the window so NSMenu key
-                        // equivalents dispatch, then restore prior frontmost.
-                        (true, false, Some(wid), None) => {
-                            crate::input::skylight::with_menu_shortcut_activation(
-                                pid as libc::pid_t,
-                                wid,
-                                || crate::input::keyboard::hotkey_no_auth(pid, &key, &m),
                             )?;
                             Ok(())
                         }
@@ -655,7 +641,11 @@ mod tests {
 
     #[test]
     fn menu_safety_refusals_do_not_fall_back_to_keys() {
-        for code in ["window_not_key", "background_unavailable"] {
+        for code in [
+            "window_not_key",
+            "background_unavailable",
+            "automation_consent_required",
+        ] {
             let result =
                 ToolResult::error("refused").with_structured(serde_json::json!({ "code": code }));
             assert_eq!(

@@ -30,16 +30,17 @@ import {
   transferTitle,
   type TransferOverlayState,
 } from "../model/transfer";
-import type { FleetBridge, HotspotStatus, ViewerConfig } from "../native/fleet";
+import type { SpacesBridge, HotspotStatus, ViewerConfig } from "../native/spacesBridge";
 import { createTransferBridge, type TransferBridge } from "../native/transfer";
 import { HotspotGlyph } from "../components/HotspotGlyph";
 import type { MediaStatus, MediaTicket } from "@cua/spacesd-html5/core/mediaSession";
 import { MediaCanvas, toMediaTicket } from "./WindowStream";
 import { useAppDropTeleport } from "./useAppDrop";
 import { PresenceOverlay } from "./presence/PresenceOverlay";
+import { useT } from "../i18n";
 
 interface SpaceViewerProps {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   /** Transfer overlay bridge; defaults to the environment-appropriate one. */
   transfer?: TransferBridge;
 }
@@ -56,11 +57,11 @@ export const NO_DESKTOP_STREAM_MESSAGE =
 /** Whether the Space can stream its desktop. False only when the registry
  * says its spacesd lacks `desktop_stream`; an unknown Space (registry
  * unavailable) still tries the stream. */
-export async function hasDesktopStream(fleet: FleetBridge, spaceId: string): Promise<boolean> {
+export async function hasDesktopStream(bridge: SpacesBridge, spaceId: string): Promise<boolean> {
   try {
-    const row = fleet.spaceInfo
-      ? await fleet.spaceInfo(spaceId)
-      : (await fleet.listSpaces()).find((r) => r.id === spaceId);
+    const row = bridge.spaceInfo
+      ? await bridge.spaceInfo(spaceId)
+      : (await bridge.listSpaces()).find((r) => r.id === spaceId);
     if (row && !row.features.includes(FEATURE.desktopStream)) return false;
   } catch {
     // registry unavailable: try the stream
@@ -103,7 +104,8 @@ const CODING_AGENTS: readonly CodingAgent[] = [
   // a headless ACP server), so it runs through the SDK, `cua agent run` and MCP.
 ];
 
-export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
+export function SpaceViewer({ bridge, transfer }: SpaceViewerProps) {
+  const t = useT(["spaces", "common", "errors"]);
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
   const transferBridge = useMemo(() => transfer ?? createTransferBridge(), [transfer]);
   // An app dropped on the Space window opens "Teleport an app…" for it.
@@ -111,10 +113,10 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fleet
+    bridge
       .viewerConfig()
       .then(async (config) => {
-        const desktopStream = await hasDesktopStream(fleet, config.space.id);
+        const desktopStream = await hasDesktopStream(bridge, config.space.id);
         if (!cancelled) setBoot({ kind: "ready", config, desktopStream });
       })
       .catch((error: unknown) => {
@@ -127,17 +129,17 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
     return () => {
       cancelled = true;
     };
-  }, [fleet]);
+  }, [bridge]);
 
   if (boot.kind === "loading") {
-    return <div className="viewer viewer-message">Connecting…</div>;
+    return <div className="viewer viewer-message">{t("common.status.connecting")}</div>;
   }
   if (boot.kind === "error") {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
   }
   return (
     <ViewerSession
-      fleet={fleet}
+      bridge={bridge}
       transfer={transferBridge}
       config={boot.config}
       desktopStream={boot.desktopStream}
@@ -162,16 +164,17 @@ export function phaseForStatus(status: MediaStatus): Phase {
 }
 
 function ViewerSession({
-  fleet,
+  bridge,
   transfer,
   config,
   desktopStream,
 }: {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   transfer: TransferBridge;
   config: ViewerConfig;
   desktopStream: boolean;
 }) {
+  const t = useT(["spaces", "common", "errors"]);
   const [phase, setPhase] = useState<Phase>(desktopStream ? "connecting" : "unsupported");
   // Bumped by Retry/Reconnect to force a fresh session.
   const [attempt, setAttempt] = useState(0);
@@ -182,14 +185,14 @@ function ViewerSession({
   const { space, view } = config;
   const openDesktop = useMemo(
     () => (): Promise<MediaTicket> =>
-      fleet
+      bridge
         .openStream(
           space.id,
           { kind: "display" },
           view === "pip" ? { policy: "view_only", audio: false, maxDimension: 1280 } : { audio: true },
         )
         .then(toMediaTicket),
-    [fleet, space.id, view],
+    [bridge, space.id, view],
   );
   // Item D: a recent screenshot (from the shared cache, via viewer_config)
   // paints a blurred background while the live stream is connecting.
@@ -241,7 +244,7 @@ function ViewerSession({
     return () => window.clearTimeout(timer);
   }, [topbarNotice]);
   const openTeleport = () => {
-    void fleet.openTeleportPicker(space).catch(() => {});
+    void bridge.openTeleportPicker(space).catch(() => {});
   };
 
   // The "Launch Agent" dropdown: a button in the bar that opens a small dark
@@ -292,20 +295,20 @@ function ViewerSession({
     }
     if (agent.launch === "teleport") {
       // Straight to the teleport consent sheet for this agent's provider.
-      void fleet.launchAgent(space, agent.id, agent.name).catch(() => {});
+      void bridge.launchAgent(space, agent.id, agent.name).catch(() => {});
       return;
     }
     if (agentInstalling) {
-      setTopbarNotice(`Still installing ${agentInstalling}`);
+      setTopbarNotice(t("spaces.viewer.agent_installing", { agent: agentInstalling }));
       return;
     }
     setAgentInstalling(agent.name);
-    fleet
+    bridge
       .launchAgentTerminal(space, agent.id)
-      .then(() => setTopbarNotice(`${agent.name} is open in a terminal in this Space; sign in there`))
+      .then(() => setTopbarNotice(t("spaces.viewer.agent_opened", { agent: agent.name })))
       .catch((error: unknown) =>
         setTopbarNotice(
-          `Couldn't open ${agent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          t("errors.viewer.agent_open_failed", { agent: agent.name, reason: error instanceof Error ? error.message : String(error) }),
         ),
       )
       .finally(() => setAgentInstalling(null));
@@ -320,13 +323,13 @@ function ViewerSession({
     let unsub: (() => void) | undefined;
     const reflect = (status: HotspotStatus) =>
       setHotspotOn(status.active && status.spaceId === space.id);
-    void fleet
+    void bridge
       .hotspotStatus()
       .then((status) => {
         if (!cancelled) reflect(status);
       })
       .catch(() => {});
-    void fleet.onHotspotChanged(reflect).then((off) => {
+    void bridge.onHotspotChanged(reflect).then((off) => {
       if (cancelled) off();
       else unsub = off;
     });
@@ -334,9 +337,9 @@ function ViewerSession({
       cancelled = true;
       unsub?.();
     };
-  }, [fleet, space.id]);
+  }, [bridge, space.id]);
   const stopHotspot = () => {
-    void fleet.stopHotspot().catch(() => setTopbarNotice("Couldn't stop sharing"));
+    void bridge.stopHotspot().catch(() => setTopbarNotice(t("errors.viewer.stop_hotspot_failed")));
   };
 
   // Keep the Space window at the remote desktop's aspect ratio while windowed.
@@ -368,8 +371,8 @@ function ViewerSession({
   // only when the resolution changes.
   useEffect(() => {
     if (view !== "pip" || phase !== "connected" || !frameSize) return;
-    void fleet.setPipAspect(space.id, frameSize.width, frameSize.height).catch(() => {});
-  }, [view, phase, frameSize, fleet, space.id]);
+    void bridge.setPipAspect(space.id, frameSize.width, frameSize.height).catch(() => {});
+  }, [view, phase, frameSize, bridge, space.id]);
 
   // The PiP window is FullScreenAuxiliary, so its green traffic-light zooms
   // (Tauri reports it as maximized) rather than entering fullscreen. Repurpose
@@ -388,8 +391,8 @@ function ViewerSession({
           if (disposed || maximized === wasMaximized) return;
           wasMaximized = maximized;
           if (maximized) {
-            void fleet.openSpaceWindow(space).catch(() => {});
-            void fleet.unpinSpacePip(space.id).catch(() => {});
+            void bridge.openSpaceWindow(space).catch(() => {});
+            void bridge.unpinSpacePip(space.id).catch(() => {});
           }
         });
       });
@@ -400,7 +403,7 @@ function ViewerSession({
       disposed = true;
       unlisten?.();
     };
-  }, [view, fleet, space, space.id]);
+  }, [view, bridge, space, space.id]);
 
   const retry = () => setAttempt((current) => current + 1);
 
@@ -411,7 +414,7 @@ function ViewerSession({
         // the whole window UNDER it (goes under the notch); this bar overlays
         // the top strip so the notch sits invisibly within it. Buttons flank
         // the centered notch via space-between.
-        <div className="viewer-topbar" role="toolbar" aria-label="Space controls">
+        <div className="viewer-topbar" role="toolbar" aria-label={t("spaces.viewer.controls_label")}>
           <div className="viewer-agent-menu" ref={agentMenuRef}>
             <button
               type="button"
@@ -419,15 +422,15 @@ function ViewerSession({
               aria-haspopup="menu"
               aria-expanded={agentMenuOpen}
               onClick={() => setAgentMenuOpen((open) => !open)}
-              title="Launch a coding agent for this Space"
+              title={t("spaces.viewer.launch_agent_hint")}
             >
-              Launch Agent
+              {t("spaces.viewer.launch_agent")}
             </button>
             {agentMenuOpen && (
               <div
                 className="viewer-agent-menu-list"
                 role="menu"
-                aria-label="Coding agents"
+                aria-label={t("spaces.viewer.agents_menu_label")}
                 onKeyDown={onAgentMenuKeyDown}
               >
                 {CODING_AGENTS.map((agent) => (
@@ -449,10 +452,10 @@ function ViewerSession({
               type="button"
               className="viewer-hotspot-stop"
               onClick={stopHotspot}
-              title="Stop sharing your network with this Space"
+              title={t("spaces.viewer.stop_hotspot_hint")}
             >
               <HotspotGlyph className="viewer-hotspot-stop-glyph" />
-              Stop sharing network
+              {t("spaces.viewer.stop_hotspot")}
             </button>
           )}
           <div className="viewer-topbar-right">
@@ -469,9 +472,9 @@ function ViewerSession({
               type="button"
               className="viewer-topbar-btn"
               onClick={openTeleport}
-              title={`Teleport an app into ${space.name}`}
+              title={t("spaces.viewer.teleport_hint", { name: space.name })}
             >
-              Teleport an app…
+              {t("spaces.viewer.teleport")}
             </button>
           </div>
           {(agentInstalling || topbarNotice) && (
@@ -523,20 +526,20 @@ function ViewerSession({
       </div>
       {phase !== "connected" && (
         <div className="viewer-status">
-          {phase === "connecting" && <span>Connecting to {space.name}…</span>}
+          {phase === "connecting" && <span>{t("spaces.viewer.connecting_to", { name: space.name })}</span>}
           {phase === "disconnected" && (
             <>
-              <span>Stream ended.</span>
+              <span>{t("spaces.viewer.stream_ended")}</span>
               <button type="button" className="ghost-button" onClick={retry}>
-                Reconnect
+                {t("common.action.reconnect")}
               </button>
             </>
           )}
           {phase === "failed" && (
             <>
-              <span>Could not reach the desktop stream.</span>
+              <span>{t("errors.viewer.stream_unreachable")}</span>
               <button type="button" className="ghost-button" onClick={retry}>
-                Retry
+                {t("common.action.retry")}
               </button>
             </>
           )}
@@ -568,6 +571,7 @@ export function TransferOverlayView({
   onRetry: () => void;
   onCancel: () => void;
 }) {
+  const t = useT(["spaces", "common", "errors"]);
   const isError = state.phase === "error";
   const progress = transferProgress(state);
   const sizeLabel = transferSizeLabel(state);
@@ -582,14 +586,14 @@ export function TransferOverlayView({
             </p>
             <div className="viewer-transfer-actions">
               <button type="button" className="ghost-button" onClick={onRetry}>
-                Retry
+                {t("common.action.retry")}
               </button>
               <button
                 type="button"
                 className="ghost-button viewer-transfer-cancel"
                 onClick={onCancel}
               >
-                Cancel
+                {t("common.action.cancel")}
               </button>
             </div>
           </>
@@ -619,7 +623,7 @@ export function TransferOverlayView({
             <div className="viewer-transfer-bar" data-testid="transfer-bar" aria-hidden="true">
               <span className="viewer-transfer-sweep" />
             </div>
-            <p className="viewer-transfer-hint">Transferring the session…</p>
+            <p className="viewer-transfer-hint">{t("spaces.viewer.transferring")}</p>
           </>
         )}
       </div>

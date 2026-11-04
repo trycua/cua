@@ -1,0 +1,205 @@
+name: "Nightly: QEMU fork fan-out"
+
+# Copy-on-write fork fan-out of a live QEMU memory checkpoint
+# (libs/cua/bench/fork-fanout): a bake VM dirties a few hundred MB of RAM, is
+# checkpointed and pinned, and the checkpoint is forked in waves. The
+# integration test (cua-daemon/tests/qemu_fork_fanout.rs) checks that every
+# fork holds the world's state, is independent of the others and shares the
+# world's unwritten pages; check.py then fails on a regression of more than
+# 1.5x against the committed baseline (fork latency, wave wall time,
+# checkpoint time, private memory per fork).
+#
+#   linux-kvm   GitHub-hosted Ubuntu with KVM, the published Linux disk,
+#               both checkpoint paths (a forkable bake VM, and a plain VM
+#               whose RAM stream is loaded into a file).
+#   macos-hvf   the self-hosted Apple-silicon Mac of the nightly Lume lane
+#               (vars.CUA_E2E_LUME_RUNNER), QEMU on HVF; QEMU and crane come
+#               from Homebrew when missing.
+#
+# Pull requests that touch the QEMU snapshot code, the test or the bench run
+# the Linux lane and the checker's unit tests.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/src/density.rs"
+      - "libs/cua/crates/cua-vmm/src/qemu/**"
+      - "libs/cua/crates/cua-daemon/tests/qemu_fork_fanout.rs"
+      - "libs/cua/bench/fork-fanout/**"
+      - ".github/workflows/nightly-qemu-fork.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-qemu-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  # The published Linux Spaces disk (slim tier), as a containerDisk.
+  FORK_DISK_REF: ghcr.io/trycua/linux:24.04-slim-disk
+
+jobs:
+  checker:
+    name: perf guard unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s libs/cua/bench/fork-fanout -p 'test_*.py' -v
+
+  linux-kvm:
+    name: linux-kvm (${{ matrix.path }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The published disk (its cua-spacesd predates new-machine
+          # renewal, so the bake VM boots cold).
+          - path: forkable
+            forkable: "1"
+            waves: "4,8"
+            disk: published
+          - path: loaded-stream
+            forkable: "0"
+            waves: "4"
+            disk: published
+          # A disk built from this tree: the bake VM restores the golden
+          # snapshot into a clone of its RAM file, then is checkpointed.
+          - path: warm-forkable
+            forkable: "1"
+            waves: "4"
+            disk: source
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-qemu-tests
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.24"
+      - name: Install QEMU, firmware and crane
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Fetch the Linux disk
+        if: matrix.disk == 'published'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk/disk"
+          crane export --platform linux/amd64 "$FORK_DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+          ls -la "$RUNNER_TEMP/disk/disk"
+      - name: Build the Linux disk from this tree
+        if: matrix.disk == 'source'
+        run: |
+          set -euo pipefail
+          cd libs/images
+          linux/build-spacesd-linux.sh amd64
+          ./build.sh linux --tag e2e --outputs rootfs,disk --out "$RUNNER_TEMP/images"
+          mkdir -p "$RUNNER_TEMP/disk/disk"
+          mv "$RUNNER_TEMP/images/linux/amd64/disk.img" "$RUNNER_TEMP/disk/disk/disk.img"
+      - name: Fork fan-out
+        env:
+          DISK: ${{ runner.temp }}/disk/disk/disk.img
+          WAVES: ${{ matrix.waves }}
+          FORKABLE: ${{ matrix.forkable }}
+          WARM: ${{ matrix.disk == 'source' && '1' || '0' }}
+          EXPECT_WARM: ${{ matrix.disk == 'source' && '1' || '0' }}
+          MEMORY_MB: "1024"
+          DIRTY_MB: "200"
+          # This bench measures fork memory and latency, not admission (unit
+          # tested in cua-vmm). Hosted runners of private repositories have
+          # 2 CPUs, where 8 forks of 2 vCPUs plus the world (18) pass the
+          # default 8x overcommit (16) and the last fork would be refused;
+          # public ones have 4. Allow the same forks on both, so a run stays
+          # comparable with the baseline.
+          CUA_VM_VCPU_OVERCOMMIT: "10"
+          # A Linux VM runs with free page reporting by default, and the RAM
+          # of such a VM stays in its checkpoint's stream, loaded privately
+          # by each fork. The loaded-stream path this lane measures (the
+          # stream loaded once into a file the forks share) is the one for a
+          # VM without it.
+          CUA_QEMU_FREE_PAGE_REPORTING: ${{ matrix.forkable == '0' && '0' || '' }}
+        run: libs/cua/bench/fork-fanout/run.sh "$RUNNER_TEMP/fork-fanout.json"
+      - name: Perf guard
+        # Hosted runners of private repositories have 2 CPUs (public ones 4):
+        # forks are about twice as slow there, so they are checked against
+        # their own measured baseline when one exists.
+        env:
+          HOST_CLASS: linux-kvm-gha-${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          base=libs/cua/bench/fork-fanout/baseline.json
+          host="$HOST_CLASS"
+          if [ "$(nproc)" -lt 4 ] && python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["hosts"] else 1)' "$base" "$host-2cpu"; then
+            host="$host-2cpu"
+          fi
+          echo "baseline host class: $host ($(nproc) CPUs)"
+          python3 libs/cua/bench/fork-fanout/check.py "$RUNNER_TEMP/fork-fanout.json" "$base" --host "$host"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fork-fanout-linux-${{ matrix.path }}
+          path: ${{ runner.temp }}/fork-fanout.json
+          if-no-files-found: ignore
+
+  macos-hvf:
+    name: macos-hvf (self-hosted)
+    if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
+    runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: QEMU and crane
+        run: |
+          command -v qemu-system-aarch64 >/dev/null || brew install qemu
+          command -v crane >/dev/null || brew install crane
+          command -v protoc >/dev/null || brew install protobuf
+      - name: Fetch the Linux disk
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk"
+          crane export --platform linux/arm64 "$FORK_DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+      - name: Fork fan-out (8, 32, 64 forks of a 2 GiB world)
+        env:
+          DISK: ${{ runner.temp }}/disk/disk/disk.img
+          WAVES: "8,32,64"
+          MEMORY_MB: "2048"
+          DIRTY_MB: "300"
+          FORKABLE: "1"
+          WARM: "0"
+        run: libs/cua/bench/fork-fanout/run.sh "$RUNNER_TEMP/fork-fanout.json"
+      - name: Perf guard
+        run: >
+          python3 libs/cua/bench/fork-fanout/check.py "$RUNNER_TEMP/fork-fanout.json"
+          libs/cua/bench/fork-fanout/baseline.json --host macos-hvf
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fork-fanout-macos
+          path: ${{ runner.temp }}/fork-fanout.json
+          if-no-files-found: ignore

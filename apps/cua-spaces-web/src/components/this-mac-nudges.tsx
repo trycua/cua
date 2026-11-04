@@ -68,7 +68,7 @@ export function NudgeCard({ nudge, onPrimary, onSecondary, onNever }: { nudge: N
       aria-modal="false"
       aria-labelledby={titleId}
       data-nudge={nudge.kind}
-      className="fixed top-[calc(var(--titlebar-height,0px)+12px)] right-4 z-50 w-[392px] max-w-[calc(100vw-2rem)] rounded-2xl border bg-popover p-5 text-popover-foreground shadow-xl"
+      className="fixed top-[calc(var(--titlebar-height,0px)+12px)] right-4 z-50 w-[392px] max-w-[calc(100vw-2rem)] rounded-lg bg-popover p-5 text-popover-foreground shadow-float"
     >
       <p className="flex items-start gap-2 text-[13px] leading-snug text-muted-foreground">
         <CuaKey size={18} />
@@ -83,7 +83,7 @@ export function NudgeCard({ nudge, onPrimary, onSecondary, onNever }: { nudge: N
         <Button data-nudge-primary="" onClick={onPrimary}>
           {nudge.primary}
         </Button>
-        <Button variant="outline" data-nudge-secondary="" onClick={onSecondary}>
+        <Button variant="secondary" data-nudge-secondary="" onClick={onSecondary}>
           {nudge.secondary}
         </Button>
         {nudge.never && onNever ? (

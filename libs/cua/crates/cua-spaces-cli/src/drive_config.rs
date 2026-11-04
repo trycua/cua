@@ -111,7 +111,7 @@ pub fn config(cmd: ConfigCmd, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                 line(
                     out,
                     format!(
-                        "drive backend set to {}; restart the daemon (cua daemon restart) to use it",
+                        "drive backend set to {}; restart the daemon (cua daemon stop, then cua daemon start) to use it",
                         c.backend.as_str()
                     ),
                 );

@@ -1,0 +1,37 @@
+List your agents, or with SANDBOX the runs in it
+
+Usage: cua agent ls [OPTIONS] [SANDBOX]
+
+Arguments:
+  [SANDBOX]
+          Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). Without it: your named agents
+
+Options:
+      --local
+          Look NAME up among local sandboxes only (same as `local:NAME`)
+
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help
+
+Examples:
+  cua agent ls
+  cua agent ls local:dev

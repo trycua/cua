@@ -1,0 +1,4 @@
+# The libs/cua crates pin 1.97.1 (edition 2024).
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"

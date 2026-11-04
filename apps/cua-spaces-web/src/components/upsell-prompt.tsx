@@ -3,7 +3,7 @@
 
 import { XIcon } from "lucide-react";
 
-import { useRelayUsage, useSession, useUpsellGate, useUpsellPrompt } from "@/bridge";
+import { usePlanLimitTelemetry, useRelayUsage, useSession, useUpsellGate, useUpsellPrompt } from "@/bridge";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -17,19 +17,20 @@ import { Button } from "@/components/ui/button";
 export function UpsellPrompt({ surface, active, className }: { surface: "share" | "machine"; active: boolean; className?: string }) {
   const usage = useRelayUsage();
   const prompt = useUpsellPrompt(surface, usage);
-  const gate = useUpsellGate(surface, active && prompt !== null);
+  const gate = useUpsellGate(surface, active && prompt !== null, true, { plan: usage?.plan });
+  const plans = usePlanLimitTelemetry();
   const { openExternal } = useSession();
   if (!prompt || !gate.show) return null;
   return (
-    <div role="note" data-upsell={surface} className={`flex items-start gap-3 rounded-lg border bg-card px-3.5 py-2.5 text-xs ${className ?? ""}`}>
+    <div role="note" data-upsell={surface} className={`flex items-start gap-3 rounded-lg bg-muted px-3.5 py-2.5 text-xs ${className ?? ""}`}>
       <p className="min-w-0 flex-1 leading-relaxed text-muted-foreground">{prompt.text}</p>
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         data-upsell-cta=""
         onClick={() => {
           gate.click();
-          void openExternal(prompt.cta.url).catch(() => {});
+          void openExternal(plans.link(prompt.cta.url, surface === "share" ? "app_share" : "app_machine")).catch(() => {});
         }}
       >
         {prompt.cta.label}

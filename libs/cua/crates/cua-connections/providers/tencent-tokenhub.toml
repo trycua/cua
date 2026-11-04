@@ -1,0 +1,23 @@
+id = "tencent-tokenhub"
+name = "Tencent TokenHub"
+icon = "tencent-tokenhub"
+tier = "more"
+rank = 330
+kind = "hosted"
+hidden = true
+hidden_reason = "Unverified: Cua has not run this provider end to end yet."
+aliases = ["tencent", "hunyuan"]
+wire = "openai-chat"
+base_url = "https://tokenhub.tencentmaas.com/v1"
+base_url_env = "TOKENHUB_BASE_URL"
+default_model = ""
+hermes_id = "tencent-tokenhub"
+key_help = "Create a key in the Tencent TokenHub console."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "TOKENHUB_API_KEY"
+
+[delivery]
+hermes = ["TOKENHUB_API_KEY"]

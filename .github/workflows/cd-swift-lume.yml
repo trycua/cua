@@ -51,7 +51,7 @@ on:
 
 permissions:
   contents: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:
@@ -309,6 +309,7 @@ jobs:
             --path libs/lume \
             --changelog libs/lume/CHANGELOG.md \
             --asset-dir release-upload \
+            --report-issue \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft

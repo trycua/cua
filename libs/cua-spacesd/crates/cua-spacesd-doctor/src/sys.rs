@@ -372,10 +372,9 @@ impl Local {
 }
 
 /// Runs a local command with a timeout and capped output. `env` adds
-/// variables. The token variables are removed: a probe's children can
-/// outlive it (cua-driver's telemetry worker does) and would hold the
-/// token where `auth.token_leak` finds it. Errors when the program cannot
-/// start.
+/// variables. The token variables are removed first: a probe's detached
+/// children can outlive it and would hold the token where `auth.token_leak`
+/// finds it. Errors when the program cannot start.
 pub async fn run_local(
     program: &str,
     args: &[&str],
@@ -387,7 +386,7 @@ pub async fn run_local(
 
 /// [`run_local`] keeping the token variables, for a cua-spacesd that must
 /// resolve its configuration the way the running service did.
-pub async fn run_local_as_service(
+pub async fn run_local_keeping_token(
     program: &str,
     args: &[&str],
     timeout: Duration,
@@ -553,18 +552,28 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn probes_do_not_inherit_the_token() {
-        // No other test in this crate reads CUA_ENV_TOKEN.
-        std::env::set_var("CUA_ENV_TOKEN", "probe-token");
-        let echo = ["-c", "echo ${CUA_ENV_TOKEN-unset}"];
-        let probe = run_local("sh", &echo, &[], Duration::from_secs(5))
-            .await
-            .unwrap();
-        let service = run_local_as_service("sh", &echo, Duration::from_secs(5))
-            .await
-            .unwrap();
-        std::env::remove_var("CUA_ENV_TOKEN");
-        assert_eq!(probe.stdout.trim(), "unset");
-        assert_eq!(service.stdout.trim(), "probe-token");
+        // No other test in this crate reads these variables.
+        let vars = [
+            "CUA_ENV_TOKEN",
+            "CUA_SPACESD_TOKEN",
+            "CUA_GUESTD_TOKEN",
+            "CUA_RELAY_TOKEN",
+        ];
+        let script: String = vars
+            .iter()
+            .map(|v| format!("echo ${{{v}-unset}};"))
+            .collect();
+        let echo = ["-c", script.as_str()];
+        for var in vars {
+            std::env::set_var(var, "probe-token");
+        }
+        let probe = run_local("sh", &echo, &[], Duration::from_secs(5)).await;
+        let kept = run_local_keeping_token("sh", &echo, Duration::from_secs(5)).await;
+        for var in vars {
+            std::env::remove_var(var);
+        }
+        assert_eq!(probe.unwrap().stdout, "unset\n".repeat(vars.len()));
+        assert_eq!(kept.unwrap().stdout, "probe-token\n".repeat(vars.len()));
     }
 
     #[cfg(unix)]

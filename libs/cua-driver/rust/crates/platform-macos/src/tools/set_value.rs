@@ -127,7 +127,7 @@ impl Tool for SetValueTool {
             Err(refusal_result) => return refusal_result,
         };
         if let Some(refusal) =
-            super::refuse_if_disabled(pid, window_id, &element_guard, "set_value").await
+            super::refuse_if_disabled(pid, window_id, &element_guard, "set_value", false).await
         {
             return refusal;
         }

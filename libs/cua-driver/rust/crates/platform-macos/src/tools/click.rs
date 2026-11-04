@@ -691,8 +691,14 @@ impl ClickTool {
             // close, autoscroll, etc.). If we can't resolve a center, error rather
             // than silently degrade to AXPress.
             if button_str == "middle" {
-                if let Some(refusal) =
-                    super::refuse_if_disabled(pid, wid, &element_guard, "middle_click").await
+                if let Some(refusal) = super::refuse_if_disabled(
+                    pid,
+                    wid,
+                    &element_guard,
+                    "middle_click",
+                    delivery_mode.is_foreground(),
+                )
+                .await
                 {
                     return refusal;
                 }
@@ -971,7 +977,9 @@ impl ClickTool {
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
-                    Some(disabled) => super::element_disabled_result(pid, wid, disabled),
+                    Some(disabled) => {
+                        super::element_disabled_result(pid, wid, disabled, foreground)
+                    }
                     None => ToolResult::error(format!("AX action failed: {e}")),
                 },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

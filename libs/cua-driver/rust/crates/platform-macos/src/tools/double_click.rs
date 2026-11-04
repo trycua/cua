@@ -122,8 +122,14 @@ impl Tool for DoubleClickTool {
             } else {
                 None
             };
-            if let Some(refusal) =
-                super::refuse_if_disabled(pid, wid, &element_guard, "double_click").await
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                &element_guard,
+                "double_click",
+                delivery_mode.is_foreground(),
+            )
+            .await
             {
                 return refusal;
             }

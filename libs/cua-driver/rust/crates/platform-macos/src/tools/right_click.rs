@@ -139,7 +139,7 @@ impl Tool for RightClickTool {
                 Err(refusal_result) => return refusal_result,
             };
             if let Some(refusal) =
-                super::refuse_if_disabled(pid, wid, &element_guard, "AXShowMenu").await
+                super::refuse_if_disabled(pid, wid, &element_guard, "AXShowMenu", false).await
             {
                 return refusal;
             }

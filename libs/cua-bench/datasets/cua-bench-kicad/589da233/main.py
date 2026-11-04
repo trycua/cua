@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 589da233-8be6-4506-868f-29df3cf0d0d1."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Change the value of R2 so that R1 sees twice as much current as R2.''',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="""Change the value of R2 so that R1 sees twice as much current as R2.""",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_currentdivider_circuit/kicad_currentdivider_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_currentdivider_circuit/kicad_currentdivider_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

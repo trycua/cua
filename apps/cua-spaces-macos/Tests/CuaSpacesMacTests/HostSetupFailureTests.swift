@@ -1,0 +1,271 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+@testable import CuaSpacesMacKit
+import CuaSDK
+import CuaSpacesFFI
+import Foundation
+import Testing
+
+@Suite("Host setup failure")
+struct HostSetupFailureTests {
+    static let missingRelease =
+        "http: download: https://github.com/trycua/cua/releases/download/cua-spacesd-v0.2.0/"
+        + "cua-spacesd-aarch64-apple-darwin.tar.gz: HTTP 404"
+
+    @Test func aMissingReleaseIsADownloadFailureWithoutTheURL() {
+        let f = HostSetupFailure.presenting(Self.missingRelease)
+        #expect(f.kind == .download)
+        #expect(f.title == "Couldn\u{2019}t download the Cua host service")
+        #expect(f.message.contains("update Cua Spaces"))
+        #expect(!f.message.contains("http"))
+        #expect(!f.title.contains("http"))
+        #expect(f.details == Self.missingRelease, "details stay raw")
+    }
+
+    @Test func aThrottledSetupSaysHowLongToWaitInPlainWords() {
+        let raw = "http: Too many attempts right now. Wait 3 seconds, then try again."
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .throttled)
+        #expect(f.title == "Too many attempts right now")
+        #expect(f.message == "Trying again in 3 seconds.")
+        #expect(f.details == raw)
+        #expect(f.actionLabel == "Retry")
+    }
+
+    @Test func aRawHTTP429FromAnOlderHostIsTheSameWithoutANumber() {
+        let f = HostSetupFailure.presenting("http: relay: HTTP 429: Too Many Requests")
+        #expect(f.kind == .throttled)
+        #expect(f.message == "Wait a few seconds, then try again.")
+        #expect(!f.message.contains("429"))
+    }
+
+    @Test(arguments: [
+        "http: relay: HTTP 429: computer limit for this token reached",
+        "HTTP 429: at most 5 unused pairing codes",
+    ])
+    func aLimitTheRelayExplainsIsNotAThrottle(_ raw: String) {
+        #expect(HostSetupFailure.presenting(raw).kind == .other)
+    }
+
+    @Test(arguments: [
+        "cua-spacesd: no published release for this platform",
+        "download: cua-spacesd v0.2.0 is not available",
+        "Download failed: HTTP 404 Not Found",
+    ])
+    func releaseNotAvailableVariants(_ raw: String) {
+        #expect(HostSetupFailure.presenting(raw).kind == .download)
+    }
+
+    @Test(arguments: [
+        "error sending request for url (https://relay.cua.ai/v1/hosts): operation timed out",
+        "The Internet connection appears to be offline.",
+        "tcp connect error: Connection refused (os error 61)",
+        "dns error: failed to lookup address information",
+        "download: https://github.com/x: operation timed out",
+    ])
+    func networkFailures(_ raw: String) {
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .network)
+        #expect(!f.message.contains("http"))
+    }
+
+    @Test(arguments: [
+        "launchctl bootstrap gui/501: Bootstrap failed: 125: Domain does not support specified action (no Aqua session)",
+        "no GUI session: sign in at the console",
+    ])
+    func guiSessionFailures(_ raw: String) {
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .guiSession)
+        #expect(f.message.contains("Sign in at the Mac"))
+    }
+
+    @Test(arguments: [
+        "relay: HTTP 401 Unauthorized",
+        "not signed in: run `cua login`",
+        "unauthenticated",
+    ])
+    func signedOutFailures(_ raw: String) {
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .signedOut)
+        #expect(f.message.contains("Sign in"))
+    }
+
+    /// The first post-launch user's error (raw), and the words the host
+    /// now reports for it: a service that did not start, never the raw
+    /// launchctl command line.
+    @Test(arguments: [
+        "local runtime: service: \"launchctl\" \"bootstrap\" \"gui/501\" \"/Users/u/Library/LaunchAgents/com.trycua.spacesd.host.plist\" failed: Bootstrap failed: 5: Input/output error",
+        "local runtime: service: macOS did not start the Cua host service (launchd: Bootstrap failed: 5: Input/output error); try again",
+    ])
+    func serviceFailures(_ raw: String) {
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .service)
+        #expect(f.title == "Couldn\u{2019}t start the Cua host service")
+        #expect(!f.message.contains("launchctl"))
+        #expect(f.details == raw)
+    }
+
+    @Test func anythingElseIsGeneric() {
+        let f = HostSetupFailure.presenting("something odd failed\nmore")
+        #expect(f.kind == .other)
+        #expect(f.title == "Couldn\u{2019}t set up this Mac for access")
+        #expect(f.message == "Something went wrong. Try again, or open Details to see what happened.")
+        #expect(f.details == "something odd failed\nmore")
+    }
+
+    @Test func aPortNumberIsNotAStatusCode() {
+        #expect(HostSetupFailure.presenting("listen 0.0.0.0:14041 failed").kind == .other)
+    }
+
+    // MARK: - The model
+
+    @MainActor @Test func aFailedSetupKeepsTheRawErrorAsDetails() async {
+        let host = FixtureHost()
+        host.failSetup = Self.missingRelease + "\ncaused by: 404"
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        let failure = model.setupFailure
+        #expect(failure?.kind == .download)
+        #expect(failure?.details == Self.missingRelease + "\ncaused by: 404", "the whole error, every line")
+        #expect(model.formView?.canSubmit == true, "Retry can run")
+        #expect(!model.settingUp)
+        #expect(model.form != nil)
+    }
+
+    /// A page button that fails (the first post-launch user turned a
+    /// setting on and the service did not start) shows in words with
+    /// Retry, and Retry runs the same button again.
+    @MainActor @Test func aFailedPageButtonShowsWordsAndRetries() async {
+        let host = FixtureHost()
+        let model = HostModel(host: host)
+        _ = try? await host.setupRequest(
+            request: AppHostSetupRequest(
+                mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil, profile: "desktop",
+                shareDesktop: nil, provideSpaces: nil),
+            accountToken: "t")
+        host.failConfigure = "local runtime: service: \"launchctl\" \"bootstrap\" \"gui/501\" \"/x.plist\" failed: Bootstrap failed: 5: Input/output error"
+        await model.run(.provideSpaces)
+        #expect(model.actionFailure?.kind == .service)
+        #expect(model.actionFailure?.details.contains("launchctl") == true)
+        await model.retryFailedAction()
+        #expect(model.actionFailure == nil)
+        #expect(host.calls.filter { $0.hasPrefix("configure:") }.count == 2, "Retry ran the same change")
+    }
+
+    @MainActor @Test func retryRunsTheSameChoiceAndClearsOnSuccess() async {
+        let host = FixtureHost()
+        host.failSetup = Self.missingRelease
+        let model = HostModel(host: host)
+        model.openForm()
+        model.send(.setProfile(profile: "spare"))
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        #expect(model.formView?.request?.profile == "spare", "the choice survives the failure")
+
+        host.failSetup = nil
+        await model.submit()
+        #expect(host.calls.count == 2)
+        #expect(host.calls[0] == host.calls[1], "the retry sends the same request")
+        #expect(model.setupFailure == nil)
+        #expect(model.form == nil)
+        #expect(model.state?.configured == true)
+    }
+
+    @MainActor @Test func whileRetryingTheFailureStaysAndSetupIsBusy() async {
+        let gate = GatedHost()
+        let model = HostModel(host: gate)
+        model.openForm()
+        gate.fail = "no GUI session"
+        await model.submit()
+        #expect(model.setupFailure?.kind == .guiSession)
+
+        gate.fail = nil
+        gate.hold = true
+        let retry = Task { await model.submit() }
+        await gate.waitUntilCalled(times: 2)
+        #expect(model.settingUp, "Retry shows progress and is disabled")
+        #expect(model.formView?.canSubmit == false, "no second setup while one runs")
+        #expect(model.setupFailure?.kind == .guiSession, "the failure stays while retrying")
+        gate.release()
+        await retry.value
+        #expect(!model.settingUp)
+        #expect(model.setupFailure == nil)
+    }
+
+    @MainActor @Test func closingTheFormClearsTheFailure() async {
+        let host = FixtureHost()
+        host.failSetup = "boom"
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        model.closeForm()
+        #expect(model.setupFailure == nil)
+        model.openForm()
+        #expect(model.setupFailure == nil)
+    }
+}
+
+/// A host whose setup can fail or wait until released (no service, no
+/// network: it wraps `FixtureHost`).
+final class GatedHost: HostRunning, @unchecked Sendable {
+    let inner = FixtureHost()
+    var fail: String?
+    var hold = false
+    private var calls = 0
+    private var held: CheckedContinuation<Void, Never>?
+    private var callWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private let lock = NSLock()
+
+    func status() async throws -> HostStatus { try await inner.status() }
+    func pauseSignedOut() async throws -> HostStatus { try await inner.pauseSignedOut() }
+    func resumeSignedIn(account: String) async throws -> HostStatus { try await inner.resumeSignedIn(account: account) }
+
+    func setupRequest(request: AppHostSetupRequest, accountToken: String?) async throws -> HostStatus {
+        let (shouldHold, ready) = lock.withLock { () -> (Bool, [CheckedContinuation<Void, Never>]) in
+            calls += 1
+            let ready = callWaiters.filter { $0.0 <= calls }.map(\.1)
+            callWaiters.removeAll { $0.0 <= calls }
+            return (hold, ready)
+        }
+        ready.forEach { $0.resume() }
+        if shouldHold { await withCheckedContinuation { c in lock.withLock { held = c } } }
+        inner.failSetup = fail
+        return try await inner.setupRequest(request: request, accountToken: accountToken)
+    }
+
+    func waitUntilCalled(times: Int) async {
+        await withCheckedContinuation { c in
+            let done = lock.withLock { () -> Bool in
+                if calls >= times { return true }
+                callWaiters.append((times, c))
+                return false
+            }
+            if done { c.resume() }
+        }
+    }
+
+    func release() {
+        // The setup may not have parked yet: poll briefly for it.
+        Task {
+            while true {
+                if let c = lock.withLock({ () -> CheckedContinuation<Void, Never>? in
+                    let c = held
+                    held = nil
+                    return c
+                }) {
+                    c.resume()
+                    return
+                }
+                await Task.yield()
+            }
+        }
+    }
+
+    func stopSharing() async throws -> HostStatus { try await inner.stopSharing() }
+    func startSharing() async throws -> HostStatus { try await inner.startSharing() }
+    func remove() async throws { try await inner.remove() }
+    func configure(change: HostSettingsChange) async throws -> HostStatus { try await inner.configure(change: change) }
+}

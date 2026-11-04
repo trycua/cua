@@ -1,0 +1,429 @@
+{
+  "schema": "cua.transcript.frame/1",
+  "cast": "claude-basic-turn",
+  "instant": "tool-running",
+  "cli": "claude",
+  "cli_version": "2.1.278 (Claude Code)",
+  "columns": 100,
+  "rows": 34,
+  "requested_time_ms": 11000,
+  "effective_time_ms": 10935,
+  "events_applied": 44,
+  "unsupported_sequences": 0,
+  "unsupported_resize": false,
+  "alternate_screen": true,
+  "window_title": "◑ Multiply function in calc.py",
+  "cursor": {
+    "row": 31,
+    "column": 2,
+    "visible": true
+  },
+  "lines": [
+    "",
+    "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+    "           Opus 5 (1M context) with low effort · Claude Max",
+    "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+    "",
+    "",
+    "❯ Read calc.py and add a multiply function to it. Keep it short.",
+    "",
+    "  Reading calc.py",
+    "  ⎿  calc.py",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "✻ Channeling… (3s · ↓ 59 tokens)",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ ",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents"
+  ],
+  "attributes": [
+    {
+      "row": 1,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          6,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          8,
+          "dim"
+        ],
+        [
+          11,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          30,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 2,
+      "runs": [
+        [
+          11,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          34,
+          "dim"
+        ],
+        [
+          36,
+          38,
+          "dim"
+        ],
+        [
+          40,
+          45,
+          "dim"
+        ],
+        [
+          47,
+          47,
+          "dim"
+        ],
+        [
+          49,
+          54,
+          "dim"
+        ],
+        [
+          56,
+          58,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 3,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          6,
+          "dim"
+        ],
+        [
+          11,
+          39,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 6,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          13,
+          "dim"
+        ],
+        [
+          15,
+          17,
+          "dim"
+        ],
+        [
+          19,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          23,
+          "dim"
+        ],
+        [
+          25,
+          32,
+          "dim"
+        ],
+        [
+          34,
+          41,
+          "dim"
+        ],
+        [
+          43,
+          44,
+          "dim"
+        ],
+        [
+          46,
+          48,
+          "dim"
+        ],
+        [
+          50,
+          53,
+          "dim"
+        ],
+        [
+          55,
+          56,
+          "dim"
+        ],
+        [
+          58,
+          63,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 8,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          8,
+          "dim"
+        ],
+        [
+          10,
+          16,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 9,
+      "runs": [
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          5,
+          11,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 28,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          12,
+          "dim"
+        ],
+        [
+          14,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          18,
+          "dim"
+        ],
+        [
+          20,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          23,
+          "dim"
+        ],
+        [
+          25,
+          31,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 30,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 31,
+      "runs": [
+        [
+          0,
+          1,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 32,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 33,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          19,
+          "dim"
+        ],
+        [
+          21,
+          30,
+          "dim"
+        ],
+        [
+          32,
+          33,
+          "dim"
+        ],
+        [
+          35,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          42,
+          "dim"
+        ],
+        [
+          44,
+          46,
+          "dim"
+        ],
+        [
+          48,
+          49,
+          "dim"
+        ],
+        [
+          51,
+          59,
+          "dim"
+        ],
+        [
+          61,
+          61,
+          "dim"
+        ],
+        [
+          63,
+          63,
+          "dim"
+        ],
+        [
+          65,
+          67,
+          "dim"
+        ],
+        [
+          69,
+          74,
+          "dim"
+        ]
+      ]
+    }
+  ]
+}

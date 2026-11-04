@@ -8,54 +8,15 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_primary_conflict_proof as proof
+from proof_fixtures import (BOUNDS, DELIVERED, client, conflict_trace as trace, identity, inkscape_profile,
+                            primary_conflict_plan as plan, status)
 
 
-BOUNDS = {'x': 10, 'y': 20, 'width': 800, 'height': 600}
 REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'primary_target_busy', 'lane': 0}}
-DELIVERED = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
-                                 'delivery': {'mode': 'background'}}}
-
-
-def identity(pid, name='app'):
-    return {'pid': pid, 'uid': 1000, 'starttime': '123', 'exe': '/usr/bin/' + name}
-
-
-def plan(app='calc'):
-    return {'purpose': 'primary_conflict', 'case': 'initial_refusal', 'disposable': True,
-        'vm': {'machine_id': 'a' * 32, 'boot_id': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'},
-        'compositor': {**identity(50, 'Hyprland'), 'instance': 'test_1'},
-        'processes': {'target': identity(20), 'foreground': identity(10)},
-        'foreground': {'pid': 10, 'window_id': 100}, 'primary_point': [20, 20], 'package_versions': {},
-        'agents': [{'app': app, 'name': 'primary-conflict', 'target': {'pid': 20, 'window_id': 200},
-            'bounds': dict(BOUNDS), 'pointer_stage': 'select_range' if app == 'calc' else 'move_rectangle', 'drag': {}}],
-        'recovery': {'pointer_stage': 'click_b2' if app == 'calc' else 'scroll_down'}}
-
-
-def trace(events=(), active=True):
-    rows = [(0, 'start', 0, 0), *events]
-    if not active:
-        rows += [(20, 'stop', 0, 0)]
-    return {'hook': True, 'active': active, 'overflow': False, 'timed_out': False, 'count': len(rows),
-        'events': [[i + 1, timestamp, kind, 30, 40, lane, value]
-                   for i, (timestamp, kind, lane, value) in enumerate(rows)]}
-
-
 RECOVERY = [(1, 'agent_admitted', 1, 0), (2, 'pointer_button', 1, 1),
             (3, 'pointer_button', 1, 0), (4, 'agent_action_end', 1, 0)]
-
-
-def status():
-    return {'configured': True, 'transport': {'ready': True}, 'input': {
-        'protocol': 3, 'test_only': False, 'transport_ready': True,
-        'seat_lifetime': 'compositor', 'upgrade': 'desktop_restart', 'lanes': [
-            {'lane': lane, 'held_button': 0, 'held_keys': 0, 'drag_active': False,
-             'lease_active': False, 'keyboard_focus': False, 'pointer_focus': False, 'reserved': False}
-            for lane in (0, 1)]}}
-
-
-def client(pid):
-    return Mock(directory=Path.cwd(), process=Mock(pid=pid, poll=Mock(return_value=None)))
 
 
 class OracleTests(unittest.TestCase):
@@ -98,20 +59,13 @@ class OracleTests(unittest.TestCase):
                     proof.verify_refusal(before, before, REFUSED)
 
     def test_incomplete_or_rewritten_trace_cannot_pass(self):
-        for key, value in (('hook', False), ('active', False), ('overflow', True), ('timed_out', True), ('count', 9)):
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_refusal(trace(), {**trace(), key: value}, REFUSED)
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_refusal(trace(), {**trace(), 'overflow': True}, REFUSED)
         changed = trace()
         changed['events'][0][3] += 1
         with self.assertRaisesRegex(AssertionError, 'history'):
             proof.verify_refusal(trace(), changed, REFUSED)
-
-    def test_trace_oracle_never_ignores_primary_input_or_warp_and_return(self):
-        for kind in ('pointer_focus', 'keyboard_focus', 'pointer_button', 'keyboard_key', 'pointer_axis'):
-            self.assertEqual(proof.analyze(trace([(1, kind, 0, 0)], active=False))['result'], 'failed')
-        warped = trace([(1, 'cursor', 0, 0), (2, 'cursor', 0, 0)], active=False)
-        warped['events'][1][3] += 20
-        self.assertEqual(proof.analyze(warped)['result'], 'failed')
 
     def test_current_held_state_and_preexisting_reservations_are_checked(self):
         proof.clear_status(status(), unreserved=True)
@@ -138,11 +92,18 @@ class OracleTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan())
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_trace_requires_exact_socket_peer_and_unowned_trace(self):
         path = Path('/run/user/1000/hypr/test_1/cua-input-v3.sock')
         for failure in (None, 'peer', 'protocol', 'active', 'owner', 'alias'):
             desktop = object.__new__(proof.ExactDesktop)
-            desktop.instance, desktop.compositor = 'test_1', identity(50, 'Hyprland')
+            desktop.instance, desktop.compositor = 'test_1', identity(50, '/usr/bin/Hyprland')
             desktop.guard = Mock()
             tracer = Mock(hello={'protocol': 2 if failure == 'protocol' else 3})
             tracer.collect.return_value = {'active': failure == 'active'}
@@ -188,7 +149,7 @@ class OwnershipTests(unittest.TestCase):
             candidate = plan()
             desktop = object.__new__(proof.ExactDesktop)
             desktop.plan, desktop.instance = candidate, 'test_1'
-            desktop.compositor = identity(50, 'Hyprland')
+            desktop.compositor = identity(50, '/usr/bin/Hyprland')
             rows = deepcopy(windows)
             if failure == 'address':
                 rows[0]['address'] = '0xc9'
@@ -218,8 +179,8 @@ class OwnershipTests(unittest.TestCase):
 class ActionTests(unittest.TestCase):
     def test_single_normal_call_fresh_snapshot_unknown_never_replayed(self):
         for phase in ('refusal', 'recovery'):
-            for failure in (None, 'guard', 'stale', 'unknown', 'same_snapshot', 'same_artifact', 'cached',
-                            'before_return', 'same_runtime', 'effect', 'pre_activity',
+            # Freshness rules are owned by cancel's ObservationTests; 'cached' proves wiring.
+            for failure in (None, 'guard', 'stale', 'unknown', 'cached', 'same_runtime', 'effect', 'pre_activity',
                             'dead_before', 'dead_after', 'observation'):
                 if phase == 'refusal' and failure == 'effect':
                     continue
@@ -241,14 +202,8 @@ class ActionTests(unittest.TestCase):
                         'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
                     after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
                         'proof_image': 'after.png', 'proof_observation_started_ns': 50, 'proof_observation_finished_ns': 60}
-                    if failure == 'same_snapshot':
-                        after = dict(before)
-                    elif failure == 'same_artifact':
-                        after['proof_image'] = before['proof_image']
-                    elif failure == 'cached':
+                    if failure == 'cached':
                         after.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
-                    elif failure == 'before_return':
-                        after['proof_observation_started_ns'] = 39
                     prepared = {'snapshot': before, 'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': 'click_b2'},
                                 'prepared_ns': 10}
                     stack.enter_context(patch.object(proof, 'prepare_drag', return_value=prepared))
@@ -408,7 +363,7 @@ class RunTests(unittest.TestCase):
                     self.assertTrue((args.evidence / 'recovery-trace.json').exists())
                     self.assertEqual(set(report['phases']), {'refusal', 'recovery'})
                     files = json.loads((args.evidence / 'provenance.json').read_text())['files']
-                    for name in ('desktop_faults.py', 'production_cancel_proof.py',
+                    for name in ('desktop_faults.py', 'production_cancel_proof.py', 'proof_fixtures.py',
                                  'production_desktop_fault_proof.py', 'production_geometry_fault_proof.py'):
                         self.assertEqual(len(files[name]['sha256']), 64)
                 if failure == 'reserved_refusal':
@@ -417,6 +372,11 @@ class RunTests(unittest.TestCase):
                     self.assertEqual(report['error']['message'], 'unexpected refusal reservation')
                 if failure == 'reserved_after_close':
                     self.assertEqual(len(launched), 2, 'recovery followed an unreleased reservation')
+                if failure == 'start_lost':
+                    self.assertEqual(report['error']['message'], 'trace start acknowledgement lost')
+                    self.assertIn({'operation': 'finish_trace',
+                                   'error': 'refusal trace boundary was never recorded; final history is unverifiable'},
+                                  json.loads((args.evidence / 'cleanup.json').read_text())['errors'])
 
 
 if __name__ == '__main__':

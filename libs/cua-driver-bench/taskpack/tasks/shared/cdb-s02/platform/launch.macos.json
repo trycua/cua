@@ -1,0 +1,210 @@
+{
+  "platform": "macos",
+  "descriptor_version": "1",
+  "semantics": {
+    "task_id": "cua.shared.cdb-s02.conflicting-change-replan",
+    "task_version": "1.0.0",
+    "brief": "brief.md",
+    "brief_sha256": "0b4c4694b1ff1eaa8473ca1e0f2aaedeb1ec21b220883b5be7a948206ffe3998",
+    "manifest": "task.cuabench.json",
+    "variant": "fixture.lighthouse",
+    "workspace_layout": {
+      "mail": "mail/messages.json",
+      "chat": "chat",
+      "calendar": "calendar/events.json",
+      "workbook": "planning/lighthouse-replan.ods",
+      "facts": "cdb-s02.workspace.json"
+    },
+    "reset": {
+      "setup": [
+        "${python}",
+        "reset/setup.py",
+        "--workspace",
+        "${workspace}"
+      ],
+      "verify": [
+        "${python}",
+        "reset/verify.py",
+        "--workspace",
+        "${workspace}"
+      ]
+    },
+    "evaluate": [
+      "${python}",
+      "evaluator/evaluate.py",
+      "--workspace",
+      "${workspace}",
+      "--artifacts",
+      "${artifacts}",
+      "--result",
+      "${result}",
+      "--agent-exit-code",
+      "${agent_exit_code}"
+    ],
+    "required_apps": [
+      "Copperfield Mail",
+      "Signal Quay Chat",
+      "Daymark Calendar",
+      "LibreOffice Calc"
+    ],
+    "note": "This block is byte-equivalent across platforms; only installation and launch details may vary."
+  },
+  "notes": [
+    "Commands run with cwd set to the bundle unless an app declares cwd.",
+    "Install Electron and LibreOffice before the network-denied trial; run apps in an interactive desktop session."
+  ],
+  "prerequisites": [
+    {
+      "id": "python",
+      "check": [
+        "python3",
+        "--version"
+      ],
+      "min_version": "3.11"
+    },
+    {
+      "id": "node",
+      "check": [
+        "node",
+        "--version"
+      ],
+      "min_version": "22"
+    },
+    {
+      "id": "electron",
+      "check": [
+        "npm",
+        "ls",
+        "electron"
+      ],
+      "cwd": "${bundle}/apps/lighthouse-desk",
+      "install": [
+        "npm",
+        "ci"
+      ]
+    },
+    {
+      "id": "libreoffice",
+      "check": [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "--version"
+      ],
+      "min_version": "25"
+    }
+  ],
+  "workspace_root": "${HOME}/cdb-s02",
+  "apps": [
+    {
+      "id": "mail",
+      "kind": "electron",
+      "role": "Copperfield Mail",
+      "cwd": "${bundle}/apps/lighthouse-desk",
+      "command": [
+        "npx",
+        "electron",
+        ".",
+        "--surface=mail",
+        "--workspace=${workspace}"
+      ],
+      "unset_env": [
+        "ELECTRON_RUN_AS_NODE"
+      ],
+      "window": {
+        "title": "Copperfield Mail",
+        "bounds": {
+          "x": 20,
+          "y": 30,
+          "width": 900,
+          "height": 680
+        }
+      }
+    },
+    {
+      "id": "chat",
+      "kind": "electron",
+      "role": "Signal Quay Chat",
+      "cwd": "${bundle}/apps/lighthouse-desk",
+      "command": [
+        "npx",
+        "electron",
+        ".",
+        "--surface=chat",
+        "--workspace=${workspace}"
+      ],
+      "unset_env": [
+        "ELECTRON_RUN_AS_NODE"
+      ],
+      "window": {
+        "title": "Signal Quay Chat",
+        "bounds": {
+          "x": 940,
+          "y": 30,
+          "width": 900,
+          "height": 700
+        }
+      }
+    },
+    {
+      "id": "calendar",
+      "kind": "electron",
+      "role": "Daymark Calendar",
+      "cwd": "${bundle}/apps/lighthouse-desk",
+      "command": [
+        "npx",
+        "electron",
+        ".",
+        "--surface=calendar",
+        "--workspace=${workspace}"
+      ],
+      "unset_env": [
+        "ELECTRON_RUN_AS_NODE"
+      ],
+      "window": {
+        "title": "Daymark Calendar",
+        "bounds": {
+          "x": 40,
+          "y": 180,
+          "width": 1120,
+          "height": 760
+        }
+      }
+    },
+    {
+      "id": "calc",
+      "kind": "spreadsheet",
+      "role": "LibreOffice Calc schedule record",
+      "command": [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "--calc",
+        "--norestore",
+        "--nodefault",
+        "--nolockcheck",
+        "-env:UserInstallation=${workspace_uri}/.runtime/libreoffice",
+        "${workspace}/planning/lighthouse-replan.ods"
+      ],
+      "window": {
+        "title_contains": "lighthouse-replan",
+        "bounds": {
+          "x": 380,
+          "y": 160,
+          "width": 1180,
+          "height": 780
+        }
+      }
+    }
+  ],
+  "teardown": {
+    "stop_apps": [
+      "mail",
+      "chat",
+      "calendar",
+      "calc"
+    ],
+    "then": [
+      "${python}",
+      "reset/setup.py",
+      "--workspace",
+      "${workspace}"
+    ]
+  }
+}

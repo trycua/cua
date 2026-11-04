@@ -1,0 +1,56 @@
+{
+  "name": "@trycua/cursor-motion",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "description": "Agent cursor motions from Cua Driver: paths, Fitts timing, trails, and a canvas player. Used from the trycua/cua repository; not published.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git",
+    "directory": "libs/typescript/cursor-motion"
+  },
+  "author": "cua",
+  "keywords": [
+    "cursor",
+    "animation",
+    "motion",
+    "fitts",
+    "agent",
+    "computer-use"
+  ],
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check .",
+    "playground": "tsdown && node playground/serve.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "tsdown": "^0.11.9",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0",
+    "vite": "^7.3.5"
+  }
+}

@@ -49,10 +49,6 @@
     "request_mac_os_permissions",
     "run_cua_driver"
   ],
-  "package_constructor_signatures": [
-    "_connect_python_sdk(cls, socket_path)",
-    "_create_python_sdk(cls, options = None)"
-  ],
   "wrapper_signatures": [
     "get_binary_path() -> Path",
     "run_cua_driver(args: Optional[list[str]] = None) -> int"
@@ -72,9 +68,12 @@
     "async get_desktop_state(self, input: cua_driver._native_contract.GetDesktopStateInput) -> ToolResult",
     "async get_screen_size(self, input: cua_driver._native_contract.GetScreenSizeInput) -> ToolResult",
     "async get_session_state(self, input: cua_driver._native_contract.GetSessionStateInput) -> cua_driver._native_contract.SessionStateOutput",
+    "async get_window_state(self, input: cua_driver._native_contract.GetWindowStateInput) -> cua_driver._native_contract.WindowStateOutput",
     "async hotkey(self, input: cua_driver._native_contract.HotkeyInput) -> ToolResult",
     "is_available(self) -> bool",
+    "async list_apps(self, input: cua_driver._native_contract.ListAppsInput) -> cua_driver._native_contract.ListAppsOutput",
     "async list_tools_json(self) -> str",
+    "async list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput",
     "async metadata(self) -> DriverMetadata",
     "async move_cursor(self, input: cua_driver._native_contract.MoveCursorInput) -> ToolResult",
     "async press_key(self, input: cua_driver._native_contract.PressKeyInput) -> ToolResult",

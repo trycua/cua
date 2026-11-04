@@ -1,0 +1,9 @@
+[Unit]
+Description=Restart cua-spacesd when the Omarchy session environment changes
+
+[Path]
+PathChanged=/run/cua-desktop/desktop.env
+Unit=cua-desktop-env-changed.service
+
+[Install]
+WantedBy=multi-user.target

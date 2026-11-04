@@ -39,7 +39,11 @@ function nativeLibraryPath() {
       : process.platform === "win32"
         ? "cua_driver_sdk.dll"
         : "libcua_driver_sdk.so"
-  return join(rustRoot, "target", "release", file)
+  // Cargo honors CARGO_TARGET_DIR (relative to the workspace) for the build above.
+  const targetRoot = process.env.CARGO_TARGET_DIR
+    ? resolve(rustRoot, process.env.CARGO_TARGET_DIR)
+    : join(rustRoot, "target")
+  return join(targetRoot, "release", file)
 }
 
 function normalizeWhitespace(source) {
@@ -49,6 +53,29 @@ function normalizeWhitespace(source) {
     .map((line) => line.replace(/[ \t]+$/u, ""))
     .join("\n")
   return output.endsWith("\n") ? output : `${output}\n`
+}
+
+function replaceExact(text, before, after, count = 1) {
+  if (text.split(before).length - 1 !== count) {
+    throw new Error(`unexpected UniFFI template: ${before}`)
+  }
+  return text.replaceAll(before, after)
+}
+
+function normalizePythonCursorEffects(source) {
+  const output = replaceExact(source, ":typing.Optional[CursorEffectSetting]",
+    ":typing.Optional[typing.Union[CursorEffectSetting, bool]]", 5)
+  return replaceExact(output, "        if value == CursorEffectSetting.ON:\n",
+    "        if type(value) is bool:\n            value = CursorEffectSetting.ON if value else CursorEffectSetting.OFF\n        if value == CursorEffectSetting.ON:\n", 2)
+}
+
+function normalizeTypeScriptCursorEffects(source) {
+  let output = replaceExact(source, "?: CursorEffectSetting", "?: CursorEffectSetting | boolean", 5)
+  output = replaceExact(output, "type TypeName = CursorEffectSetting;", "type TypeName = CursorEffectSetting | boolean;")
+  output = replaceExact(output, "            switch (value) {\n                case CursorEffectSetting.On:",
+    "            if (typeof value === \"boolean\") value = value ? CursorEffectSetting.On : CursorEffectSetting.Off;\n            switch (value) {\n                case CursorEffectSetting.On:")
+  return replaceExact(output, "                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);\n",
+    "                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);\n                default: throw new UniffiInternalError.UnexpectedEnumCase();\n")
 }
 
 function normalizePython(source) {
@@ -102,12 +129,6 @@ function normalizePythonRemoteChannels(source) {
       throw new Error("unexpected normalized UniFFI remote callback template")
     }
     return source
-  }
-  const replaceExact = (text, before, after, count = 1) => {
-    if (text.split(before).length - 1 !== count) {
-      throw new Error(`unexpected UniFFI Python remote callback template: ${before}`)
-    }
-    return text.replaceAll(before, after)
   }
   // Each foreign carrier belongs to the loop on which it enters Rust. Rust
   // lifecycle threads must not depend on the process-global callback loop.
@@ -175,6 +196,7 @@ function normalizeTypeScript(name, source) {
     }
     output = output.replace(needle, 'import lib from "./node-runtime.js";')
   }
+  if (name === "cua_driver_contract.ts") output = normalizeTypeScriptCursorEffects(output)
   if (name === "cua_driver_contract-ffi.ts") {
     const needle = 'crateName: "cua_driver_contract"'
     const matches = output.split(needle).length - 1
@@ -314,9 +336,9 @@ try {
     "src/cua_driver/_native.py": normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_sdk.py"), "utf8"),
     ),
-    "src/cua_driver/_native_contract.py": normalizePython(
+    "src/cua_driver/_native_contract.py": normalizePythonCursorEffects(normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_contract.py"), "utf8"),
-    ),
+    )),
   })
 
   const typescriptFiles = {}

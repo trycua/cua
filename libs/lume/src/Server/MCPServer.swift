@@ -38,7 +38,7 @@ final class LumeMCPServer {
                 return ListTools.Result(tools: [])
             }
             return await MainActor.run {
-                ListTools.Result(tools: self.toolDefinitions)
+                ListTools.Result(tools: Self.toolDefinitions)
             }
         }
 
@@ -315,7 +315,36 @@ final class LumeMCPServer {
 
     // MARK: - Tool Definitions
 
-    private var toolDefinitions: [Tool] {
+    /// The tool list, also emitted by `lume dump-docs --type mcp` for the
+    /// generated reference (no server needed).
+    nonisolated static var toolDefinitions: [Tool] {
+        toolSchemas.map { tool in
+            var tool = tool
+            tool.annotations = toolAnnotations(tool.name)
+            return tool
+        }
+    }
+
+    /// MCP behavior hints per tool (clients use them to decide what needs
+    /// confirmation). Unknown tools get no hints.
+    nonisolated static func toolAnnotations(_ name: String) -> Tool.Annotations {
+        switch name {
+        case "check_for_update":
+            return .init(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true)
+        case "lume_list_vms", "lume_get_vm":
+            return .init(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
+        case "lume_run_vm", "lume_stop_vm", "lume_clone_vm", "lume_create_vm":
+            return .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
+        case "lume_delete_vm", "lume_resize_disk":
+            return .init(readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false)
+        case "lume_exec":
+            return .init(readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static var toolSchemas: [Tool] {
         [
             Tool(
                 name: "check_for_update",
@@ -533,7 +562,7 @@ final class LumeMCPServer {
                         ]),
                         "keep_backup": .object([
                             "type": .string("boolean"),
-                            "description": .string("Keep the rollback backup after a successful resize. Default false.")
+                            "description": .string("Keep the rollback backup after a successful resize; cannot be combined with no_backup. Default false.")
                         ]),
                         "dry_run": .object([
                             "type": .string("boolean"),

@@ -1,0 +1,241 @@
+{
+  "name": "checklist",
+  "about": "The getting-started checklist counts the same in every UI and app: the host keeps one copy of its progress, and every UI ticks steps off from the same reading of what the app shows (checklist.observeFrom over the Machines page's rows, the Spaces list and the agents). Another machine is any Machines row but this one, a device of your own included; a Space is one you made that is there now (running, waiting, or stopped), not a machine's own desktop or one being created, deleted or whose create failed; an agent is a persistent agent or a run in any Space. Progress kept before in the web UI's own storage is merged in once, without its usage events again.",
+  "cases": [
+    {
+      "name": "a spare Mac: its Space is stopped, its devices are only in the device list, no agents",
+      "page": {
+        "hostOs": "macos",
+        "now": 1800000000,
+        "spaces": [
+          {
+            "name": "This Mac",
+            "os": "macos",
+            "status": "local",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "this-mac"
+          },
+          {
+            "name": "fbd1",
+            "os": "linux",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "local:fbd1",
+            "provider": "local"
+          },
+          {
+            "name": "studio-2.local",
+            "os": "unknown",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:b6953d14ff94b10fcbb38bdd13c47824",
+            "provider": "relay",
+            "sdk": {
+              "features": [],
+              "spacesdVersion": "",
+              "reachable": false,
+              "error": "unauthenticated: studio-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+            }
+          }
+        ],
+        "devices": [
+          {
+            "id": "dev_me",
+            "name": "Mac.localdomain",
+            "platform": "macos",
+            "lastSeen": 1799999990,
+            "current": true,
+            "state": "enrolled"
+          },
+          {
+            "id": "dev_s",
+            "name": "studio-2.local",
+            "platform": "macos",
+            "lastSeen": 1799000000,
+            "state": "enrolled"
+          },
+          {
+            "id": "dev_byoc",
+            "name": "BYOC tests",
+            "platform": "macos",
+            "lastSeen": 1797000000,
+            "state": "enrolled"
+          },
+          {
+            "id": "dev_l1",
+            "name": "Ana's MacBook Pro",
+            "platform": "macos",
+            "lastSeen": 1799999500,
+            "state": "enrolled"
+          },
+          {
+            "id": "dev_l2",
+            "name": "Ana's MacBook Pro",
+            "platform": "macos",
+            "lastSeen": 1796000000,
+            "state": "expired"
+          },
+          {
+            "id": "dev_x",
+            "name": "Lost phone",
+            "platform": "ios",
+            "state": "revoked"
+          }
+        ],
+        "hostnames": {},
+        "presence": {
+          "b6953d14ff94b10fcbb38bdd13c47824": false
+        }
+      },
+      "agents": 0,
+      "runs": 0,
+      "state": {
+        "done": [
+          "add_machine",
+          "create_space"
+        ],
+        "dismissed": false,
+        "shown": true
+      },
+      "earlier": {
+        "done": [
+          "add_machine",
+          "create_space",
+          "teleport"
+        ],
+        "dismissed": false,
+        "shown": true
+      }
+    },
+    {
+      "name": "only this machine, a Space still being created and one whose create failed",
+      "page": {
+        "hostOs": "macos",
+        "now": 1800000000,
+        "spaces": [
+          {
+            "name": "This Mac",
+            "os": "macos",
+            "status": "local",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "this-mac"
+          },
+          {
+            "name": "new",
+            "os": "linux",
+            "status": "provisioning",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "pending:7"
+          },
+          {
+            "name": "bad",
+            "os": "linux",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "local:bad",
+            "progress": {
+              "phase": "pull",
+              "permille": 0,
+              "label": "",
+              "error": "no disk",
+              "cancellable": false
+            }
+          }
+        ],
+        "devices": [
+          {
+            "id": "dev_me",
+            "name": "Mac.localdomain",
+            "platform": "macos",
+            "current": true,
+            "state": "enrolled"
+          }
+        ]
+      },
+      "agents": 0,
+      "runs": 0,
+      "state": {
+        "done": [],
+        "dismissed": false,
+        "shown": false
+      },
+      "earlier": null
+    },
+    {
+      "name": "a Space another machine provides, and an agent run in it",
+      "page": {
+        "hostOs": "linux",
+        "now": 1800000000,
+        "spaces": [
+          {
+            "name": "Spare Mac mini",
+            "os": "macos",
+            "status": "running",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:m-mini",
+            "provider": "relay"
+          },
+          {
+            "name": "dev box",
+            "os": "linux",
+            "status": "running",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:m-box/space-1",
+            "provider": "relay",
+            "host": "m-box",
+            "hostName": "Build box"
+          },
+          {
+            "name": "ci",
+            "os": "linux",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:m-box/space-2",
+            "provider": "relay",
+            "host": "m-box",
+            "hostName": "Build box"
+          }
+        ],
+        "devices": [],
+        "hostnames": {
+          "m-mini": "mini.lan"
+        },
+        "presence": {
+          "m-box": true
+        }
+      },
+      "agents": 0,
+      "runs": 1,
+      "state": {
+        "done": [],
+        "dismissed": false,
+        "shown": false
+      },
+      "earlier": {
+        "done": [
+          "share"
+        ],
+        "dismissed": true,
+        "shown": true
+      }
+    }
+  ]
+}

@@ -5,6 +5,9 @@ on:
     tags:
       - "docker-cua-qemu-linux-v*.*.*"
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     uses: ./.github/workflows/docker-reusable-publish.yml

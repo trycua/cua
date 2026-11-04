@@ -218,6 +218,18 @@ std::string status_output(bool json) {
 
     if (json) {
         auto result = cua::hyprland::render_status_json(report);
+#ifdef CUA_HYPRLAND_INPUT
+        // Compiled keyboard behavior of this loaded module, reported whether or
+        // not input is enabled, so an installer can tell it from an older module
+        // still loaded in the running compositor. keyboard_layout_independent:
+        // agent seats use a private canonical keymap, and foreground
+        // pointer-only actions do not depend on the physical layout.
+        // foreground_numlock_compatible: foreground keys keep the human
+        // keyboard's Num Lock and are admitted only when they mean the same
+        // thing under it.
+        result.pop_back();
+        result += R"(,"keyboard_layout_independent":true,"foreground_numlock_compatible":true})";
+#endif
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
         if (g_experiment) {
 #ifdef CUA_HYPRLAND_INPUT

@@ -1,0 +1,1229 @@
+{
+ "_comment": "Presence netcode conformance vectors (libs/cua/proto/PRESENCE.md section 4). Run by the Rust (cua-spaces), TypeScript (@trycua/cua/spaces/presence) and Swift (through the SDK) test suites. 'at' is the local time in ms; an 'expect' step lists drawables(at, pointer) in order.",
+ "version": 1,
+ "tolerance": 1e-06,
+ "cases": [
+  {
+   "name": "linear_interpolation_below_four_samples",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.3,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1100,
+       "received_ms": 1100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1175,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.25,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "catmull_rom_with_four_samples",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.4,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1100,
+       "received_ms": 1100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1150,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.5,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1150,
+       "received_ms": 1150,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1175,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.3,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 1100,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.1,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "minimum_clock_offset_absorbs_jitter",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1037,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1037,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1130,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1130,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1137,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.3,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1100,
+       "received_ms": 1137,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1212,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.25,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "extrapolate_100ms_then_hold",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1180,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.26,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 1260,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.2,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "jump_over_a_quarter_snaps",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.9,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1100,
+       "received_ms": 1100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1175,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.9,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "target_change_snaps",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": "",
+       "window_id": "w1"
+      }
+     }
+    },
+    {
+     "at": 1120,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.2,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "idle_cursor_fades_then_disappears",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 6000,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.1,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 6150,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.1,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 0.5,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 6300,
+     "expect": []
+    },
+    {
+     "at": 6400,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.15,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 6400,
+       "received_ms": 6400,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 6500,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.15,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "own_cursor_is_local_with_server_shape",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "b",
+       "principal_id": "u-b",
+       "display_name": "B",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 900,
+     "event": {
+      "kind": "shape_changed",
+      "participant_id": "me",
+      "shape": "text",
+      "source": "system"
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "b",
+      "cursor": {
+       "x": 0.6,
+       "y": 0.5,
+       "visible": true,
+       "shape": "pointer",
+       "shape_source": "hit_test",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "expect": [
+      {
+       "participant_id": "me",
+       "x": 0.3,
+       "y": 0.4,
+       "shape": "text",
+       "alpha": 1.0,
+       "is_me": true
+      },
+      {
+       "participant_id": "b",
+       "x": 0.6,
+       "y": 0.5,
+       "shape": "pointer",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ],
+     "pointer": [
+      0.3,
+      0.4
+     ]
+    },
+    {
+     "at": 1000,
+     "expect": [
+      {
+       "participant_id": "b",
+       "x": 0.6,
+       "y": 0.5,
+       "shape": "pointer",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "shape_changed_updates_a_remote_cursor",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "b",
+       "principal_id": "u-b",
+       "display_name": "B",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "b",
+      "cursor": {
+       "x": 0.6,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1010,
+     "event": {
+      "kind": "shape_changed",
+      "participant_id": "b",
+      "shape": "resize_ew",
+      "source": "probe"
+     }
+    },
+    {
+     "at": 1100,
+     "expect": [
+      {
+       "participant_id": "b",
+       "x": 0.6,
+       "y": 0.5,
+       "shape": "resize_ew",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "heartbeat_drops_missing_then_silence_drops_all",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "b",
+       "principal_id": "u-b",
+       "display_name": "B",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 100,
+       "received_ms": 100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "b",
+      "cursor": {
+       "x": 0.7,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 100,
+       "received_ms": 100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 200,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.2,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      },
+      {
+       "participant_id": "b",
+       "x": 0.7,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 2000,
+     "event": {
+      "kind": "heartbeat",
+      "participant_ids": [
+       "me",
+       "a"
+      ]
+     }
+    },
+    {
+     "at": 2000,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.2,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 16000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.25,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 16000,
+       "received_ms": 16000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 17000,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.25,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 17001,
+     "expect": []
+    }
+   ]
+  },
+  {
+   "name": "left_run_ended_removes_the_agent_cursor",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "agent-1",
+       "principal_id": "u-agent-1",
+       "display_name": "AGENT-1",
+       "color": "#e6194b",
+       "kind": "agent"
+      }
+     }
+    },
+    {
+     "at": 100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "agent-1",
+      "cursor": {
+       "x": 0.5,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 100,
+       "received_ms": 100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 200,
+     "expect": [
+      {
+       "participant_id": "agent-1",
+       "x": 0.5,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    },
+    {
+     "at": 300,
+     "event": {
+      "kind": "left",
+      "participant_id": "agent-1",
+      "reason": "run_ended"
+     }
+    },
+    {
+     "at": 300,
+     "expect": []
+    }
+   ]
+  },
+  {
+   "name": "hidden_cursor_is_not_drawn_and_reshow_snaps",
+   "me": "me",
+   "delay_ms": 100,
+   "steps": [
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "me",
+       "principal_id": "u-me",
+       "display_name": "ME",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 0,
+     "event": {
+      "kind": "joined",
+      "participant": {
+       "participant_id": "a",
+       "principal_id": "u-a",
+       "display_name": "A",
+       "color": "#e6194b",
+       "kind": "human"
+      }
+     }
+    },
+    {
+     "at": 1000,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.1,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1000,
+       "received_ms": 1000,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1050,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1050,
+       "received_ms": 1050,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1100,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.2,
+       "y": 0.5,
+       "visible": false,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1100,
+       "received_ms": 1100,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1200,
+     "expect": []
+    },
+    {
+     "at": 1300,
+     "event": {
+      "kind": "cursor_moved",
+      "participant_id": "a",
+      "cursor": {
+       "x": 0.3,
+       "y": 0.5,
+       "visible": true,
+       "shape": "arrow",
+       "shape_source": "unspecified",
+       "at_ms": 1300,
+       "received_ms": 1300,
+       "display_id": ""
+      }
+     }
+    },
+    {
+     "at": 1350,
+     "expect": [
+      {
+       "participant_id": "a",
+       "x": 0.3,
+       "y": 0.5,
+       "shape": "arrow",
+       "alpha": 1.0,
+       "is_me": false
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

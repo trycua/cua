@@ -58,8 +58,8 @@ This code relies on private, version-sensitive Metal implementation details in t
 
 ## Evidence
 
-- [TinyLlama and MLX-LM validation](../../../evidence/lume-metal-capability-shim/2026-08-09-m1-ultra)
-- [Gemma 4 12B validation](../../../evidence/lume-metal-capability-shim/2026-08-10-m1-ultra-gemma4)
+- [TinyLlama and MLX-LM validation](evidence/2026-08-09-m1-ultra)
+- [Gemma 4 12B validation](evidence/2026-08-10-m1-ultra-gemma4)
 
 ## License
 

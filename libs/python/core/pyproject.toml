@@ -4,9 +4,10 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-core"
-version = "0.3.1"
+version = "0.3.2"
 description = "Core functionality for Cua including telemetry and shared utilities"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]

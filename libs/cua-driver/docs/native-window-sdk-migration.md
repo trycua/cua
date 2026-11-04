@@ -78,7 +78,7 @@ have landed even when the caller did not receive a result.
   do not reuse coordinates after window geometry changes or manually rescale
   an image without accounting for that transformation.
 
-See [Use Cua Driver in process](https://cua.ai/docs/how-to-guides/driver/use-sdk-in-process)
+See [Use Cua Driver in process](https://cua.ai/docs/cua-driver/guides/use-the-sdk)
 for complete Python and TypeScript discovery, token-click, verification, and
 shutdown examples. The [agent SDK adapters](../examples/agent-sdks/) show how to
 retain desktop coordinate tools while migrating the click result handling.

@@ -1,0 +1,32 @@
+{
+  "book_file": "book/kestrel-wharf.gnucash",
+  "workbook_file": "planning/kestrel-wharf-reconciliation.ods",
+  "allowed_reconciled": ["GNC-512", "GNC-518"],
+  "expected": {
+    "GNC-512": {"amount": "1248.60", "source_amount": "1248.60", "source": "OCP-4821", "status": "matched"},
+    "GNC-514": {"amount": "864.50", "source_amount": "846.50", "source": "OCP-4827", "status": "discrepancy", "memo": "DISCREPANCY: OCP-4827 amount mismatch; book $864.50 vs source $846.50"},
+    "GNC-518": {"amount": "392.40", "source_amount": "392.40", "source": "SVL-119", "status": "matched"},
+    "GNC-519": {"amount": "392.40", "source_amount": "392.40", "source": "SVL-119", "status": "duplicate", "memo": "DUPLICATE: SVL-119 already matched to GNC-518; left unreconciled"},
+    "GNC-521": {"amount": "117.25", "source_amount": "", "source": "", "status": "unmatched", "memo": "", "evidence": "No source invoice found"}
+  },
+  "source_only": ["NAR-773"],
+  "mail_sha256": {
+    "messages.json": "2617f8ad065e159c877fe0c1435c0c3b0b24eba6a3a46e7b0fff9b4e1a7b6bef",
+    "attachments/NAR-773.txt": "f9e0fa484e987541859e74a07f75ba1c1f3f0d578c43d7cd24dd6a9b07cd037a",
+    "attachments/OCP-4821.txt": "b7d001fac2f68cacc32aeb40db79c77f39852b4cc24b5b54c1dfb425ea3f163a",
+    "attachments/OCP-4827.txt": "d762c979a453e1767685c6fef4516eaac94a288b9b2069a0a993d1fd60eba102",
+    "attachments/SVL-119.txt": "7e0fcfecc10a5a7432253ae3cf34b07c37ebaacdd32743a7319debb142ea7d85",
+    "attachments/open-house-menu.txt": "522b33f445606ff24364052dfec0e3a709c3b50246655b058223124ef7928241",
+    "attachments/receiving-log-october.txt": "63bb2e90dd210a9f6a81431d551feacc0d58f613ab2e9d5fc112ae37d4ec4795"
+  },
+  "decoy_transactions": ["GNC-406"],
+  "controls": {
+    "Book": "Kestrel Wharf Operations",
+    "Currency": "USD",
+    "Review scope": "October 2026 payment review",
+    "Status vocabulary": "pending | matched | discrepancy | duplicate | unmatched",
+    "Matching rule": "Vendor and amount must agree; one source invoice may support at most one ledger transaction",
+    "Reconciliation rule": "Only exact supported matches may be reconciled",
+    "Evidence rule": "Record the source invoice ID or the exact exception memo"
+  }
+}

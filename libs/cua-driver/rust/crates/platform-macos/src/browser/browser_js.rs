@@ -11,6 +11,7 @@ const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
 
 #[derive(Clone, Debug)]
 struct NativeWindowTarget {
+    pid: i32,
     title: String,
     bounds: WindowBounds,
     same_bounds_ordinal: usize,
@@ -27,6 +28,17 @@ fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
     }
 }
 
+fn should_quit_before_enabling(
+    permission: crate::apple_events::AutomationPermission,
+    ensure_permitted: impl FnOnce() -> Result<(), crate::apple_events::ScriptRefusal>,
+) -> Result<bool, crate::apple_events::ScriptRefusal> {
+    if permission == crate::apple_events::AutomationPermission::NotRunning {
+        return Ok(false);
+    }
+    ensure_permitted()?;
+    Ok(true)
+}
+
 impl BrowserJs {
     /// Returns true if this bundle ID is a supported browser.
     pub fn supports(bundle_id: &str) -> bool {
@@ -37,10 +49,14 @@ impl BrowserJs {
     pub async fn execute(
         javascript: &str,
         bundle_id: &str,
+        expected_pid: i32,
         window_id: u32,
     ) -> anyhow::Result<String> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+
+        crate::apple_events::ensure_permitted(bundle_id, app_name)
+            .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
         // Resolve the WindowServer CGWindowID to stable properties that can be
         // matched against the browser's AppleScript window model.
@@ -48,6 +64,14 @@ impl BrowserJs {
             let wid = window_id;
             tokio::task::spawn_blocking(move || native_window_target(wid)).await?
         }?;
+
+        if target.pid != expected_pid {
+            anyhow::bail!(
+                "browser_window_owner_pid_mismatch: window_id {window_id} is owned by pid {}, not requested pid {expected_pid}",
+                target.pid
+            );
+        }
+        ensure_applescript_process_identity(bundle_id, expected_pid)?;
 
         let escaped_js = escape_js_for_applescript(javascript);
 
@@ -81,15 +105,23 @@ end tell"#
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
-        // Quit the browser.
-        let quit_script = format!("tell application \"{app_name}\" to quit");
-        let _ = tokio::process::Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(&quit_script)
-            .output()
-            .await;
+        let should_quit = should_quit_before_enabling(
+            crate::apple_events::automation_permission(bundle_id),
+            || crate::apple_events::ensure_permitted(bundle_id, app_name),
+        )
+        .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Quit the browser.
+        if should_quit {
+            let quit_script = format!("tell application \"{app_name}\" to quit");
+            let _ = tokio::process::Command::new("/usr/bin/osascript")
+                .arg("-e")
+                .arg(&quit_script)
+                .output()
+                .await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
         // Find profile directory.
         let home = std::env::var("HOME").unwrap_or_default();
@@ -141,10 +173,58 @@ fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
         .unwrap_or(0);
 
     Ok(NativeWindowTarget {
+        pid: target.pid,
         title: target.title.clone(),
         bounds: target.bounds.clone(),
         same_bounds_ordinal,
     })
+}
+
+fn ensure_applescript_process_identity(bundle_id: &str, expected_pid: i32) -> anyhow::Result<()> {
+    let matching_pids = crate::apps::list_running_apps()
+        .into_iter()
+        .filter(|app| app.bundle_id.as_deref() == Some(bundle_id))
+        .map(|app| app.pid)
+        .filter(|pid| process_is_alive(*pid))
+        .collect::<Vec<_>>();
+    ensure_applescript_process_identity_in(bundle_id, expected_pid, &matching_pids)
+}
+
+fn process_is_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // Signal zero checks process existence without delivering a signal.
+    // EPERM still proves that the pid exists; only ESRCH proves it is gone.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+fn ensure_applescript_process_identity_in(
+    bundle_id: &str,
+    expected_pid: i32,
+    matching_pids: &[i32],
+) -> anyhow::Result<()> {
+    let unique = matching_pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    if !unique.contains(&expected_pid) {
+        anyhow::bail!(
+            "browser_process_not_running: requested pid {expected_pid} is not a live regular application for bundle {bundle_id}"
+        );
+    }
+    if unique.len() != 1 {
+        anyhow::bail!(
+            "browser_applescript_process_ambiguous: bundle {bundle_id} has {} live regular application instances; AppleScript cannot prove requested pid {expected_pid}. Use an exact CDP target or close the other instance.",
+            unique.len()
+        );
+    }
+    Ok(())
 }
 
 fn chromium_window_script(
@@ -347,6 +427,7 @@ mod tests {
 
     fn target(title: &str, same_bounds_ordinal: usize) -> NativeWindowTarget {
         NativeWindowTarget {
+            pid: 4242,
             title: title.to_owned(),
             bounds: WindowBounds {
                 x: 22.0,
@@ -356,6 +437,64 @@ mod tests {
             },
             same_bounds_ordinal,
         }
+    }
+
+    #[test]
+    fn closed_browser_skips_quit_without_checking_consent() {
+        for refuse_ungranted in [false, true] {
+            let should_quit = should_quit_before_enabling(
+                crate::apple_events::AutomationPermission::NotRunning,
+                || panic!("closed browser checked consent with refuse={refuse_ungranted}"),
+            )
+            .unwrap();
+            assert!(!should_quit);
+        }
+    }
+
+    #[test]
+    fn running_browser_requires_permission_before_quitting() {
+        use crate::apple_events::{AutomationPermission, ScriptRefusal};
+
+        assert!(should_quit_before_enabling(AutomationPermission::Granted, || Ok(())).unwrap());
+        let refusal = ScriptRefusal {
+            code: "automation_consent_required",
+            reason: "Grant access in System Settings > Privacy & Security > Automation".into(),
+        };
+        assert_eq!(
+            should_quit_before_enabling(
+                AutomationPermission::NeedsConsent,
+                || Err(refusal.clone())
+            ),
+            Err(refusal)
+        );
+    }
+
+    #[test]
+    fn applescript_process_identity_accepts_only_the_requested_single_instance() {
+        assert!(ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242]).is_ok());
+    }
+
+    #[test]
+    fn process_liveness_filters_departed_running_application_rows() {
+        assert!(process_is_alive(std::process::id() as i32));
+        assert!(!process_is_alive(i32::MAX));
+    }
+
+    #[test]
+    fn applescript_process_identity_refuses_same_bundle_ambiguity() {
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242, 9001])
+                .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("browser_applescript_process_ambiguous"));
+    }
+
+    #[test]
+    fn applescript_process_identity_refuses_missing_requested_instance() {
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[9001]).unwrap_err();
+        assert!(error.to_string().contains("browser_process_not_running"));
     }
 
     #[test]

@@ -7,7 +7,8 @@ implementations, testkit, and helper crates.
 
 | Crate | Purpose |
 | --- | --- |
-| `cua-driver` | Main CLI/MCP daemon and integration tests |
+| `cua-driver` | Main CLI/MCP daemon and hermetic integration tests |
+| `cua-driver-e2e` | Desktop E2E suites that the canonical OS runners select; never shipped |
 | `cua-driver-core` | Shared protocol, tool models, config, and CDP helpers |
 | `platform-macos` | macOS AX, capture, input, browser, and daemon support |
 | `platform-windows` | Windows UIA, capture, input, overlay, and diagnostics |
@@ -54,18 +55,32 @@ Default tests should be headless and safe for CI:
 
 ```bash
 cargo test -p cua-driver-core
-cargo test -p cua-driver --test protocol_mcp_test
+cargo test -p cua-driver --test protocol_schema_test
 ```
 
-GUI and VM-backed tests are marked `#[ignore]` and require harness apps from
-`../tests/fixtures/build/` plus a real interactive desktop session:
+GUI and VM-backed tests live in `cua-driver-e2e`, are marked `#[ignore]`, and
+require a built driver, harness apps from `../tests/fixtures/build/`, and a
+real interactive desktop session:
 
 ```bash
-cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
-cargo test -p cua-driver --test harness_wpf_test -- --ignored --nocapture
+cargo build -p cua-driver
+cargo test -p cua-driver-e2e --test harness_appkit_test -- --ignored --nocapture
+cargo test -p cua-driver-e2e --test harness_wpf_test -- --ignored --nocapture
 ```
 
-See `crates/cua-driver/tests/README.md` for the test matrix.
+See `crates/cua-driver-e2e/tests/README.md` for the desktop E2E suites and
+`crates/cua-driver/tests/README.md` for the hermetic driver tests.
+
+Testkit-owned daemons use a temporary `CUA_DRIVER_RS_HOME` on every platform.
+A nonempty override also places Computer History data and its `admission.json`
+under `<CUA_DRIVER_RS_HOME>/computer-history`. Without an override (or with an
+empty value), History keeps its platform-specific default location. Existing
+data is not migrated, and installed-product admission checks still apply.
+On Windows this isolates driver state without redirecting `LOCALAPPDATA`,
+`APPDATA`, or `USERPROFILE`, which Windows app discovery needs. Explicit caller
+environment values take precedence; `SHARE_HOST_STATE` opts a testkit spawn out
+of isolation. Use separate roots for independent driver instances. This isolates
+files, not the operating system's credential store.
 
 ## Generated Outputs
 

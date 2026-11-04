@@ -258,38 +258,24 @@ fn serialize(resp: &Response) -> String {
     })
 }
 
-/// Mirror an explicit `session` arg into `_session_id` (the per-session config /
-/// recording key) — the HTTP-side equivalent of
-/// `serve.rs::apply_session_identity`. Runtime-private idle-TTL activity is
-/// refreshed later at the authorized registry boundary.
+/// Apply the shared session identity mapping
+/// ([`cua_driver_core::tool_args::apply_session_identity`]) to a tool call's
+/// arguments, with the MCP HTTP session as the transport session.
+/// Runtime-private idle-TTL activity is refreshed later at the authorized
+/// registry boundary.
 fn apply_session_identity(req: &mut Request, transport_session: &str) {
-    let Some(params) = req.params.as_mut() else {
-        return;
-    };
-    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else {
-        return;
-    };
-    let session = args
-        .get("session")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    let effective = session.unwrap_or_else(|| transport_session.to_owned());
-    args.insert(
-        "_session_id".to_owned(),
-        serde_json::Value::String(effective),
-    );
-    args.insert(
-        "_transport_session_id".to_owned(),
-        serde_json::Value::String(transport_session.to_owned()),
-    );
+    if let Some(args) = req
+        .params
+        .as_mut()
+        .and_then(|params| params.get_mut("arguments"))
+    {
+        cua_driver_core::tool_args::apply_session_identity(args, Some(transport_session));
+    }
 }
 
 /// One parsed HTTP/1.1 request.
 struct HttpRequest {
     method: String,
-    #[allow(dead_code)]
-    path: String,
     body: Vec<u8>,
     /// Browser requests carry Origin; native MCP clients normally do not.
     has_origin: bool,
@@ -326,8 +312,7 @@ async fn read_http_request(
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_owned();
-    let path = parts.next().unwrap_or("/").to_owned();
-    let version = parts.next().unwrap_or("HTTP/1.1");
+    let version = parts.nth(1).unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
     let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
@@ -367,7 +352,6 @@ async fn read_http_request(
     }
     Ok(Some(HttpRequest {
         method,
-        path,
         body,
         has_origin,
         keep_alive,
@@ -469,6 +453,35 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
         server.await.unwrap();
         String::from_utf8(response).unwrap()
+    }
+
+    async fn parse_request(request: &str) -> (String, bool) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let req = read_http_request(&mut server, "token")
+            .await
+            .unwrap()
+            .unwrap();
+        (req.method, req.keep_alive)
+    }
+
+    #[tokio::test]
+    async fn keep_alive_follows_http_version_and_connection_header() {
+        for (request, expected) in [
+            ("POST /mcp HTTP/1.1\r\n\r\n", true),
+            ("POST /mcp HTTP/1.0\r\n\r\n", false),
+            ("POST /mcp HTTP/1.1\r\nConnection: close\r\n\r\n", false),
+            ("POST /mcp HTTP/1.0\r\nConnection: keep-alive\r\n\r\n", true),
+        ] {
+            assert_eq!(
+                parse_request(request).await,
+                ("POST".to_owned(), expected),
+                "{request:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -611,20 +624,6 @@ mod tests {
             assert!(response["result"]["capabilities"].get("apps").is_none());
         }
         sdk.shutdown().await.expect("SDK shutdown");
-    }
-
-    #[test]
-    fn apply_session_identity_mirrors_session_to_session_id() {
-        let mut req: Request = serde_json::from_value(json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": "click", "arguments": { "pid": 1, "session": "alpha" } }
-        }))
-        .unwrap();
-        apply_session_identity(&mut req, "http-test");
-        let args = req.params.unwrap();
-        let args = args.get("arguments").unwrap();
-        assert_eq!(args.get("_session_id").unwrap(), "alpha");
-        assert_eq!(args.get("session").unwrap(), "alpha");
     }
 
     #[test]

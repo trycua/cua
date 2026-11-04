@@ -1,8 +1,7 @@
 packages:
-  - "computer"
   - "core"
   - "agent"
-  - "fleet"
   - "playground"
+  - "cursor-motion"
 
 minimumReleaseAge: 46080

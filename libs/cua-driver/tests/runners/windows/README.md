@@ -1,7 +1,9 @@
 # Windows Rust runner
 
 This directory keeps a local convenience wrapper for an interactive user
-desktop. From the repository root, the canonical command is:
+desktop. It is a supporting runner, not a canonical entrypoint; see
+[`scripts/ci/README.md`](../../../../../scripts/ci/README.md#canonical-and-supporting-runners).
+From the repository root, the canonical command is:
 
 ```powershell
 .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui

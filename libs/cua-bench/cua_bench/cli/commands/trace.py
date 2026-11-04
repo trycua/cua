@@ -6,10 +6,12 @@ Usage:
 """
 
 from __future__ import annotations
+from ._help import examples
 
 import base64
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -35,6 +37,19 @@ def _get_runs_dir() -> Path:
     """Get the default runs output directory (XDG compliant)."""
     xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
     return Path(xdg_data) / "cua-bench" / "runs"
+
+
+def _variant_trace_dir(task_dir: Path, variant: int) -> Optional[Path]:
+    """The trace of one variant's output dir: ``task_<variant>_trace``.
+
+    Runs before cua-bench 0.3 could only be found as ``task_0_trace``; any
+    single ``task_*_trace`` is accepted as a fallback.
+    """
+    for name in (f"task_{variant}_trace", "task_0_trace"):
+        if (task_dir / name).is_dir():
+            return task_dir / name
+    found = sorted(task_dir.glob("task_*_trace")) if task_dir.is_dir() else []
+    return found[0] if len(found) == 1 else None
 
 
 def _resolve_trace_path(identifier: str) -> Optional[Path]:
@@ -70,13 +85,9 @@ def _resolve_trace_path(identifier: str) -> Optional[Path]:
         task_name = match.group(1)
         variant = match.group(2)
 
-        # Build path: <runs_dir>/<run_id>/<task_name>_v<variant>/task_0_trace
+        # Build path: <runs_dir>/<run_id>/<task_name>_v<variant>/task_<variant>_trace
         task_dir = runs_dir / run_id / f"{task_name}_v{variant}"
-        trace_dir = task_dir / "task_0_trace"
-
-        if trace_dir.exists():
-            return trace_dir
-        return None
+        return _variant_trace_dir(task_dir, int(variant))
     else:
         # Assume it's a run_id - just check if the directory exists
         run_dir = runs_dir / identifier
@@ -103,9 +114,10 @@ def _collect_run_traces(run_dir: Path) -> List[Tuple[str, Path]]:
         if not task_dir.is_dir():
             continue
 
-        # Look for task_0_trace subdirectory
-        trace_dir = task_dir / "task_0_trace"
-        if trace_dir.exists():
+        # The episode writes task_<variant>_trace (older runs: task_0_trace)
+        match = re.search(r"_v(\d+)$", task_dir.name)
+        trace_dir = _variant_trace_dir(task_dir, int(match.group(1)) if match else 0)
+        if trace_dir is not None:
             try:
                 # Verify it's a valid trace dataset
                 _ = load_from_disk(str(trace_dir))
@@ -118,11 +130,25 @@ def _collect_run_traces(run_dir: Path) -> List[Tuple[str, Path]]:
 
 def register_parser(subparsers):
     """Register the trace command parser."""
-    trace_parser = subparsers.add_parser("trace", help="View and analyze trace datasets")
+    trace_parser = subparsers.add_parser(
+        "trace",
+        help="View and analyze trace datasets",
+        **examples(
+            ("Open a run's trace in the browser", "cb trace view 30c12572"),
+            ("Open a run's agent trajectories", "cb trace traj 30c12572"),
+        ),
+    )
     trace_subparsers = trace_parser.add_subparsers(dest="trace_command")
 
     # cb trace view <id>
-    view_parser = trace_subparsers.add_parser("view", help="View a single trace in browser")
+    view_parser = trace_subparsers.add_parser(
+        "view",
+        help="View a single trace in browser",
+        **examples(
+            ("Open a run's trace", "cb trace view 30c12572"),
+            ("Open one session's trace", "cb trace view task-30c12572-click-button-v0"),
+        ),
+    )
     view_parser.add_argument(
         "identifier",
         help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")',
@@ -130,7 +156,12 @@ def register_parser(subparsers):
 
     # cb trace traj <run_id>
     traj_parser = trace_subparsers.add_parser(
-        "traj", help="View agent trajectories from a run in cua.ai/trajectory-viewer"
+        "traj",
+        help="View agent trajectories from a run in cua.ai/trajectory-viewer",
+        **examples(
+            ("Open a run's trajectories", "cb trace traj 30c12572"),
+            ("Serve the files on another port", "cb trace traj 30c12572 --port 9000"),
+        ),
     )
     traj_parser.add_argument("identifier", help='Run ID (e.g., "30c12572")')
     traj_parser.add_argument(

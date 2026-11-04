@@ -1,0 +1,97 @@
+---
+title: Run Cua Driver with local models
+description: Drive apps with a model on your own machine through Ollama or llama.cpp, and keep the tool list small enough for its context window.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Tested: Meta's Muse Glimmer 30B with Claude Code as the harness, served by
+Ollama or by llama.cpp with Unsloth's `UD-Q4_K_XL` GGUF. Every tool schema
+costs context, so hide unused tools with the filter:
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/docs-assets/examples/local-models/cua-mcp-filter.py \
+  -o "$HOME/.local/bin/cua-mcp-filter" && chmod +x "$HOME/.local/bin/cua-mcp-filter"
+```
+
+Save as `muse-cua-mcp.json` (the filter hides tools; it does not authorize):
+
+```json test="config" id="json-config-local-model" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "cua-computer-use": {
+      "command": "cua-mcp-filter",
+      "args": [
+        "--allow",
+        "start_session,end_session,launch_app,list_apps,list_windows,get_window_state,get_accessibility_tree,move_cursor,click,type_text,press_key,hotkey,invoke_menu"
+      ]
+    }
+  }
+}
+```
+
+<Tabs items={['Ollama', 'llama.cpp']}>
+  <Tab value="Ollama">
+
+```bash skip="third-party-cli"
+ollama pull muse-glimmer:30b-mlx
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+ollama launch claude --model muse-glimmer:30b-mlx --yes -- \
+  --bare --strict-mcp-config --mcp-config ./muse-cua-mcp.json --tools ""
+```
+
+  </Tab>
+  <Tab value="llama.cpp">
+
+```bash skip="third-party-cli"
+llama-server --hf-repo "unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL" \
+  --alias "muse-glimmer-local" --host 127.0.0.1 --port 8001 \
+  --ctx-size 131072 --parallel 1 --temp 1.0 --top-p 0.95 --top-k 64 \
+  --jinja --mmproj-auto --fit on --no-webui
+
+# In another terminal, once http://127.0.0.1:8001/health responds:
+ANTHROPIC_BASE_URL=http://127.0.0.1:8001 \
+ANTHROPIC_API_KEY=local-no-key-required \
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+claude --bare --strict-mcp-config --mcp-config ./muse-cua-mcp.json \
+  --tools "" --model muse-glimmer-local
+```
+
+  </Tab>
+</Tabs>
+
+Keep context small: bound `get_window_state` with `max_elements` and
+`max_depth`, reuse `pid` and `window_id`, and batch text into one `type_text`.
+In the tested Calculator runs this cut uncached input from 71,088 to 12,251
+tokens. Use at least a 64K context window. To target a macOS VM, pass the
+guest's SSH MCP command ([Run in a VM](/cua-driver/guides/vms-and-remote#macos-lume-vm))
+to `cua-mcp-filter --driver`.
+
+## Text-only models
+
+For a model that cannot accept images, such as iFlytek Spark-X2.5 on the
+Astron Token Plan, add `--text-only` to the filter's `args`. The filter then
+requests `get_window_state` without a screenshot and replaces any remaining
+image content with a short text note, so the model works through the
+accessibility tree and its `element_token` values. Leave pixel-only tools such
+as `screenshot` and `zoom` out of the allowlist. Without `--text-only`, a
+provider that rejects images fails every request once a screenshot reaches
+the conversation. Apps that expose no usable accessibility elements (canvas,
+video, custom-drawn surfaces) need a vision model instead.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial-poster.jpg"
+    title="Create a checklist in Apple Notes"
+  >
+    Muse Glimmer runs locally and completes the task through Cua Driver.
+  </VideoDemo>
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+    title="Schedule an Apple Reminder"
+  >
+    Muse Glimmer sets the reminder and verifies the final state.
+  </VideoDemo>
+</div>

@@ -1,0 +1,4 @@
+omarchy-dev 4.0.0.r2186.gee8ebf6-1
+cua-driver-bin 0.28.2-1
+cua-hyprland-plugin 0.26.1-6
+hyprland 0.56.2-3

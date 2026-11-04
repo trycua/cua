@@ -4,6 +4,28 @@ const { join } = require('node:path');
 const { test } = require('node:test');
 const { runInNewContext } = require('node:vm');
 
+test('pixel-addressed controls stay within the first three grid rows', () => {
+  const html = readFileSync(join(__dirname, 'index.html'), 'utf8');
+  assert.match(html, /grid-template-columns:\s*repeat\(3,/);
+
+  const gridStart = html.indexOf('<main class="harness-grid">');
+  assert.notEqual(gridStart, -1, 'shared fixture grid exists');
+  for (const id of [
+    'txt-input',
+    'keyboard-input',
+    'drag-source',
+    'drop-target',
+    'scroll-tall',
+    'click-target',
+    'btn-open-child-window',
+  ]) {
+    const control = html.indexOf(`id="${id}"`, gridStart);
+    assert.notEqual(control, -1, `${id} exists in the shared fixture grid`);
+    const fieldsetCount = (html.slice(gridStart, control).match(/<fieldset>/g) || []).length;
+    assert.ok(fieldsetCount <= 9, `${id} moved below the third grid row`);
+  }
+});
+
 test('journal samples live scroll geometry without an event or DOM mutation', () => {
   const html = readFileSync(join(__dirname, 'index.html'), 'utf8');
   const source = html.match(/\(function startFixtureJournal\(\) \{[\s\S]*?\n  \}\)\(\);/);
@@ -52,4 +74,50 @@ test('journal samples live scroll geometry without an event or DOM mutation', ()
   timers.shift()();
   assert.equal(publications[1]['scroll-tall'].scrollTop, 320);
   assert.deepEqual(publications[1]['lbl-scroll-offset'], { text: 'scroll_offset=104' });
+});
+
+test('a collapsed scroller publishes the layout the renderer reports', () => {
+  const html = readFileSync(join(__dirname, 'index.html'), 'utf8');
+  const source = html.match(/\(function startFixtureJournal\(\) \{[\s\S]*?\n  \}\)\(\);/);
+  const scroll = { dataset: { cuaId: 'scroll-tall' }, textContent: 'contents', scrollTop: 0, clientHeight: 0 };
+  const publications = [];
+  const timers = [];
+  runInNewContext(source[0], {
+    document: {
+      body: {},
+      readyState: 'complete',
+      documentElement: { getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) },
+      querySelectorAll: () => [scroll],
+      addEventListener() {},
+    },
+    window: {
+      innerWidth: 0,
+      innerHeight: 0,
+      devicePixelRatio: 1,
+      cuaE2E: {
+        journalUrl: 'http://fixture.invalid',
+        publishFixtureState(state) { publications.push(JSON.parse(JSON.stringify(state))); },
+      },
+      addEventListener(name, callback) { callback(); },
+    },
+    getComputedStyle: () => ({
+      display: 'block', visibility: 'visible', position: 'static',
+      width: '260px', height: '120px', overflowY: 'auto',
+    }),
+    MutationObserver: class { observe() {} },
+    setTimeout(callback) { timers.push(callback); },
+    setInterval() {},
+  });
+  timers.shift()();
+  assert.deepEqual(publications[0]['scroll-tall'].layout, {
+    innerWidth: 0,
+    innerHeight: 0,
+    devicePixelRatio: 1,
+    readyState: 'complete',
+    rootRect: { x: 0, y: 0, width: 0, height: 0 },
+    scrollStyle: {
+      display: 'block', visibility: 'visible', position: 'static',
+      width: '260px', height: '120px', overflowY: 'auto',
+    },
+  });
 });

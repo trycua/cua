@@ -1,0 +1,14 @@
+[Unit]
+Description=cua spacesd token from the SDK's NoCloud seed (guests without cloud-init)
+DefaultDependencies=no
+After=local-fs.target systemd-udevd.service
+Before=cua-env-token-sync.service cua-spacesd.service
+ConditionVirtualization=vm
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/cua/bin/cua-seed-token.py
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

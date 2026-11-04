@@ -16,6 +16,7 @@ on:
           - sway
           - sway-xwayland
           - cua-compositor
+          - niri
       lane:
         description: "Diagnostic lane; canonical dispatches use all"
         required: false
@@ -35,10 +36,25 @@ permissions:
   contents: read
   actions: read
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+# Identical dispatches queue behind the running certification instead of
+# racing it. In-progress runs are never cancelled.
+concurrency:
+  group: e2e-rust-linux-wayland-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.environment }}-${{ inputs.lane }}-${{ inputs.cell_filter }}
+  cancel-in-progress: false
+
 jobs:
   source:
     name: "Resolve exact source"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       lanes: ${{ steps.resolve.outputs.lanes }}
@@ -80,7 +96,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - name: Install Sway and Rust build dependencies
         if: startsWith(inputs.environment, 'sway')
         shell: bash
@@ -94,8 +110,8 @@ jobs:
             libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
             libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
             ffmpeg jq gnome-keyring
-      - name: Install Nix for the custom compositor environment
-        if: inputs.environment == 'cua-compositor'
+      - name: Install Nix for the nested compositor environments
+        if: inputs.environment == 'cua-compositor' || inputs.environment == 'niri'
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
@@ -108,6 +124,9 @@ jobs:
           if [[ "${{ inputs.environment }}" == "cua-compositor" ]]; then
             nix develop .#cua-driver-inject-e2e \
               -c scripts/ci/linux/run-rust-e2e-inject.sh
+          elif [[ "${{ inputs.environment }}" == "niri" ]]; then
+            nix develop .#cua-driver-niri-e2e \
+              -c scripts/ci/linux/run-rust-e2e-wayland.sh
           else
             scripts/ci/linux/run-rust-e2e-wayland.sh
           fi

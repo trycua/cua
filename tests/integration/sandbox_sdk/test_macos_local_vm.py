@@ -9,7 +9,6 @@ Requires the Lume CLI: https://github.com/trycua/cua/tree/main/libs/lume
 
 Contrast:
     Image.macos("26")  + local=True  -> Lume VM on macOS host (this file)
-    Image.macos("26")  + local=False -> Cua cloud macOS VM (no Lume needed)
 """
 
 from __future__ import annotations

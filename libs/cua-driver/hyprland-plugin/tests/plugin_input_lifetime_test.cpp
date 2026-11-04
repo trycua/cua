@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -18,6 +19,16 @@ void check(bool value, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+// Omarchy's Cua Input toggle checks both fields before enabling input, to tell
+// this module from an older one still loaded. Keep these exact names.
+[[maybe_unused]] bool advertises_keyboard_behavior(const std::string& status) {
+    return status.find(R"("keyboard_layout_independent":true)") != std::string::npos &&
+        status.find(R"("foreground_numlock_compatible":true)") != std::string::npos;
+}
+[[maybe_unused]] bool mentions_keyboard_behavior(const std::string& status) {
+    return status.find("keyboard_layout_independent") != std::string::npos ||
+        status.find("foreground_numlock_compatible") != std::string::npos;
 }
 }
 
@@ -51,8 +62,17 @@ int main() {
     check(setenv("XDG_RUNTIME_DIR", directory, 1) == 0 &&
               setenv("HYPRLAND_INSTANCE_SIGNATURE", "mock", 1) == 0,
           "select runtime");
-    Config::Values::configured_bool_override = true;
+    Config::Values::configured_bool_override = false;
     static_cast<void>(pluginInit(nullptr));
+    const auto initial_status = HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {});
+    check(created == 0 && initial_status.find(R"("configured":false)") != std::string::npos,
+          "plugin starts with input disabled");
+#ifdef CUA_HYPRLAND_INPUT
+    check(advertises_keyboard_behavior(initial_status),
+          "disabled v3 module advertises its compiled keyboard behavior before enable");
+#else
+    check(!mentions_keyboard_behavior(initial_status), "experiment advertises v3 keyboard behavior");
+#endif
     const auto toggle = [](bool enabled) {
         HyprlandAPI::registered_bool->set_mock_value(enabled);
         Event::bus()->m_events.config.reloaded.emit();
@@ -66,6 +86,12 @@ int main() {
                   status.find("\"input\":{}") != std::string::npos &&
                   status.find("operator") == std::string::npos,
               "v3 status advertises its actual admission mode");
+        check(advertises_keyboard_behavior(status) && status.back() == '}' &&
+                  status.find(R"("foreground_numlock_compatible":true,"input":{}})") != std::string::npos,
+              "enabled v3 status keeps both keyboard fields in one JSON object");
+#else
+        check(!mentions_keyboard_behavior(HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {})),
+              "experiment advertises v3 keyboard behavior");
 #endif
         check(created == 1 && destroyed == 0 && resumed == i + 1,
               "enable reuses the session's seat owner");
@@ -74,6 +100,10 @@ int main() {
         toggle(false);
         check(destroyed == 0 && access(socket.c_str(), F_OK) != 0,
               "disable stops transport but retains seat owner");
+#ifdef CUA_HYPRLAND_INPUT
+        check(advertises_keyboard_behavior(HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {})),
+              "disabled v3 module keeps advertising its keyboard behavior");
+#endif
     }
     fail_resume = true;
     toggle(true);

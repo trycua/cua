@@ -601,9 +601,11 @@ struct EisState {
     /// xkb keymap (delivered by the `ei_keyboard` device). Lets keycode typing
     /// follow the user's real layout instead of assuming US. Empty until the
     /// `Keymap` event arrives; typing then falls back to [`char_to_evdev`].
-    keymap_chars: HashMap<char, (u32, bool)>,
+    keymap_chars: HashMap<char, TypedKey>,
     /// evdev keycode that produces `Shift_L` in the active keymap (else 42).
     keymap_shift: Option<u32>,
+    /// evdev keycode that produces `ISO_Level3_Shift` (AltGr), when the keymap has one.
+    keymap_level3: Option<u32>,
 }
 
 #[derive(Default)]
@@ -810,9 +812,6 @@ impl EisState {
     /// to [`char_to_evdev`].
     fn load_xkb_keymap(&mut self, fd: std::os::unix::io::OwnedFd, size: u32) {
         use std::io::{Read, Seek, SeekFrom};
-        const XKB_EVDEV_OFFSET: u32 = 8;
-        const SHIFT_L: u32 = 0xffe1;
-
         // Sanity-cap the size from the (trusted, but possibly buggy) compositor
         // event: real xkb keymaps are a few KiB; refuse absurd values rather
         // than attempt a multi-GB allocation.
@@ -841,26 +840,10 @@ impl EisState {
             None => return,
         };
 
-        let mut chars: HashMap<char, (u32, bool)> = HashMap::new();
-        let mut shift = None;
-        for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
-            let keycode = xkb::Keycode::new(kc);
-            let evdev = kc.wrapping_sub(XKB_EVDEV_OFFSET);
-            // Level 0 = unshifted, 1 = shifted; scan 0 first so the unshifted
-            // mapping wins when a char is reachable both ways.
-            for level in 0..=1u32 {
-                for sym in keymap.key_get_syms_by_level(keycode, 0, level) {
-                    if shift.is_none() && sym.raw() == SHIFT_L {
-                        shift = Some(evdev);
-                    }
-                    if let Some(ch) = sym.key_char() {
-                        chars.entry(ch).or_insert((evdev, level == 1));
-                    }
-                }
-            }
-        }
+        let (chars, shift, level3) = keymap_char_table(&keymap);
         self.keymap_chars = chars;
         self.keymap_shift = shift;
+        self.keymap_level3 = level3;
     }
 
     /// True once the device THIS command needs has been negotiated and
@@ -1026,9 +1009,9 @@ impl EisState {
                 // Prefer ei_text (libei 1.6+ — a UTF-8 string, layout-correct).
                 // Mutter does NOT advertise ei_text, so fall back to keycode
                 // typing via ei_keyboard: map each char to a US-layout evdev
-                // keycode + shift and emit press/release. Chars with no US-layout
-                // keycode are skipped (a documented limitation — full layout
-                // support needs an xkb keymap, like reis's type-text example).
+                // keycode + modifiers and emit press/release. A string with any
+                // character the keymap cannot produce is refused before the first
+                // key, so the field never receives a silently shortened string.
                 if let Some(device) = self.device_with_interface("ei_text") {
                     let serial = self.last_serial;
                     let text_iface =
@@ -1046,41 +1029,31 @@ impl EisState {
                     let kb =
                         require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
                     let shift_code = self.keymap_shift.unwrap_or(42);
-                    let mut skipped = 0usize;
-                    for ch in text.chars() {
-                        // Prefer the compositor's actual keymap (layout-correct);
-                        // fall back to the US-layout table if no keymap arrived.
-                        let mapped = self
-                            .keymap_chars
-                            .get(&ch)
-                            .copied()
-                            .or_else(|| char_to_evdev(ch));
-                        let Some((code, shift)) = mapped else {
-                            // No keycode for this char in the keymap/US table
-                            // (e.g. CJK/emoji via the keycode path). Skip it, but
-                            // don't pretend the whole string was typed.
-                            skipped += 1;
-                            continue;
-                        };
-                        if shift {
-                            kb.key(shift_code, KeyState::Press);
-                            device.frame(serial, event_time_us());
-                        }
-                        kb.key(code, KeyState::Press);
+                    let level3_code = self.keymap_level3;
+                    let plan = plan_keycode_typing(text, &self.keymap_chars, level3_code)?;
+                    let press = |code: u32, state: KeyState| {
+                        kb.key(code, state);
                         device.frame(serial, event_time_us());
-                        kb.key(code, KeyState::Released);
-                        device.frame(serial, event_time_us());
-                        if shift {
-                            kb.key(shift_code, KeyState::Released);
-                            device.frame(serial, event_time_us());
+                    };
+                    for key in plan {
+                        if key.shift {
+                            press(shift_code, KeyState::Press);
                         }
-                    }
-                    if skipped > 0 {
-                        tracing::warn!(
-                            "libei keycode typing skipped {skipped} char(s) with no \
-                             keycode in the active keymap (e.g. non-Latin/emoji) — \
-                             the ei_text path (libei 1.6+) would type these verbatim"
-                        );
+                        if key.level3 {
+                            if let Some(code) = level3_code {
+                                press(code, KeyState::Press);
+                            }
+                        }
+                        press(key.code, KeyState::Press);
+                        press(key.code, KeyState::Released);
+                        if key.level3 {
+                            if let Some(code) = level3_code {
+                                press(code, KeyState::Released);
+                            }
+                        }
+                        if key.shift {
+                            press(shift_code, KeyState::Released);
+                        }
                     }
                 }
             }
@@ -1286,6 +1259,84 @@ fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
             .checked_div(frames)
             .unwrap_or(0),
     )
+}
+
+/// One key press that yields a character on the active layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TypedKey {
+    code: u32,
+    shift: bool,
+    level3: bool,
+}
+
+/// Index the compositor keymap's first layout by character. Lower levels win,
+/// across all keys, so a character reachable without AltGr never uses it.
+fn keymap_char_table(keymap: &xkb::Keymap) -> (HashMap<char, TypedKey>, Option<u32>, Option<u32>) {
+    const XKB_EVDEV_OFFSET: u32 = 8;
+    const SHIFT_L: u32 = 0xffe1;
+    const ISO_LEVEL3_SHIFT: u32 = 0xfe03;
+    let mut chars = HashMap::new();
+    let mut shift = None;
+    let mut level3 = None;
+    for level in 0..=3u32 {
+        for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+            let keycode = xkb::Keycode::new(kc);
+            let evdev = kc.wrapping_sub(XKB_EVDEV_OFFSET);
+            for sym in keymap.key_get_syms_by_level(keycode, 0, level) {
+                if shift.is_none() && sym.raw() == SHIFT_L {
+                    shift = Some(evdev);
+                }
+                if level3.is_none() && sym.raw() == ISO_LEVEL3_SHIFT {
+                    level3 = Some(evdev);
+                }
+                if let Some(ch) = sym.key_char() {
+                    chars.entry(ch).or_insert(TypedKey {
+                        code: evdev,
+                        shift: level & 1 == 1,
+                        level3: level >= 2,
+                    });
+                }
+            }
+        }
+    }
+    (chars, shift, level3)
+}
+
+/// Resolve every character before any key is sent, so a string the keymap
+/// cannot produce is refused whole instead of arriving with characters missing.
+/// Control characters and a compositor that announced no keymap fall back to
+/// the fixed US table; a printable character on a known keymap never does,
+/// because on that layout the US key would produce a different character.
+fn plan_keycode_typing(
+    text: &str,
+    table: &HashMap<char, TypedKey>,
+    level3: Option<u32>,
+) -> anyhow::Result<Vec<TypedKey>> {
+    let mut plan = Vec::new();
+    let mut missing = String::new();
+    for ch in text.chars() {
+        let key = table.get(&ch).copied().or_else(|| {
+            (table.is_empty() || ch.is_control())
+                .then(|| char_to_evdev(ch))
+                .flatten()
+                .map(|(code, shift)| TypedKey {
+                    code,
+                    shift,
+                    level3: false,
+                })
+        });
+        match key {
+            Some(key) if !key.level3 || level3.is_some() => plan.push(key),
+            _ if missing.contains(ch) => {}
+            _ => missing.push(ch),
+        }
+    }
+    anyhow::ensure!(
+        missing.is_empty(),
+        "the active keyboard layout has no key for {missing:?}. Nothing was typed. \
+         Use set_value on the element, or clipboard_write and then hotkey ctrl+v."
+    );
+    Ok(plan)
 }
 
 #[cfg(test)]
@@ -1582,5 +1633,108 @@ mod tests {
             );
         }
         assert_eq!(events, vec![]);
+    }
+}
+
+#[cfg(test)]
+mod keycode_typing_tests {
+    use super::*;
+
+    // Same shape as `us(altgr-intl)`: n/N, ntilde/Ntilde on one key.
+    const KEYMAP: &str = r#"xkb_keymap {
+      xkb_keycodes { minimum = 8; maximum = 255;
+        <AB06> = 57; <AC01> = 38; <AE05> = 14; <LFSH> = 50; <RALT> = 108; };
+      xkb_types { virtual_modifiers LevelThree;
+        type "ONE_LEVEL" { modifiers = none; level_name[Level1] = "1"; };
+        type "FOUR_LEVEL" { modifiers = Shift+LevelThree;
+          map[None] = Level1; map[Shift] = Level2; map[LevelThree] = Level3; map[Shift+LevelThree] = Level4;
+          level_name[Level1] = "1"; level_name[Level2] = "2"; level_name[Level3] = "3"; level_name[Level4] = "4"; };
+      };
+      xkb_compatibility { };
+      xkb_symbols {
+        key <AB06> { type = "FOUR_LEVEL", [ n, N, ntilde, Ntilde ] };
+        key <AC01> { type = "FOUR_LEVEL", [ a, A, aacute, Aacute ] };
+        key <AE05> { type = "FOUR_LEVEL", [ 5, percent, EuroSign, cent ] };
+        key <LFSH> { type = "ONE_LEVEL", [ Shift_L ] };
+        key <RALT> { type = "ONE_LEVEL", [ ISO_Level3_Shift ] };
+      };
+    };"#;
+
+    fn table() -> (HashMap<char, TypedKey>, Option<u32>, Option<u32>) {
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let km = xkb::Keymap::new_from_string(
+            &ctx,
+            KEYMAP.to_string(),
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("test keymap compiles");
+        keymap_char_table(&km)
+    }
+
+    #[test]
+    fn altgr_characters_are_typable() {
+        let (t, _, level3) = table();
+        assert_eq!(level3, Some(100));
+        assert_eq!(
+            t.get(&'ñ').copied(),
+            Some(TypedKey {
+                code: 49,
+                shift: false,
+                level3: true
+            })
+        );
+        assert_eq!(
+            t.get(&'Ñ').copied(),
+            Some(TypedKey {
+                code: 49,
+                shift: true,
+                level3: true
+            })
+        );
+        assert_eq!(
+            t.get(&'€').copied(),
+            Some(TypedKey {
+                code: 6,
+                shift: false,
+                level3: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_character_reachable_without_altgr_never_uses_it() {
+        let (t, _, _) = table();
+        assert_eq!(
+            t.get(&'n').copied(),
+            Some(TypedKey {
+                code: 49,
+                shift: false,
+                level3: false
+            })
+        );
+        assert_eq!(
+            t.get(&'N').copied(),
+            Some(TypedKey {
+                code: 49,
+                shift: true,
+                level3: false
+            })
+        );
+    }
+
+    #[test]
+    fn an_untypable_character_refuses_the_whole_string_and_names_it() {
+        let (t, _, level3) = table();
+        let err = plan_keycode_typing("añ🙂", &t, level3).expect_err("emoji has no key");
+        let msg = err.to_string();
+        assert!(msg.contains('🙂'), "{msg}");
+        assert!(msg.contains("Nothing was typed"), "{msg}");
+    }
+
+    #[test]
+    fn altgr_characters_refuse_when_the_keymap_has_no_altgr_key() {
+        let (t, _, _) = table();
+        assert!(plan_keycode_typing("ñ", &t, None).is_err());
     }
 }

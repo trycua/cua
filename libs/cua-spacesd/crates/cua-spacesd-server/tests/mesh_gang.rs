@@ -185,14 +185,17 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// Waits for `key` to be in `m`'s map and online: a refusal asserted
+/// below must come from the host, not from a dial to a peer the map still
+/// lists offline (its first map can arrive before the host's node joins).
 async fn in_map(m: &Mesh, key: &cua_mesh::PublicKey) {
     for _ in 0..200 {
-        if m.peers().iter().any(|p| &p.node_key == key) {
+        if m.peers().iter().any(|p| &p.node_key == key && p.online) {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("peer never appeared");
+    panic!("peer never appeared online");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

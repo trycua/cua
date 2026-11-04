@@ -183,11 +183,19 @@ async fn connect_disconnect_churn_leaves_no_state_and_no_heap_behind() {
     });
     let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local = backend.local_addr().unwrap();
-    // Holds every connection open and silent, so proxied streams stay open.
+    // Holds every connection open and silent while its proxied stream lives,
+    // and lets it go when the relay closes it, so the test's own backend
+    // never accumulates sockets (and heap) round after round.
     tokio::spawn(async move {
-        let mut held = Vec::new();
-        while let Ok((conn, _)) = backend.accept().await {
-            held.push(conn);
+        while let Ok((mut conn, _)) = backend.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 256];
+                while let Ok(n) = tokio::io::AsyncReadExt::read(&mut conn, &mut buf).await {
+                    if n == 0 {
+                        break;
+                    }
+                }
+            });
         }
     });
 
@@ -210,8 +218,8 @@ async fn connect_disconnect_churn_leaves_no_state_and_no_heap_behind() {
         // Ten rounds of 32 machine sessions (8 replaced), 24 mesh
         // connections (12 replaced) and 12 proxied streams: about 680
         // connections, so a leak of 2 KiB per connection crosses this.
-        // (The silent backend's held sockets add a few hundred bytes each in
-        // the test itself, well inside the margin.)
+        // (The silent backend drops each socket when its stream closes, so
+        // none of the growth is the test's own.)
         assert!(grew < 1 << 20, "live heap grew {grew} bytes over the churn");
     }
 }

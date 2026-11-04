@@ -305,16 +305,33 @@ def _build_image_wsl2(
 # ── Full build ──────────────────────────────────────────────────────────────
 
 
+def wsl2_kvm_available() -> bool:
+    """True when a WSL2 distribution on this Windows host can open /dev/kvm (nested virtualization)."""
+    if _plat.system() != "Windows" or not shutil.which("wsl"):
+        return False
+    try:
+        r = subprocess.run(["wsl", "-e", "sh", "-c", "test -r /dev/kvm -a -w /dev/kvm"], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
 def apply_windows_accel(cmd: list, environ) -> list:
     """Add the accelerator to a QEMU command for a Windows host and return the new command.
 
-    CUA_QEMU_ACCEL picks it: "whpx,kernel-irqchip=off" for hardware acceleration, or "tcg" for
-    software emulation (the default, because OVMF's pflash drives hang under WHPX on current QEMU:
-    the firmware splash never advances). Software emulation needs a CPU model with the features
-    Windows 11 25H2 and later require (SSE4.2, POPCNT, CMPXCHG16B, LAHF and PrefetchW), which the
-    qemu64 model lacks, so it runs `max`. WHPX runs the host's model.
+    There is no default: a Windows install under software emulation takes hours, so it is never chosen
+    silently. CUA_QEMU_ACCEL picks one explicitly: "whpx,kernel-irqchip=off" for hardware acceleration
+    (OVMF's pflash drives hang under WHPX on current QEMU, so this suits legacy BIOS guests), or "tcg"
+    to accept software emulation, which needs the `max` CPU model for Windows 11 25H2 and later
+    (the qemu64 model lacks PrefetchW). build_image prefers WSL2 with KVM, which needs none of this.
     """
-    accel = environ.get("CUA_QEMU_ACCEL", "tcg")
+    accel = environ.get("CUA_QEMU_ACCEL")
+    if not accel:
+        raise RuntimeError(
+            "No hardware acceleration for a Windows image build on this Windows host. Enable WSL2 with "
+            "/dev/kvm (nested virtualization), or set CUA_QEMU_ACCEL=whpx,kernel-irqchip=off for a legacy "
+            "BIOS guest, or CUA_QEMU_ACCEL=tcg to accept hours of software emulation."
+        )
     out = list(cmd) + ["-accel", accel]
     if "-cpu" in out:
         out[out.index("-cpu") + 1] = "host" if accel.startswith("whpx") else "max"
@@ -485,7 +502,10 @@ def build_image(
             ]
         )
 
-    # Hardware acceleration
+    # Hardware acceleration: on a Windows host prefer WSL2 with KVM (15 to 30 minutes) over anything else
+    if not use_wsl2 and _plat.system() == "Windows" and "CUA_QEMU_ACCEL" not in os.environ and wsl2_kvm_available():
+        logger.info("Using WSL2 with KVM for the install")
+        use_wsl2 = True
     if use_wsl2:
         # WSL2 path: rewrite entire command for WSL2 with KVM
         return _build_image_wsl2(

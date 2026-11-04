@@ -157,6 +157,12 @@ jobs:
       publish: ${{ steps.meta.outputs.publish }}
       spacesd_source: ${{ steps.meta.outputs.spacesd_source }}
       spacesd_version: ${{ steps.meta.outputs.spacesd_version }}
+      full: ${{ steps.meta.outputs.full }}
+      arch_matrix: ${{ steps.meta.outputs.arch_matrix }}
+      release_matrix: ${{ steps.meta.outputs.release_matrix }}
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - id: meta
         env:
@@ -168,8 +174,34 @@ jobs:
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_SOURCE: ${{ inputs.spacesd_source }}
           VAR_SOURCE: ${{ vars.CUA_LINUX_SPACESD_SOURCE || vars.CUA_DESKTOP_LINUX_SPACESD_SOURCE }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # Scope of the build. Every event but a pull request builds the full
+          # matrix (both arches, every tier, the plain images). A pull request
+          # builds only the amd64 slim image, unless it changes the image
+          # definitions or build scripts (the image paths below): then it
+          # builds the full matrix too, so an image regression is caught
+          # before merge. Any doubt (the file list cannot be read) means full.
+          full=true
+          if [ "$EVENT" = pull_request ]; then
+            if files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+                --jq '.[] | .filename, (.previous_filename // empty)')"; then
+              if grep -Eq '^(libs/images/|scripts/images/|libs/cua/crates/cua-cli/src/(image_build|image_release)\.rs$|libs/cua/crates/cua-cli/src/sandbox/bake\.rs$|libs/cua/crates/cua-image/src/(canonical|publish)\.rs$|libs/cua/crates/cua-vmm/src/(density\.rs$|qemu/)|\.github/workflows/(cd-image-linux|image-doctor)\.yml$)' <<<"$files"; then
+                full=true
+              else
+                full=false
+                echo "::notice::pull request does not touch the image definitions or build scripts: building only the amd64 slim image"
+              fi
+            fi
+          fi
+          if [ "$full" = true ]; then
+            arch_matrix='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
+            release_matrix='{"arch":["amd64","arm64"],"tier":["slim","full","docker"]}'
+          else
+            arch_matrix='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
+            release_matrix='{"arch":["amd64"],"tier":["slim"]}'
+          fi
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/linux-image-v* ]] && publish=true ;;
@@ -215,6 +247,9 @@ jobs:
             echo "publish=$publish"
             echo "spacesd_source=$source"
             echo "spacesd_version=$version"
+            echo "full=$full"
+            echo "arch_matrix=$arch_matrix"
+            echo "release_matrix=$release_matrix"
           } | tee -a "$GITHUB_OUTPUT"
 
   spacesd:
@@ -223,11 +258,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.meta.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -241,15 +272,12 @@ jobs:
           retention-days: 7
 
   cli:
+    needs: meta
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.meta.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -281,9 +309,7 @@ jobs:
     if: ${{ !cancelled() && needs.meta.result == 'success' && needs.cli.result == 'success' && needs.spacesd.result != 'failure' }}
     strategy:
       fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        tier: [slim, full, docker]
+      matrix: ${{ fromJSON(needs.meta.outputs.release_matrix) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # arm64 runs its VM doctor under TCG (hosted arm64 runners have no KVM).
     timeout-minutes: 360
@@ -347,7 +373,8 @@ jobs:
   # answering the official MCP client through a port forward.
   docker-bake:
     needs: [meta, cli, release]
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    # The docker tier is built only on the full matrix.
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.meta.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -396,7 +423,9 @@ jobs:
           retention-days: 14
 
   plain:
-    needs: cli
+    needs: [meta, cli]
+    # Not built on a pull request that leaves the image definitions alone.
+    if: ${{ !cancelled() && needs.cli.result == 'success' && needs.meta.outputs.full == 'true' }}
     strategy:
       fail-fast: false
       matrix:

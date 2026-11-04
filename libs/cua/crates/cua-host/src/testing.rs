@@ -73,6 +73,8 @@ struct State_ {
     /// Statuses the next machine registrations answer with, in order
     /// (a relay mid-deploy, a proxy in front of it).
     fail_register: std::collections::VecDeque<u16>,
+    /// Statuses the next machine deletes answer with, in order.
+    fail_deletes: std::collections::VecDeque<u16>,
     /// Statuses the next machine reads (GET) answer with, in order.
     fail_reads: std::collections::VecDeque<u16>,
     /// Every machine read answers 503, as the proxy in front of the
@@ -666,6 +668,12 @@ async fn patch(
 
 async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
     let mut st = s.lock().unwrap();
+    if let Some(code) = st.fail_deletes.pop_front() {
+        return err(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
+            "delete failed",
+        );
+    }
     if let Err(r) = authorize(&st, &headers, &id, true) {
         return r;
     }
@@ -1403,6 +1411,17 @@ impl FakeRelay {
             .lock()
             .unwrap()
             .fail_register
+            .extend(statuses.iter().copied());
+    }
+
+    /// The next machine deletes answer with `statuses`, in order, before the
+    /// relay deletes normally again (a relay mid-deploy: 503; a refused
+    /// token: 401 or 403).
+    pub fn fail_deletes(&self, statuses: &[u16]) {
+        self.state
+            .lock()
+            .unwrap()
+            .fail_deletes
             .extend(statuses.iter().copied());
     }
 

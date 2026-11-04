@@ -58,7 +58,12 @@ async fn open_streams(url: &str) -> u64 {
         .await
         .unwrap();
     text.lines()
-        .find_map(|l| l.strip_prefix("cua_relay_client_streams ")?.trim().parse().ok())
+        .find_map(|l| {
+            l.strip_prefix("cua_relay_client_streams ")?
+                .trim()
+                .parse()
+                .ok()
+        })
         .expect("cua_relay_client_streams in /metrics")
 }
 

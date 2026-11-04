@@ -184,10 +184,7 @@ async fn a_refusal_retries_later_and_spares_open_streams_and_other_routes() {
     };
     let id = format!("slow{}", uuid::Uuid::new_v4().simple());
     let stop = join_machine(id.clone());
-    wait_for("machine joined", async || {
-        relay.machine_ids().contains(&id)
-    })
-    .await;
+    wait_for("machine joined", async || relay.machine_ids().contains(&id)).await;
 
     // Hold BUDGET streams open (the futures live in tasks we keep).
     let client = reqwest::Client::builder()
@@ -232,7 +229,10 @@ async fn a_refusal_retries_later_and_spares_open_streams_and_other_routes() {
             .unwrap();
         assert!((1..=5).contains(&secs), "Retry-After {secs}");
     }
-    assert_eq!(metric(&base, "cua_relay_client_streams_refused_total").await, 8);
+    assert_eq!(
+        metric(&base, "cua_relay_client_streams_refused_total").await,
+        8
+    );
 
     // The probes and the metrics are not streams, so they are never refused.
     for path in ["/healthz", "/readyz", "/metrics"] {

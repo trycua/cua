@@ -1,7 +1,8 @@
 # CI
 
 Every pull request must pass one required check, **CI: gate** (`ci-gate`). The gate waits for the other
-pull request workflows and passes when they pass. This page explains which of those workflows it waits for.
+pull request workflows and passes when they pass. This page explains which of those workflows it waits for,
+and the two checks in front of them: the quick stage and, for agent pull requests, the `local-ci` sign-off.
 
 ## Run the checks locally first: `bin/ci`
 
@@ -55,7 +56,7 @@ your `PATH`, and installs a web package's `node_modules` with its frozen lockfil
 What it cannot catch: failures that only happen on a real Windows or Linux host (sockets, permissions,
 installers), the end-to-end and image lanes, and flakes. CI still runs those.
 
-### Pre-push hook (opt-in)
+### Pre-push hook
 
 ```bash
 bin/ci --install-hook    # runs bin/ci before every git push from this clone and its worktrees
@@ -63,16 +64,49 @@ bin/ci --uninstall-hook
 CUA_SKIP_LOCAL_CI=1 git push   # skip it once
 ```
 
-The hook goes in the clone's `hooks/pre-push`. An existing pre-push hook is kept and still runs first.
-If you set a global `core.hooksPath`, your global pre-push hook must chain to the repository hook; the
-installer tells you whether it does. Prefer `CUA_SKIP_LOCAL_CI=1` to `git push --no-verify`, which also
-skips every other pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
+Agent machines install the hook; for everyone else it is opt-in. The hook goes in the clone's
+`hooks/pre-push`. An existing pre-push hook is kept and still runs first. If you set a global
+`core.hooksPath`, your global pre-push hook must chain to the repository hook; the installer tells you
+whether it does. Prefer `CUA_SKIP_LOCAL_CI=1` to `git push --no-verify`, which also skips every other
+pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
 
-### Local sign-off (optional)
+### Local sign-off: `bin/ci --signoff`
 
 After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit status on `HEAD` through
 `gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
-sign off a run that failed or skipped a check. The status is informational; `ci-gate` does not require it.
+sign off a run that failed or skipped a check. Sign off again after every new commit.
+
+`ci-gate` requires a successful `local-ci` status on the head commit for **agent pull requests**: those
+opened by the Cua Agents GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch
+of this repository. Community pull requests are not asked for it. When it is missing the gate says "Run
+bin/ci and bin/ci --signoff on this head commit."
+
+The requirement is **report-only** at first: the gate prints that line as a warning and passes. Setting the
+repository variable `REQUIRE_LOCAL_CI` to `true` makes it blocking. It is the only switch. When blocking, the
+gate polls for the status for five minutes, so signing off right after the push is enough; after a failure,
+sign off and rerun the gate job.
+
+How it authenticates: `bin/ci --signoff` calls `gh api` with whatever credential `gh` uses on that machine
+(`gh auth login` or `GH_TOKEN`), which needs permission to write commit statuses on the repository. It
+reads the result of the last green run from `.git/bin-ci/last-run.json` in that checkout, so run `bin/ci`
+and `bin/ci --signoff` in the same checkout. The status is an ordinary commit status (context `local-ci`)
+on a commit SHA, so another machine or credential can set it, as long as the checks passed on that commit.
+
+## Quick stage
+
+[`ci-quick.yml`](../../.github/workflows/ci-quick.yml) runs `bin/ci --quick` on the pull request: formatting,
+lockfiles, SPDX headers, workflow lint and the other checks that build nothing. It is the command you run
+locally, so the two cannot drift (`bin/ci --verify-sync` covers the rest). It needs no secrets and builds
+nothing, so it is deterministic. A check that needs a package's `node_modules` is skipped there; that
+package's own workflow still runs it.
+
+The heavy workflows (Rust, macOS and Swift, Nix, containers, SDK and end-to-end) start with a `quick` job
+that calls it, and every job in them waits for it (`needs: quick`). A pull request that fails a cheap check
+stops in about a minute instead of spending runner minutes on builds. The jobs use
+`if: ${{ !failure() && !cancelled() }}` so they still run on pushes and manual runs, where `quick` is
+skipped. `ci-quick.yml` also runs on its own on every pull request, so the gate sees a quick failure even
+when no heavy workflow starts. A failed `quick` fails its workflow run; the jobs it skipped are not read as
+passed. When you add a heavy workflow, add the `quick` job and the `needs` the same way.
 
 ## Path-scoped gate
 

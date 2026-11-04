@@ -290,3 +290,91 @@ def test_gate_reads_the_quarantine_list_from_the_base_commit():
     assert '/.github/flaky/quarantine.json' in base and '/.github/scripts/flaky/flaky.py' in base
     env = STEPS['Wait for every other workflow on the pull request head']['env']
     assert env['FLAKY_PY'].startswith('base/') and env['QUARANTINE_FILE'].startswith('base/')
+
+
+def test_gate_fails_a_run_whose_quick_job_failed_and_skipped_the_rest():
+    # `quick` failed; the heavy jobs were skipped (the jobs API lists them, the gate drops them).
+    # The run is a failure, so the gate must not read the skipped jobs as a pass.
+    completed = run_gate('1\t11\tbuild\tfailure\tcompleted', jobs='quick / quick\tfailure')
+    assert completed.returncode == 1
+    assert 'build: fail' in completed.stdout
+
+
+HEAVY_WORKFLOWS = sorted(
+    path for path in WORKFLOWS.glob('*.yml')
+    if 'quick' in (yaml.safe_load(path.read_text()).get('jobs') or {})
+    and path.name != 'ci-quick.yml'
+)
+
+
+def test_quick_stage_is_wired_into_heavy_workflows():
+    assert HEAVY_WORKFLOWS
+    for path in HEAVY_WORKFLOWS:
+        jobs = yaml.safe_load(path.read_text())['jobs']
+        assert jobs['quick']['uses'] == './.github/workflows/ci-quick.yml', path.name
+        for name, job in jobs.items():
+            if name == 'quick':
+                continue
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            # Every job waits for `quick`, directly or through the job it needs.
+            assert needs, f'{path.name}: {name} does not wait for quick'
+            if 'quick' in needs:
+                # Still runs on push and manual runs, where `quick` is skipped.
+                assert '!failure() && !cancelled()' in str(job['if']), f'{path.name}: {name}'
+
+
+LOCAL_CI = STEPS['Require local sign-off on agent pull requests']['run']
+GH_STUB = '''
+sleep() { :; }
+gh() {
+  case "$*" in
+    *'/pulls/'*) printf '%s\\t%s\\t%s\\t%s\\n' "$AUTHOR" "deadbeefcafe" "$REF" "$HEAD_REPO" ;;
+    *'/labels'*) printf '%s\\n' "$LABELS" ;;
+    *'/statuses'*) printf '%s\\n' "$STATE" ;;
+  esac
+}
+'''
+
+
+def run_local_ci(author='someone', labels='', ref='fix/x', head_repo='fork/repo', state='', require='true'):
+    return subprocess.run(
+        ['bash', '-e', '-c', GH_STUB + LOCAL_CI],
+        env={**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+             'AUTHOR': author, 'LABELS': labels, 'REF': ref, 'HEAD_REPO': head_repo, 'STATE': state,
+             'REQUIRE_LOCAL_CI': require},
+        capture_output=True, text=True, timeout=20,
+    )
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'author': 'cua-agents[bot]'},
+    {'labels': 'bug,agent'},
+    {'ref': 'agent/cua-1-x', 'head_repo': 'test/repo'},
+])
+def test_local_ci_is_required_for_agent_pull_requests(kwargs):
+    missing = run_local_ci(**kwargs)
+    assert missing.returncode == 1
+    assert 'Run bin/ci and bin/ci --signoff on this head commit.' in missing.stdout
+    assert run_local_ci(**kwargs, state='failure').returncode == 1
+    assert run_local_ci(**kwargs, state='success').returncode == 0
+
+
+@pytest.mark.parametrize('kwargs', [
+    {},
+    {'ref': 'agent/x', 'head_repo': 'fork/repo'},  # a fork cannot opt in or out by branch name
+    {'labels': 'agents,bug'},
+])
+def test_local_ci_is_not_required_for_community_pull_requests(kwargs):
+    done = run_local_ci(**kwargs)
+    assert done.returncode == 0, done.stdout
+    assert 'Not an agent pull request' in done.stdout
+
+
+def test_local_ci_is_report_only_until_the_switch_is_on():
+    for state in ('', 'failure'):
+        done = run_local_ci(author='cua-agents[bot]', state=state, require='')
+        assert done.returncode == 0, done.stdout
+        assert '::warning' in done.stdout
+        assert 'Run bin/ci and bin/ci --signoff on this head commit.' in done.stdout
+    assert run_local_ci(author='cua-agents[bot]', state='success', require='').returncode == 0

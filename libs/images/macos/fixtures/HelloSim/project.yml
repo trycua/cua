@@ -1,0 +1,45 @@
+name: HelloSim
+options:
+  bundleIdPrefix: ai.cua.fixture
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  HelloSim:
+    type: application
+    platform: iOS
+    sources: [HelloSim]
+    settings:
+      base:
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cua.fixture.HelloSim
+  HelloSimTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [HelloSimTests]
+    dependencies:
+      - target: HelloSim
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cua.fixture.HelloSimTests
+  HelloSimUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [HelloSimUITests]
+    dependencies:
+      - target: HelloSim
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cua.fixture.HelloSimUITests
+schemes:
+  HelloSim:
+    build:
+      targets:
+        HelloSim: all
+    test:
+      targets: [HelloSimTests, HelloSimUITests]

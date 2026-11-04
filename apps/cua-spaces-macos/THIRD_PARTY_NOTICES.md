@@ -30,6 +30,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## PermissionFlow
+
+The app links [PermissionFlow](https://github.com/jaywcjlove/PermissionFlow)
+2.11.4 (pinned in `Package.resolved`), unmodified, with its
+`PermissionFlow_PermissionFlow.bundle` strings in `Contents/Resources`: the
+guide to Screen Recording and Accessibility in System Settings
+(`Sources/CuaSpacesMacKit/Models/PermissionGuide.swift`). Copyright (c) 2026
+小弟调调 (jaywcjlove), under the MIT License above.
+
 ## Sparkle
 
 The app bundles [Sparkle](https://github.com/sparkle-project/Sparkle) 2.10.0,

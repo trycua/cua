@@ -237,6 +237,72 @@ async fn connects_through_the_relay_path_with_the_account_token_per_call() {
     assert!(wrong.space(&format!("relay:{MACHINE}")).await.is_err());
 }
 
+/// What a relay machine reported at connect reaches the next process: the
+/// CLI lists the machine's OS without connecting first.
+#[tokio::test]
+async fn a_later_process_lists_the_os_a_relay_machine_reported() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("tok", "ada", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "tok",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.set_online(MACHINE, true, "1.0.0");
+    let srv = MockServer::start(MockAuth {
+        token: None,
+        gateway: None,
+        prefix: None,
+    })
+    .await;
+    relay.tunnel(MACHINE, &srv.url());
+    let home = tempfile::tempdir().unwrap();
+    let build = || {
+        Spaces::builder()
+            .home(home.path())
+            .relay(RelayAccount::new(
+                relay.url.clone(),
+                Arc::new(StaticToken("tok".into())),
+            ))
+            .build()
+    };
+    let id = format!("relay:{MACHINE}");
+    let first = build();
+    first.list_all().await.unwrap();
+    first.space(&id).await.unwrap();
+    let os = |s: &Spaces| {
+        s.list()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.id == id)
+            .map(|i| i.os)
+    };
+    // Saved in the background: give it a moment.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let later = build();
+        later.list_all().await.unwrap();
+        if os(&later).as_deref() == Some("linux") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "listed {:?}",
+            os(&later)
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// The relay requires an enrolled client device: the account token alone
 /// lists nothing, and with the device every directory call and every
 /// connection to `relay:<id>` carries the device's session.

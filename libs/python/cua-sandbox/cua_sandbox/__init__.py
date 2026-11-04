@@ -40,6 +40,13 @@ from cua_sandbox.runtime.compat import (
     skip_if_unsupported,
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
+from cua_sandbox.sandbox_pool import (
+    SandboxPool,
+    create_pool,
+    delete_pool,
+    get_pool,
+    list_pools,
+)
 from cua_sandbox.transport.env import EnvTransport
 
 __all__ = [
@@ -48,6 +55,11 @@ __all__ = [
     "whoami",
     "Image",
     "ImageInfo",
+    "SandboxPool",
+    "create_pool",
+    "get_pool",
+    "list_pools",
+    "delete_pool",
     "ServiceHandle",
     "Container",
     "RegistrySecret",

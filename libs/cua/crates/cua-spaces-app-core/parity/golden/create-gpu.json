@@ -18,7 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -47,7 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -70,14 +70,14 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": "GPU acceleration (Experimental) [ ] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
         "image": "ghcr.io/trycua/macos:26",
@@ -126,7 +126,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -179,7 +179,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -264,7 +264,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -287,7 +287,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -340,7 +340,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
@@ -392,7 +392,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [],
         "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
         "image": "ghcr.io/trycua/macos:26",

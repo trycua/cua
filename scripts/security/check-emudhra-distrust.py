@@ -134,10 +134,6 @@ CHECKS = [
 ]
 
 
-# Read-only mirrors of private canonical repositories: a change here is overwritten
-# by the next sync (fleet-mirror-guard), so the bump must land upstream instead.
-MIRRORED = ("libs/fleet/",)
-
 # Test harnesses that never ship and never connect to Cua endpoints. Each needs a reason.
 EXEMPT = {
     # Electron 42 fails to install on the Windows E2E runners (npm install leaves no electron.exe,
@@ -150,7 +146,7 @@ def main(root="."):
     files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
     failures = []
     for f in filter(None, files):
-        if f.startswith(MIRRORED) or f.startswith(tuple(EXEMPT)):
+        if f.startswith(tuple(EXEMPT)):
             continue
         for match, fn in CHECKS:
             if match(f):

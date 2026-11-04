@@ -30,6 +30,11 @@ pub const ACCOUNT_FILE: &str = "account";
 pub const LINKED_FILE: &str = "linked";
 /// Marker: this machine showed the linking notice.
 pub const NOTICE_MARKER: &str = "link_notice_shown";
+/// Marker: when a long-lived or repeated client last asked the Spaces API
+/// for the account id (its modification time), so a client that was
+/// already signed in when linking was turned on on the server links too,
+/// without asking on every start.
+pub const CHECKED_FILE: &str = "account_checked";
 
 /// The one-time notice for installs that saw the older "anonymous" wording,
 /// as the CLI prints it. The app shows [`NOTICE_TITLE`] and [`NOTICE_BODY`].

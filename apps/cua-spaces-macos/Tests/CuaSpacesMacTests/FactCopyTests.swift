@@ -12,11 +12,11 @@ import Testing
 @Suite("Fact copy")
 struct FactCopyTests {
     static func identifier() -> AppFact {
-        let row = AppSpaceRow(id: "direct:127.0.0.1:34752", name: "studio", provider: "direct",
+        let row = AppSpaceRow(id: "direct:127.0.0.1:34752", name: "studio", displayName: nil, provider: "direct",
                               spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .linux,
                               osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
                               kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                              power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
+                              power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
         let facts = appSpaceDetail(space: appRowsToSpaces(rows: [row], nowMs: 0)[0]).facts
         #expect(facts.filter { $0.copy != nil }.map(\.label) == ["Identifier"])
         return facts.first { $0.copy != nil }!

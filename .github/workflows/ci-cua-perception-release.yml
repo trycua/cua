@@ -81,7 +81,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      # Only macOS compiles long enough (about 1 minute of cacheable work) to
+      # pay for the restore; Linux and Windows take 5 to 25 seconds cold.
+      - if: runner.os == 'macOS'
+        uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua-driver/rust
       - name: Compile and test Cua Perception

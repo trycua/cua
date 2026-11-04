@@ -138,7 +138,7 @@ pub fn registry_image_dict(reference: &str, os_type: &str, kind: Option<&str>) -
 
 /// Writes `data` to `path` through a temp file created `0600` (Unix), then
 /// renamed, so a token in it is never readable by others, even briefly.
-fn write_private(path: &Path, data: &[u8]) -> Result<()> {
+pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     use std::io::Write as _;
     // A test must never write the user's real sandbox state.
     cua_home::guard_write(path)?;

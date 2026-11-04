@@ -14,7 +14,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 pub fn already_disclaimed() -> bool {
-    std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
+    crate::env_vars::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
 }
 
 /// Split out from [`reexec_disclaimed_if_needed`] so the decision is
@@ -225,17 +225,10 @@ mod tests {
     #[test]
     fn already_disclaimed_reflects_env_var() {
         let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
-        let original = std::env::var_os(name);
-
-        std::env::remove_var(name);
+        let mut env = crate::env_vars::Overrides::new();
+        env.unset(name);
         assert!(!already_disclaimed());
-
-        std::env::set_var(name, "1");
+        env.set(name, "1");
         assert!(already_disclaimed());
-
-        match original {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
-        }
     }
 }

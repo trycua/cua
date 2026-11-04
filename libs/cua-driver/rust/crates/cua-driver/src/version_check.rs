@@ -560,7 +560,8 @@ fn is_enabled() -> bool {
 /// the `cua-driver config set` subcommand writes to. Returns `None` when
 /// the file is missing, unreadable, or doesn't have the key.
 fn read_config_flag() -> Option<bool> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home =
+        crate::env_vars::var_os("HOME").or_else(|| crate::env_vars::var_os("USERPROFILE"))?;
     let path = PathBuf::from(home)
         .join(crate::bundle::user_home_subdirectory())
         .join("config.json");
@@ -570,7 +571,7 @@ fn read_config_flag() -> Option<bool> {
 }
 
 fn parse_env_bool(var: &str) -> Option<bool> {
-    let raw = std::env::var(var).ok()?;
+    let raw = crate::env_vars::var(var)?;
     match raw.trim().to_ascii_lowercase().as_str() {
         "0" | "false" | "no" | "off" => Some(false),
         "1" | "true" | "yes" | "on" => Some(true),
@@ -677,7 +678,8 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
 }
 
 fn home_root() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home =
+        crate::env_vars::var_os("HOME").or_else(|| crate::env_vars::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home))
 }
 
@@ -878,19 +880,13 @@ fn civil_from_unix(unix_secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
-/// All env-mutating tests serialise on this lock — `std::env::set_var`
-/// is process-global, parallel tests would race.
-#[cfg(test)]
-pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::env_vars::Overrides;
 
     #[test]
     fn pacman_managed_check_ignores_upstream_cache_and_channel() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             write_cache(&VersionCache {
                 latest_version: Some("999.0.0".into()),
@@ -932,42 +928,17 @@ mod tests {
         assert!(banner.is_empty());
     }
 
-    use super::ENV_LOCK;
-
     /// Redirect `HOME` / `USERPROFILE` to a fresh temp dir for the body
     /// of `f`, then restore. Ensures the cache file lives in an isolated
     /// directory and never touches the developer's real
     /// `~/.cua-driver/version_check.json`.
     fn with_isolated_home<R>(f: impl FnOnce(&std::path::Path) -> R) -> R {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let saved_home = std::env::var_os("HOME");
-        let saved_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-        }
-        unsafe {
-            std::env::set_var("USERPROFILE", tmp.path());
-        }
-
-        let result = f(tmp.path());
-
-        match saved_home {
-            Some(s) => unsafe {
-                std::env::set_var("HOME", s);
-            },
-            None => unsafe {
-                std::env::remove_var("HOME");
-            },
-        }
-        match saved_userprofile {
-            Some(s) => unsafe {
-                std::env::set_var("USERPROFILE", s);
-            },
-            None => unsafe {
-                std::env::remove_var("USERPROFILE");
-            },
-        }
-        result
+        let mut env = Overrides::new();
+        env.set("HOME", tmp.path())
+            .set("USERPROFILE", tmp.path())
+            .unset("CUA_DRIVER_RS_HOME");
+        f(tmp.path())
     }
 
     // ── is_newer ────────────────────────────────────────────────────────
@@ -1052,7 +1023,6 @@ mod tests {
 
     #[test]
     fn cache_round_trips_through_tempdir() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             let original = VersionCache {
                 last_checked_unix: Some(1_700_000_000),
@@ -1073,7 +1043,6 @@ mod tests {
 
     #[test]
     fn cache_lands_in_the_canonical_home() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             write_cache(&VersionCache::default()).expect("write_cache");
             assert!(home
@@ -1088,7 +1057,6 @@ mod tests {
 
     #[test]
     fn legacy_cache_is_migrated_and_its_home_removed() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&legacy_home).unwrap();
@@ -1111,7 +1079,6 @@ mod tests {
 
     #[test]
     fn migration_leaves_a_legacy_home_that_still_holds_other_files() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&legacy_home).unwrap();
@@ -1129,7 +1096,6 @@ mod tests {
 
     #[test]
     fn failed_migration_preserves_the_legacy_cache() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|home| {
             let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
             let legacy_cache = legacy_home.join(CACHE_FILE_NAME);
@@ -1156,7 +1122,6 @@ mod tests {
 
     #[test]
     fn cache_older_than_threshold_triggers_refresh() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             // Seed the cache 2 hours in the past.
             let now = unix_now();
@@ -1196,7 +1161,6 @@ mod tests {
 
     #[test]
     fn cache_younger_than_threshold_skips_network() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             // Seed the cache 30 minutes in the past with a known-newer version.
             let now = unix_now();
@@ -1236,7 +1200,6 @@ mod tests {
 
     #[test]
     fn dismissed_latest_suppresses_banner() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             // Cache is fresh and reports a newer version, but the user
             // dismissed exactly that version — banner must stay silent.
@@ -1326,7 +1289,6 @@ mod tests {
 
     #[test]
     fn stale_cache_from_older_build_is_replaced_not_announced() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             // The #4755 shape: a young cache saying 0.33.4, written by the
             // 0.33.4 build, read by the 0.34.0 build that replaced it.
@@ -1352,7 +1314,6 @@ mod tests {
 
     #[test]
     fn failed_lookup_backs_off_but_never_serves_an_untrusted_result() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             let now = unix_now();
             let fetches = std::sync::atomic::AtomicUsize::new(0);
@@ -1399,7 +1360,6 @@ mod tests {
 
     #[test]
     fn invalidate_cache_drops_the_result_and_keeps_dismissals() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_isolated_home(|_| {
             let now = unix_now();
             let mut cache = seeded(now, 60, "0.33.4", Some("0.33.4"));
@@ -1438,50 +1398,29 @@ mod tests {
 
     #[test]
     fn env_opt_out_short_circuits_enabled_check() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = std::env::var_os(ENV_UPDATE_CHECK);
-
-        unsafe {
-            std::env::set_var(ENV_UPDATE_CHECK, "false");
-        }
+        let mut env = Overrides::new();
+        env.set(ENV_UPDATE_CHECK, "false");
         // Use a separately-redirected HOME so any config file present on
         // the developer's machine can't influence the result.
         with_isolated_home(|_| {
             assert!(!is_enabled(), "explicit false env var must disable");
         });
 
-        unsafe {
-            std::env::set_var(ENV_UPDATE_CHECK, "0");
-        }
+        env.set(ENV_UPDATE_CHECK, "0");
         with_isolated_home(|_| {
             assert!(!is_enabled(), "0 must disable");
         });
 
-        unsafe {
-            std::env::set_var(ENV_UPDATE_CHECK, "off");
-        }
+        env.set(ENV_UPDATE_CHECK, "off");
         with_isolated_home(|_| {
             assert!(!is_enabled(), "off must disable");
         });
-
-        // Restore.
-        match saved {
-            Some(s) => unsafe {
-                std::env::set_var(ENV_UPDATE_CHECK, s);
-            },
-            None => unsafe {
-                std::env::remove_var(ENV_UPDATE_CHECK);
-            },
-        }
     }
 
     #[test]
     fn config_flag_disables_check() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = std::env::var_os(ENV_UPDATE_CHECK);
-        unsafe {
-            std::env::remove_var(ENV_UPDATE_CHECK);
-        }
+        let mut env = Overrides::new();
+        env.unset(ENV_UPDATE_CHECK);
 
         with_isolated_home(|home| {
             // Write a config that disables the check.
@@ -1501,24 +1440,12 @@ mod tests {
                 "persisted update_check_enabled=false must disable the check"
             );
         });
-
-        match saved {
-            Some(s) => unsafe {
-                std::env::set_var(ENV_UPDATE_CHECK, s);
-            },
-            None => unsafe {
-                std::env::remove_var(ENV_UPDATE_CHECK);
-            },
-        }
     }
 
     #[test]
     fn config_flag_true_or_missing_leaves_check_on() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = std::env::var_os(ENV_UPDATE_CHECK);
-        unsafe {
-            std::env::remove_var(ENV_UPDATE_CHECK);
-        }
+        let mut env = Overrides::new();
+        env.unset(ENV_UPDATE_CHECK);
 
         with_isolated_home(|home| {
             // Case A: no config file at all → enabled.
@@ -1541,15 +1468,6 @@ mod tests {
                 "explicit update_check_enabled=true must leave check on"
             );
         });
-
-        match saved {
-            Some(s) => unsafe {
-                std::env::set_var(ENV_UPDATE_CHECK, s);
-            },
-            None => unsafe {
-                std::env::remove_var(ENV_UPDATE_CHECK);
-            },
-        }
     }
 
     // ── Banner formatting ───────────────────────────────────────────────

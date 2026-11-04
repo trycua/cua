@@ -261,6 +261,11 @@ enum ErrorReason {
   ERROR_REASON_NOT_INITIALIZED = 22;
   // An internal server error. Report a bug.
   ERROR_REASON_INTERNAL = 23;
+  // The request carries a fencing epoch lower than the Space's current
+  // epoch (`ProcessService.AdvanceEpoch`): a newer client has taken over,
+  // for example after the Space was restored from a checkpoint.
+  // `metadata["current_epoch"]` holds the current epoch.
+  ERROR_REASON_STALE_EPOCH = 24;
 }
 
 // Periodic empty message sent on long-lived server streams so proxies (gateways,

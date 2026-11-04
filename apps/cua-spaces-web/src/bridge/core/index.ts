@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-/// <reference types="vite/client" />
-
 /**
  * The Cua Spaces app core (libs/cua/crates/cua-spaces-app-core) in the
  * page, as wasm. Same crate and shim as the Tauri app

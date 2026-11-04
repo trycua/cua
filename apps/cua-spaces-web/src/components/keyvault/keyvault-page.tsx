@@ -14,6 +14,7 @@ import { toastError } from "@/components/ui/toast";
 import { hostOs, keyvaultUnlockWay } from "@/lib/host-labels";
 
 import { ApprovalDialog } from "./approval-dialog";
+import { KeyvaultOptions } from "./options-dialog";
 import { CategoryPane } from "./category-pane";
 import { VaultList } from "./vault-list";
 
@@ -113,25 +114,28 @@ export function KeyvaultPage({ initialView = "all", focus = null }: { initialVie
           title="Keyvault"
           description="Saved logins your agents can use. Each use asks you first unless you allow it."
           actions={
-            locked ? (
-              <Button variant="outline" onClick={unlockVault}>
-                <LockIcon /> Unlock
-              </Button>
-            ) : null
+            <>
+              <KeyvaultOptions />
+              {locked ? (
+                <Button variant="secondary" onClick={unlockVault}>
+                  <LockIcon /> Unlock
+                </Button>
+              ) : null}
+            </>
           }
         />
         {locked ? (
-          <div className="mb-4 flex items-center gap-3 rounded-xl border bg-brand-surface/60 px-4 py-3">
+          <div className="mb-4 flex items-center gap-3 rounded-lg bg-brand-surface px-4 py-3">
             <LockIcon className="size-4 text-brand-strong" />
             <p className="flex-1 text-[13px]">Keyvault is locked. Unlock to change who can use a login.</p>
           </div>
         ) : null}
         {views?.page.disabledBanner ? (
-          <p className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-[13px]" data-vault-disabled>
+          <p className="mb-4 rounded-lg bg-destructive/10 px-4 py-2.5 text-[13px]" data-vault-disabled>
             {views.page.disabledBanner}
           </p>
         ) : null}
-        {views?.page.resetNotice ? <p className="mb-4 rounded-xl border bg-brand-surface/60 px-4 py-2.5 text-[13px]">{views.page.resetNotice}</p> : null}
+        {views?.page.resetNotice ? <p className="mb-4 rounded-lg bg-brand-surface px-4 py-2.5 text-[13px]">{views.page.resetNotice}</p> : null}
         {notice ? <p className="mb-4 px-1 text-xs text-muted-foreground" data-vault-notice>{notice}</p> : null}
         {noticeDetail && noticeDetail !== notice ? (
           <p className="-mt-2 mb-4 px-1 text-xs text-muted-foreground" data-vault-notice-detail>
@@ -159,7 +163,7 @@ export function KeyvaultPage({ initialView = "all", focus = null }: { initialVie
                   <>
                     {c.title}
                     {c.badge ? (
-                      <span data-waiting-badge className="min-w-4 rounded-full bg-brand px-1 text-center text-2xs font-medium text-white tabular-nums">
+                      <span data-waiting-badge className="min-w-4 rounded-lg bg-brand px-1 text-center text-2xs font-medium text-white tabular-nums">
                         {c.badge}
                       </span>
                     ) : c.count !== null ? (
@@ -261,16 +265,16 @@ function SetUpVault({ passphrase, help, label, busy, onSetUp }: { passphrase: bo
 function RecoveryKey({ value, onDone }: { value: string; onDone: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div data-vault-recovery className="mb-4 rounded-xl border bg-brand-surface/60 px-4 py-3">
+    <div data-vault-recovery className="mb-4 rounded-lg bg-brand-surface px-4 py-3">
       <p className="text-[13px] font-medium">Save your recovery key</p>
       <p className="mt-0.5 text-xs text-muted-foreground">It's shown once. You need it if {keyvaultUnlockWay()} or your passphrase stops working.</p>
       <div className="mt-2 flex items-center gap-2">
-        <code className="flex-1 truncate rounded-md bg-background px-2 py-1 font-mono text-[13px]" data-recovery-key>
+        <code className="flex-1 truncate rounded-lg bg-background px-2 py-1 font-mono text-[13px]" data-recovery-key>
           {value}
         </code>
         <Button
           size="sm"
-          variant="outline"
+          variant="secondary"
           aria-label={copied ? "Copied" : "Copy recovery key"}
           onClick={() => void navigator.clipboard?.writeText(value).then(() => setCopied(true), () => {})}
         >

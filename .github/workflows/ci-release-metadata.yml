@@ -196,6 +196,33 @@ jobs:
               --output /tmp/sandbox-release-manifest.json
           fi
 
+      # Release Please tags from this PR's body after merge. Text added above
+      # its version heading makes it tag every component (#6350), so check the
+      # current body with the same engine on every edit.
+      - name: Check that the release PR tags only its own component
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          GUARD=.github/scripts/release_please_tag_guard.cjs
+          # A release branch cut before the guard existed uses main's copy.
+          [[ -f "$GUARD" ]] || git show "$BASE_SHA:$GUARD" > "$GUARD"
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          ENGINE="$RUNNER_TEMP/release-please-engine"
+          npm install --prefix "$ENGINE" --ignore-scripts --no-audit --no-fund release-please@17.3.0 > /dev/null
+          jq '{number: .pull_request.number, title: .pull_request.title,
+               headRefName: .pull_request.head.ref, body: (.pull_request.body // "")}' \
+            "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/release-pr.json"
+          if ! NODE_PATH="$ENGINE/node_modules" node "$GUARD" check "$RUNNER_TEMP/release-pr.json"; then
+            echo "::error::After merge this PR would tag other components. Keep the version heading (## [x.y.z](...)) as the first line after '---'; put added notes below it."
+            exit 1
+          fi
+
       # The components release-notes.yml renders get the same preflight: a
       # release PR whose changelog or contributor attribution would not render
       # fails here, before its tag exists.

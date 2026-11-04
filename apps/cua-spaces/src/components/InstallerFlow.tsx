@@ -31,7 +31,7 @@ import type { DriveMountInput } from "../model/persistent";
 import type { SettingsRow } from "../model/window";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import type { AgentDetectReport, AgentSetupReport, InstallerBridge } from "../native/installer";
 import { onboardingFinishedSignals, onboardingSignals } from "../model/telemetry";
@@ -324,7 +324,13 @@ export function InstallerFlow({
           <h2 className="onboarding-title">{view.title}</h2>
           <p className="host-setup-lede">{view.lede}</p>
           <footer className="shelf-footer create-cloud-actions">
-            <button type="button" className="primary-button" data-owns-enter onClick={() => send({ type: "start" })}>
+            <button
+              type="button"
+              className="primary-button"
+              data-owns-enter
+              autoFocus
+              onClick={() => send({ type: "start" })}
+            >
               {view.primaryLabel}
             </button>
           </footer>

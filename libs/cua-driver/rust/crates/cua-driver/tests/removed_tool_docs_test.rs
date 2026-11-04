@@ -73,9 +73,15 @@ fn advertises_removed_tool(line: &str, tool: &str) -> bool {
     ]
     .iter()
     .any(|pattern| line.contains(pattern));
-    let explicitly_absent = ["no standalone", "does not register", "removed", "obsolete"]
-        .iter()
-        .any(|marker| line.contains(marker));
+    let explicitly_absent = [
+        "no standalone",
+        "does not register",
+        "does not add",
+        "removed",
+        "obsolete",
+    ]
+    .iter()
+    .any(|marker| line.contains(marker));
 
     invocation || (tool_reference && !explicitly_absent)
 }
@@ -159,6 +165,7 @@ fn removed_tool_reference_detection_covers_invocations_and_prose() {
         "there is no standalone screenshot tool",
         "the `screenshot` tool was removed",
         "this does not register a standalone `screenshot` tool",
+        "the old compatibility flag does not add a screenshot tool",
     ] {
         assert!(!advertises_removed_tool(notice, "screenshot"), "{notice:?}");
     }

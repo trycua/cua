@@ -3,11 +3,11 @@
   "root": true,
   "pages": [
     "index",
-    "---Learn---",
-    "tutorials",
-    "concepts",
-    "---Do---",
-    "how-to-guides",
-    "reference"
+    "spaces",
+    "cua-driver",
+    "lume",
+    "cua-sdk",
+    "cua-cli",
+    "cua-bench"
   ]
 }

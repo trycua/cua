@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Ensure UV is in PATH
 export PATH="/usr/local/bin:$PATH"
 
 info () { printf "%b%s%b" "\E[1;34m❯ \E[1;36m" "${1:-}" "\E[0m\n"; }
@@ -81,8 +80,8 @@ else
     fi
 fi
 
-info "Updating cua-computer-server and cua-agent..."
-uv add --directory /opt/cua-server cua-computer-server "cua-agent[all]"
-
-info "Starting Computer Server..."
-DISPLAY= uv run --directory /opt/cua-server python -m computer_server --host 0.0.0.0 --port 8000 --log-level info
+# No in-guest daemon on Android (cua-spacesd does not target Android yet):
+# clients drive the emulator over ADB. Keep the container alive with the
+# emulator's own supervisor.
+info "Emulator ready; control it over ADB."
+wait

@@ -1,0 +1,25 @@
+[package]
+name = "cua-media-transport"
+description = "Length-prefixed local transport framing for RCDP"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-media-protocol = { path = "../cua-media-protocol" }
+serde_json.workspace = true
+tokio.workspace = true
+quinn = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rcgen = { version = "0.14.8", optional = true }
+sha2 = { workspace = true, optional = true }
+
+[features]
+# Direct QUIC media (rcdp wire v2 over quinn): framing, identity, pinning.
+quic = ["dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

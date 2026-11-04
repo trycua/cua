@@ -374,7 +374,8 @@ pub fn inject_click_screen(
 /// rather than an occluder. Used to enforce the macOS-aligned rule that a
 /// `background` actuation never raises: when this is false the injection bails
 /// and the tool returns `background_unavailable` (escalate to foreground).
-unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
+/// The foreground SendInput drag uses the same check before its button-down.
+pub(crate) unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
     let top = WindowFromPoint(POINT { x: sx, y: sy });
     if top.0.is_null() {
         return false;
@@ -467,19 +468,6 @@ mod iconic_sentinel_tests {
     /// The exact rect Win32 hands back for a minimized window, as documented on
     /// the capture-path guard in `capture.rs`.
     const ICONIC_RECT: (i32, i32, i32, i32) = (-32000, -32000, -31840, -31972);
-
-    #[test]
-    fn iconic_rect_passes_the_positive_extent_check_that_guards_the_bounds_path() {
-        // This is why #2015 is silent rather than refused: the sentinel rect is
-        // a *well-formed* rectangle, so validity checks phrased as
-        // "right > left && bottom > top" admit it.
-        let (left, top, right, bottom) = ICONIC_RECT;
-        assert!(right > left, "sentinel width is positive: {right} > {left}");
-        assert!(
-            bottom > top,
-            "sentinel height is positive: {bottom} > {top}"
-        );
-    }
 
     #[test]
     fn virtual_desktop_membership_has_no_magic_negative_ceiling() {

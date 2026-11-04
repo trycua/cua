@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "repo": "cua-e2e-local/tiny",
+  "arches": ["amd64", "arm64"],
+  "series": "1",
+  "tag": "build-{stamp}",
+  "steps": [
+    {
+      "id": "build/{arch}", "phase": "build", "per_arch": true, "requires": ["docker", "native-{arch}"],
+      "run": ["bash", "-c", "docker build -q --platform linux/$3 -t \"$1\" \"$0\" && mkdir -p \"$2\" && qemu-img create -q -f qcow2 \"$2/disk.img\" 16M",
+              "{dir}", "{repo}:docker-{tag}-{arch}", "{out}/{name}/{arch}", "{arch}"],
+      "produces": ["{out}/{name}/{arch}/disk.img"]
+    },
+    {
+      "id": "doctor/{arch}/smoke", "phase": "gate", "per_arch": true, "requires": ["docker", "native-{arch}"],
+      "run": ["docker", "run", "--rm", "{repo}:docker-{tag}-{arch}", "cat", "/etc/tiny-release"]
+    },
+    {
+      "id": "content/{arch}", "phase": "stage", "per_arch": true, "requires": ["docker", "native-{arch}"],
+      "run": ["bash", "-c", "echo \"sha256:$(docker image inspect -f '{{{{.Id}}}}' \"$0\" | cut -d: -f2)\"", "{repo}:docker-{tag}-{arch}"],
+      "stdout": "{evidence}/content-digest-{arch}",
+      "produces": ["{evidence}/content-digest-{arch}"]
+    },
+    {
+      "id": "save/{arch}", "phase": "stage", "per_arch": true, "requires": ["docker", "native-{arch}"],
+      "run": ["{root}/scripts/images/release-save.sh", "--arch", "{arch}", "--rootfs", "{repo}:docker-{tag}-{arch}",
+              "--disk", "{out}/{name}/{arch}/disk.img", "--artifacts", "{artifacts}", "--evidence", "{evidence}"],
+      "produces": ["{artifacts}/{arch}/disk/disk.img", "{evidence}/artifacts-{arch}.sha256"]
+    },
+    {
+      "id": "push/{arch}", "phase": "push", "per_arch": true, "requires": ["docker", "native-{arch}"],
+      "run": ["{root}/scripts/images/release-push.sh", "--image-dir", "{dir}", "--repo", "{repo}", "--tag", "{tag}",
+              "--arch", "{arch}", "--artifacts", "{artifacts}", "--evidence", "{evidence}", "--out", "{out}/pack", "--cua", "{cua}"],
+      "produces": ["{evidence}/pushed-{arch}/pushed.json"]
+    },
+    {
+      "id": "publish", "phase": "publish",
+      "run": ["{root}/scripts/images/release-publish.sh", "--image-dir", "{dir}", "--repo", "{repo}", "--tag", "{tag}",
+              "--series", "{series}", "--stamp", "{stamp}", "--arches", "{arches}", "--evidence", "{evidence}",
+              "--cua", "{cua}", "--run-url", "{run_url}"],
+      "produces": ["{evidence}/pins.json"]
+    },
+    {
+      "id": "verify", "phase": "verify",
+      "run": ["{root}/scripts/images/verify-pins.sh", "--pins", "{evidence}/pins.json", "--evidence", "{evidence}",
+              "--arches", "{arches}", "--spacesd", "false"]
+    },
+    {
+      "id": "promote", "phase": "promote",
+      "run": ["{cua}", "images", "promote", "{evidence}/pins.json"]
+    }
+  ]
+}

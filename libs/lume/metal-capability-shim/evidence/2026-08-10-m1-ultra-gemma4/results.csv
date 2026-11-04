@@ -1,0 +1,3 @@
+workload,metric,unit,host_baremetal,stock_guest,safe_shim_guest,guest_ratio,shim_to_host_percent
+Gemma 4 12B IT QAT Q4_0 (llama.cpp),pp512,tokens/s,517.8775,71.65675,515.763,7.197689,99.591699
+Gemma 4 12B IT QAT Q4_0 (llama.cpp),tg128,tokens/s,52.3818,3.41483,49.66695,14.544487,94.817188

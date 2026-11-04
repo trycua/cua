@@ -21,7 +21,7 @@ import re
 import subprocess
 import sys
 import textwrap
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -60,11 +60,39 @@ VERIFIED_IDENTITY_PR_RE = re.compile(
 )
 TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
 LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
+PUBLISHED_INSTALLER_BUMP_RE = re.compile(
+    r"^chore\(cua-driver\): advance published installer version to "
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?: \[skip ci\])?(?: \(#\d+\))?$",
+    re.IGNORECASE,
+)
 NOREPLY_RE = re.compile(
     r"^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)@users\.noreply\.github\.com$",
     re.IGNORECASE,
 )
 RELEASING_TYPES = {"feat", "fix", "perf", "revert"}
+STABLE_VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+NO_RELEASE_LABEL = "no-release"
+PERCEPTION_OWNED_PATHS = (
+    ".github/releases/cua-perception",
+    "libs/cua-driver/rust/crates/cua-perception",
+    "libs/cua-driver/experiments/cua-perception-inference",
+)
+PERCEPTION_EXACT_PATHS = ("libs/cua-driver/docs/cua-perception-rust-inference-spike.md",)
+PERCEPTION_COMPANION_PATHS = (
+    "libs/cua-driver/rust/Cargo.toml",
+    "libs/cua-driver/rust/Cargo.lock",
+)
+CLA_STRICT_PATHS = (
+    "apps/cua-spaces/",
+    "apps/cua-spaces-desktop/",
+    "apps/cua-spaces-macos/",
+    "apps/cua-spaces-web/",
+    "libs/cua-spacesd/",
+)
+CLA_WORKFLOW = Path(".github/workflows/cla.yml")
+CLA_SIGNATURES_PATH = "signatures/version1/cla.json"
+CLA_SIGNATURES_BRANCH = "cla-signatures"
+CLA_ALLOWLIST_RE = re.compile(r'^\s*allowlist:\s*"(?P<logins>[^"]*)"\s*$', re.MULTILINE)
 ALLOWED_TITLE_TYPES = RELEASING_TYPES | {
     "build",
     "chore",
@@ -88,6 +116,9 @@ class ReleaseError(RuntimeError):
     """A release invariant failed."""
 
 
+CLA_LOOKUP_ERRORS = (ReleaseError, OSError, ValueError, KeyError, TypeError)
+
+
 @dataclass(frozen=True)
 class CommitRecord:
     sha: str
@@ -102,6 +133,10 @@ class ConventionalEntry:
     summary: str
     breaking: bool
 
+
+# The pull request commits endpoint lists at most 250 commits.
+PULL_COMMITS_ENDPOINT_CAP = 250
+MAX_COMPARE_PAGES = 100
 
 class GitHubClient:
     """Small GitHub REST client with explicit, testable endpoints."""
@@ -130,6 +165,53 @@ class GitHubClient:
             detail = error.read().decode("utf-8", errors="replace")
             raise ReleaseError(f"GitHub API GET {path} failed: {error.code} {detail}") from error
 
+    def send(self, method: str, path: str, payload: Mapping[str, Any]) -> Any:
+        request = Request(
+            f"{self.api_url}/{path.lstrip('/')}",
+            data=json.dumps(payload).encode(),
+            method=method,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "User-Agent": "trycua-release-attribution",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise ReleaseError(
+                f"GitHub API {method} {path} failed: {error.code} {detail}"
+            ) from error
+
+    def login_for_email(self, email: str) -> str | None:
+        """The one GitHub account whose public profile email is ``email``, if any."""
+        key = email.strip().lower()
+        if not key or "@" not in key:
+            return None
+        cache = self.__dict__.setdefault("_email_logins", {})
+        if key not in cache:
+            login = None
+            try:
+                payload = self.get(f"search/users?q={quote(key + ' in:email', safe='')}&per_page=2")
+                items = list(payload.get("items") or [])
+                if (
+                    not payload.get("incomplete_results")
+                    and len(items) == 1
+                    and items[0].get("type") == "User"
+                ):
+                    # Trust the match only when the profile's public email is exactly this one.
+                    profile = self.get(f"users/{quote(str(items[0].get('login') or ''), safe='')}")
+                    if str(profile.get("email") or "").strip().lower() == key:
+                        login = str(profile.get("login") or "") or None
+            except (ReleaseError, OSError, ValueError, AttributeError):
+                login = None
+            cache[key] = login
+        return cache[key]
+
     def pulls_for_commit(self, repository: str, commit_sha: str) -> list[dict[str, Any]]:
         return list(self.get(f"repos/{repository}/commits/{commit_sha}/pulls?per_page=100"))
 
@@ -149,6 +231,60 @@ class GitHubClient:
             if len(batch) < 100:
                 return commits
         raise ReleaseError(f"pull request #{number} has too many commits to validate safely")
+
+    def compare_commits(self, repository: str, base: str, head: str) -> tuple[list[dict[str, Any]], int]:
+        """Every commit in ``base...head`` and GitHub's total, paging the compare API.
+
+        The pull request commits endpoint stops at 250 commits; the compare
+        endpoint pages through all of them.
+        """
+        commits: list[dict[str, Any]] = []
+        spec = f"{quote(base, safe='')}...{quote(head, safe='')}"
+        total = -1
+        for page in range(1, MAX_COMPARE_PAGES + 1):
+            payload = self.get(f"repos/{repository}/compare/{spec}?per_page=100&page={page}")
+            total = int(payload.get("total_commits") or 0)
+            batch = list(payload.get("commits") or [])
+            commits.extend(batch)
+            if not batch or len(commits) >= total:
+                return commits, total
+        raise ReleaseError(f"{base}...{head} has too many commits to validate safely")
+
+    def all_pull_commits(self, repository: str, pull: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Every commit of a pull request, including past the endpoint's 250 cap."""
+        number = int(pull.get("number") or 0)
+        expected = int(pull.get("commits") or 0)
+        if expected <= PULL_COMMITS_ENDPOINT_CAP:
+            commits = self.pull_commits(repository, number)
+            expected = expected or len(commits)
+        else:
+            base_ref = str((pull.get("base") or {}).get("ref") or "")
+            head_sha = str((pull.get("head") or {}).get("sha") or "")
+            if not base_ref or not head_sha:
+                raise ReleaseError(f"pull request #{number} has no readable base or head")
+            commits, total = self.compare_commits(repository, base_ref, head_sha)
+            if total != expected:
+                raise ReleaseError(
+                    f"GitHub compares {total} commits but pull request #{number} has "
+                    f"{expected}; refusing partial attribution validation"
+                )
+        if len(commits) != expected or len({c.get("sha") for c in commits}) != expected:
+            raise ReleaseError(
+                f"GitHub returned {len(commits)} of {expected} commits for pull request "
+                f"#{number}; refusing partial attribution validation"
+            )
+        return commits
+
+    def pull_files(self, repository: str, number: int) -> list[str]:
+        paths: list[str] = []
+        for page in range(1, 31):
+            batch = list(
+                self.get(f"repos/{repository}/pulls/{number}/files?per_page=100&page={page}")
+            )
+            paths.extend(str(item.get("filename") or "") for item in batch)
+            if len(batch) < 100:
+                break
+        return paths
 
     def file_json(self, repository: str, path: str, ref: str) -> Mapping[str, Any]:
         encoded_path = quote(path.strip("/"), safe="/")
@@ -185,9 +321,31 @@ def resolve_tag_sha(repo_root: Path, tag: str) -> str:
     return run_git(repo_root, "rev-list", "-n", "1", tag).strip()
 
 
+def _stable_version_key(tag: str, tag_prefix: str) -> tuple[int, int, int] | None:
+    if not tag.startswith(tag_prefix):
+        return None
+    match = STABLE_VERSION_RE.match(tag[len(tag_prefix) :])
+    if not match:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
 def find_previous_tag(repo_root: Path, current_tag: str, tag_prefix: str) -> str | None:
+    """Return the newest tag whose version precedes the current release.
+
+    A higher version tag, such as an abandoned Release Please tag, is never a
+    valid base: selecting it would silently drop real changes from the range.
+    """
     tags = run_git(repo_root, "tag", "--list", f"{tag_prefix}*", "--sort=-v:refname").splitlines()
-    return next((tag for tag in tags if tag and tag != current_tag), None)
+    current_key = _stable_version_key(current_tag, tag_prefix)
+    for tag in tags:
+        if not tag or tag == current_tag:
+            continue
+        tag_key = _stable_version_key(tag, tag_prefix)
+        if current_key is None or (tag_key is not None and tag_key < current_key):
+            return tag
+    return None
 
 
 def commits_in_range(
@@ -196,6 +354,7 @@ def commits_in_range(
     current_tag: str,
     paths: Sequence[str],
     exclude_paths: Sequence[str] = (),
+    exclude_companion_paths: Sequence[str] = (),
 ) -> list[CommitRecord]:
     range_spec = f"{previous_tag}..{current_tag}" if previous_tag else current_tag
     pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
@@ -204,10 +363,54 @@ def commits_in_range(
     for commit_sha in shas.splitlines():
         if not commit_sha:
             continue
+        if exclude_companion_paths:
+            changed_files = run_git(
+                repo_root,
+                "show",
+                "--format=",
+                "--name-only",
+                commit_sha,
+            ).splitlines()
+            owns_excluded_path = any(
+                file == excluded or file.startswith(f"{excluded}/")
+                for file in changed_files
+                for excluded in exclude_paths
+            )
+            only_excluded_or_companion = all(
+                file in exclude_companion_paths
+                or any(
+                    file == excluded or file.startswith(f"{excluded}/")
+                    for excluded in exclude_paths
+                )
+                for file in changed_files
+            )
+            if owns_excluded_path and only_excluded_or_companion:
+                continue
         raw = run_git(repo_root, "show", "-s", "--format=%s%x00%B", commit_sha)
         subject, _, body = raw.partition("\x00")
         records.append(CommitRecord(commit_sha, subject.strip(), body.strip()))
     return records
+
+
+def is_release_metadata_only_commit(
+    repo_root: Path,
+    commit_sha: str,
+    paths: Sequence[str],
+    exclude_paths: Sequence[str],
+    metadata_paths: Sequence[str],
+) -> bool:
+    """Return whether a commit's in-scope diff touches only release metadata files."""
+    if not metadata_paths:
+        return False
+    pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
+    changed_files = [
+        file
+        for file in run_git(
+            repo_root, "show", "--format=", "--name-only", commit_sha, "--", *pathspecs
+        ).splitlines()
+        if file
+    ]
+    return bool(changed_files) and all(file in metadata_paths for file in changed_files)
 
 
 def parse_conventional_line(line: str) -> ConventionalEntry | None:
@@ -223,7 +426,13 @@ def parse_conventional_line(line: str) -> ConventionalEntry | None:
     )
 
 
-def release_entries(subject: str, commit_body: str, pull_body: str) -> list[ConventionalEntry]:
+def release_entries(
+    subject: str,
+    commit_body: str,
+    pull_body: str,
+    *,
+    allowed_types: set[str] = RELEASING_TYPES,
+) -> list[ConventionalEntry]:
     override = OVERRIDE_RE.search(pull_body or "")
     candidates = override.group("body").splitlines() if override else [subject]
     entries = [entry for line in candidates if (entry := parse_conventional_line(line))]
@@ -232,7 +441,7 @@ def release_entries(subject: str, commit_body: str, pull_body: str) -> list[Conv
             ConventionalEntry(entry.change_type, entry.scope, entry.summary, True)
             for entry in entries
         ]
-    return [entry for entry in entries if entry.change_type in RELEASING_TYPES]
+    return [entry for entry in entries if entry.change_type in allowed_types]
 
 
 def validate_pr_title(
@@ -240,6 +449,8 @@ def validate_pr_title(
     *,
     require_release: bool = False,
     allow_non_release: bool = False,
+    forbid_any_releasing_title: bool = False,
+    pull_body: str = "",
 ) -> None:
     entry = parse_conventional_line(title)
     if not entry:
@@ -252,6 +463,27 @@ def validate_pr_title(
         raise ReleaseError(
             f"unsupported pull request type '{entry.change_type}'; use one of: {allowed}"
         )
+    override = OVERRIDE_RE.search(pull_body or "")
+    override_entries = (
+        [
+            parsed
+            for line in override.group("body").splitlines()
+            if (parsed := parse_conventional_line(line))
+        ]
+        if override
+        else []
+    )
+    forbidden_entries = [entry, *override_entries]
+    if forbid_any_releasing_title and any(
+        candidate.change_type in RELEASING_TYPES or candidate.breaking
+        for candidate in forbidden_entries
+    ):
+        raise ReleaseError(
+            "Perception changes that also modify shared Cargo metadata cannot use a "
+            "releasing or breaking title or commit override because Release Please would "
+            "also classify the commit as a Driver release; use an accurate non-releasing "
+            "type with the 'no-release' label"
+        )
     if require_release and entry.change_type not in RELEASING_TYPES and not allow_non_release:
         raise ReleaseError(
             f"pull request type '{entry.change_type}' makes Release Please skip changes to "
@@ -262,12 +494,69 @@ def validate_pr_title(
         )
 
 
+def is_perception_only_diff(paths: Sequence[str]) -> bool:
+    """Return whether the complete diff is Perception-owned plus allowed companions."""
+    perception_owned = False
+    for path in paths:
+        if path in PERCEPTION_EXACT_PATHS or any(
+            path == root or path.startswith(f"{root}/") for root in PERCEPTION_OWNED_PATHS
+        ):
+            perception_owned = True
+            continue
+        if path in PERCEPTION_COMPANION_PATHS:
+            continue
+        return False
+    return perception_owned
+
+
 def login_from_email(email: str, overrides: Mapping[str, str]) -> str | None:
     normalized = email.strip().lower()
     if normalized in overrides:
         return overrides[normalized]
     match = NOREPLY_RE.match(normalized)
     return match.group("login") if match else None
+
+
+def lookup_email_login(github: Any, email: str) -> str | None:
+    """Best-effort GitHub account lookup by public email; never raises."""
+    lookup = getattr(github, "login_for_email", None)
+    if lookup is None:
+        return None
+    try:
+        return lookup(email) or None
+    except (ReleaseError, OSError, ValueError):
+        return None
+
+
+def pull_commit_email_logins(github: Any, repository: str, number: int) -> dict[str, str]:
+    """Map each commit email GitHub links to an account, from the commits API.
+
+    Uses ``author.login`` for the author email and ``committer.login`` for the
+    committer email of every commit in the pull request. Best effort.
+    """
+    fetch = getattr(github, "pull_commits", None)
+    if fetch is None or not number:
+        return {}
+    try:
+        commits = fetch(repository, number)
+    except (ReleaseError, OSError, ValueError):
+        return {}
+    logins: dict[str, str] = {}
+    for item in commits:
+        commit = item.get("commit") or {}
+        for role in ("author", "committer"):
+            email = str((commit.get(role) or {}).get("email") or "").strip().lower()
+            login = str((item.get(role) or {}).get("login") or "").strip()
+            if email and login:
+                logins.setdefault(email, login)
+    return logins
+
+
+def display_name_credit(name: str) -> str:
+    """A safe plain-text display name: never an @-mention, no markup."""
+    cleaned = re.sub(r"[\r\n\t]+", " ", name)
+    cleaned = re.sub(r"[@<>\[\]`*|\\]", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()[:80]
 
 
 def is_bot(login: str, configured_bots: set[str]) -> bool:
@@ -320,14 +609,202 @@ def _normalized_set(config: Mapping[str, Any], key: str) -> set[str]:
     return {str(item).strip().lower() for item in config.get(key, [])}
 
 
+def unresolved_coauthor_identities(
+    commits: Sequence[CommitRecord], config: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """Return commit trailers that cannot resolve to a trusted contributor."""
+    ignored = _normalized_set(config, "ignoredCoauthorEmails")
+    overrides = _normalized_map(config, "identityOverrides")
+    coauthor_overrides = _normalized_map(config, "coauthorOverrides")
+    unresolved: dict[tuple[str, str], dict[str, str]] = {}
+    for commit in commits:
+        for match in COAUTHOR_RE.finditer(commit.body):
+            name = match.group("name").strip() or "unknown"
+            email = match.group("email").strip().lower()
+            if not email or email in ignored:
+                continue
+            identity = f"{name} <{email}>".lower()
+            login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
+            if login:
+                continue
+            unresolved.setdefault(
+                (commit.sha, email), {"sha": commit.sha, "name": name, "email": email}
+            )
+    return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
+
+
+def resolve_login(
+    config: Mapping[str, Any],
+    name: str,
+    email: str,
+    linked_login: str = "",
+    github: Any = None,
+) -> str | None:
+    return (
+        linked_login
+        or _normalized_map(config, "coauthorOverrides").get(f"{name.strip()} <{email}>".lower())
+        or login_from_email(email, _normalized_map(config, "identityOverrides"))
+        or lookup_email_login(github, email)
+        or None
+    )
+
+
+def unsigned_cla_contributors(
+    *,
+    repository: str,
+    pull: Mapping[str, Any],
+    commits: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+    signed: set[str],
+    github: GitHubClient,
+) -> list[str]:
+    problems: list[str] = []
+    bots = _normalized_set(config, "bots")
+    ignored = _normalized_set(config, "ignoredCoauthorEmails")
+    unsigned: dict[str, set[int]] = defaultdict(set)
+
+    def add(number: int, name: str, email: str, linked_login: str = "") -> None:
+        email = email.strip().lower()
+        login = resolve_login(config, name, email, linked_login, github)
+        if email in ignored or (login and (is_bot(login, bots) or login.lower() in signed)):
+            return
+        person = f"@{login}" if login else f"{name.strip()} <{email}> (no GitHub login)"
+        unsigned[person].add(number)
+
+    def add_pull(
+        number: int, source: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
+    ) -> set[int]:
+        add(number, "", "", str((source.get("user") or {}).get("login") or ""))
+        sources = set(source_pull_numbers(str(source.get("body") or ""), repository))
+        for item in items:
+            commit = item.get("commit") or {}
+            author = commit.get("author") or {}
+            linked_author = str((item.get("author") or {}).get("login") or "")
+            add(
+                number, str(author.get("name") or ""), str(author.get("email") or ""), linked_author
+            )
+            message = str(commit.get("message") or "")
+            for match in COAUTHOR_RE.finditer(message):
+                add(number, match.group("name"), match.group("email"))
+            sources.update(source_pull_numbers(message, repository))
+        return sources
+
+    pull_number = int(pull.get("number") or 0)
+    for number in sorted(add_pull(pull_number, pull, commits) - {pull_number}):
+        try:
+            source = github.pull(repository, number)
+            items = github.all_pull_commits(repository, {**source, "number": number})
+        except CLA_LOOKUP_ERRORS as error:
+            problems.append(f"could not read source pull request #{number}: {error}")
+            continue
+        add_pull(number, source, items)
+    return problems + [
+        f"{person} has not signed the CLA; sign it on "
+        + " or ".join(f"#{n}" for n in sorted(numbers))
+        for person, numbers in sorted(unsigned.items())
+    ]
+
+
+def validate_pr_cla(*, repository: str, number: int, config_path: Path, github: GitHubClient) -> None:
+    """Enforce the CLA on Spaces paths; warn about every problem elsewhere."""
+    try:
+        paths = github.pull_files(repository, number)
+    except (ReleaseError, OSError, ValueError) as error:
+        raise ReleaseError(
+            f"cannot read the changed files of pull request #{number}; "
+            f"treating it as touching Spaces paths: {error}"
+        ) from error
+    strict = any(path and path.startswith(CLA_STRICT_PATHS) for path in paths)
+    problems: list[str] = []
+    pull = commits = config = None
+    signed: set[str] | None = None
+    try:
+        pull = github.pull(repository, number)
+        expected = pull.get("changed_files")
+        if not isinstance(expected, int) or expected != len(paths) or not all(paths):
+            problems.append(f"changed files of pull request #{number} are incomplete")
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"could not read pull request #{number}: {error}")
+    names: set[str] | None = None
+    try:
+        entries = github.file_json(repository, CLA_SIGNATURES_PATH, CLA_SIGNATURES_BRANCH).get(
+            "signedContributors"
+        )
+        if isinstance(entries, list):
+            names = {
+                str(entry.get("name") or "").lower() for entry in entries if isinstance(entry, Mapping)
+            }
+        else:
+            problems.append(
+                "signatures/version1/cla.json on cla-signatures has no signedContributors list"
+            )
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"signatures/version1/cla.json on cla-signatures could not be read: {error}")
+    allowed: set[str] | None = None
+    try:
+        match = CLA_ALLOWLIST_RE.search(CLA_WORKFLOW.read_text())
+    except (OSError, ValueError):
+        match = None
+    if match:
+        allowed = {login.strip().lower() for login in match.group("logins").split(",")}
+    else:
+        problems.append(".github/workflows/cla.yml has no readable allowlist")
+    try:
+        config = json.loads(config_path.read_text())
+        if pull is not None:
+            commits = github.all_pull_commits(repository, {**pull, "number": number})
+    except CLA_LOOKUP_ERRORS as error:
+        problems.append(f"could not read the pull request commits or attribution config: {error}")
+    if names is not None and allowed is not None:
+        signed = names | allowed
+    if signed is not None and pull is not None and commits is not None and config is not None:
+        problems += unsigned_cla_contributors(
+            repository=repository,
+            pull=pull,
+            commits=commits,
+            config=config,
+            signed=signed,
+            github=github,
+        )
+    if problems and strict:
+        raise ReleaseError(
+            "CLA is not signed or could not be verified on a pull request touching Spaces paths:\n- "
+            + "\n- ".join(problems)
+        )
+    for problem in problems:
+        print(f"::warning::{problem}")
+
+
+def is_clean_main_sync(github, repository, sha, parents, main_sha) -> bool:
+    if len(parents) != 2 or not main_sha:
+        return False
+    try:
+        ancestry = github.get(f"repos/{repository}/compare/{parents[1]}...{main_sha}")
+        if ancestry.get("status") not in {"ahead", "identical"}:
+            return False
+        changed_paths = []
+        for parent in parents:
+            files = github.get(f"repos/{repository}/compare/{parent}...{sha}").get("files")
+            if files is None or len(files) >= 300:
+                return False
+            changed_paths.append(
+                {file.get(key) for file in files for key in ("filename", "previous_filename")}
+                - {None}
+            )
+        return changed_paths[0].isdisjoint(changed_paths[1])
+    except (ReleaseError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def validate_pr_attribution(
     *,
     repository: str,
     pull: Mapping[str, Any],
     commits: Sequence[Mapping[str, Any]],
     base_config: Mapping[str, Any],
-    head_config: Mapping[str, Any],
+    identity_changes: Mapping[str, str | None],
     github: GitHubClient,
+    main_sha: str = "",
 ) -> None:
     """Fail closed when preserved human authorship cannot reach a GitHub login.
 
@@ -341,21 +818,16 @@ def validate_pr_attribution(
     opt_out = _normalized_set(base_config, "optOutHandles")
     ignored = _normalized_set(base_config, "ignoredCoauthorEmails")
     base_overrides = _normalized_map(base_config, "identityOverrides")
-    head_overrides = _normalized_map(head_config, "identityOverrides")
-    coauthor_overrides = _normalized_map(base_config, "coauthorOverrides")
 
-    changed_existing = {
-        email: (login, head_overrides.get(email))
-        for email, login in base_overrides.items()
-        if head_overrides.get(email) != login
-    }
-    if changed_existing:
-        details = ", ".join(
-            f"{email}={actual!r} (expected {expected!r})"
-            for email, (expected, actual) in sorted(changed_existing.items())
-        )
+    override_errors = [
+        f"{email}={login!r} (expected {base_overrides[email]!r})"
+        for email, login in sorted(identity_changes.items())
+        if email in base_overrides and login != base_overrides[email]
+    ]
+    if override_errors:
         raise ReleaseError(
-            "the pull request removes or changes trusted identityOverrides: " + details
+            "the pull request removes or changes trusted identityOverrides: "
+            + ", ".join(override_errors)
         )
 
     pull_number = int(pull.get("number") or 0)
@@ -366,21 +838,13 @@ def validate_pr_attribution(
     preserved_authors: list[dict[str, Any]] = []
     early_errors: list[str] = []
 
-    def resolved_login(name: str, email: str, linked_login: str = "") -> str | None:
-        login = (
-            linked_login
-            or coauthor_overrides.get(f"{name.strip()} <{email}>".lower())
-            or login_from_email(email, base_overrides)
-        )
-        return login or None
-
     commit_shas = {str(item.get("sha") or "") for item in commits}
     credited_coauthors: set[str] = set()
     for item in commits:
         message = str((item.get("commit") or {}).get("message") or "")
         for match in COAUTHOR_RE.finditer(message):
             email = match.group("email").strip().lower()
-            login = resolved_login(match.group("name"), email)
+            login = resolve_login(base_config, match.group("name"), email, "", github)
             if login and email not in ignored:
                 credited_coauthors.add(login.lower())
 
@@ -411,20 +875,12 @@ def validate_pr_attribution(
         author_name = str(author.get("name") or "")
         author_email = str(author.get("email") or "").strip().lower()
         linked_author = str((item.get("author") or {}).get("login") or "").strip()
-        author_login = resolved_login(author_name, author_email, linked_author)
-        committer = commit.get("committer") or {}
-        committer_email = str(committer.get("email") or "").strip().lower()
-        linked_committer = str((item.get("committer") or {}).get("login") or "").strip()
+        author_login = resolve_login(base_config, author_name, author_email, linked_author, github)
         parents = [str(parent.get("sha") or "") for parent in item.get("parents") or []]
         is_base_sync_merge = len(parents) > 1 and any(
             parent and parent not in commit_shas for parent in parents[1:]
         )
-        preserved_unlinked_author = (
-            not author_login
-            and bool(pull_login)
-            and linked_committer.lower() == pull_login.lower()
-            and author_email != committer_email
-        )
+        unlinked_author = not author_login and author_email not in ignored
         distinct_external_author = bool(author_login) and (
             author_login.lower() != pull_login.lower()
             and not is_bot(author_login, bots)
@@ -437,21 +893,23 @@ def validate_pr_attribution(
         #
         # A base synchronization merge imports a parent outside the PR commit set,
         # so it is not salvaged contributor work. Its distinct author must still
-        # have explicit coauthor credit elsewhere in the PR.
+        # have explicit coauthor credit elsewhere in the PR unless it is a clean main sync.
         if is_base_sync_merge and distinct_external_author:
-            if author_login.lower() not in credited_coauthors:
+            if author_login.lower() not in credited_coauthors and not is_clean_main_sync(
+                github, repository, sha, parents, main_sha
+            ):
                 trailer = f"Co-authored-by: {author_name} <{author_email}>"
                 early_errors.append(
                     f"base synchronization merge {sha} is authored by @{author_login}, "
                     "distinct from the landing PR author, but that contribution is not "
                     f"credited; add `{trailer}` to a commit in this PR"
                 )
-        elif preserved_unlinked_author and author_email not in ignored:
+        elif unlinked_author:
             record_unresolved(
                 email=author_email,
                 name=author_name,
                 sha=sha,
-                kind="commit author",
+                kind="unlinked commit author (would become a squash coauthor)",
                 references=references,
             )
         elif distinct_external_author:
@@ -473,7 +931,7 @@ def validate_pr_attribution(
         for match in COAUTHOR_RE.finditer(message):
             name = match.group("name").strip()
             email = match.group("email").strip().lower()
-            login = resolved_login(name, email)
+            login = resolve_login(base_config, name, email, "", github)
             if email in ignored:
                 continue
             if login and (
@@ -493,7 +951,9 @@ def validate_pr_attribution(
                 )
 
     new_overrides = {
-        email: login for email, login in head_overrides.items() if email not in base_overrides
+        email: login
+        for email, login in identity_changes.items()
+        if login is not None and email not in base_overrides
     }
     if not unresolved and not new_overrides and not preserved_authors and not early_errors:
         return
@@ -588,7 +1048,7 @@ def validate_pr_attribution(
             )
 
     for email, expected in sorted(suggestions.items()):
-        actual = head_overrides.get(email)
+        actual = identity_changes.get(email)
         if actual != expected:
             fragment = json.dumps(
                 {"identityOverrides": {email: expected}}, indent=2, sort_keys=True
@@ -660,21 +1120,30 @@ def merge_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     by_login: dict[str, dict[str, Any]] = {}
     for item in items:
         login = str(item["login"])
-        key = login.lower()
+        mention = bool(item.get("mention", True))
+        key = login.lower() if mention else f"name:{login.lower()}"
         existing = by_login.setdefault(
             key,
-            {"login": login, "roles": set(), "external": bool(item.get("external", True))},
+            {
+                "login": login,
+                "roles": set(),
+                "external": bool(item.get("external", True)),
+                "mention": mention,
+            },
         )
         existing["roles"].add(str(item["role"]))
         existing["external"] = existing["external"] and bool(item.get("external", True))
-    return [
-        {
+    merged = []
+    for item in by_login.values():
+        row = {
             "login": item["login"],
             "roles": sorted(item["roles"], key=lambda role: ROLE_ORDER.get(role, 99)),
             "external": item["external"],
         }
-        for item in sorted(by_login.values(), key=lambda value: value["login"].lower())
-    ]
+        if not item["mention"]:
+            row["mention"] = False
+        merged.append(row)
+    return sorted(merged, key=lambda value: (value.get("mention") is False, value["login"].lower()))
 
 
 def asset_checksums(asset_dir: Path | None) -> list[dict[str, Any]]:
@@ -701,13 +1170,66 @@ def asset_checksums(asset_dir: Path | None) -> list[dict[str, Any]]:
     return assets
 
 
+def merging_maintainer_squash_coauthor(
+    pull: Mapping[str, Any],
+    name: str,
+    github: GitHubClient,
+    repository: str,
+    internal_handles: set[str],
+) -> str | None:
+    """The internal maintainer behind a GitHub-generated squash co-author trailer.
+
+    When a maintainer pushes commits onto someone else's pull request and then
+    squash-merges it, GitHub writes ``Co-authored-by: <commit author name>
+    <account email>`` using that account's own (often private) email, which no
+    commit in the pull request carries. Such a trailer resolves to the merging
+    account only when every one of these holds:
+
+    - that account merged the pull request;
+    - it is listed in ``internalHandles`` (so no external contributor's credit
+      can be claimed or moved this way); and
+    - one of the pull request's commits is linked by GitHub to that account and
+      its git author name is exactly the trailer's name.
+
+    Anything else stays unresolved and fails closed.
+    """
+    number = int(pull.get("number") or 0)
+    if not number:
+        return None
+    merged_by = pull.get("merged_by")
+    if not merged_by:
+        merged_by = github.pull(repository, number).get("merged_by")
+    merger = str((merged_by or {}).get("login") or "").strip()
+    if not merger or merger.lower() not in internal_handles:
+        return None
+    wanted = name.strip().lower()
+    if not wanted:
+        return None
+    for item in github.pull_commits(repository, number):
+        linked = str((item.get("author") or {}).get("login") or "").strip()
+        author_name = str(((item.get("commit") or {}).get("author") or {}).get("name") or "")
+        if linked.lower() == merger.lower() and author_name.strip().lower() == wanted:
+            return merger
+    return None
+
+
 def _change_contributors(
     pull: Mapping[str, Any],
     commit: CommitRecord,
     github: GitHubClient,
     repository: str,
     config: Mapping[str, Any],
+    unresolved: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[int], bool]:
+    """Credit everyone behind one change; attribution is best effort and never raises.
+
+    A trailer resolves, in order, through ``coauthorOverrides``/``identityOverrides``
+    or a noreply email, the merging maintainer's squash trailer, the commits API
+    ``author.login``/``committer.login`` of the pull request's commits, and a
+    GitHub search by public email. Whatever stays unresolved is credited by
+    display name without an @-mention and appended to ``unresolved`` for the
+    rolling maintainer issue.
+    """
     bots = {str(item).lower() for item in config.get("bots", [])}
     overrides = {
         str(email).lower(): str(login)
@@ -723,6 +1245,7 @@ def _change_contributors(
     internal = {str(item).lower() for item in config.get("internalHandles", [])}
     opt_out = {str(item).lower() for item in config.get("optOutHandles", [])}
     items: list[dict[str, Any]] = []
+    pull_logins: dict[str, str] | None = None
 
     author_login = str((pull.get("user") or {}).get("login") or "")
     if author_login and not is_bot(author_login, bots) and author_login.lower() not in opt_out:
@@ -741,10 +1264,30 @@ def _change_contributors(
         identity = f"{match.group('name').strip()} <{email}>".lower()
         login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
         if not login:
-            raise ReleaseError(
-                f"commit {commit.sha} has an unresolved human coauthor email; "
-                "add an exceptional identityOverrides entry"
+            login = merging_maintainer_squash_coauthor(
+                pull, match.group("name"), github, repository, internal
             )
+        if not login:
+            if pull_logins is None:
+                pull_logins = pull_commit_email_logins(
+                    github, repository, int(pull.get("number") or 0)
+                )
+            login = pull_logins.get(email) or lookup_email_login(github, email)
+        if not login:
+            display = display_name_credit(match.group("name"))
+            if unresolved is not None:
+                unresolved.append(
+                    {
+                        "sha": commit.sha,
+                        "name": match.group("name").strip() or "unknown",
+                        "email": email,
+                    }
+                )
+            if display and display.lower() != "unknown":
+                items.append(
+                    {"login": display, "role": "coauthor", "external": True, "mention": False}
+                )
+            continue
         if is_bot(login, bots) or login.lower() in opt_out:
             continue
         items.append(contributor(login, "coauthor", login.lower() not in internal))
@@ -784,9 +1327,13 @@ def _change_contributors(
 
 
 def _dedupe_change_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    unique: dict[tuple[str, str, str], dict[str, Any]] = {}
     for item in items:
-        key = (str(item["login"]).lower(), str(item["role"]))
+        key = (
+            str(item["login"]).lower(),
+            str(item["role"]),
+            str(item.get("mention", True)),
+        )
         unique[key] = dict(item)
     return sorted(
         unique.values(),
@@ -845,8 +1392,13 @@ def build_manifest(
     github: GitHubClient,
     release_ref: str | None = None,
     exclude_paths: Sequence[str] = (),
+    exclude_companion_paths: Sequence[str] = (),
+    release_metadata_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
+    channel: str = "stable",
 ) -> dict[str, Any]:
+    if channel not in {"stable", "nightly"}:
+        raise ReleaseError(f"unsupported release channel: {channel}")
     current_ref = release_ref or tag
     actual_sha = resolve_tag_sha(repo_root, current_ref)
     if actual_sha != expected_sha:
@@ -859,35 +1411,68 @@ def build_manifest(
     pull_commits: dict[int, set[str]] = defaultdict(set)
     all_contributors: list[dict[str, Any]] = []
     visual_requested = False
+    unresolved_identities: list[dict[str, str]] = []
 
-    for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
-        if re.match(
-            r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE
-        ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
+    for commit in commits_in_range(
+        repo_root,
+        previous_tag,
+        current_ref,
+        paths,
+        exclude_paths,
+        exclude_companion_paths,
+    ):
+        if (
+            re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE)
+            or LEGACY_RELEASE_BUMP_RE.match(commit.subject)
+            or PUBLISHED_INSTALLER_BUMP_RE.match(commit.subject)
+        ):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
-        subject_is_releasing = bool(
-            parsed_subject and parsed_subject.change_type in RELEASING_TYPES
-        )
+        included_types = ALLOWED_TITLE_TYPES if channel == "nightly" else RELEASING_TYPES
+        subject_is_included = bool(parsed_subject and parsed_subject.change_type in included_types)
         pull = resolve_pull_for_commit(
             github,
             repository,
             commit,
-            required=subject_is_releasing,
+            required=subject_is_included,
         )
         if pull is None:
             continue
         pull_body = str(pull.get("body") or "")
-        if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
+        if not subject_is_included and not OVERRIDE_RE.search(pull_body):
+            continue
+        # A maintainer-labeled release-control pull request that only edits
+        # version or changelog metadata is part of preparing this release, not
+        # a product change the changelog must cite. Product diffs stay required.
+        if (
+            channel == "stable"
+            and NO_RELEASE_LABEL in {str(label.get("name")) for label in pull.get("labels") or []}
+            and is_release_metadata_only_commit(
+                repo_root, commit.sha, paths, exclude_paths, release_metadata_paths
+            )
+        ):
             continue
         pull_number = int(pull["number"])
         pull_commits[pull_number].add(commit.sha)
-        entries = release_entries(commit.subject, commit.body, pull_body)
+        entries = release_entries(
+            commit.subject,
+            commit.body,
+            pull_body,
+            allowed_types=included_types,
+        )
         if not entries:
             continue
-        contributors, issues, pull_visual = _change_contributors(
-            pull, commit, github, repository, attribution_config
-        )
+        try:
+            contributors, issues, pull_visual = _change_contributors(
+                pull,
+                commit,
+                github,
+                repository,
+                attribution_config,
+                unresolved=unresolved_identities,
+            )
+        except ReleaseError as error:
+            raise ReleaseError(f"pull request #{pull_number}: {error}") from error
         visual_requested = visual_requested or pull_visual
         all_contributors.extend(contributors)
 
@@ -908,33 +1493,37 @@ def build_manifest(
                 }
             )
 
-    if not changes:
+    if not changes and channel == "stable":
         raise ReleaseError(f"no releasing pull requests found for {tag}")
 
-    changelog_section = extract_changelog_section(changelog_path, version)
-    missing_prs = sorted(
-        {
-            int(change["pr"])
-            for change in changes
-            if not changelog_references_change(
-                changelog_section,
-                int(change["pr"]),
-                pull_commits[int(change["pr"])],
-            )
-        }
-    )
-    if missing_prs:
-        raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    if channel == "stable":
+        changelog_content = extract_changelog_section(changelog_path, version)
+        missing_prs = sorted(
+            {
+                int(change["pr"])
+                for change in changes
+                if not changelog_references_change(
+                    changelog_content,
+                    int(change["pr"]),
+                    pull_commits[int(change["pr"])],
+                )
+            }
+        )
+        if missing_prs:
+            raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    else:
+        changelog_content = changelog_path.read_text()
 
-    bump = release_bump(changes, version)
+    bump = release_bump(changes, version) if changes else "patch"
 
     owner, repo = repository.split("/", 1)
+    compare_target = actual_sha if channel == "nightly" else tag
     compare_url = (
-        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(tag)}"
+        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(compare_target)}"
         if previous_tag
         else f"https://github.com/{owner}/{repo}/releases/tag/{quote(tag)}"
     )
-    return {
+    manifest = {
         "schema": (
             f"https://raw.githubusercontent.com/{repository}/{actual_sha}/"
             ".github/release-manifest.schema.json"
@@ -951,23 +1540,35 @@ def build_manifest(
         "compareUrl": compare_url,
         "changelog": {
             "path": changelog_path.relative_to(repo_root).as_posix(),
-            "sha256": sha256(changelog_section.encode()).hexdigest(),
+            "sha256": sha256(changelog_content.encode()).hexdigest(),
         },
-        "visualRequested": visual_requested or bump == "major",
+        "visualRequested": channel == "stable" and (visual_requested or bump == "major"),
         "changes": changes,
         "contributors": merge_contributors(all_contributors),
         "assets": asset_checksums(asset_dir),
     }
+    if channel == "nightly":
+        manifest["channel"] = "nightly"
+    deduped = _dedupe_identities(unresolved_identities)
+    if deduped:
+        manifest["unresolvedIdentities"] = deduped
+    return manifest
 
 
-def _thanks(change: Mapping[str, Any]) -> str:
+def credit(item: Mapping[str, Any]) -> str:
+    """``@login`` for a resolved account, the plain display name otherwise."""
+    login = str(item["login"])
+    return f"@{login}" if item.get("mention", True) else login
+
+
+def format_change_thanks(change: Mapping[str, Any]) -> str:
     external: dict[str, Mapping[str, Any]] = {}
     reporters: dict[str, Mapping[str, Any]] = {}
     for item in change.get("contributors", []):
         if not item.get("external"):
             continue
         login = str(item["login"])
-        key = login.lower()
+        key = login.lower() if item.get("mention", True) else f"name:{login.lower()}"
         if item.get("role") in {"author", "coauthor"}:
             external.setdefault(key, item)
         elif item.get("role") == "reporter":
@@ -977,14 +1578,9 @@ def _thanks(change: Mapping[str, Any]) -> str:
 
     parts: list[str] = []
     if external:
-        parts.append(
-            "Thanks " + ", ".join(f"@{item['login']}" for item in external.values())
-        )
+        parts.append("Thanks " + ", ".join(credit(item) for item in external.values()))
     if reporters:
-        parts.append(
-            "reported by "
-            + ", ".join(f"@{item['login']}" for item in reporters.values())
-        )
+        parts.append("reported by " + ", ".join(credit(item) for item in reporters.values()))
     return "; ".join(parts)
 
 
@@ -1027,7 +1623,7 @@ def render_body(manifest: Mapping[str, Any], footer: str = "") -> str:
             continue
         lines.extend(["", f"## {TYPE_HEADINGS[change_type]}", ""])
         for change in grouped[change_type]:
-            suffix = _thanks(change)
+            suffix = format_change_thanks(change)
             bullet = (
                 f"- {change['summary']}. ([#{change['pr']}]({repository_url}/pull/{change['pr']}))"
             )
@@ -1040,7 +1636,7 @@ def render_body(manifest: Mapping[str, Any], footer: str = "") -> str:
     if external:
         lines.append(
             "Thanks to "
-            + ", ".join(f"@{item['login']}" for item in external)
+            + ", ".join(credit(item) for item in external)
             + " for contributing to this release."
         )
     else:
@@ -1116,6 +1712,122 @@ def render_card_alt_text(manifest: Mapping[str, Any]) -> str:
     )
 
 
+def _dedupe_identities(items: Iterable[Mapping[str, str]]) -> list[dict[str, str]]:
+    unique: dict[str, dict[str, str]] = {}
+    for item in items:
+        email = str(item.get("email") or "").strip().lower()
+        if email:
+            unique.setdefault(
+                email,
+                {
+                    "sha": str(item.get("sha") or ""),
+                    "name": str(item.get("name") or "unknown"),
+                    "email": email,
+                },
+            )
+    return sorted(unique.values(), key=lambda value: value["email"])
+
+
+UNRESOLVED_ISSUE_TITLE = "Contributor attribution: unresolved identities"
+UNRESOLVED_ENTRY_RE = re.compile(r"^- `(?P<email>[^`\s]+)`: (?P<rest>.+)$")
+UNRESOLVED_ISSUE_INTRO = (
+    "Contributor attribution is best effort and never blocks a pull request, nightly or "
+    "stable release. These commit identities could not be linked to a GitHub account, so "
+    "release notes credit them by display name without an @-mention.\n\n"
+    "To credit one by handle, link the email to the GitHub account or add a verified "
+    "`identityOverrides` entry in `.github/release-attribution-config.json` (no wildcard or "
+    "human-email ignores). Resolved entries drop off this list on the next refresh.\n\n"
+    "Unresolved identities:\n"
+)
+
+
+def merge_unresolved_issue_body(
+    existing_body: str,
+    identities: Sequence[Mapping[str, str]],
+    config: Mapping[str, Any],
+    source: str,
+    resolves: Callable[[str], str | None] | None = None,
+) -> str:
+    """The rolling issue body: deduplicated by email, minus identities now resolved.
+
+    ``resolves`` re-checks every stored email (for example through a GitHub
+    lookup); overrides, coauthor overrides and noreply emails always apply.
+    """
+    overrides = _normalized_map(config, "identityOverrides")
+    coauthor_emails = {
+        key.rsplit("<", 1)[-1].rstrip(">").strip()
+        for key in _normalized_map(config, "coauthorOverrides")
+    }
+    entries: dict[str, str] = {}
+    for line in existing_body.splitlines():
+        match = UNRESOLVED_ENTRY_RE.match(line.strip())
+        if match:
+            entries[match.group("email").lower()] = match.group("rest")
+    for item in identities:
+        email = str(item["email"]).strip().lower()
+        name = display_name_credit(str(item.get("name") or "unknown")) or "unknown"
+        entries.setdefault(email, f"{name} (commit `{item.get('sha', '')}`, {source})")
+    lines = [
+        f"- `{email}`: {rest}"
+        for email, rest in sorted(entries.items())
+        if login_from_email(email, overrides) is None
+        and email not in coauthor_emails
+        and not (resolves and resolves(email))
+    ]
+    return UNRESOLVED_ISSUE_INTRO + ("\n".join(lines) if lines else "_None right now._") + "\n"
+
+
+def report_unresolved_identities(
+    github: GitHubClient,
+    repository: str,
+    identities: Sequence[Mapping[str, str]],
+    config: Mapping[str, Any],
+    source: str,
+) -> int | None:
+    """Create or refresh the one rolling maintainer issue. Best effort, never raises."""
+    try:
+        pending = [
+            item
+            for item in _dedupe_identities(identities)
+            if not lookup_email_login(github, item["email"])
+        ]
+        found = github.get(
+            "search/issues?q="
+            + quote(f'repo:{repository} is:issue is:open in:title "{UNRESOLVED_ISSUE_TITLE}"')
+            + "&per_page=20"
+        )
+        existing = next(
+            (
+                issue
+                for issue in found.get("items") or []
+                if issue.get("title") == UNRESOLVED_ISSUE_TITLE
+            ),
+            None,
+        )
+        if not existing and not pending:
+            return None
+        body = merge_unresolved_issue_body(
+            str((existing or {}).get("body") or ""),
+            pending,
+            config,
+            source,
+            resolves=lambda email: lookup_email_login(github, email),
+        )
+        if existing:
+            if body != str(existing.get("body") or ""):
+                github.send("PATCH", f"repos/{repository}/issues/{existing['number']}", {"body": body})
+            return int(existing["number"])
+        created = github.send(
+            "POST",
+            f"repos/{repository}/issues",
+            {"title": UNRESOLVED_ISSUE_TITLE, "body": body},
+        )
+        return int(created["number"])
+    except Exception as error:  # noqa: BLE001 - reporting must never fail a release
+        print(f"::warning::could not update the unresolved attribution issue: {error}")
+        return None
+
+
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -1143,23 +1855,49 @@ def collect_command(args: argparse.Namespace) -> None:
         github=client,
         release_ref=args.ref,
         exclude_paths=args.exclude_path,
+        exclude_companion_paths=args.exclude_companion_path,
+        release_metadata_paths=args.release_metadata_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
+        channel=args.channel,
     )
     write_json(args.output, manifest)
     print(f"wrote {args.output} with {len(manifest['changes'])} changes")
+    unresolved = manifest.get("unresolvedIdentities") or []
+    if unresolved:
+        print(
+            f"::warning::{len(unresolved)} contributor identities could not be linked to "
+            "GitHub; they are credited by display name without an @-mention"
+        )
+    if args.report_issue:
+        # Also refreshes the rolling issue when nothing is unresolved, so resolved entries drop off.
+        report_unresolved_identities(client, args.repository, unresolved, config, args.tag)
 
 
-def validate_pr_command(args: argparse.Namespace) -> None:
+
+def report_unresolved_command(args: argparse.Namespace) -> None:
+    identities = json.loads(args.identities.read_text())
+    config = json.loads(args.config.read_text())
+    client = GitHubClient(
+        os.environ.get("GH_TOKEN", ""), os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    )
+    report_unresolved_identities(client, args.repository, identities, config, args.source)
+
+
+def pull_request_from_event(args: argparse.Namespace) -> tuple[str, int, GitHubClient]:
     event = json.loads(args.event.read_text())
     event_pull = event.get("pull_request") or {}
     repository = str((event.get("repository") or {}).get("full_name") or "")
     number = int(event_pull.get("number") or event.get("number") or 0)
     if not repository or not number:
         raise ReleaseError("event does not identify a repository and pull request")
-
     client = GitHubClient(
         os.environ.get("GH_TOKEN", ""), os.environ.get("GITHUB_API_URL", "https://api.github.com")
     )
+    return repository, number, client
+
+
+def validate_pr_command(args: argparse.Namespace) -> None:
+    repository, number, client = pull_request_from_event(args)
     pull = client.pull(repository, number)
     head = pull.get("head") or {}
     head_repository = str((head.get("repo") or {}).get("full_name") or "")
@@ -1167,25 +1905,67 @@ def validate_pr_command(args: argparse.Namespace) -> None:
     if not head_repository or not head_sha:
         raise ReleaseError(f"pull request #{number} has no readable head repository")
 
-    commits = client.pull_commits(repository, number)
-    expected_commits = int(pull.get("commits") or len(commits))
-    if len(commits) != expected_commits:
-        raise ReleaseError(
-            f"GitHub returned {len(commits)} of {expected_commits} commits for pull request "
-            f"#{number}; refusing partial attribution validation"
-        )
+    commits = client.all_pull_commits(repository, {**pull, "number": number})
 
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)
+    trusted_sha = run_git(Path.cwd(), "rev-parse", "HEAD").strip()
+    comparison = client.get(
+        f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1"
+    )
+    ancestor_sha = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
+    if not ancestor_sha:
+        raise ReleaseError("GitHub returned no merge base for attribution validation")
+    ancestor_config = client.file_json(repository, args.config.as_posix(), ancestor_sha)
+    ancestor_overrides = _normalized_map(ancestor_config, "identityOverrides")
+    head_overrides = _normalized_map(head_config, "identityOverrides")
+    identity_changes = {
+        email: head_overrides.get(email)
+        for email in ancestor_overrides.keys() | head_overrides.keys()
+        if head_overrides.get(email) != ancestor_overrides.get(email)
+    }
     validate_pr_attribution(
         repository=repository,
         pull=pull,
         commits=commits,
         base_config=base_config,
-        head_config=head_config,
+        identity_changes=identity_changes,
         github=client,
+        main_sha=trusted_sha,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")
+
+
+def report_pr_attribution(args: argparse.Namespace) -> None:
+    """Run the PR attribution validation as information only.
+
+    The CLA check runs first and enforces the path policy: it fails on Spaces
+    paths (or an unreadable file list). Attribution is best effort: every finding, and any error while checking,
+    becomes a warning annotation and step summary. The check always passes so
+    the required ``contributor-attribution`` status never blocks a merge.
+    """
+    repository, number, client = pull_request_from_event(args)
+    validate_pr_cla(
+        repository=repository, number=number, config_path=args.config, github=client
+    )
+    try:
+        validate_pr_command(args)
+        return
+    except Exception as error:  # noqa: BLE001 - informational check must never fail
+        message = str(error)
+    warning = (
+        "Contributor attribution warning (informational, this check still passes). "
+        "Unresolved contributors are credited by display name without an @-mention in release "
+        "notes. To credit by handle, use a GitHub-linked or noreply commit email, or add a "
+        "verified `identityOverrides` entry.\n" + message
+    )
+    for line in message.splitlines() or [message]:
+        print(f"::warning title=Contributor attribution::{line}")
+    print(warning)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"### Contributor attribution (informational)\n\n{warning}\n")
 
 
 def render_command(args: argparse.Namespace) -> None:
@@ -1215,6 +1995,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--title", required=True)
     validate.add_argument("--require-release", action="store_true")
     validate.add_argument("--allow-non-release", action="store_true")
+    validate.add_argument("--forbid-any-releasing-title", action="store_true")
+    validate.add_argument("--pull-body", default="")
+
+    classify = subparsers.add_parser("classify-perception-diff")
+    classify.add_argument("--path", action="append", default=[])
 
     validate_pr = subparsers.add_parser("validate-pr")
     validate_pr.add_argument("--event", type=Path, required=True)
@@ -1235,12 +2020,33 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--sha", required=True)
     collect.add_argument("--path", action="append", required=True)
     collect.add_argument("--exclude-path", action="append", default=[])
+    collect.add_argument("--exclude-companion-path", action="append", default=[])
+    collect.add_argument(
+        "--release-metadata-path",
+        action="append",
+        default=[],
+        help="version or changelog file a no-release release-control PR may edit",
+    )
     collect.add_argument("--changelog", type=Path, required=True)
     collect.add_argument(
         "--config", type=Path, default=Path(".github/release-attribution-config.json")
     )
     collect.add_argument("--asset-dir", type=Path)
+    collect.add_argument("--channel", choices=("stable", "nightly"), default="stable")
     collect.add_argument("--output", type=Path, required=True)
+    collect.add_argument(
+        "--report-issue",
+        action="store_true",
+        help="record unresolved identities in the rolling maintainer issue (best effort)",
+    )
+
+    report = subparsers.add_parser("report-unresolved")
+    report.add_argument("--repository", required=True)
+    report.add_argument("--identities", type=Path, required=True, help="JSON list of identities")
+    report.add_argument("--source", default="nightly")
+    report.add_argument(
+        "--config", type=Path, default=Path(".github/release-attribution-config.json")
+    )
 
     render = subparsers.add_parser("render")
     render.add_argument("--manifest", type=Path, required=True)
@@ -1261,12 +2067,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.title,
                 require_release=args.require_release,
                 allow_non_release=args.allow_non_release,
+                forbid_any_releasing_title=args.forbid_any_releasing_title,
+                pull_body=args.pull_body,
             )
             print("release title is valid")
+        elif args.command == "classify-perception-diff":
+            print("true" if is_perception_only_diff(args.path) else "false")
         elif args.command == "validate-pr":
-            validate_pr_command(args)
+            report_pr_attribution(args)
         elif args.command == "collect":
             collect_command(args)
+        elif args.command == "report-unresolved":
+            report_unresolved_command(args)
         elif args.command == "render":
             render_command(args)
         else:

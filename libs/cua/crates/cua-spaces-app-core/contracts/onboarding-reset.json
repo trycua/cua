@@ -1,0 +1,13 @@
+{
+  "webKeys": [
+    "cua-spaces:onboarding",
+    "cua-spaces:first-run",
+    "cua.upsell.dismissed.onboarding",
+    "cua.firstRun.teammates",
+    "cua.connectedApps"
+  ],
+  "hostFiles": [
+    "onboarding.json"
+  ],
+  "firstStep": "welcome"
+}

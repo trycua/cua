@@ -166,7 +166,7 @@ export function VMStatusBanner({
         <p className="mt-0.5 text-orange-700 text-xs dark:text-orange-300">
           {versionInfo?.unreachable
             ? 'The sandbox is slow to respond. Try waiting a moment or restarting it.'
-            : 'The computer-server is out of date. Restart the sandbox to update.'}
+            : 'The sandbox software is out of date. Restart the sandbox to update.'}
         </p>
       </div>
       <div className="flex items-center gap-2">

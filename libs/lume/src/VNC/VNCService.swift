@@ -11,6 +11,9 @@ protocol VNCService {
     func start(port: Int, password: String?, virtualMachine: VZVirtualMachine?) async throws
     func stop()
     func openClient(url: String) async throws
+    /// The VM directory moved (the VM was renamed while running): its
+    /// session file lives there now.
+    func relocate(to vmDirectory: VMDirectory)
 
     // Automation support
     var virtualMachine: VZVirtualMachine? { get }
@@ -49,7 +52,7 @@ struct VNCKeyModifiers: OptionSet, Sendable {
 @MainActor
 final class DefaultVNCService: VNCService {
     private var vncServer: Any?
-    private let vmDirectory: VMDirectory
+    private var vmDirectory: VMDirectory
     private var _virtualMachine: VZVirtualMachine?
     private var vncClient: VNCClient?
     private var vncPort: UInt16 = 0
@@ -62,10 +65,15 @@ final class DefaultVNCService: VNCService {
     init(vmDirectory: VMDirectory) {
         self.vmDirectory = vmDirectory
     }
+
+    func relocate(to vmDirectory: VMDirectory) {
+        self.vmDirectory = vmDirectory
+    }
     
     var url: String? {
         get {
-            return try? vmDirectory.loadSession().url
+            // A VNC-disabled marker has no URL, so this stays nil for those runs.
+            return (try? vmDirectory.loadSession())?.url
         }
     }
     

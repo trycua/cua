@@ -85,11 +85,15 @@ enum APIDocExtractor {
             updateVM,
             runVM,
             stopVM,
+            suspendVM,
+            renameVM,
 
             // Image Management
             getImages,
             getIPSW,
             pullImage,
+            pullImageAsync,
+            cancelPull,
             pushImage,
             pruneImages,
 
@@ -157,12 +161,17 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "status", type: "string", required: true, description: "VM status (running, stopped)", defaultValue: nil),
                     APIFieldDoc(name: "vncUrl", type: "string", required: false, description: "VNC URL if running", defaultValue: nil),
                     APIFieldDoc(name: "ipAddress", type: "string", required: false, description: "IP address if running", defaultValue: nil),
-                    APIFieldDoc(name: "locationName", type: "string", required: true, description: "Storage location name", defaultValue: nil)
+                    APIFieldDoc(name: "locationName", type: "string", required: true, description: "Storage location name", defaultValue: nil),
+                    APIFieldDoc(name: "savedState", type: "boolean", required: false, description: "The VM has a saved machine state (suspend) that its next run resumes", defaultValue: nil),
+                    APIFieldDoc(name: "downloadProgress", type: "number", required: false, description: "While an async pull runs (status \"pulling\"): downloaded percent, 0 to 100", defaultValue: nil),
+                    APIFieldDoc(name: "downloadedBytes", type: "integer", required: false, description: "While an async pull runs: bytes downloaded so far", defaultValue: nil),
+                    APIFieldDoc(name: "totalBytes", type: "integer", required: false, description: "While an async pull runs: total bytes to download (0 until known)", defaultValue: nil),
+                    APIFieldDoc(name: "bytesPerSecond", type: "number", required: false, description: "While an async pull runs: smoothed transfer rate in bytes per second", defaultValue: nil)
                 ]
             ),
             statusCodes: [
-                APIStatusCodeDoc(code: 200, description: "Success"),
-                APIStatusCodeDoc(code: 400, description: "VM not found or invalid request")
+                APIStatusCodeDoc(code: 200, description: "Success (while an async pull runs, only name, status \"pulling\", downloadProgress, downloadedBytes, totalBytes and bytesPerSecond)"),
+                APIStatusCodeDoc(code: 400, description: "VM not found, invalid request, or the async pull failed")
             ]
         )
     }
@@ -241,7 +250,8 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "name", type: "string", required: true, description: "Name of the source VM", defaultValue: nil),
                     APIFieldDoc(name: "newName", type: "string", required: true, description: "Name for the cloned VM", defaultValue: nil),
                     APIFieldDoc(name: "sourceLocation", type: "string", required: false, description: "Source VM storage location", defaultValue: nil),
-                    APIFieldDoc(name: "destLocation", type: "string", required: false, description: "Destination VM storage location", defaultValue: nil)
+                    APIFieldDoc(name: "destLocation", type: "string", required: false, description: "Destination VM storage location", defaultValue: nil),
+                    APIFieldDoc(name: "withSavedState", type: "boolean", required: false, description: "Clone the source's saved machine state too (see suspend): the clone keeps the source's MAC address and machine identifier, which the state is bound to, and its first run resumes the saved guest", defaultValue: "false")
                 ]
             ),
             responseBody: APIResponseDoc(
@@ -310,7 +320,9 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "sharedDirectories", type: "array", required: false, description: "Directories to share with the VM", defaultValue: nil),
                     APIFieldDoc(name: "recoveryMode", type: "boolean", required: false, description: "Boot macOS VM in recovery mode", defaultValue: "false"),
                     APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil),
-                    APIFieldDoc(name: "clipboard", type: "boolean", required: false, description: "Enable bidirectional clipboard sync via SSH (experimental)", defaultValue: "false")
+                    APIFieldDoc(name: "clipboard", type: "boolean", required: false, description: "Enable bidirectional clipboard sync via SSH (experimental)", defaultValue: "false"),
+                    APIFieldDoc(name: "vnc", type: "string", required: false, description: "VNC server policy: 'enabled' or 'disabled'. 'disabled' requires noDisplay=true, starts no VNC listener, and reports a null vncUrl", defaultValue: "enabled"),
+                    APIFieldDoc(name: "forwards", type: "array", required: false, description: "Guest ports to publish on host loopback ports over a virtio socket device, through Cua's guest vsock agent. GET reports the host ports under 'forwards' once the agent answers; these connections are not subject to macOS Local Network privacy or VPN routes", defaultValue: nil)
                 ]
             ),
             responseBody: APIResponseDoc(
@@ -320,6 +332,7 @@ enum APIDocExtractor {
             ),
             statusCodes: [
                 APIStatusCodeDoc(code: 202, description: "VM start initiated (async operation)"),
+                APIStatusCodeDoc(code: 409, description: "Host limit of running macOS guests reached"),
                 APIStatusCodeDoc(code: 400, description: "Invalid request or VM not found")
             ]
         )
@@ -350,6 +363,59 @@ enum APIDocExtractor {
             statusCodes: [
                 APIStatusCodeDoc(code: 200, description: "VM stopped successfully"),
                 APIStatusCodeDoc(code: 400, description: "Stop operation failed")
+            ]
+        )
+    }
+
+    private static var suspendVM: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/vms/:name/suspend",
+            description: "Suspend a running virtual machine to disk (its next run resumes it)",
+            category: "VM Management",
+            pathParameters: [
+                APIParameterDoc(name: "name", type: "string", required: true, description: "Name of the VM to suspend")
+            ],
+            queryParameters: [],
+            requestBody: nil,
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Success message",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 200, description: "The VM's memory and device state were saved next to its disk (macOS 14 or later) and the VM stopped; a run resumes it, a cold boot discards the state"),
+                APIStatusCodeDoc(code: 400, description: "The VM does not run in this lume serve, or the save failed (the VM keeps running)")
+            ]
+        )
+    }
+
+    private static var renameVM: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/vms/:name/rename",
+            description: "Rename a virtual machine, running or stopped",
+            category: "VM Management",
+            pathParameters: [
+                APIParameterDoc(name: "name", type: "string", required: true, description: "Name of the VM to rename")
+            ],
+            queryParameters: [],
+            requestBody: APIRequestBodyDoc(
+                contentType: "application/json",
+                description: "Rename parameters",
+                fields: [
+                    APIFieldDoc(name: "newName", type: "string", required: true, description: "The VM's new name", defaultValue: nil),
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                ]
+            ),
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Success message with the new name",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 200, description: "VM renamed (a running VM keeps running)"),
+                APIStatusCodeDoc(code: 400, description: "The name is taken or invalid, or the VM runs in another process than this lume serve")
             ]
         )
     }
@@ -427,6 +493,66 @@ enum APIDocExtractor {
             statusCodes: [
                 APIStatusCodeDoc(code: 200, description: "Image pulled successfully"),
                 APIStatusCodeDoc(code: 400, description: "Pull operation failed")
+            ]
+        )
+    }
+
+    private static var pullImageAsync: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/pull/start",
+            description: "Start a background pull",
+            category: "Image Management",
+            pathParameters: [],
+            queryParameters: [],
+            requestBody: APIRequestBodyDoc(
+                contentType: "application/json",
+                description: "Pull parameters (same as POST /lume/pull)",
+                fields: [
+                    APIFieldDoc(name: "image", type: "string", required: true, description: "Image to pull (format: name:tag)", defaultValue: nil),
+                    APIFieldDoc(name: "name", type: "string", required: false, description: "Name for the resulting VM", defaultValue: nil),
+                    APIFieldDoc(name: "registry", type: "string", required: false, description: "Container registry URL", defaultValue: "ghcr.io"),
+                    APIFieldDoc(name: "organization", type: "string", required: false, description: "Organization to pull from", defaultValue: "trycua"),
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                ]
+            ),
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Object with message, name and image. A start for a name that is already pulling joins that pull (message \"Pull already in progress\")",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 202, description: "Pull started or already in progress"),
+                APIStatusCodeDoc(code: 400, description: "Invalid request body")
+            ]
+        )
+    }
+
+    private static var cancelPull: APIEndpointDoc {
+        APIEndpointDoc(
+            method: "POST",
+            path: "/lume/pull/cancel",
+            description: "Cancel a background pull",
+            category: "Image Management",
+            pathParameters: [],
+            queryParameters: [],
+            requestBody: APIRequestBodyDoc(
+                contentType: "application/json",
+                description: "The VM name the pull was started for",
+                fields: [
+                    APIFieldDoc(name: "name", type: "string", required: true, description: "VM name of the pull to cancel", defaultValue: nil)
+                ]
+            ),
+            responseBody: APIResponseDoc(
+                contentType: "application/json",
+                description: "Object with message (\"Pull cancelled\") and name",
+                fields: nil
+            ),
+            statusCodes: [
+                APIStatusCodeDoc(code: 200, description: "The pull stopped and was cleaned up"),
+                APIStatusCodeDoc(code: 400, description: "Invalid request body"),
+                APIStatusCodeDoc(code: 404, description: "No background pull in progress for the name (for example it already finished or was cancelled)"),
+                APIStatusCodeDoc(code: 500, description: "The pull did not stop within 30 seconds")
             ]
         )
     }

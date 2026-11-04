@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "cua/env/v1/stream.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Multi-user presence: who is looking at the guest and where their cursors
+// are. Agent cursors are published automatically when an agent principal
+// drives `ComputerService` or cua-driver tools.
+//
+// Cursor updates are unary (`UpdateCursor`) so browsers on gRPC-Web can send
+// them; events arrive on the `Join` server stream.
+service PresenceService {
+  // Joins presence and streams events until `Leave` or disconnect. The first
+  // event is `PresenceJoined` with the caller's participant id and the
+  // current roster.
+  rpc Join(JoinRequest) returns (stream JoinResponse);
+  // Publishes the caller's cursor.
+  rpc UpdateCursor(UpdateCursorRequest) returns (UpdateCursorResponse);
+  // Leaves presence and ends the caller's `Join` stream.
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+}
+
+// A participant.
+message Participant {
+  // Server-assigned participant id, unique per `Join`.
+  string participant_id = 1;
+  // Who it is. `color` is the server-assigned color, which may differ from
+  // the requested one.
+  Principal principal = 2;
+  // When it joined.
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+// Where a cursor is.
+message CursorPosition {
+  // Target the cursor is over. Unset means the primary desktop.
+  string display_id = 1;
+  // Window the cursor is over, when the participant is viewing a window
+  // stream.
+  WindowRef window = 2;
+  // Position normalized to [0, 1] within the window (if set) or the
+  // display, so viewers at different scales agree.
+  Point position = 3;
+  // False hides the cursor (for example the pointer left the viewer).
+  bool visible = 4;
+  // The pointer shape the guest would show at `position`, computed by the
+  // server for participants that joined with `JoinRequest.cursor_shapes`.
+  // Ignored in `UpdateCursorRequest`. `CURSOR_SHAPE_UNSPECIFIED` (older
+  // daemons, or not probed yet) is drawn as the arrow.
+  CursorShape shape = 5;
+  // How `shape` was determined.
+  CursorShapeSource shape_source = 6;
+}
+
+// A pointer shape, in a small portable vocabulary. Clients draw their own art
+// for each value in the participant's color.
+enum CursorShape {
+  // Unknown or not probed. Draw the arrow.
+  CURSOR_SHAPE_UNSPECIFIED = 0;
+  // The ordinary arrow.
+  CURSOR_SHAPE_ARROW = 1;
+  // Text insertion (I-beam).
+  CURSOR_SHAPE_TEXT = 2;
+  // A link or other clickable control (pointing hand).
+  CURSOR_SHAPE_POINTER = 3;
+  // Resize along the vertical axis (top or bottom edge).
+  CURSOR_SHAPE_RESIZE_NS = 4;
+  // Resize along the horizontal axis (left or right edge).
+  CURSOR_SHAPE_RESIZE_EW = 5;
+  // Resize along the rising diagonal (top-right or bottom-left corner).
+  CURSOR_SHAPE_RESIZE_NESW = 6;
+  // Resize along the falling diagonal (top-left or bottom-right corner).
+  CURSOR_SHAPE_RESIZE_NWSE = 7;
+  // Busy; input is not accepted.
+  CURSOR_SHAPE_WAIT = 8;
+  // Working in the background; input is still accepted.
+  CURSOR_SHAPE_PROGRESS = 9;
+  // The action is not permitted here.
+  CURSOR_SHAPE_NOT_ALLOWED = 10;
+  // Precise selection.
+  CURSOR_SHAPE_CROSSHAIR = 11;
+  // Open hand over something draggable.
+  CURSOR_SHAPE_GRAB = 12;
+  // Closed hand while dragging.
+  CURSOR_SHAPE_GRABBING = 13;
+  // Move in any direction.
+  CURSOR_SHAPE_MOVE = 14;
+}
+
+// How a cursor shape was determined.
+enum CursorShapeSource {
+  // Not reported.
+  CURSOR_SHAPE_SOURCE_UNSPECIFIED = 0;
+  // Accessibility hit-test at the participant's position (role of the
+  // element under the point, window edges). Never moves the guest pointer.
+  CURSOR_SHAPE_SOURCE_HIT_TEST = 1;
+  // The guest's real cursor, read while this participant's input is what
+  // positioned the pointer.
+  CURSOR_SHAPE_SOURCE_SYSTEM = 2;
+  // The guest's real cursor, read by briefly moving the idle pointer to the
+  // participant's position and restoring it (see `PresenceSettings`).
+  CURSOR_SHAPE_SOURCE_PROBE = 3;
+}
+
+// Request for `PresenceService.Join`.
+message JoinRequest {
+  // Who is joining. Overrides the `x-cua-principal-bin` metadata.
+  Principal principal = 1;
+  // Interval between `keepalive` events. Unset means 30 seconds.
+  google.protobuf.Duration keepalive_interval = 2;
+  // Asks the server to compute cursor shapes (`CursorPosition.shape`) and
+  // send `CursorShapeChanged`. Honored only when the capability
+  // "presence.cursor_shape" is supported; otherwise shapes stay unspecified.
+  bool cursor_shapes = 3;
+  // Interval between `RosterHeartbeat` events, which list everyone present
+  // so a client can drop a participant whose leave it missed. Unset or zero
+  // means no heartbeats. Clamped to at least one second.
+  google.protobuf.Duration roster_interval = 4;
+  // Asks for one `CursorBatch` per server tick, carrying every cursor that
+  // moved in it, instead of one `CursorMoved` per cursor.
+  bool cursor_batches = 5;
+  // Asks for a presence datagram channel (`PresenceJoined.datagrams`):
+  // cursors as unreliable, latest-wins QUIC datagrams in both directions,
+  // with this stream kept for everything else. Ignored when the server has
+  // no QUIC listener; the stream then carries cursors as before.
+  bool cursor_datagrams = 6;
+}
+
+// First event of a `Join` stream.
+message PresenceJoined {
+  // The caller.
+  Participant participant = 1;
+  // Everyone else currently present, with their last known cursors.
+  repeated ParticipantCursor roster = 2;
+  // The presence datagram channel, when requested and available. See
+  // `libs/cua/proto/PRESENCE.md`.
+  PresenceDatagrams datagrams = 3;
+}
+
+// Where and how to open the presence datagram channel.
+message PresenceDatagrams {
+  // The QUIC listener (normally UDP 3212); `alpn` is "cua-presence/1".
+  QuicEndpoint endpoint = 1;
+  // Single-use credential binding the QUIC connection to this participant.
+  string ticket = 2;
+  // Server cursor tick on the channel (normally 33 ms).
+  google.protobuf.Duration tick = 3;
+}
+
+// A participant and their cursor.
+message ParticipantCursor {
+  // The participant.
+  Participant participant = 1;
+  // Their last cursor, unset if never published.
+  CursorPosition cursor = 2;
+}
+
+// A participant left.
+message ParticipantLeft {
+  // Their participant id.
+  string participant_id = 1;
+  // Why.
+  LeaveReason reason = 2;
+}
+
+// Why a participant left.
+enum LeaveReason {
+  // Not reported.
+  LEAVE_REASON_UNSPECIFIED = 0;
+  // It called `Leave`.
+  LEAVE_REASON_LEFT = 1;
+  // Its `Join` stream ended.
+  LEAVE_REASON_DISCONNECTED = 2;
+  // No activity within the server's timeout (agents without a stream).
+  LEAVE_REASON_TIMEOUT = 3;
+  // The agent run or driver session that owned the cursor ended.
+  LEAVE_REASON_RUN_ENDED = 4;
+}
+
+// Everyone present, sent every `JoinRequest.roster_interval`. A participant
+// missing from it has left.
+message RosterHeartbeat {
+  // Participant ids present, the recipient included.
+  repeated string participant_ids = 1;
+  // When the server sent it.
+  google.protobuf.Timestamp at = 2;
+}
+
+// Every cursor that moved in one server tick.
+message CursorBatch {
+  // The moves, at most one per participant.
+  repeated CursorMoved moves = 1;
+  // Server tick number. Ticks are the server's cursor interval apart; a gap
+  // means ticks without moves.
+  uint64 tick = 2;
+  // When the server sent it.
+  google.protobuf.Timestamp at = 3;
+}
+
+// A participant's cursor moved.
+message CursorMoved {
+  // Whose cursor.
+  string participant_id = 1;
+  // New position.
+  CursorPosition cursor = 2;
+  // When the server received it.
+  google.protobuf.Timestamp at = 3;
+}
+
+// A participant's cursor shape changed. Sent to every subscriber that asked
+// for shapes, including the participant itself, so each client can draw its
+// own cursor with the guest's shape.
+message CursorShapeChanged {
+  // Whose cursor.
+  string participant_id = 1;
+  // New shape.
+  CursorShape shape = 2;
+  // How it was determined.
+  CursorShapeSource source = 3;
+  // When the server determined it.
+  google.protobuf.Timestamp at = 4;
+}
+
+// One message of the `PresenceService.Join` stream.
+message JoinResponse {
+  // The event.
+  oneof event {
+    // First event.
+    PresenceJoined joined = 1;
+    // Someone joined.
+    Participant participant_joined = 2;
+    // Someone left.
+    ParticipantLeft participant_left = 3;
+    // Someone's cursor moved. Coalesced to at most 30 per second per
+    // participant.
+    CursorMoved cursor_moved = 4;
+    // Idle stream heartbeat.
+    KeepAlive keepalive = 5;
+    // Someone's cursor shape changed (only with `JoinRequest.cursor_shapes`).
+    CursorShapeChanged cursor_shape_changed = 6;
+    // Everyone present (only with `JoinRequest.roster_interval`).
+    RosterHeartbeat roster_heartbeat = 7;
+    // Cursors that moved in one tick (only with
+    // `JoinRequest.cursor_batches`).
+    CursorBatch cursor_batch = 8;
+  }
+}
+
+// Request for `PresenceService.UpdateCursor`.
+message UpdateCursorRequest {
+  // The caller's participant id from `PresenceJoined.participant`.
+  string participant_id = 1;
+  // New position.
+  CursorPosition cursor = 2;
+}
+
+// Response for `PresenceService.UpdateCursor`.
+message UpdateCursorResponse {}
+
+// Request for `PresenceService.Leave`.
+message LeaveRequest {
+  // The caller's participant id.
+  string participant_id = 1;
+}
+
+// Response for `PresenceService.Leave`.
+message LeaveResponse {}

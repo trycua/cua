@@ -33,6 +33,7 @@ pub(crate) struct MockEvent {
 /// The scripted reaction to one command.
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
+    pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
 }
 
@@ -41,6 +42,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            suppress_response: false,
         }
     }
 
@@ -48,6 +50,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            suppress_response: false,
         }
     }
 
@@ -67,6 +70,9 @@ pub(crate) type MockHandler = Arc<dyn Fn(&MockCall) -> MockReply + Send + Sync>;
 /// A running mock endpoint. Dropping it aborts the accept loop.
 pub(crate) struct MockCdpServer {
     addr: SocketAddr,
+    /// Completed WebSocket handshakes: each one is a browser-level
+    /// connection a real browser would ask the person to approve.
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
     accept_task: tokio::task::JoinHandle<()>,
 }
 
@@ -76,16 +82,20 @@ impl MockCdpServer {
             .await
             .expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepted_count = accepted.clone();
         let accept_task = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     break;
                 };
                 let handler = handler.clone();
+                let accepted_count = accepted_count.clone();
                 tokio::spawn(async move {
                     let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
                         return;
                     };
+                    accepted_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     while let Some(Ok(msg)) = ws.next().await {
                         let Message::Text(text) = msg else { continue };
                         let Ok(v) = serde_json::from_str::<Value>(&text) else {
@@ -107,6 +117,9 @@ impl MockCdpServer {
                                 .map(str::to_owned),
                         };
                         let reply = handler(&call);
+                        if reply.suppress_response {
+                            continue;
+                        }
                         for event in reply.events {
                             let mut frame =
                                 json!({ "method": event.method, "params": event.params });
@@ -133,7 +146,15 @@ impl MockCdpServer {
                 });
             }
         });
-        Self { addr, accept_task }
+        Self {
+            addr,
+            accepted,
+            accept_task,
+        }
+    }
+
+    pub fn accepted_connections(&self) -> usize {
+        self.accepted.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn ws_url(&self) -> String {

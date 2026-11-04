@@ -5,22 +5,35 @@
 # and accessibility-based element interaction.
 #
 # Usage:
-#   cuaDriver = import ./package.nix { inherit pkgs; src = ./../../libs/cua-driver/rust; };
+#   cuaDriver = import ./package.nix {
+#     inherit pkgs;
+#     src = <a source tree rooted at libs/>;
+#     sourceSubdir = "cua-driver/rust";
+#   };
 #
+# The source is rooted above the driver workspace because cua-driver depends
+# on libs/cua/crates/cua-telemetry by path (see flake.nix for the fileset).
 {
   pkgs,
   src,
+  sourceSubdir ? null,
   ...
 }:
 
+let
+  rustSrc = if sourceSubdir == null then src else "${src}/${sourceSubdir}";
+in
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver";
   # Read the version from the single source of truth (the workspace manifest
   # bumpversion edits) so it can never drift from Cargo.toml the way a
   # hardcoded literal silently did across 0.5.3 -> 0.5.6.
-  version = (pkgs.lib.importTOML "${src}/Cargo.toml").workspace.package.version;
+  version = (pkgs.lib.importTOML "${rustSrc}/Cargo.toml").workspace.package.version;
 
   inherit src;
+  postUnpack = pkgs.lib.optionalString (sourceSubdir != null) ''
+    sourceRoot="$sourceRoot/${sourceSubdir}"
+  '';
 
   # Vendor straight from the committed Cargo.lock instead of a manual cargoHash.
   # `importCargoLock` derives every dependency's fixed-output hash from the
@@ -32,7 +45,7 @@ pkgs.rustPlatform.buildRustPackage {
   # Every dependency here is a crates.io registry crate (the macOS-only
   # apple-cf/apple-metal/objc2 crates included) and there are zero git deps, so
   # importCargoLock needs no `outputHashes` overrides.
-  cargoLock.lockFile = "${src}/Cargo.lock";
+  cargoLock.lockFile = "${rustSrc}/Cargo.lock";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, and cua-driver-uia
@@ -56,8 +69,9 @@ pkgs.rustPlatform.buildRustPackage {
   # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) needs
   # libX11/libXi/libXtst via pkg-config. The Wayland-parity work
   # (round 2/3 — wayland::portal_screencast / wayland::libei) adds:
-  #   pipewire 0.8 -> needs libpipewire-0.3 + libspa headers via pkg-config
-  #                   + bindgen (clang) for SPA pod generation
+  #   pipewire-sys 0.10 -> needs libpipewire-0.3 + libspa headers via
+  #                   pkg-config + bindgen (clang); libpipewire is loaded at
+  #                   runtime, not linked
   #   reis 0.7     -> pure Rust libei binding, but the workspace pulls
   #                   libei-dev transitively through ashpd's tokio feature
   nativeBuildInputs = with pkgs; [
@@ -81,6 +95,16 @@ pkgs.rustPlatform.buildRustPackage {
     # reis links its keyboard support directly against libxkbcommon.
     libxkbcommon
   ];
+
+  # The portal video route dlopens libpipewire instead of linking it, so the
+  # fixup's RUNPATH shrink would drop PipeWire; put it back.
+  postFixup = ''
+    patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.pipewire ]} $out/bin/cua-driver
+    if ''${READELF:-readelf} -d $out/bin/cua-driver | grep NEEDED | grep -q libpipewire; then
+      echo "cua-driver links libpipewire; it must load it at runtime" >&2
+      exit 1
+    fi
+  '';
 
   # Skip tests that require a running X11 display or AT-SPI bus
   doCheck = false;

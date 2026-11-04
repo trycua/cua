@@ -1,0 +1,23 @@
+name: "CI: Public ContainerDisk References"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ci-public-containerdisk-refs.yml"
+      - "docs/content/docs/how-to-guides/sandbox/**"
+      - "tests/test_public_containerdisk_refs.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reject private containerDisk references
+        run: python3 -m unittest tests.test_public_containerdisk_refs

@@ -28,6 +28,7 @@
     "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
     "product": { "type": "string", "minLength": 1 },
     "displayName": { "type": "string", "minLength": 1 },
+    "channel": { "enum": ["stable", "nightly"] },
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
     "bump": { "enum": ["patch", "minor", "major"] },
     "tag": { "type": "string", "minLength": 1 },
@@ -46,13 +47,26 @@
     "visualRequested": { "type": "boolean" },
     "changes": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["type", "scope", "summary", "breaking", "pr", "issues", "contributors"],
         "properties": {
-          "type": { "enum": ["feat", "fix", "perf", "revert"] },
+          "type": {
+            "enum": [
+              "build",
+              "chore",
+              "ci",
+              "docs",
+              "feat",
+              "fix",
+              "perf",
+              "refactor",
+              "revert",
+              "style",
+              "test"
+            ]
+          },
           "scope": { "type": ["string", "null"] },
           "summary": { "type": "string", "minLength": 1 },
           "breaking": { "type": "boolean" },
@@ -65,6 +79,19 @@
     "contributors": {
       "type": "array",
       "items": { "$ref": "#/$defs/releaseContributor" }
+    },
+    "unresolvedIdentities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha", "name", "email"],
+        "properties": {
+          "sha": { "type": "string" },
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        }
+      }
     },
     "assets": {
       "type": "array",
@@ -80,6 +107,26 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["channel"],
+        "properties": { "channel": { "const": "nightly" } }
+      },
+      "else": {
+        "properties": {
+          "changes": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "type": { "enum": ["feat", "fix", "perf", "revert"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "changeContributor": {
@@ -89,7 +136,8 @@
       "properties": {
         "login": { "type": "string", "minLength": 1 },
         "role": { "enum": ["author", "coauthor", "reporter"] },
-        "external": { "type": "boolean" }
+        "external": { "type": "boolean" },
+        "mention": { "type": "boolean" }
       }
     },
     "releaseContributor": {
@@ -104,7 +152,8 @@
           "minItems": 1,
           "uniqueItems": true
         },
-        "external": { "type": "boolean" }
+        "external": { "type": "boolean" },
+        "mention": { "type": "boolean" }
       }
     }
   }

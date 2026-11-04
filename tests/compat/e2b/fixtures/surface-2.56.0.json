@@ -1,0 +1,2639 @@
+{
+ "classes": {
+  "e2b.AsyncSandbox": {
+   "__init__": "(self, **opts: Unpack[e2b.sandbox.main.SandboxOpts])",
+   "beta_pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "commands": "property",
+   "connect": "(self, timeout: Optional[int] = None, *, on_resume: Literal['restore', 'reboot'] = 'restore', **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+   "connection_config": "property",
+   "create": "(template: Optional[str] = None, timeout: Optional[int] = None, metadata: Optional[Dict[str, str]] = None, envs: Optional[Dict[str, str]] = None, secure: Optional[bool] = None, allow_internet_access: Optional[bool] = None, mcp: Union[e2b.sandbox.mcp.McpServer, Dict[str, Union[e2b.sandbox.sandbox_api.GitHubMcpServerConfig, Any]], NoneType] = None, network: Optional[e2b.sandbox.sandbox_api.SandboxNetworkOpts] = None, iam: Optional[e2b.sandbox.sandbox_api.SandboxIamOpts] = None, lifecycle: Optional[e2b.sandbox.sandbox_api.SandboxLifecycle] = None, volume_mounts: Optional[Dict[str, Union[e2b.volume.volume_async.AsyncVolume, str]]] = None, logger: Optional[logging.Logger] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+   "create_snapshot": "(self, name: Optional[str] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SnapshotInfo",
+   "delete_snapshot": "(snapshot_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "download_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str",
+   "envd_api_url": "property",
+   "envd_direct_url": "property",
+   "files": "property",
+   "fork": "(self, timeout: Optional[int] = None, count: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[Union[Self, Exception]]",
+   "get_host": "(self, port: int) -> str",
+   "get_info": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SandboxInfo",
+   "get_mcp_token": "(self) -> Optional[str]",
+   "get_mcp_url": "(self) -> str",
+   "get_metrics": "(self, start: Optional[datetime.datetime] = None, end: Optional[datetime.datetime] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxMetrics]",
+   "git": "property",
+   "is_running": "(self, request_timeout: Optional[float] = None) -> bool",
+   "kill": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "list": "(query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_async.paginator.AsyncSandboxPaginator",
+   "list_snapshots": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_async.paginator.AsyncSnapshotPaginator",
+   "pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "pty": "property",
+   "sandbox_domain": "property",
+   "sandbox_id": "property",
+   "set_timeout": "(self, timeout: int, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+   "traffic_access_token": "property",
+   "update_network": "(self, network: e2b.sandbox.sandbox_api.SandboxNetworkUpdate, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+   "upload_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str"
+  },
+  "e2b.Sandbox": {
+   "__init__": "(self, **opts: Unpack[e2b.sandbox.main.SandboxOpts])",
+   "beta_pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "commands": "property",
+   "connect": "(self, timeout: Optional[int] = None, *, on_resume: Literal['restore', 'reboot'] = 'restore', **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+   "connection_config": "property",
+   "create": "(template: Optional[str] = None, timeout: Optional[int] = None, metadata: Optional[Dict[str, str]] = None, envs: Optional[Dict[str, str]] = None, secure: Optional[bool] = None, allow_internet_access: Optional[bool] = None, mcp: Union[e2b.sandbox.mcp.McpServer, Dict[str, Union[e2b.sandbox.sandbox_api.GitHubMcpServerConfig, Any]], NoneType] = None, network: Optional[e2b.sandbox.sandbox_api.SandboxNetworkOpts] = None, iam: Optional[e2b.sandbox.sandbox_api.SandboxIamOpts] = None, lifecycle: Optional[e2b.sandbox.sandbox_api.SandboxLifecycle] = None, volume_mounts: Optional[Dict[str, Union[e2b.volume.volume_sync.Volume, str]]] = None, logger: Optional[logging.Logger] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+   "create_snapshot": "(self, name: Optional[str] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SnapshotInfo",
+   "delete_snapshot": "(snapshot_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "download_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str",
+   "envd_api_url": "property",
+   "envd_direct_url": "property",
+   "files": "property",
+   "fork": "(self, timeout: Optional[int] = None, count: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[Union[Self, Exception]]",
+   "get_host": "(self, port: int) -> str",
+   "get_info": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SandboxInfo",
+   "get_mcp_token": "(self) -> Optional[str]",
+   "get_mcp_url": "(self) -> str",
+   "get_metrics": "(self, start: Optional[datetime.datetime] = None, end: Optional[datetime.datetime] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxMetrics]",
+   "git": "property",
+   "is_running": "(self, request_timeout: Optional[float] = None) -> bool",
+   "kill": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "list": "(query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_sync.paginator.SandboxPaginator",
+   "list_snapshots": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_sync.paginator.SnapshotPaginator",
+   "pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+   "pty": "property",
+   "sandbox_domain": "property",
+   "sandbox_id": "property",
+   "set_timeout": "(self, timeout: int, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+   "traffic_access_token": "property",
+   "update_network": "(self, network: e2b.sandbox.sandbox_api.SandboxNetworkUpdate, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+   "upload_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str"
+  },
+  "e2b.sandbox_async.commands.command.Commands": {
+   "__init__": "(self, envd_api_url: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, envd_api: httpx.AsyncClient) -> None",
+   "close_stdin": "(self, pid: int, request_timeout: Optional[float] = None) -> None",
+   "connect": "(self, pid: int, timeout: Optional[float] = 60, request_timeout: Optional[float] = None, on_stdout: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_stderr: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None) -> e2b.sandbox_async.commands.command_handle.AsyncCommandHandle",
+   "kill": "(self, pid: int, request_timeout: Optional[float] = None) -> bool",
+   "list": "(self, request_timeout: Optional[float] = None) -> List[e2b.sandbox.commands.main.ProcessInfo]",
+   "run": "(self, cmd: str, background: Optional[bool] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, on_stdout: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_stderr: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, stdin: Optional[bool] = None, timeout: Optional[float] = 60, request_timeout: Optional[float] = None)",
+   "send_stdin": "(self, pid: int, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None"
+  },
+  "e2b.sandbox_async.commands.command_handle.AsyncCommandHandle": {
+   "__init__": "(self, pid: int, handle_kill: Callable[[], Coroutine[Any, Any, bool]], events: AsyncGenerator[Union[e2b.envd.process.process_pb.StartResponse, e2b.envd.process.process_pb.ConnectResponse], Any], on_stdout: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_stderr: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_pty: Union[Callable[[bytes], NoneType], Callable[[bytes], Awaitable[NoneType]], NoneType] = None, handle_send_stdin: Optional[Callable[[Union[str, bytes], Optional[float]], Coroutine[Any, Any, NoneType]]] = None, handle_close_stdin: Optional[Callable[[Optional[float]], Coroutine[Any, Any, NoneType]]] = None, check_health: Optional[Callable[[], Awaitable[Optional[bool]]]] = None)",
+   "close_stdin": "(self, request_timeout: Optional[float] = None) -> None",
+   "disconnect": "(self) -> None",
+   "error": "property",
+   "exit_code": "property",
+   "kill": "(self) -> bool",
+   "pid": "property",
+   "send_stdin": "(self, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None",
+   "stderr": "property",
+   "stdout": "property",
+   "wait": "(self) -> e2b.sandbox.commands.command_handle.CommandResult"
+  },
+  "e2b.sandbox_async.commands.pty.Pty": {
+   "__init__": "(self, envd_api_url: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, envd_api: httpx.AsyncClient) -> None",
+   "connect": "(self, pid: int, on_data: Union[Callable[[bytes], NoneType], Callable[[bytes], Awaitable[NoneType]]], timeout: Optional[float] = 60, request_timeout: Optional[float] = None) -> e2b.sandbox_async.commands.command_handle.AsyncCommandHandle",
+   "create": "(self, size: e2b.sandbox.commands.command_handle.PtySize, on_data: Union[Callable[[bytes], NoneType], Callable[[bytes], Awaitable[NoneType]]], user: Optional[str] = None, cwd: Optional[str] = None, envs: Optional[Dict[str, str]] = None, timeout: Optional[float] = 60, request_timeout: Optional[float] = None) -> e2b.sandbox_async.commands.command_handle.AsyncCommandHandle",
+   "kill": "(self, pid: int, request_timeout: Optional[float] = None) -> bool",
+   "resize": "(self, pid: int, size: e2b.sandbox.commands.command_handle.PtySize, request_timeout: Optional[float] = None) -> None",
+   "send_stdin": "(self, pid: int, data: bytes, request_timeout: Optional[float] = None) -> None"
+  },
+  "e2b.sandbox_async.filesystem.filesystem.Filesystem": {
+   "__init__": "(self, envd_api_url: str, envd_version: packaging.version.Version, connection_config: e2b.connection_config.ConnectionConfig, envd_api: httpx.AsyncClient) -> None",
+   "exists": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> bool",
+   "get_info": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> e2b.sandbox.filesystem.filesystem.EntryInfo",
+   "list": "(self, path: str, depth: Optional[int] = 1, user: Optional[str] = None, request_timeout: Optional[float] = None) -> List[e2b.sandbox.filesystem.filesystem.EntryInfo]",
+   "make_dir": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> bool",
+   "read": "(self, path: str, format: Literal['text', 'bytes', 'stream'] = 'text', user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, stream_idle_timeout: Optional[float] = None)",
+   "remove": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> None",
+   "rename": "(self, old_path: str, new_path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> e2b.sandbox.filesystem.filesystem.EntryInfo",
+   "watch_dir": "(self, path: str, on_event: Union[Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], NoneType], Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], Awaitable[NoneType]]], on_exit: Union[Callable[[Optional[Exception]], NoneType], Callable[[Optional[Exception]], Awaitable[NoneType]], NoneType] = None, user: Optional[str] = None, request_timeout: Optional[float] = None, timeout: Optional[float] = 60, recursive: bool = False, include_entry: bool = False, allow_network_mounts: bool = False) -> e2b.sandbox_async.filesystem.watch_handle.AsyncWatchHandle",
+   "write": "(self, path: str, data: Union[str, bytes, IO], user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, use_octet_stream: Optional[bool] = None, metadata: Optional[Dict[str, str]] = None) -> e2b.sandbox.filesystem.filesystem.WriteInfo",
+   "write_files": "(self, files: List[e2b.sandbox.filesystem.filesystem.WriteEntry], user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, use_octet_stream: Optional[bool] = None, metadata: Optional[Dict[str, str]] = None) -> List[e2b.sandbox.filesystem.filesystem.WriteInfo]"
+  },
+  "e2b.sandbox_sync.commands.command.Commands": {
+   "__init__": "(self, envd_api_url: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, envd_api: httpx.Client) -> None",
+   "close_stdin": "(self, pid: int, request_timeout: Optional[float] = None) -> None",
+   "connect": "(self, pid: int, timeout: Optional[float] = 60, request_timeout: Optional[float] = None)",
+   "kill": "(self, pid: int, request_timeout: Optional[float] = None) -> bool",
+   "list": "(self, request_timeout: Optional[float] = None) -> List[e2b.sandbox.commands.main.ProcessInfo]",
+   "run": "(self, cmd: str, background: Optional[bool] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, on_stdout: Optional[Callable[[str], NoneType]] = None, on_stderr: Optional[Callable[[str], NoneType]] = None, stdin: Optional[bool] = None, timeout: Optional[float] = 60, request_timeout: Optional[float] = None)",
+   "send_stdin": "(self, pid: int, data: Union[str, bytes], request_timeout: Optional[float] = None)"
+  },
+  "e2b.sandbox_sync.filesystem.filesystem.Filesystem": {
+   "__init__": "(self, envd_api_url: str, envd_version: packaging.version.Version, connection_config: e2b.connection_config.ConnectionConfig, envd_api: httpx.Client) -> None",
+   "exists": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> bool",
+   "get_info": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> e2b.sandbox.filesystem.filesystem.EntryInfo",
+   "list": "(self, path: str, depth: Optional[int] = 1, user: Optional[str] = None, request_timeout: Optional[float] = None) -> List[e2b.sandbox.filesystem.filesystem.EntryInfo]",
+   "make_dir": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> bool",
+   "read": "(self, path: str, format: Literal['text', 'bytes', 'stream'] = 'text', user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, stream_idle_timeout: Optional[float] = None)",
+   "remove": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> None",
+   "rename": "(self, old_path: str, new_path: str, user: Optional[str] = None, request_timeout: Optional[float] = None) -> e2b.sandbox.filesystem.filesystem.EntryInfo",
+   "watch_dir": "(self, path: str, user: Optional[str] = None, request_timeout: Optional[float] = None, recursive: bool = False, include_entry: bool = False, allow_network_mounts: bool = False) -> e2b.sandbox_sync.filesystem.watch_handle.WatchHandle",
+   "write": "(self, path: str, data: Union[str, bytes, IO], user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, use_octet_stream: Optional[bool] = None, metadata: Optional[Dict[str, str]] = None) -> e2b.sandbox.filesystem.filesystem.WriteInfo",
+   "write_files": "(self, files: List[e2b.sandbox.filesystem.filesystem.WriteEntry], user: Optional[str] = None, request_timeout: Optional[float] = None, gzip: bool = False, use_octet_stream: Optional[bool] = None, metadata: Optional[Dict[str, str]] = None) -> List[e2b.sandbox.filesystem.filesystem.WriteInfo]"
+  }
+ },
+ "exceptions": {
+  "AuthenticationException": [
+   "AuthenticationException"
+  ],
+  "BuildException": [
+   "BuildException"
+  ],
+  "CommandExitException": [
+   "CommandExitException",
+   "SandboxException",
+   "CommandResult"
+  ],
+  "DockerfileSyntaxError": [
+   "DockerfileSyntaxError"
+  ],
+  "FileNotFoundException": [
+   "FileNotFoundException",
+   "NotFoundException",
+   "SandboxException"
+  ],
+  "FileUploadException": [
+   "FileUploadException",
+   "BuildException"
+  ],
+  "GitAuthException": [
+   "GitAuthException",
+   "AuthenticationException"
+  ],
+  "GitUpstreamException": [
+   "GitUpstreamException",
+   "SandboxException"
+  ],
+  "InvalidArgumentException": [
+   "InvalidArgumentException",
+   "SandboxException"
+  ],
+  "NotEnoughSpaceException": [
+   "NotEnoughSpaceException",
+   "SandboxException"
+  ],
+  "NotFoundException": [
+   "NotFoundException",
+   "SandboxException"
+  ],
+  "RateLimitException": [
+   "RateLimitException",
+   "SandboxException"
+  ],
+  "SandboxException": [
+   "SandboxException"
+  ],
+  "SandboxNotFoundException": [
+   "SandboxNotFoundException",
+   "NotFoundException",
+   "SandboxException"
+  ],
+  "SandboxNotRunningException": [
+   "SandboxNotRunningException",
+   "TimeoutException",
+   "SandboxException"
+  ],
+  "SandboxUnreachableException": [
+   "SandboxUnreachableException",
+   "TimeoutException",
+   "SandboxException"
+  ],
+  "SecretException": [
+   "SecretException"
+  ],
+  "SecretNotFoundException": [
+   "SecretNotFoundException",
+   "SecretException"
+  ],
+  "ServiceBusyException": [
+   "ServiceBusyException"
+  ],
+  "TemplateException": [
+   "TemplateException",
+   "SandboxException"
+  ],
+  "TimeoutException": [
+   "TimeoutException",
+   "SandboxException"
+  ],
+  "VolumeException": [
+   "VolumeException"
+  ],
+  "VolumeNotFoundException": [
+   "VolumeNotFoundException",
+   "NotFoundException",
+   "SandboxException"
+  ],
+  "VolumePathNotFoundException": [
+   "VolumePathNotFoundException",
+   "NotFoundException",
+   "SandboxException"
+  ]
+ },
+ "exports": {
+  "e2b.ALL_TRAFFIC": {
+   "kind": "value",
+   "type": "str"
+  },
+  "e2b.ApiClient": {
+   "bases": [
+    "AuthenticatedClient"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, config: e2b.connection_config.ConnectionConfig, transport: Union[httpx.BaseTransport, httpx.AsyncBaseTransport, NoneType] = None, *args, **kwargs)",
+    "auth_header_name": "field: <class 'str'>",
+    "get_async_httpx_client": "(self) -> httpx.AsyncClient",
+    "get_httpx_client": "(self) -> httpx.Client",
+    "prefix": "field: <class 'str'>",
+    "raise_on_unexpected_status": "field: <class 'bool'>",
+    "set_async_httpx_client": "(self, async_client: httpx.AsyncClient) -> 'AuthenticatedClient'",
+    "set_httpx_client": "(self, client: httpx.Client) -> 'AuthenticatedClient'",
+    "token": "field: <class 'str'>",
+    "with_cookies": "(self, cookies: dict[str, str]) -> 'AuthenticatedClient'",
+    "with_headers": "(self, headers: dict[str, str]) -> 'AuthenticatedClient'",
+    "with_timeout": "(self, timeout: httpx.Timeout) -> 'AuthenticatedClient'"
+   }
+  },
+  "e2b.ApiParams": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "api_headers": "field: typing.Optional[typing.Dict[str, str]]",
+    "api_key": "field: typing.Optional[str]",
+    "api_url": "field: typing.Optional[str]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "debug": "field: typing.Optional[bool]",
+    "domain": "field: typing.Optional[str]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "headers": "field: typing.Optional[typing.Dict[str, str]]",
+    "http_version": "field: typing.Optional[typing.Literal['1.1', '2']]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "proxy": "field: typing.Union[str, httpx.URL, httpx.Proxy, NoneType]",
+    "request_timeout": "field: typing.Optional[float]",
+    "retries": "field: typing.Optional[int]",
+    "sandbox_url": "field: typing.Optional[str]",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "validate_api_key": "field: typing.Optional[bool]",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.AsyncCommandHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, pid: int, handle_kill: Callable[[], Coroutine[Any, Any, bool]], events: AsyncGenerator[Union[e2b.envd.process.process_pb.StartResponse, e2b.envd.process.process_pb.ConnectResponse], Any], on_stdout: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_stderr: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_pty: Union[Callable[[bytes], NoneType], Callable[[bytes], Awaitable[NoneType]], NoneType] = None, handle_send_stdin: Optional[Callable[[Union[str, bytes], Optional[float]], Coroutine[Any, Any, NoneType]]] = None, handle_close_stdin: Optional[Callable[[Optional[float]], Coroutine[Any, Any, NoneType]]] = None, check_health: Optional[Callable[[], Awaitable[Optional[bool]]]] = None)",
+    "close_stdin": "(self, request_timeout: Optional[float] = None) -> None",
+    "disconnect": "(self) -> None",
+    "error": "property",
+    "exit_code": "property",
+    "kill": "(self) -> bool",
+    "pid": "property",
+    "send_stdin": "(self, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None",
+    "stderr": "property",
+    "stdout": "property",
+    "wait": "(self) -> e2b.sandbox.commands.command_handle.CommandResult"
+   }
+  },
+  "e2b.AsyncSandbox": {
+   "bases": [
+    "SandboxApi"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, **opts: Unpack[e2b.sandbox.main.SandboxOpts])",
+    "beta_pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "commands": "property",
+    "connect": "(self, timeout: Optional[int] = None, *, on_resume: Literal['restore', 'reboot'] = 'restore', **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "connection_config": "property",
+    "create": "(template: Optional[str] = None, timeout: Optional[int] = None, metadata: Optional[Dict[str, str]] = None, envs: Optional[Dict[str, str]] = None, secure: Optional[bool] = None, allow_internet_access: Optional[bool] = None, mcp: Union[e2b.sandbox.mcp.McpServer, Dict[str, Union[e2b.sandbox.sandbox_api.GitHubMcpServerConfig, Any]], NoneType] = None, network: Optional[e2b.sandbox.sandbox_api.SandboxNetworkOpts] = None, iam: Optional[e2b.sandbox.sandbox_api.SandboxIamOpts] = None, lifecycle: Optional[e2b.sandbox.sandbox_api.SandboxLifecycle] = None, volume_mounts: Optional[Dict[str, Union[e2b.volume.volume_async.AsyncVolume, str]]] = None, logger: Optional[logging.Logger] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "create_snapshot": "(self, name: Optional[str] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SnapshotInfo",
+    "delete_snapshot": "(snapshot_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "download_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str",
+    "envd_api_url": "property",
+    "envd_direct_url": "property",
+    "files": "property",
+    "fork": "(self, timeout: Optional[int] = None, count: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[Union[Self, Exception]]",
+    "get_host": "(self, port: int) -> str",
+    "get_info": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SandboxInfo",
+    "get_mcp_token": "(self) -> Optional[str]",
+    "get_mcp_url": "(self) -> str",
+    "get_metrics": "(self, start: Optional[datetime.datetime] = None, end: Optional[datetime.datetime] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxMetrics]",
+    "git": "property",
+    "is_running": "(self, request_timeout: Optional[float] = None) -> bool",
+    "kill": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "list": "(query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_async.paginator.AsyncSandboxPaginator",
+    "list_snapshots": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_async.paginator.AsyncSnapshotPaginator",
+    "pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "pty": "property",
+    "sandbox_domain": "property",
+    "sandbox_id": "property",
+    "set_timeout": "(self, timeout: int, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "traffic_access_token": "property",
+    "update_network": "(self, network: e2b.sandbox.sandbox_api.SandboxNetworkUpdate, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "upload_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str"
+   }
+  },
+  "e2b.AsyncSandboxPaginator": {
+   "bases": [
+    "SandboxPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.AsyncSecret": {
+   "bases": [
+    "SecretBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "create": "(name: str, value: str, metadata: Optional[Dict[str, str]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo",
+    "destroy": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "exists": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "fill": "(secret: str) -> str",
+    "get_info": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo",
+    "iam_token": "(*, audience: str, token_type: Union[Literal['JWT-SVID'], str]) -> e2b.sandbox.sandbox_api.SandboxIamToken",
+    "list": "(limit: Optional[int] = None, next_token: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.secret_async.AsyncSecretPaginator",
+    "update": "(secret: str, value: str, metadata: Optional[Dict[str, str]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo"
+   }
+  },
+  "e2b.AsyncSecretPaginator": {
+   "bases": [
+    "SecretPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, **opts: Unpack[~OptsT])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.secret.types.SecretInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.AsyncSnapshotPaginator": {
+   "bases": [
+    "SnapshotPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, sandbox_id: Optional[str] = None, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SnapshotInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.AsyncTemplate": {
+   "bases": [
+    "TemplateBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, file_context_path: Union[str, pathlib._local.Path, NoneType] = None, file_ignore_patterns: Optional[List[str]] = None)",
+    "alias_exists": "(alias: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "assign_tags": "(target_name: str, tags: Union[str, List[str]], **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.TemplateTagInfo",
+    "build": "(template: Union[e2b.template.main.TemplateFinal, e2b.template.main.TemplateBuilder], name: Optional[str] = None, *, alias: Optional[str] = None, tags: Optional[List[str]] = None, cpu_count: Optional[int] = None, memory_mb: Optional[int] = None, min_free_disk_mb: Optional[int] = None, skip_cache: bool = False, on_build_logs: Optional[Callable[[e2b.template.logger.LogEntry], NoneType]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.BuildInfo",
+    "build_in_background": "(template: Union[e2b.template.main.TemplateFinal, e2b.template.main.TemplateBuilder], name: Optional[str] = None, *, alias: Optional[str] = None, tags: Optional[List[str]] = None, cpu_count: Optional[int] = None, memory_mb: Optional[int] = None, min_free_disk_mb: Optional[int] = None, skip_cache: bool = False, on_build_logs: Optional[Callable[[e2b.template.logger.LogEntry], NoneType]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.BuildInfo",
+    "exists": "(name: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "from_alpine_image": "(self, variant: str = '3.24') -> e2b.template.main.TemplateBuilder",
+    "from_arch_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_aws_registry": "(self, image: str, access_key_id: str, secret_access_key: str, region: str) -> e2b.template.main.TemplateBuilder",
+    "from_base_image": "(self) -> e2b.template.main.TemplateBuilder",
+    "from_bun_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_debian_image": "(self, variant: str = 'stable') -> e2b.template.main.TemplateBuilder",
+    "from_dockerfile": "(self, dockerfile_content_or_path: str) -> e2b.template.main.TemplateBuilder",
+    "from_fedora_image": "(self, variant: str = '44') -> e2b.template.main.TemplateBuilder",
+    "from_gcp_registry": "(self, image: str, service_account_json: Union[str, dict]) -> e2b.template.main.TemplateBuilder",
+    "from_image": "(self, image: str, username: Optional[str] = None, password: Optional[str] = None) -> e2b.template.main.TemplateBuilder",
+    "from_node_image": "(self, variant: str = 'lts') -> e2b.template.main.TemplateBuilder",
+    "from_python_image": "(self, version: str = '3') -> e2b.template.main.TemplateBuilder",
+    "from_template": "(self, template: str) -> e2b.template.main.TemplateBuilder",
+    "from_ubuntu_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "get_build_status": "(build_info: e2b.template.types.BuildInfo, logs_offset: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "get_tags": "(template_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.template.types.TemplateTag]",
+    "remove_tags": "(name: str, tags: Union[str, List[str]], **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "skip_cache": "(self) -> 'TemplateBase'",
+    "to_dockerfile": "(template: 'TemplateClass') -> str",
+    "to_json": "(template: 'TemplateClass') -> str"
+   }
+  },
+  "e2b.AsyncVolume": {
+   "bases": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, volume_id: str, name: str, token: Optional[str] = None, domain: Optional[str] = None, debug: Optional[bool] = None, proxy: Union[str, httpx.URL, httpx.Proxy, NoneType] = None, *, http_version: Optional[Literal['1.1', '2']] = None)",
+    "connect": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "create": "(name: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "destroy": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "exists": "(self, path: str, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> bool",
+    "get_info": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.volume.types.VolumeAndToken",
+    "list": "(**opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.volume.types.VolumeInfo]",
+    "make_dir": "(self, path: str, uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, force: Optional[bool] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat",
+    "name": "property",
+    "read_file": "(self, path: str, format: Literal['text', 'bytes', 'stream'] = 'text', stream_idle_timeout: Optional[float] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> Union[str, bytes, AsyncIterator[bytes]]",
+    "remove": "(self, path: str, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> None",
+    "token": "property",
+    "update_metadata": "(self, path: str, uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat",
+    "volume_id": "property",
+    "write_file": "(self, path: str, data: Union[str, bytes, IO], uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, force: Optional[bool] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat"
+   }
+  },
+  "e2b.AsyncWatchHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, events: AsyncGenerator[e2b.envd.filesystem.filesystem_pb.WatchDirResponse, Any], on_event: Union[Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], NoneType], Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], Awaitable[NoneType]]], on_exit: Union[Callable[[Optional[Exception]], NoneType], Callable[[Optional[Exception]], Awaitable[NoneType]], NoneType] = None, check_health: Optional[Callable[[], Awaitable[Optional[bool]]]] = None)",
+    "stop": "(self)"
+   }
+  },
+  "e2b.AuthenticationException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.BuildException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.BuildInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, template_id: str, build_id: str, name: str, alias: str, tags: List[str] = <factory>) -> None",
+    "alias": "field: <class 'str'>",
+    "build_id": "field: <class 'str'>",
+    "name": "field: <class 'str'>",
+    "tags": "field: typing.List[str]",
+    "template_id": "field: <class 'str'>"
+   }
+  },
+  "e2b.BuildStatusReason": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, message: str, step: Optional[str] = None, log_entries: List[e2b.template.logger.LogEntry] = <factory>) -> None",
+    "log_entries": "field: typing.List[e2b.template.logger.LogEntry]",
+    "message": "field: <class 'str'>",
+    "step": "field: typing.Optional[str]"
+   }
+  },
+  "e2b.CommandExitException": {
+   "bases": [
+    "SandboxException",
+    "CommandResult"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, stderr: str, stdout: str, exit_code: int, error: Optional[str]) -> None",
+    "add_note": "(self, object, /)",
+    "error": "field: typing.Optional[str]",
+    "exit_code": "field: <class 'int'>",
+    "status_code": "field: typing.Optional[int]",
+    "stderr": "field: <class 'str'>",
+    "stdout": "field: <class 'str'>",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.CommandHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, pid: int, handle_kill: Callable[[], bool], events: Generator[Union[e2b.envd.process.process_pb.StartResponse, e2b.envd.process.process_pb.ConnectResponse], Any, NoneType], handle_send_stdin: Optional[Callable[[Union[str, bytes], Optional[float]], NoneType]] = None, handle_close_stdin: Optional[Callable[[Optional[float]], NoneType]] = None, check_health: Optional[Callable[[], Optional[bool]]] = None)",
+    "close_stdin": "(self, request_timeout: Optional[float] = None) -> None",
+    "disconnect": "(self) -> None",
+    "kill": "(self) -> bool",
+    "pid": "property",
+    "send_stdin": "(self, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None",
+    "wait": "(self, on_pty: Optional[Callable[[bytes], NoneType]] = None, on_stdout: Optional[Callable[[str], NoneType]] = None, on_stderr: Optional[Callable[[str], NoneType]] = None) -> e2b.sandbox.commands.command_handle.CommandResult"
+   }
+  },
+  "e2b.CommandResult": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, stderr: str, stdout: str, exit_code: int, error: Optional[str]) -> None",
+    "error": "field: typing.Optional[str]",
+    "exit_code": "field: <class 'int'>",
+    "stderr": "field: <class 'str'>",
+    "stdout": "field: <class 'str'>"
+   }
+  },
+  "e2b.ConnectionConfig": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, domain: Optional[str] = None, debug: Optional[bool] = None, api_key: Optional[str] = None, validate_api_key: Optional[bool] = None, api_url: Optional[str] = None, sandbox_url: Optional[str] = None, request_timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None, api_headers: Optional[Dict[str, str]] = None, extra_sandbox_headers: Optional[Dict[str, str]] = None, proxy: Union[str, httpx.URL, httpx.Proxy, NoneType] = None, logger: Optional[logging.Logger] = None, *, retries: Optional[int] = None, http_version: Optional[Literal['1.1', '2']] = None)",
+    "get_api_params": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> dict",
+    "get_host": "(self, sandbox_id: str, sandbox_domain: str, port: int) -> str",
+    "get_request_timeout": "(self, request_timeout: Optional[float] = None)",
+    "get_sandbox_direct_url": "(self, sandbox_id: str, sandbox_domain: str, port: Optional[int] = None) -> str",
+    "get_sandbox_url": "(self, sandbox_id: str, sandbox_domain: str, port: Optional[int] = None) -> str",
+    "sandbox_headers": "property",
+    "set_integration": "(integration: Optional[str]) -> None"
+   }
+  },
+  "e2b.CopyItem": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "dest": "field: typing.Union[str, pathlib._local.Path]",
+    "forceUpload": "field: typing.NotRequired[typing.Optional[typing.Literal[True]]]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "gzip": "field: typing.NotRequired[typing.Optional[bool]]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "mode": "field: typing.NotRequired[typing.Optional[int]]",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "resolveSymlinks": "field: typing.NotRequired[typing.Optional[bool]]",
+    "setdefault": "(self, key, default=None, /)",
+    "src": "field: typing.Union[str, pathlib._local.Path, typing.List[typing.Union[str, pathlib._local.Path]]]",
+    "update": "?",
+    "user": "field: typing.NotRequired[typing.Optional[str]]",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.DockerfileSyntaxError": {
+   "bases": [
+    "ValueError"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, message: str, line: Optional[int] = None) -> None",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.E2B": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, **opts: Unpack[e2b.client.E2BClientParams])"
+   }
+  },
+  "e2b.E2BClientParams": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "api_headers": "field: typing.Optional[typing.Dict[str, str]]",
+    "api_key": "field: typing.Optional[str]",
+    "api_url": "field: typing.Optional[str]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "debug": "field: typing.Optional[bool]",
+    "domain": "field: typing.Optional[str]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "headers": "field: typing.Optional[typing.Dict[str, str]]",
+    "http_version": "field: typing.Optional[typing.Literal['1.1', '2']]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "proxy": "field: typing.Union[str, httpx.URL, httpx.Proxy, NoneType]",
+    "request_timeout": "field: typing.Optional[float]",
+    "retries": "field: typing.Optional[int]",
+    "sandbox_url": "field: typing.Optional[str]",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "validate_api_key": "field: typing.Optional[bool]",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.EntryInfo": {
+   "bases": [
+    "WriteInfo"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, name: str, type: Optional[e2b.sandbox.filesystem.filesystem.FileType], path: str, size: int, mode: int, permissions: str, owner: str, group: str, modified_time: datetime.datetime, symlink_target: Optional[str] = None, *, metadata: Optional[Dict[str, str]] = None) -> None",
+    "from_dict": "(payload: Dict) -> 'WriteInfo'",
+    "group": "field: <class 'str'>",
+    "metadata": "field: typing.Optional[typing.Dict[str, str]]",
+    "mode": "field: <class 'int'>",
+    "modified_time": "field: <class 'datetime.datetime'>",
+    "name": "field: <class 'str'>",
+    "owner": "field: <class 'str'>",
+    "path": "field: <class 'str'>",
+    "permissions": "field: <class 'str'>",
+    "size": "field: <class 'int'>",
+    "symlink_target": "field: typing.Optional[str]",
+    "type": "field: typing.Optional[e2b.sandbox.filesystem.filesystem.FileType]"
+   }
+  },
+  "e2b.FileNotFoundException": {
+   "bases": [
+    "NotFoundException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.FileType": {
+   "bases": [
+    "Enum"
+   ],
+   "kind": "enum",
+   "members": {
+    "DIR": "'dir'",
+    "FILE": "'file'",
+    "SYMLINK": "'symlink'"
+   }
+  },
+  "e2b.FileUploadException": {
+   "bases": [
+    "BuildException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.FilesystemEvent": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, name: str, type: e2b.sandbox.filesystem.watch_handle.FilesystemEventType, entry: Optional[e2b.sandbox.filesystem.filesystem.EntryInfo] = None) -> None",
+    "entry": "field: typing.Optional[e2b.sandbox.filesystem.filesystem.EntryInfo]",
+    "name": "field: <class 'str'>",
+    "type": "field: <enum 'FilesystemEventType'>"
+   }
+  },
+  "e2b.FilesystemEventType": {
+   "bases": [
+    "Enum"
+   ],
+   "kind": "enum",
+   "members": {
+    "CHMOD": "'chmod'",
+    "CREATE": "'create'",
+    "REMOVE": "'remove'",
+    "RENAME": "'rename'",
+    "WRITE": "'write'"
+   }
+  },
+  "e2b.Git": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, commands: e2b.sandbox_sync.commands.command.Commands) -> None",
+    "add": "(self, path: str, files: Optional[List[str]] = None, all: bool = True, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "branches": "(self, path: str, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None) -> e2b.sandbox._git.types.GitBranches",
+    "checkout_branch": "(self, path: str, branch: str, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "clone": "(self, url: str, path: Optional[str] = None, branch: Optional[str] = None, depth: Optional[int] = None, username: Optional[str] = None, password: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None, dangerously_store_credentials: bool = False)",
+    "commit": "(self, path: str, message: str, author_name: Optional[str] = None, author_email: Optional[str] = None, allow_empty: bool = False, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "configure_user": "(self, name: str, email: str, scope: str = 'global', path: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "create_branch": "(self, path: str, branch: str, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "dangerously_authenticate": "(self, username: str, password: str, host: str = 'github.com', protocol: str = 'https', envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "delete_branch": "(self, path: str, branch: str, force: bool = False, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "get_config": "(self, key: str, scope: str = 'global', path: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None) -> Optional[str]",
+    "init": "(self, path: str, bare: bool = False, initial_branch: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "pull": "(self, path: str, remote: Optional[str] = None, branch: Optional[str] = None, username: Optional[str] = None, password: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "push": "(self, path: str, remote: Optional[str] = None, branch: Optional[str] = None, set_upstream: bool = True, username: Optional[str] = None, password: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "remote_add": "(self, path: str, name: str, url: str, fetch: bool = False, overwrite: bool = False, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "remote_get": "(self, path: str, name: str, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None) -> Optional[str]",
+    "reset": "(self, path: str, mode: Optional[Literal['soft', 'mixed', 'hard', 'merge', 'keep']] = None, target: Optional[str] = None, paths: Optional[List[str]] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "restore": "(self, path: str, paths: List[str], staged: Optional[bool] = None, worktree: Optional[bool] = None, source: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "set_config": "(self, key: str, value: str, scope: str = 'global', path: Optional[str] = None, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None)",
+    "status": "(self, path: str, envs: Optional[Dict[str, str]] = None, user: Optional[str] = None, cwd: Optional[str] = None, timeout: Optional[float] = None, request_timeout: Optional[float] = None) -> e2b.sandbox._git.types.GitStatus"
+   }
+  },
+  "e2b.GitAuthException": {
+   "bases": [
+    "AuthenticationException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.GitBranches": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, branches: List[str], current_branch: Optional[str]) -> None",
+    "branches": "field: typing.List[str]",
+    "current_branch": "field: typing.Optional[str]"
+   }
+  },
+  "e2b.GitFileStatus": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, name: str, status: str, index_status: str, working_tree_status: str, staged: bool, renamed_from: Optional[str] = None) -> None",
+    "index_status": "field: <class 'str'>",
+    "name": "field: <class 'str'>",
+    "renamed_from": "field: typing.Optional[str]",
+    "staged": "field: <class 'bool'>",
+    "status": "field: <class 'str'>",
+    "working_tree_status": "field: <class 'str'>"
+   }
+  },
+  "e2b.GitHubMcpServer": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.GitHubMcpServerConfig": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "envs": "field: typing.NotRequired[typing.Dict[str, str]]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "install_cmd": "field: typing.NotRequired[str]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "run_cmd": "field: <class 'str'>",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.GitResetMode": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.GitStatus": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, current_branch: Optional[str], upstream: Optional[str], ahead: int, behind: int, detached: bool, file_status: List[e2b.sandbox._git.types.GitFileStatus]) -> None",
+    "ahead": "field: <class 'int'>",
+    "behind": "field: <class 'int'>",
+    "conflict_count": "property",
+    "current_branch": "field: typing.Optional[str]",
+    "detached": "field: <class 'bool'>",
+    "file_status": "field: typing.List[e2b.sandbox._git.types.GitFileStatus]",
+    "has_changes": "property",
+    "has_conflicts": "property",
+    "has_staged": "property",
+    "has_untracked": "property",
+    "is_clean": "property",
+    "staged_count": "property",
+    "total_count": "property",
+    "unstaged_count": "property",
+    "untracked_count": "property",
+    "upstream": "field: typing.Optional[str]"
+   }
+  },
+  "e2b.GitUpstreamException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.HttpVersion": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.InvalidArgumentException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.LogEntry": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, timestamp: datetime.datetime, level: Literal['debug', 'info', 'warn', 'error'], message: str) -> None",
+    "level": "field: typing.Literal['debug', 'info', 'warn', 'error']",
+    "message": "field: <class 'str'>",
+    "timestamp": "field: <class 'datetime.datetime'>"
+   }
+  },
+  "e2b.LogEntryEnd": {
+   "bases": [
+    "LogEntry"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, timestamp: datetime.datetime, message: str) -> None",
+    "level": "field: typing.Literal['debug', 'info', 'warn', 'error']",
+    "message": "field: <class 'str'>",
+    "timestamp": "field: <class 'datetime.datetime'>"
+   }
+  },
+  "e2b.LogEntryLevel": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.LogEntryStart": {
+   "bases": [
+    "LogEntry"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, timestamp: datetime.datetime, message: str) -> None",
+    "level": "field: typing.Literal['debug', 'info', 'warn', 'error']",
+    "message": "field: <class 'str'>",
+    "timestamp": "field: <class 'datetime.datetime'>"
+   }
+  },
+  "e2b.McpServer": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.NotEnoughSpaceException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.NotFoundException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.OutputHandler": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.ProcessInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, pid: int, tag: Optional[str], cmd: str, args: List[str], envs: Dict[str, str], cwd: Optional[str]) -> None",
+    "args": "field: typing.List[str]",
+    "cmd": "field: <class 'str'>",
+    "cwd": "field: typing.Optional[str]",
+    "envs": "field: typing.Dict[str, str]",
+    "pid": "field: <class 'int'>",
+    "tag": "field: typing.Optional[str]"
+   }
+  },
+  "e2b.ProxyTypes": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.PtyOutput": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "capitalize": "(self, /)",
+    "center": "(self, width, fillchar=b' ', /)",
+    "count": "?",
+    "decode": "(self, /, encoding='utf-8', errors='strict')",
+    "endswith": "?",
+    "expandtabs": "(self, /, tabsize=8)",
+    "find": "?",
+    "fromhex": "(string, /)",
+    "hex": "?",
+    "index": "?",
+    "isalnum": "(self, /)",
+    "isalpha": "(self, /)",
+    "isascii": "(self, /)",
+    "isdigit": "(self, /)",
+    "islower": "(self, /)",
+    "isspace": "(self, /)",
+    "istitle": "(self, /)",
+    "isupper": "(self, /)",
+    "join": "(self, iterable_of_bytes, /)",
+    "ljust": "(self, width, fillchar=b' ', /)",
+    "lower": "(self, /)",
+    "lstrip": "(self, bytes=None, /)",
+    "maketrans": "(frm, to, /)",
+    "partition": "(self, sep, /)",
+    "removeprefix": "(self, prefix, /)",
+    "removesuffix": "(self, suffix, /)",
+    "replace": "(self, old, new, count=-1, /)",
+    "rfind": "?",
+    "rindex": "?",
+    "rjust": "(self, width, fillchar=b' ', /)",
+    "rpartition": "(self, sep, /)",
+    "rsplit": "(self, /, sep=None, maxsplit=-1)",
+    "rstrip": "(self, bytes=None, /)",
+    "split": "(self, /, sep=None, maxsplit=-1)",
+    "splitlines": "(self, /, keepends=False)",
+    "startswith": "?",
+    "strip": "(self, bytes=None, /)",
+    "swapcase": "(self, /)",
+    "title": "(self, /)",
+    "translate": "(self, table, /, delete=b'')",
+    "upper": "(self, /)",
+    "zfill": "(self, width, /)"
+   }
+  },
+  "e2b.PtySize": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, rows: int, cols: int) -> None",
+    "cols": "field: <class 'int'>",
+    "rows": "field: <class 'int'>"
+   }
+  },
+  "e2b.RateLimitException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.ReadyCmd": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, cmd: str)",
+    "get_cmd": "(self)"
+   }
+  },
+  "e2b.Sandbox": {
+   "bases": [
+    "SandboxApi"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, **opts: Unpack[e2b.sandbox.main.SandboxOpts])",
+    "beta_pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "commands": "property",
+    "connect": "(self, timeout: Optional[int] = None, *, on_resume: Literal['restore', 'reboot'] = 'restore', **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "connection_config": "property",
+    "create": "(template: Optional[str] = None, timeout: Optional[int] = None, metadata: Optional[Dict[str, str]] = None, envs: Optional[Dict[str, str]] = None, secure: Optional[bool] = None, allow_internet_access: Optional[bool] = None, mcp: Union[e2b.sandbox.mcp.McpServer, Dict[str, Union[e2b.sandbox.sandbox_api.GitHubMcpServerConfig, Any]], NoneType] = None, network: Optional[e2b.sandbox.sandbox_api.SandboxNetworkOpts] = None, iam: Optional[e2b.sandbox.sandbox_api.SandboxIamOpts] = None, lifecycle: Optional[e2b.sandbox.sandbox_api.SandboxLifecycle] = None, volume_mounts: Optional[Dict[str, Union[e2b.volume.volume_sync.Volume, str]]] = None, logger: Optional[logging.Logger] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "create_snapshot": "(self, name: Optional[str] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SnapshotInfo",
+    "delete_snapshot": "(snapshot_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "download_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str",
+    "envd_api_url": "property",
+    "envd_direct_url": "property",
+    "files": "property",
+    "fork": "(self, timeout: Optional[int] = None, count: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[Union[Self, Exception]]",
+    "get_host": "(self, port: int) -> str",
+    "get_info": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox.sandbox_api.SandboxInfo",
+    "get_mcp_token": "(self) -> Optional[str]",
+    "get_mcp_url": "(self) -> str",
+    "get_metrics": "(self, start: Optional[datetime.datetime] = None, end: Optional[datetime.datetime] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxMetrics]",
+    "git": "property",
+    "is_running": "(self, request_timeout: Optional[float] = None) -> bool",
+    "kill": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "list": "(query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_sync.paginator.SandboxPaginator",
+    "list_snapshots": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.sandbox_sync.paginator.SnapshotPaginator",
+    "pause": "(self, keep_memory: Optional[bool] = None, *, mode: Optional[Literal['full', 'filesystem']] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "pty": "property",
+    "sandbox_domain": "property",
+    "sandbox_id": "property",
+    "set_timeout": "(self, timeout: int, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "traffic_access_token": "property",
+    "update_network": "(self, network: e2b.sandbox.sandbox_api.SandboxNetworkUpdate, **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "upload_url": "(self, path: str, user: Optional[str] = None, use_signature_expiration: Optional[int] = None) -> str"
+   }
+  },
+  "e2b.SandboxEgressProxyInfo": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "address": "field: <class 'str'>",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "username": "field: typing.NotRequired[str]",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxEgressProxyOpts": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "address": "field: <class 'str'>",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "password": "field: typing.NotRequired[str]",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "username": "field: typing.NotRequired[str]",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SandboxIamOpts": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "tokens": "field: typing.Dict[str, e2b.sandbox.sandbox_api.SandboxIamToken]",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxIamToken": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "audience": "field: <class 'str'>",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "token_type": "field: typing.Union[typing.Literal['JWT-SVID'], str]",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxIamTokenType": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, sandbox_id: str, sandbox_domain: Optional[str], template_id: str, name: Optional[str], metadata: Dict[str, str], started_at: datetime.datetime, end_at: datetime.datetime, state: e2b.api.client.models.sandbox_state.SandboxState, cpu_count: int, memory_mb: int, envd_version: str, allow_internet_access: Optional[bool] = None, network: Optional[e2b.sandbox.sandbox_api.SandboxNetworkInfo] = None, lifecycle: Optional[e2b.sandbox.sandbox_api.SandboxInfoLifecycle] = None, volume_mounts: List[Dict[str, str]] = <factory>) -> None",
+    "allow_internet_access": "field: typing.Optional[bool]",
+    "cpu_count": "field: <class 'int'>",
+    "end_at": "field: <class 'datetime.datetime'>",
+    "envd_version": "field: <class 'str'>",
+    "lifecycle": "field: typing.Optional[e2b.sandbox.sandbox_api.SandboxInfoLifecycle]",
+    "memory_mb": "field: <class 'int'>",
+    "metadata": "field: typing.Dict[str, str]",
+    "name": "field: typing.Optional[str]",
+    "network": "field: typing.Optional[e2b.sandbox.sandbox_api.SandboxNetworkInfo]",
+    "sandbox_domain": "field: typing.Optional[str]",
+    "sandbox_id": "field: <class 'str'>",
+    "started_at": "field: <class 'datetime.datetime'>",
+    "state": "field: <enum 'SandboxState'>",
+    "template_id": "field: <class 'str'>",
+    "volume_mounts": "field: typing.List[typing.Dict[str, str]]"
+   }
+  },
+  "e2b.SandboxInfoLifecycle": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "auto_resume": "field: <class 'bool'>",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "on_timeout": "field: typing.Literal['pause', 'kill']",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxLifecycle": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "auto_resume": "field: typing.NotRequired[bool]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "on_timeout": "field: typing.Union[typing.Literal['pause', 'kill'], e2b.sandbox.sandbox_api.SandboxOnTimeoutPause, e2b.sandbox.sandbox_api.SandboxOnTimeoutKill]",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxListOrder": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxMetrics": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, cpu_count: int, cpu_used_pct: float, disk_total: int, disk_used: int, mem_total: int, mem_used: int, mem_cache: int, timestamp: datetime.datetime) -> None",
+    "cpu_count": "field: <class 'int'>",
+    "cpu_used_pct": "field: <class 'float'>",
+    "disk_total": "field: <class 'int'>",
+    "disk_used": "field: <class 'int'>",
+    "mem_cache": "field: <class 'int'>",
+    "mem_total": "field: <class 'int'>",
+    "mem_used": "field: <class 'int'>",
+    "timestamp": "field: <class 'datetime.datetime'>"
+   }
+  },
+  "e2b.SandboxNetworkInfo": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "allow_out": "field: typing.List[str]",
+    "allow_public_traffic": "field: <class 'bool'>",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "deny_out": "field: typing.List[str]",
+    "egress_proxy": "field: <class 'e2b.sandbox.sandbox_api.SandboxEgressProxyInfo'>",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "https_ports": "field: typing.List[int]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "mask_request_host": "field: <class 'str'>",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "rules": "field: typing.Dict[str, typing.List[e2b.sandbox.sandbox_api.SandboxNetworkRuleInfo]]",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNetworkOpts": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "allow_out": "field: typing.NotRequired[typing.Union[typing.List[str], typing.Callable[[e2b.sandbox.sandbox_api.SandboxNetworkSelectorContext], typing.List[str]]]]",
+    "allow_public_traffic": "field: typing.NotRequired[bool]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "deny_out": "field: typing.NotRequired[typing.Union[typing.List[str], typing.Callable[[e2b.sandbox.sandbox_api.SandboxNetworkSelectorContext], typing.List[str]]]]",
+    "egress_proxy": "field: typing.NotRequired[e2b.sandbox.sandbox_api.SandboxEgressProxyOpts]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "https_ports": "field: typing.NotRequired[typing.List[int]]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "mask_request_host": "field: typing.NotRequired[str]",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "rules": "field: typing.NotRequired[typing.Dict[str, typing.List[e2b.sandbox.sandbox_api.SandboxNetworkRule]]]",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNetworkRule": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "transform": "field: typing.NotRequired[typing.Union[e2b.sandbox.sandbox_api.SandboxNetworkTransform, typing.Callable[[e2b.sandbox.sandbox_api.SandboxNetworkTransformContext], e2b.sandbox.sandbox_api.SandboxNetworkTransform]]]",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNetworkRuleInfo": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "transform": "field: typing.NotRequired[e2b.sandbox.sandbox_api.SandboxNetworkTransform]",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNetworkRules": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxNetworkSelector": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxNetworkSelectorContext": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, all_traffic: str, rules: Mapping[str, List[e2b.sandbox.sandbox_api.SandboxNetworkRule]]) -> None",
+    "all_traffic": "field: <class 'str'>",
+    "rules": "field: typing.Mapping[str, typing.List[e2b.sandbox.sandbox_api.SandboxNetworkRule]]"
+   }
+  },
+  "e2b.SandboxNetworkTransform": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "headers": "field: typing.NotRequired[typing.Dict[str, str]]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNetworkTransformContext": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, iam: e2b.sandbox.sandbox_api._SandboxNetworkTransformIam) -> None",
+    "iam": "field: <class 'e2b.sandbox.sandbox_api._SandboxNetworkTransformIam'>"
+   }
+  },
+  "e2b.SandboxNetworkTransformResolver": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxNetworkUpdate": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "allow_internet_access": "field: <class 'bool'>",
+    "allow_out": "field: typing.Union[typing.List[str], typing.Callable[[e2b.sandbox.sandbox_api.SandboxNetworkSelectorContext], typing.List[str]]]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "deny_out": "field: typing.Union[typing.List[str], typing.Callable[[e2b.sandbox.sandbox_api.SandboxNetworkSelectorContext], typing.List[str]]]",
+    "egress_proxy": "field: <class 'e2b.sandbox.sandbox_api.SandboxEgressProxyOpts'>",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "rules": "field: typing.Dict[str, typing.List[e2b.sandbox.sandbox_api.SandboxNetworkRule]]",
+    "setdefault": "(self, key, default=None, /)",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.SandboxNotFoundException": {
+   "bases": [
+    "NotFoundException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SandboxNotRunningException": {
+   "bases": [
+    "TimeoutException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SandboxOnResume": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxOnTimeout": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SandboxPaginator": {
+   "bases": [
+    "SandboxPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, query: Optional[e2b.sandbox.sandbox_api.SandboxQuery] = None, limit: Optional[int] = None, next_token: Optional[str] = None, order: Optional[Literal['asc', 'desc']] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SandboxInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.SandboxQuery": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, metadata: Optional[dict[str, str]] = None, state: Optional[list[e2b.api.client.models.sandbox_state.SandboxState]] = None, started_after: Optional[datetime.datetime] = None, template: Optional[str] = None) -> None",
+    "metadata": "field: typing.Optional[dict[str, str]]",
+    "started_after": "field: typing.Optional[datetime.datetime]",
+    "state": "field: typing.Optional[list[e2b.api.client.models.sandbox_state.SandboxState]]",
+    "template": "field: typing.Optional[str]"
+   }
+  },
+  "e2b.SandboxState": {
+   "bases": [
+    "str",
+    "Enum"
+   ],
+   "kind": "enum",
+   "members": {
+    "PAUSED": "'paused'",
+    "RUNNING": "'running'"
+   }
+  },
+  "e2b.SandboxUnreachableException": {
+   "bases": [
+    "TimeoutException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.Secret": {
+   "bases": [
+    "SecretBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "create": "(name: str, value: str, metadata: Optional[Dict[str, str]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo",
+    "destroy": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "exists": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "fill": "(secret: str) -> str",
+    "get_info": "(secret: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo",
+    "iam_token": "(*, audience: str, token_type: Union[Literal['JWT-SVID'], str]) -> e2b.sandbox.sandbox_api.SandboxIamToken",
+    "list": "(limit: Optional[int] = None, next_token: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.secret_sync.SecretPaginator",
+    "update": "(secret: str, value: str, metadata: Optional[Dict[str, str]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.secret.types.SecretInfo"
+   }
+  },
+  "e2b.SecretException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SecretInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, secret_id: str, name: str, version: int, metadata: Dict[str, str], created_at: datetime.datetime, updated_at: datetime.datetime) -> None",
+    "created_at": "field: <class 'datetime.datetime'>",
+    "metadata": "field: typing.Dict[str, str]",
+    "name": "field: <class 'str'>",
+    "secret_id": "field: <class 'str'>",
+    "updated_at": "field: <class 'datetime.datetime'>",
+    "version": "field: <class 'int'>"
+   }
+  },
+  "e2b.SecretNotFoundException": {
+   "bases": [
+    "SecretException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SecretPaginator": {
+   "bases": [
+    "SecretPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, limit: Optional[int] = None, next_token: Optional[str] = None, **opts: Unpack[~OptsT])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.secret.types.SecretInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.ServiceBusyException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.SnapshotInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, snapshot_id: str, names: List[str] = <factory>) -> None",
+    "names": "field: typing.List[str]",
+    "snapshot_id": "field: <class 'str'>"
+   }
+  },
+  "e2b.SnapshotMode": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.SnapshotPaginator": {
+   "bases": [
+    "SnapshotPaginatorBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, sandbox_id: Optional[str] = None, limit: Optional[int] = None, next_token: Optional[str] = None, name: Optional[str] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "has_next": "property",
+    "next_items": "(self, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.sandbox.sandbox_api.SnapshotInfo]",
+    "next_token": "property"
+   }
+  },
+  "e2b.Stderr": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "capitalize": "(self, /)",
+    "casefold": "(self, /)",
+    "center": "(self, width, fillchar=' ', /)",
+    "count": "?",
+    "encode": "(self, /, encoding='utf-8', errors='strict')",
+    "endswith": "?",
+    "expandtabs": "(self, /, tabsize=8)",
+    "find": "?",
+    "format": "(self, /, *args, **kwargs)",
+    "format_map": "(self, mapping, /)",
+    "index": "?",
+    "isalnum": "(self, /)",
+    "isalpha": "(self, /)",
+    "isascii": "(self, /)",
+    "isdecimal": "(self, /)",
+    "isdigit": "(self, /)",
+    "isidentifier": "(self, /)",
+    "islower": "(self, /)",
+    "isnumeric": "(self, /)",
+    "isprintable": "(self, /)",
+    "isspace": "(self, /)",
+    "istitle": "(self, /)",
+    "isupper": "(self, /)",
+    "join": "(self, iterable, /)",
+    "ljust": "(self, width, fillchar=' ', /)",
+    "lower": "(self, /)",
+    "lstrip": "(self, chars=None, /)",
+    "maketrans": "?",
+    "partition": "(self, sep, /)",
+    "removeprefix": "(self, prefix, /)",
+    "removesuffix": "(self, suffix, /)",
+    "replace": "(self, old, new, /, count=-1)",
+    "rfind": "?",
+    "rindex": "?",
+    "rjust": "(self, width, fillchar=' ', /)",
+    "rpartition": "(self, sep, /)",
+    "rsplit": "(self, /, sep=None, maxsplit=-1)",
+    "rstrip": "(self, chars=None, /)",
+    "split": "(self, /, sep=None, maxsplit=-1)",
+    "splitlines": "(self, /, keepends=False)",
+    "startswith": "?",
+    "strip": "(self, chars=None, /)",
+    "swapcase": "(self, /)",
+    "title": "(self, /)",
+    "translate": "(self, table, /)",
+    "upper": "(self, /)",
+    "zfill": "(self, width, /)"
+   }
+  },
+  "e2b.Stdout": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "capitalize": "(self, /)",
+    "casefold": "(self, /)",
+    "center": "(self, width, fillchar=' ', /)",
+    "count": "?",
+    "encode": "(self, /, encoding='utf-8', errors='strict')",
+    "endswith": "?",
+    "expandtabs": "(self, /, tabsize=8)",
+    "find": "?",
+    "format": "(self, /, *args, **kwargs)",
+    "format_map": "(self, mapping, /)",
+    "index": "?",
+    "isalnum": "(self, /)",
+    "isalpha": "(self, /)",
+    "isascii": "(self, /)",
+    "isdecimal": "(self, /)",
+    "isdigit": "(self, /)",
+    "isidentifier": "(self, /)",
+    "islower": "(self, /)",
+    "isnumeric": "(self, /)",
+    "isprintable": "(self, /)",
+    "isspace": "(self, /)",
+    "istitle": "(self, /)",
+    "isupper": "(self, /)",
+    "join": "(self, iterable, /)",
+    "ljust": "(self, width, fillchar=' ', /)",
+    "lower": "(self, /)",
+    "lstrip": "(self, chars=None, /)",
+    "maketrans": "?",
+    "partition": "(self, sep, /)",
+    "removeprefix": "(self, prefix, /)",
+    "removesuffix": "(self, suffix, /)",
+    "replace": "(self, old, new, /, count=-1)",
+    "rfind": "?",
+    "rindex": "?",
+    "rjust": "(self, width, fillchar=' ', /)",
+    "rpartition": "(self, sep, /)",
+    "rsplit": "(self, /, sep=None, maxsplit=-1)",
+    "rstrip": "(self, chars=None, /)",
+    "split": "(self, /, sep=None, maxsplit=-1)",
+    "splitlines": "(self, /, keepends=False)",
+    "startswith": "?",
+    "strip": "(self, chars=None, /)",
+    "swapcase": "(self, /)",
+    "title": "(self, /)",
+    "translate": "(self, table, /)",
+    "upper": "(self, /)",
+    "zfill": "(self, width, /)"
+   }
+  },
+  "e2b.Template": {
+   "bases": [
+    "TemplateBase"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, file_context_path: Union[str, pathlib._local.Path, NoneType] = None, file_ignore_patterns: Optional[List[str]] = None)",
+    "alias_exists": "(alias: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "assign_tags": "(target_name: str, tags: Union[str, List[str]], **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.TemplateTagInfo",
+    "build": "(template: Union[e2b.template.main.TemplateFinal, e2b.template.main.TemplateBuilder], name: Optional[str] = None, *, alias: Optional[str] = None, tags: Optional[List[str]] = None, cpu_count: Optional[int] = None, memory_mb: Optional[int] = None, min_free_disk_mb: Optional[int] = None, skip_cache: bool = False, on_build_logs: Optional[Callable[[e2b.template.logger.LogEntry], NoneType]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.BuildInfo",
+    "build_in_background": "(template: Union[e2b.template.main.TemplateFinal, e2b.template.main.TemplateBuilder], name: Optional[str] = None, *, alias: Optional[str] = None, tags: Optional[List[str]] = None, cpu_count: Optional[int] = None, memory_mb: Optional[int] = None, min_free_disk_mb: Optional[int] = None, skip_cache: bool = False, on_build_logs: Optional[Callable[[e2b.template.logger.LogEntry], NoneType]] = None, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.template.types.BuildInfo",
+    "exists": "(name: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "from_alpine_image": "(self, variant: str = '3.24') -> e2b.template.main.TemplateBuilder",
+    "from_arch_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_aws_registry": "(self, image: str, access_key_id: str, secret_access_key: str, region: str) -> e2b.template.main.TemplateBuilder",
+    "from_base_image": "(self) -> e2b.template.main.TemplateBuilder",
+    "from_bun_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_debian_image": "(self, variant: str = 'stable') -> e2b.template.main.TemplateBuilder",
+    "from_dockerfile": "(self, dockerfile_content_or_path: str) -> e2b.template.main.TemplateBuilder",
+    "from_fedora_image": "(self, variant: str = '44') -> e2b.template.main.TemplateBuilder",
+    "from_gcp_registry": "(self, image: str, service_account_json: Union[str, dict]) -> e2b.template.main.TemplateBuilder",
+    "from_image": "(self, image: str, username: Optional[str] = None, password: Optional[str] = None) -> e2b.template.main.TemplateBuilder",
+    "from_node_image": "(self, variant: str = 'lts') -> e2b.template.main.TemplateBuilder",
+    "from_python_image": "(self, version: str = '3') -> e2b.template.main.TemplateBuilder",
+    "from_template": "(self, template: str) -> e2b.template.main.TemplateBuilder",
+    "from_ubuntu_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "get_build_status": "(build_info: e2b.template.types.BuildInfo, logs_offset: Optional[int] = None, **opts: Unpack[e2b.connection_config.ApiParams])",
+    "get_tags": "(template_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.template.types.TemplateTag]",
+    "remove_tags": "(name: str, tags: Union[str, List[str]], **opts: Unpack[e2b.connection_config.ApiParams]) -> None",
+    "skip_cache": "(self) -> 'TemplateBase'",
+    "to_dockerfile": "(template: 'TemplateClass') -> str",
+    "to_json": "(template: 'TemplateClass') -> str"
+   }
+  },
+  "e2b.TemplateBase": {
+   "bases": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, file_context_path: Union[str, pathlib._local.Path, NoneType] = None, file_ignore_patterns: Optional[List[str]] = None)",
+    "from_alpine_image": "(self, variant: str = '3.24') -> e2b.template.main.TemplateBuilder",
+    "from_arch_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_aws_registry": "(self, image: str, access_key_id: str, secret_access_key: str, region: str) -> e2b.template.main.TemplateBuilder",
+    "from_base_image": "(self) -> e2b.template.main.TemplateBuilder",
+    "from_bun_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "from_debian_image": "(self, variant: str = 'stable') -> e2b.template.main.TemplateBuilder",
+    "from_dockerfile": "(self, dockerfile_content_or_path: str) -> e2b.template.main.TemplateBuilder",
+    "from_fedora_image": "(self, variant: str = '44') -> e2b.template.main.TemplateBuilder",
+    "from_gcp_registry": "(self, image: str, service_account_json: Union[str, dict]) -> e2b.template.main.TemplateBuilder",
+    "from_image": "(self, image: str, username: Optional[str] = None, password: Optional[str] = None) -> e2b.template.main.TemplateBuilder",
+    "from_node_image": "(self, variant: str = 'lts') -> e2b.template.main.TemplateBuilder",
+    "from_python_image": "(self, version: str = '3') -> e2b.template.main.TemplateBuilder",
+    "from_template": "(self, template: str) -> e2b.template.main.TemplateBuilder",
+    "from_ubuntu_image": "(self, variant: str = 'latest') -> e2b.template.main.TemplateBuilder",
+    "skip_cache": "(self) -> 'TemplateBase'",
+    "to_dockerfile": "(template: 'TemplateClass') -> str",
+    "to_json": "(template: 'TemplateClass') -> str"
+   }
+  },
+  "e2b.TemplateBuildStatus": {
+   "bases": [
+    "str",
+    "Enum"
+   ],
+   "kind": "enum",
+   "members": {
+    "BUILDING": "'building'",
+    "ERROR": "'error'",
+    "READY": "'ready'",
+    "WAITING": "'waiting'"
+   }
+  },
+  "e2b.TemplateBuildStatusResponse": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, build_id: str, template_id: str, status: e2b.template.types.TemplateBuildStatus, log_entries: List[e2b.template.logger.LogEntry], logs: List[str], reason: Optional[e2b.template.types.BuildStatusReason] = None) -> None",
+    "build_id": "field: <class 'str'>",
+    "log_entries": "field: typing.List[e2b.template.logger.LogEntry]",
+    "logs": "field: typing.List[str]",
+    "reason": "field: typing.Optional[e2b.template.types.BuildStatusReason]",
+    "status": "field: <enum 'TemplateBuildStatus'>",
+    "template_id": "field: <class 'str'>"
+   }
+  },
+  "e2b.TemplateClass": {
+   "kind": "function",
+   "signature": "(*args, **kwargs)"
+  },
+  "e2b.TemplateException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.TemplateTag": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, tag: str, build_id: str, created_at: datetime.datetime) -> None",
+    "build_id": "field: <class 'str'>",
+    "created_at": "field: <class 'datetime.datetime'>",
+    "tag": "field: <class 'str'>"
+   }
+  },
+  "e2b.TemplateTagInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, build_id: str, tags: List[str]) -> None",
+    "build_id": "field: <class 'str'>",
+    "tags": "field: typing.List[str]"
+   }
+  },
+  "e2b.TimeoutException": {
+   "bases": [
+    "SandboxException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.Username": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "capitalize": "(self, /)",
+    "casefold": "(self, /)",
+    "center": "(self, width, fillchar=' ', /)",
+    "count": "?",
+    "encode": "(self, /, encoding='utf-8', errors='strict')",
+    "endswith": "?",
+    "expandtabs": "(self, /, tabsize=8)",
+    "find": "?",
+    "format": "(self, /, *args, **kwargs)",
+    "format_map": "(self, mapping, /)",
+    "index": "?",
+    "isalnum": "(self, /)",
+    "isalpha": "(self, /)",
+    "isascii": "(self, /)",
+    "isdecimal": "(self, /)",
+    "isdigit": "(self, /)",
+    "isidentifier": "(self, /)",
+    "islower": "(self, /)",
+    "isnumeric": "(self, /)",
+    "isprintable": "(self, /)",
+    "isspace": "(self, /)",
+    "istitle": "(self, /)",
+    "isupper": "(self, /)",
+    "join": "(self, iterable, /)",
+    "ljust": "(self, width, fillchar=' ', /)",
+    "lower": "(self, /)",
+    "lstrip": "(self, chars=None, /)",
+    "maketrans": "?",
+    "partition": "(self, sep, /)",
+    "removeprefix": "(self, prefix, /)",
+    "removesuffix": "(self, suffix, /)",
+    "replace": "(self, old, new, /, count=-1)",
+    "rfind": "?",
+    "rindex": "?",
+    "rjust": "(self, width, fillchar=' ', /)",
+    "rpartition": "(self, sep, /)",
+    "rsplit": "(self, /, sep=None, maxsplit=-1)",
+    "rstrip": "(self, chars=None, /)",
+    "split": "(self, /, sep=None, maxsplit=-1)",
+    "splitlines": "(self, /, keepends=False)",
+    "startswith": "?",
+    "strip": "(self, chars=None, /)",
+    "swapcase": "(self, /)",
+    "title": "(self, /)",
+    "translate": "(self, table, /)",
+    "upper": "(self, /)",
+    "zfill": "(self, width, /)"
+   }
+  },
+  "e2b.Volume": {
+   "bases": [
+    "ClientFactory"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, volume_id: str, name: str, token: Optional[str] = None, domain: Optional[str] = None, debug: Optional[bool] = None, proxy: Union[str, httpx.URL, httpx.Proxy, NoneType] = None, *, http_version: Optional[Literal['1.1', '2']] = None)",
+    "connect": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "create": "(name: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> Self",
+    "destroy": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> bool",
+    "exists": "(self, path: str, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> bool",
+    "get_info": "(volume_id: str, **opts: Unpack[e2b.connection_config.ApiParams]) -> e2b.volume.types.VolumeAndToken",
+    "list": "(**opts: Unpack[e2b.connection_config.ApiParams]) -> List[e2b.volume.types.VolumeInfo]",
+    "make_dir": "(self, path: str, uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, force: Optional[bool] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat",
+    "name": "property",
+    "read_file": "(self, path: str, format: Literal['text', 'bytes', 'stream'] = 'text', stream_idle_timeout: Optional[float] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> Union[str, bytes, Iterator[bytes]]",
+    "remove": "(self, path: str, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> None",
+    "token": "property",
+    "update_metadata": "(self, path: str, uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat",
+    "volume_id": "property",
+    "write_file": "(self, path: str, data: Union[str, bytes, IO], uid: Optional[int] = None, gid: Optional[int] = None, mode: Optional[int] = None, force: Optional[bool] = None, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> e2b.volume.types.VolumeEntryStat"
+   }
+  },
+  "e2b.VolumeAndToken": {
+   "bases": [
+    "VolumeInfo"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, volume_id: str, name: str, token: str, domain: Optional[str] = None) -> None",
+    "domain": "field: typing.Optional[str]",
+    "name": "field: <class 'str'>",
+    "token": "field: <class 'str'>",
+    "volume_id": "field: <class 'str'>"
+   }
+  },
+  "e2b.VolumeApiParams": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "api_url": "field: typing.Optional[str]",
+    "clear": "(self, /)",
+    "copy": "(self, /)",
+    "debug": "field: typing.Optional[bool]",
+    "domain": "field: typing.Optional[str]",
+    "fromkeys": "(iterable, value=None, /)",
+    "get": "(self, key, default=None, /)",
+    "headers": "field: typing.Optional[typing.Dict[str, str]]",
+    "http_version": "field: typing.Optional[typing.Literal['1.1', '2']]",
+    "items": "(self, /)",
+    "keys": "(self, /)",
+    "logger": "field: typing.Optional[logging.Logger]",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "proxy": "field: typing.Union[str, httpx.URL, httpx.Proxy, NoneType]",
+    "request_timeout": "field: typing.Optional[float]",
+    "setdefault": "(self, key, default=None, /)",
+    "token": "field: typing.Optional[str]",
+    "update": "?",
+    "values": "(self, /)"
+   }
+  },
+  "e2b.VolumeConnectionConfig": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, domain: Optional[str] = None, debug: Optional[bool] = None, token: Optional[str] = None, api_url: Optional[str] = None, request_timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None, proxy: Union[str, httpx.URL, httpx.Proxy, NoneType] = None, logger: Optional[logging.Logger] = None, *, http_version: Optional[Literal['1.1', '2']] = None)",
+    "get_api_params": "(self, **opts: Unpack[e2b.volume.connection_config.VolumeApiParams]) -> dict",
+    "get_request_timeout": "(self, request_timeout: Optional[float] = None)"
+   }
+  },
+  "e2b.VolumeEntryStat": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, name: str, type: e2b.volume.client.models.volume_entry_stat_type.VolumeEntryStatType, path: str, size: int, mode: int, uid: int, gid: int, atime: datetime.datetime, mtime: datetime.datetime, ctime: datetime.datetime, target: Optional[str] = None) -> None",
+    "atime": "field: <class 'datetime.datetime'>",
+    "ctime": "field: <class 'datetime.datetime'>",
+    "gid": "field: <class 'int'>",
+    "mode": "field: <class 'int'>",
+    "mtime": "field: <class 'datetime.datetime'>",
+    "name": "field: <class 'str'>",
+    "path": "field: <class 'str'>",
+    "size": "field: <class 'int'>",
+    "target": "field: typing.Optional[str]",
+    "type": "field: <enum 'VolumeEntryStatType'>",
+    "uid": "field: <class 'int'>"
+   }
+  },
+  "e2b.VolumeException": {
+   "bases": [
+    "Exception"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "add_note": "(self, object, /)",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.VolumeFileType": {
+   "bases": [
+    "str",
+    "Enum"
+   ],
+   "kind": "enum",
+   "members": {
+    "DIRECTORY": "'directory'",
+    "FILE": "'file'",
+    "SYMLINK": "'symlink'",
+    "UNKNOWN": "'unknown'"
+   }
+  },
+  "e2b.VolumeInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, volume_id: str, name: str) -> None",
+    "name": "field: <class 'str'>",
+    "volume_id": "field: <class 'str'>"
+   }
+  },
+  "e2b.VolumeNotFoundException": {
+   "bases": [
+    "NotFoundException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.VolumePathNotFoundException": {
+   "bases": [
+    "NotFoundException"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, *args, status_code: Optional[int] = None)",
+    "add_note": "(self, object, /)",
+    "status_code": "field: typing.Optional[int]",
+    "with_traceback": "(self, object, /)"
+   }
+  },
+  "e2b.WatchHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, rpc: e2b.envd.filesystem.filesystem_connect.FilesystemClientSync, watcher_id: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, user: Optional[str] = None, check_health: Optional[Callable[[], Optional[bool]]] = None)",
+    "get_new_events": "(self, request_timeout: Optional[float] = None) -> List[e2b.sandbox.filesystem.watch_handle.FilesystemEvent]",
+    "stop": "(self, request_timeout: Optional[float] = None)"
+   }
+  },
+  "e2b.WriteInfo": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, name: str, type: Optional[e2b.sandbox.filesystem.filesystem.FileType], path: str, *, metadata: Optional[Dict[str, str]] = None) -> None",
+    "from_dict": "(payload: Dict) -> 'WriteInfo'",
+    "metadata": "field: typing.Optional[typing.Dict[str, str]]",
+    "name": "field: <class 'str'>",
+    "path": "field: <class 'str'>",
+    "type": "field: typing.Optional[e2b.sandbox.filesystem.filesystem.FileType]"
+   }
+  },
+  "e2b.api": {
+   "kind": "module"
+  },
+  "e2b.client": {
+   "kind": "module"
+  },
+  "e2b.connection_config": {
+   "kind": "module"
+  },
+  "e2b.default_build_logger": {
+   "kind": "function",
+   "signature": "(min_level: Optional[Literal['debug', 'info', 'warn', 'error']] = None) -> Callable[[e2b.template.logger.LogEntry], NoneType]"
+  },
+  "e2b.envd": {
+   "kind": "module"
+  },
+  "e2b.exceptions": {
+   "kind": "module"
+  },
+  "e2b.get_signature": {
+   "kind": "function",
+   "signature": "(path: str, operation: Literal['read', 'write'], user: Optional[str], envd_access_token: Optional[str], expiration_in_seconds: Optional[int] = None) -> e2b.sandbox.signature.Signature"
+  },
+  "e2b.io_utils": {
+   "kind": "module"
+  },
+  "e2b.paginator": {
+   "kind": "module"
+  },
+  "e2b.retry": {
+   "kind": "module"
+  },
+  "e2b.sandbox": {
+   "kind": "module"
+  },
+  "e2b.sandbox.mcp.McpServer": {
+   "bases": [
+    "dict"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, /, *args, **kwargs)",
+    "airtable": "field: ForwardRef('NotRequired[Airtable]', module='e2b.sandbox.mcp')",
+    "aks": "field: ForwardRef('NotRequired[Aks]', module='e2b.sandbox.mcp')",
+    "alfresco": "field: ForwardRef('NotRequired[Alfresco]', module='e2b.sandbox.mcp')",
+    "amazonBedrockAgentcore": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "amazonKendraIndex": "field: ForwardRef('NotRequired[AmazonKendraIndex]', module='e2b.sandbox.mcp')",
+    "amazonNeptune": "field: ForwardRef('NotRequired[AmazonNeptune]', module='e2b.sandbox.mcp')",
+    "amazonQbusinessAnonymous": "field: ForwardRef('NotRequired[AmazonQbusinessAnonymous]', module='e2b.sandbox.mcp')",
+    "apiGateway": "field: ForwardRef('NotRequired[ApiGateway]', module='e2b.sandbox.mcp')",
+    "apify": "field: ForwardRef('NotRequired[Apify]', module='e2b.sandbox.mcp')",
+    "arm": "field: ForwardRef('NotRequired[Arm]', module='e2b.sandbox.mcp')",
+    "arxiv": "field: ForwardRef('NotRequired[Arxiv]', module='e2b.sandbox.mcp')",
+    "astGrep": "field: ForwardRef('NotRequired[AstGrep]', module='e2b.sandbox.mcp')",
+    "astraDb": "field: ForwardRef('NotRequired[AstraDb]', module='e2b.sandbox.mcp')",
+    "astroDocs": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "atlan": "field: ForwardRef('NotRequired[Atlan]', module='e2b.sandbox.mcp')",
+    "atlasDocs": "field: ForwardRef('NotRequired[AtlasDocs]', module='e2b.sandbox.mcp')",
+    "atlassian": "field: ForwardRef('NotRequired[Atlassian]', module='e2b.sandbox.mcp')",
+    "audienseInsights": "field: ForwardRef('NotRequired[AudienseInsights]', module='e2b.sandbox.mcp')",
+    "awsApi": "field: ForwardRef('NotRequired[AwsApi]', module='e2b.sandbox.mcp')",
+    "awsAppsync": "field: ForwardRef('NotRequired[AwsAppsync]', module='e2b.sandbox.mcp')",
+    "awsBedrockCustomModelImport": "field: ForwardRef('NotRequired[AwsBedrockCustomModelImport]', module='e2b.sandbox.mcp')",
+    "awsBedrockDataAutomation": "field: ForwardRef('NotRequired[AwsBedrockDataAutomation]', module='e2b.sandbox.mcp')",
+    "awsCdk": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "awsCore": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "awsDataprocessing": "field: ForwardRef('NotRequired[AwsDataprocessing]', module='e2b.sandbox.mcp')",
+    "awsDiagram": "field: ForwardRef('NotRequired[AwsDiagram]', module='e2b.sandbox.mcp')",
+    "awsDocumentation": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "awsHealthomics": "field: ForwardRef('NotRequired[AwsHealthomics]', module='e2b.sandbox.mcp')",
+    "awsIotSitewise": "field: ForwardRef('NotRequired[AwsIotSitewise]', module='e2b.sandbox.mcp')",
+    "awsKbRetrievalServer": "field: ForwardRef('NotRequired[AwsKbRetrievalServer]', module='e2b.sandbox.mcp')",
+    "awsLocation": "field: ForwardRef('NotRequired[AwsLocation]', module='e2b.sandbox.mcp')",
+    "awsMsk": "field: ForwardRef('NotRequired[AwsMsk]', module='e2b.sandbox.mcp')",
+    "awsPricing": "field: ForwardRef('NotRequired[AwsPricing]', module='e2b.sandbox.mcp')",
+    "awsTerraform": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "awslabsBillingCostManagement": "field: ForwardRef('NotRequired[AwslabsBillingCostManagement]', module='e2b.sandbox.mcp')",
+    "awslabsCcapi": "field: ForwardRef('NotRequired[AwslabsCcapi]', module='e2b.sandbox.mcp')",
+    "awslabsCfn": "field: ForwardRef('NotRequired[AwslabsCfn]', module='e2b.sandbox.mcp')",
+    "awslabsCloudtrail": "field: ForwardRef('NotRequired[AwslabsCloudtrail]', module='e2b.sandbox.mcp')",
+    "awslabsCloudwatch": "field: ForwardRef('NotRequired[AwslabsCloudwatch]', module='e2b.sandbox.mcp')",
+    "awslabsCloudwatchAppsignals": "field: ForwardRef('NotRequired[AwslabsCloudwatchAppsignals]', module='e2b.sandbox.mcp')",
+    "awslabsCostExplorer": "field: ForwardRef('NotRequired[AwslabsCostExplorer]', module='e2b.sandbox.mcp')",
+    "awslabsDynamodb": "field: ForwardRef('NotRequired[AwslabsDynamodb]', module='e2b.sandbox.mcp')",
+    "awslabsElasticache": "field: ForwardRef('NotRequired[AwslabsElasticache]', module='e2b.sandbox.mcp')",
+    "awslabsIam": "field: ForwardRef('NotRequired[AwslabsIam]', module='e2b.sandbox.mcp')",
+    "awslabsMemcached": "field: ForwardRef('NotRequired[AwslabsMemcached]', module='e2b.sandbox.mcp')",
+    "awslabsNovaCanvas": "field: ForwardRef('NotRequired[AwslabsNovaCanvas]', module='e2b.sandbox.mcp')",
+    "awslabsRedshift": "field: ForwardRef('NotRequired[AwslabsRedshift]', module='e2b.sandbox.mcp')",
+    "awslabsS3Tables": "field: ForwardRef('NotRequired[AwslabsS3Tables]', module='e2b.sandbox.mcp')",
+    "awslabsTimestreamForInfluxdb": "field: ForwardRef('NotRequired[AwslabsTimestreamForInfluxdb]', module='e2b.sandbox.mcp')",
+    "awslabsValkey": "field: ForwardRef('NotRequired[AwslabsValkey]', module='e2b.sandbox.mcp')",
+    "azure": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "beagleSecurity": "field: ForwardRef('NotRequired[BeagleSecurity]', module='e2b.sandbox.mcp')",
+    "bitrefill": "field: ForwardRef('NotRequired[Bitrefill]', module='e2b.sandbox.mcp')",
+    "box": "field: ForwardRef('NotRequired[Box]', module='e2b.sandbox.mcp')",
+    "brave": "field: ForwardRef('NotRequired[Brave]', module='e2b.sandbox.mcp')",
+    "browserbase": "field: ForwardRef('NotRequired[Browserbase]', module='e2b.sandbox.mcp')",
+    "buildkite": "field: ForwardRef('NotRequired[Buildkite]', module='e2b.sandbox.mcp')",
+    "camunda": "field: ForwardRef('NotRequired[Camunda]', module='e2b.sandbox.mcp')",
+    "charmhealth": "field: ForwardRef('NotRequired[Charmhealth]', module='e2b.sandbox.mcp')",
+    "chroma": "field: ForwardRef('NotRequired[Chroma]', module='e2b.sandbox.mcp')",
+    "circleci": "field: ForwardRef('NotRequired[Circleci]', module='e2b.sandbox.mcp')",
+    "clear": "(self, /)",
+    "clickhouse": "field: ForwardRef('NotRequired[Clickhouse]', module='e2b.sandbox.mcp')",
+    "close": "field: ForwardRef('NotRequired[Close]', module='e2b.sandbox.mcp')",
+    "cloudRun": "field: ForwardRef('NotRequired[CloudRun]', module='e2b.sandbox.mcp')",
+    "cloudflareDocs": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "cockroachdb": "field: ForwardRef('NotRequired[Cockroachdb]', module='e2b.sandbox.mcp')",
+    "codeInterpreter": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "context7": "field: ForwardRef('NotRequired[Context7]', module='e2b.sandbox.mcp')",
+    "copy": "(self, /)",
+    "couchbase": "field: ForwardRef('NotRequired[Couchbase]', module='e2b.sandbox.mcp')",
+    "cylera": "field: ForwardRef('NotRequired[Cylera]', module='e2b.sandbox.mcp')",
+    "cyreslabAiShodan": "field: ForwardRef('NotRequired[CyreslabAiShodan]', module='e2b.sandbox.mcp')",
+    "dappier": "field: ForwardRef('NotRequired[Dappier]', module='e2b.sandbox.mcp')",
+    "dappierRemote": "field: ForwardRef('NotRequired[DappierRemote]', module='e2b.sandbox.mcp')",
+    "dart": "field: ForwardRef('NotRequired[Dart]', module='e2b.sandbox.mcp')",
+    "databaseServer": "field: ForwardRef('NotRequired[DatabaseServer]', module='e2b.sandbox.mcp')",
+    "databutton": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "deepwiki": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "descope": "field: ForwardRef('NotRequired[Descope]', module='e2b.sandbox.mcp')",
+    "desktopCommander": "field: ForwardRef('NotRequired[DesktopCommander]', module='e2b.sandbox.mcp')",
+    "devhubCms": "field: ForwardRef('NotRequired[DevhubCms]', module='e2b.sandbox.mcp')",
+    "discord": "field: ForwardRef('NotRequired[Discord]', module='e2b.sandbox.mcp')",
+    "dockerhub": "field: ForwardRef('NotRequired[Dockerhub]', module='e2b.sandbox.mcp')",
+    "dodoPayments": "field: ForwardRef('NotRequired[DodoPayments]', module='e2b.sandbox.mcp')",
+    "dotnetTypesExplorer": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "dreamfactory": "field: ForwardRef('NotRequired[Dreamfactory]', module='e2b.sandbox.mcp')",
+    "duckduckgo": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "dynatrace": "field: ForwardRef('NotRequired[Dynatrace]', module='e2b.sandbox.mcp')",
+    "e2b": "field: ForwardRef('NotRequired[E2b]', module='e2b.sandbox.mcp')",
+    "edubase": "field: ForwardRef('NotRequired[Edubase]', module='e2b.sandbox.mcp')",
+    "effect": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "elasticsearch": "field: ForwardRef('NotRequired[Elasticsearch]', module='e2b.sandbox.mcp')",
+    "elevenlabs": "field: ForwardRef('NotRequired[Elevenlabs]', module='e2b.sandbox.mcp')",
+    "everart": "field: ForwardRef('NotRequired[Everart]', module='e2b.sandbox.mcp')",
+    "exa": "field: ForwardRef('NotRequired[Exa]', module='e2b.sandbox.mcp')",
+    "explorium": "field: ForwardRef('NotRequired[Explorium]', module='e2b.sandbox.mcp')",
+    "fetch": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "fibery": "field: ForwardRef('NotRequired[Fibery]', module='e2b.sandbox.mcp')",
+    "filesystem": "field: ForwardRef('NotRequired[Filesystem]', module='e2b.sandbox.mcp')",
+    "findADomain": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "firecrawl": "field: ForwardRef('NotRequired[Firecrawl]', module='e2b.sandbox.mcp')",
+    "firewalla": "field: ForwardRef('NotRequired[Firewalla]', module='e2b.sandbox.mcp')",
+    "fromkeys": "(iterable, value=None, /)",
+    "geminiApiDocs": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "get": "(self, key, default=None, /)",
+    "git": "field: ForwardRef('NotRequired[Git]', module='e2b.sandbox.mcp')",
+    "github": "field: ForwardRef('NotRequired[Github]', module='e2b.sandbox.mcp')",
+    "githubChat": "field: ForwardRef('NotRequired[GithubChat]', module='e2b.sandbox.mcp')",
+    "githubOfficial": "field: ForwardRef('NotRequired[GithubOfficial]', module='e2b.sandbox.mcp')",
+    "gitlab": "field: ForwardRef('NotRequired[Gitlab]', module='e2b.sandbox.mcp')",
+    "gitmcp": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "glif": "field: ForwardRef('NotRequired[Glif]', module='e2b.sandbox.mcp')",
+    "gmail": "field: ForwardRef('NotRequired[Gmail]', module='e2b.sandbox.mcp')",
+    "googleFlights": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "googleMaps": "field: ForwardRef('NotRequired[GoogleMaps]', module='e2b.sandbox.mcp')",
+    "googleMapsComprehensive": "field: ForwardRef('NotRequired[GoogleMapsComprehensive]', module='e2b.sandbox.mcp')",
+    "grafana": "field: ForwardRef('NotRequired[Grafana]', module='e2b.sandbox.mcp')",
+    "gyazo": "field: ForwardRef('NotRequired[Gyazo]', module='e2b.sandbox.mcp')",
+    "hackernews": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "hackle": "field: ForwardRef('NotRequired[Hackle]', module='e2b.sandbox.mcp')",
+    "handwritingOcr": "field: ForwardRef('NotRequired[HandwritingOcr]', module='e2b.sandbox.mcp')",
+    "hdx": "field: ForwardRef('NotRequired[Hdx]', module='e2b.sandbox.mcp')",
+    "heroku": "field: ForwardRef('NotRequired[Heroku]', module='e2b.sandbox.mcp')",
+    "hostinger": "field: ForwardRef('NotRequired[Hostinger]', module='e2b.sandbox.mcp')",
+    "hoverfly": "field: ForwardRef('NotRequired[Hoverfly]', module='e2b.sandbox.mcp')",
+    "hubspot": "field: ForwardRef('NotRequired[Hubspot]', module='e2b.sandbox.mcp')",
+    "huggingFace": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "hummingbot": "field: ForwardRef('NotRequired[Hummingbot]', module='e2b.sandbox.mcp')",
+    "husqvarnaAutomower": "field: ForwardRef('NotRequired[HusqvarnaAutomower]', module='e2b.sandbox.mcp')",
+    "hyperbrowser": "field: ForwardRef('NotRequired[Hyperbrowser]', module='e2b.sandbox.mcp')",
+    "hyperspell": "field: ForwardRef('NotRequired[Hyperspell]', module='e2b.sandbox.mcp')",
+    "iaptic": "field: ForwardRef('NotRequired[Iaptic]', module='e2b.sandbox.mcp')",
+    "inspektorGadget": "field: ForwardRef('NotRequired[InspektorGadget]', module='e2b.sandbox.mcp')",
+    "items": "(self, /)",
+    "javadocs": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "jetbrains": "field: ForwardRef('NotRequired[Jetbrains]', module='e2b.sandbox.mcp')",
+    "kafkaSchemaReg": "field: ForwardRef('NotRequired[KafkaSchemaReg]', module='e2b.sandbox.mcp')",
+    "kagisearch": "field: ForwardRef('NotRequired[Kagisearch]', module='e2b.sandbox.mcp')",
+    "keboola": "field: ForwardRef('NotRequired[Keboola]', module='e2b.sandbox.mcp')",
+    "keys": "(self, /)",
+    "kong": "field: ForwardRef('NotRequired[Kong]', module='e2b.sandbox.mcp')",
+    "kubectl": "field: ForwardRef('NotRequired[Kubectl]', module='e2b.sandbox.mcp')",
+    "kubernetes": "field: ForwardRef('NotRequired[Kubernetes]', module='e2b.sandbox.mcp')",
+    "lara": "field: ForwardRef('NotRequired[Lara]', module='e2b.sandbox.mcp')",
+    "line": "field: ForwardRef('NotRequired[Line]', module='e2b.sandbox.mcp')",
+    "linkedin": "field: ForwardRef('NotRequired[Linkedin]', module='e2b.sandbox.mcp')",
+    "llmtxt": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "maestro": "field: ForwardRef('NotRequired[Maestro]', module='e2b.sandbox.mcp')",
+    "manifold": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "mapbox": "field: ForwardRef('NotRequired[Mapbox]', module='e2b.sandbox.mcp')",
+    "mapboxDevkit": "field: ForwardRef('NotRequired[MapboxDevkit]', module='e2b.sandbox.mcp')",
+    "markdownify": "field: ForwardRef('NotRequired[Markdownify]', module='e2b.sandbox.mcp')",
+    "markitdown": "field: ForwardRef('NotRequired[Markitdown]', module='e2b.sandbox.mcp')",
+    "mavenTools": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "memory": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "mercadoLibre": "field: ForwardRef('NotRequired[MercadoLibre]', module='e2b.sandbox.mcp')",
+    "mercadoPago": "field: ForwardRef('NotRequired[MercadoPago]', module='e2b.sandbox.mcp')",
+    "metabase": "field: ForwardRef('NotRequired[Metabase]', module='e2b.sandbox.mcp')",
+    "minecraftWiki": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "mongodb": "field: ForwardRef('NotRequired[Mongodb]', module='e2b.sandbox.mcp')",
+    "multiversxMx": "field: ForwardRef('NotRequired[MultiversxMx]', module='e2b.sandbox.mcp')",
+    "n8n": "field: ForwardRef('NotRequired[N8n]', module='e2b.sandbox.mcp')",
+    "nasdaqDataLink": "field: ForwardRef('NotRequired[NasdaqDataLink]', module='e2b.sandbox.mcp')",
+    "needle": "field: ForwardRef('NotRequired[Needle]', module='e2b.sandbox.mcp')",
+    "neo4j": "field: ForwardRef('NotRequired[Neo4j]', module='e2b.sandbox.mcp')",
+    "neo4jCloudAuraApi": "field: ForwardRef('NotRequired[Neo4jCloudAuraApi]', module='e2b.sandbox.mcp')",
+    "neo4jCypher": "field: ForwardRef('NotRequired[Neo4jCypher]', module='e2b.sandbox.mcp')",
+    "neo4jDataModeling": "field: ForwardRef('NotRequired[Neo4jDataModeling]', module='e2b.sandbox.mcp')",
+    "neo4jMemory": "field: ForwardRef('NotRequired[Neo4jMemory]', module='e2b.sandbox.mcp')",
+    "neon": "field: ForwardRef('NotRequired[Neon]', module='e2b.sandbox.mcp')",
+    "nextDevtools": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "nodeCodeSandbox": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "notion": "field: ForwardRef('NotRequired[Notion]', module='e2b.sandbox.mcp')",
+    "novita": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "npmSentinel": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "obsidian": "field: ForwardRef('NotRequired[Obsidian]', module='e2b.sandbox.mcp')",
+    "okta": "field: ForwardRef('NotRequired[Okta]', module='e2b.sandbox.mcp')",
+    "oktaMcpFctr": "field: ForwardRef('NotRequired[OktaMcpFctr]', module='e2b.sandbox.mcp')",
+    "omi": "field: ForwardRef('NotRequired[Omi]', module='e2b.sandbox.mcp')",
+    "onlyofficeDocspace": "field: ForwardRef('NotRequired[OnlyofficeDocspace]', module='e2b.sandbox.mcp')",
+    "openapi": "field: ForwardRef('NotRequired[Openapi]', module='e2b.sandbox.mcp')",
+    "openapiSchema": "field: ForwardRef('NotRequired[OpenapiSchema]', module='e2b.sandbox.mcp')",
+    "openbnbAirbnb": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "openmesh": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "openweather": "field: ForwardRef('NotRequired[Openweather]', module='e2b.sandbox.mcp')",
+    "openzeppelinCairo": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "openzeppelinSolidity": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "openzeppelinStellar": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "openzeppelinStylus": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "opik": "field: ForwardRef('NotRequired[Opik]', module='e2b.sandbox.mcp')",
+    "opine": "field: ForwardRef('NotRequired[Opine]', module='e2b.sandbox.mcp')",
+    "oracle": "field: ForwardRef('NotRequired[Oracle]', module='e2b.sandbox.mcp')",
+    "ospMarketingTools": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "oxylabs": "field: ForwardRef('NotRequired[Oxylabs]', module='e2b.sandbox.mcp')",
+    "paperSearch": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "perplexityAsk": "field: ForwardRef('NotRequired[PerplexityAsk]', module='e2b.sandbox.mcp')",
+    "pia": "field: ForwardRef('NotRequired[Pia]', module='e2b.sandbox.mcp')",
+    "pinecone": "field: ForwardRef('NotRequired[Pinecone]', module='e2b.sandbox.mcp')",
+    "playwright": "field: ForwardRef('NotRequired[Playwright]', module='e2b.sandbox.mcp')",
+    "pluggedinMcpProxy": "field: ForwardRef('NotRequired[PluggedinMcpProxy]', module='e2b.sandbox.mcp')",
+    "polarSignals": "field: ForwardRef('NotRequired[PolarSignals]', module='e2b.sandbox.mcp')",
+    "pomodash": "field: ForwardRef('NotRequired[Pomodash]', module='e2b.sandbox.mcp')",
+    "pop": "?",
+    "popitem": "(self, /)",
+    "postman": "field: ForwardRef('NotRequired[Postman]', module='e2b.sandbox.mcp')",
+    "prefEditor": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "prometheus": "field: ForwardRef('NotRequired[Prometheus]', module='e2b.sandbox.mcp')",
+    "proxmox": "field: ForwardRef('NotRequired[Proxmox]', module='e2b.sandbox.mcp')",
+    "puppeteer": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "pythonRefactoring": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "quantconnect": "field: ForwardRef('NotRequired[Quantconnect]', module='e2b.sandbox.mcp')",
+    "ramparts": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "razorpay": "field: ForwardRef('NotRequired[Razorpay]', module='e2b.sandbox.mcp')",
+    "reddit": "field: ForwardRef('NotRequired[Reddit]', module='e2b.sandbox.mcp')",
+    "redis": "field: ForwardRef('NotRequired[Redis]', module='e2b.sandbox.mcp')",
+    "redisCloud": "field: ForwardRef('NotRequired[RedisCloud]', module='e2b.sandbox.mcp')",
+    "ref": "field: ForwardRef('NotRequired[Ref]', module='e2b.sandbox.mcp')",
+    "remote": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "render": "field: ForwardRef('NotRequired[Render]', module='e2b.sandbox.mcp')",
+    "resend": "field: ForwardRef('NotRequired[Resend]', module='e2b.sandbox.mcp')",
+    "risken": "field: ForwardRef('NotRequired[Risken]', module='e2b.sandbox.mcp')",
+    "ros2": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "rube": "field: ForwardRef('NotRequired[Rube]', module='e2b.sandbox.mcp')",
+    "rustMcpFilesystem": "field: ForwardRef('NotRequired[RustMcpFilesystem]', module='e2b.sandbox.mcp')",
+    "schemacrawlerAi": "field: ForwardRef('NotRequired[SchemacrawlerAi]', module='e2b.sandbox.mcp')",
+    "schoginiMcpImageBorder": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "scrapegraph": "field: ForwardRef('NotRequired[Scrapegraph]', module='e2b.sandbox.mcp')",
+    "scrapezy": "field: ForwardRef('NotRequired[Scrapezy]', module='e2b.sandbox.mcp')",
+    "securenoteLink": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "semgrep": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "sentry": "field: ForwardRef('NotRequired[Sentry]', module='e2b.sandbox.mcp')",
+    "sequa": "field: ForwardRef('NotRequired[Sequa]', module='e2b.sandbox.mcp')",
+    "sequentialthinking": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "setdefault": "(self, key, default=None, /)",
+    "shortIo": "field: ForwardRef('NotRequired[ShortIo]', module='e2b.sandbox.mcp')",
+    "simplechecklist": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "singlestore": "field: ForwardRef('NotRequired[Singlestore]', module='e2b.sandbox.mcp')",
+    "slack": "field: ForwardRef('NotRequired[Slack]', module='e2b.sandbox.mcp')",
+    "smartbear": "field: ForwardRef('NotRequired[Smartbear]', module='e2b.sandbox.mcp')",
+    "sonarqube": "field: ForwardRef('NotRequired[Sonarqube]', module='e2b.sandbox.mcp')",
+    "sqlite": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "stackgen": "field: ForwardRef('NotRequired[Stackgen]', module='e2b.sandbox.mcp')",
+    "stackhawk": "field: ForwardRef('NotRequired[Stackhawk]', module='e2b.sandbox.mcp')",
+    "stripe": "field: ForwardRef('NotRequired[Stripe]', module='e2b.sandbox.mcp')",
+    "supadata": "field: ForwardRef('NotRequired[Supadata]', module='e2b.sandbox.mcp')",
+    "suzieq": "field: ForwardRef('NotRequired[Suzieq]', module='e2b.sandbox.mcp')",
+    "taskOrchestrator": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "tavily": "field: ForwardRef('NotRequired[Tavily]', module='e2b.sandbox.mcp')",
+    "teamwork": "field: ForwardRef('NotRequired[Teamwork]', module='e2b.sandbox.mcp')",
+    "telnyx": "field: ForwardRef('NotRequired[Telnyx]', module='e2b.sandbox.mcp')",
+    "temporal": "field: ForwardRef('NotRequired[Temporal]', module='e2b.sandbox.mcp')",
+    "terraform": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "testkube": "field: ForwardRef('NotRequired[Testkube]', module='e2b.sandbox.mcp')",
+    "textToGraphql": "field: ForwardRef('NotRequired[TextToGraphql]', module='e2b.sandbox.mcp')",
+    "thingsboard": "field: ForwardRef('NotRequired[Thingsboard]', module='e2b.sandbox.mcp')",
+    "tigris": "field: ForwardRef('NotRequired[Tigris]', module='e2b.sandbox.mcp')",
+    "time": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "unrealEngine": "field: ForwardRef('NotRequired[UnrealEngine]', module='e2b.sandbox.mcp')",
+    "update": "?",
+    "values": "(self, /)",
+    "vectraAiRux": "field: ForwardRef('NotRequired[VectraAiRux]', module='e2b.sandbox.mcp')",
+    "veyrax": "field: ForwardRef('NotRequired[Veyrax]', module='e2b.sandbox.mcp')",
+    "victorialogs": "field: ForwardRef('NotRequired[Victorialogs]', module='e2b.sandbox.mcp')",
+    "victoriametrics": "field: ForwardRef('NotRequired[Victoriametrics]', module='e2b.sandbox.mcp')",
+    "victoriatraces": "field: ForwardRef('NotRequired[Victoriatraces]', module='e2b.sandbox.mcp')",
+    "vizro": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "vulnNist": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "wayfound": "field: ForwardRef('NotRequired[Wayfound]', module='e2b.sandbox.mcp')",
+    "webflow": "field: ForwardRef('NotRequired[Webflow]', module='e2b.sandbox.mcp')",
+    "wikipedia": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "wolframAlpha": "field: ForwardRef('NotRequired[WolframAlpha]', module='e2b.sandbox.mcp')",
+    "youtubeTranscript": "field: ForwardRef('NotRequired[dict[str, Any]]', module='e2b.sandbox.mcp')",
+    "zen": "field: ForwardRef('NotRequired[Zen]', module='e2b.sandbox.mcp')",
+    "zerodhaKite": "field: ForwardRef('NotRequired[ZerodhaKite]', module='e2b.sandbox.mcp')",
+    "zscaler": "field: ForwardRef('NotRequired[Zscaler]', module='e2b.sandbox.mcp')"
+   }
+  },
+  "e2b.sandbox_async": {
+   "kind": "module"
+  },
+  "e2b.sandbox_async.commands.command_handle.AsyncCommandHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, pid: int, handle_kill: Callable[[], Coroutine[Any, Any, bool]], events: AsyncGenerator[Union[e2b.envd.process.process_pb.StartResponse, e2b.envd.process.process_pb.ConnectResponse], Any], on_stdout: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_stderr: Union[Callable[[str], NoneType], Callable[[str], Awaitable[NoneType]], NoneType] = None, on_pty: Union[Callable[[bytes], NoneType], Callable[[bytes], Awaitable[NoneType]], NoneType] = None, handle_send_stdin: Optional[Callable[[Union[str, bytes], Optional[float]], Coroutine[Any, Any, NoneType]]] = None, handle_close_stdin: Optional[Callable[[Optional[float]], Coroutine[Any, Any, NoneType]]] = None, check_health: Optional[Callable[[], Awaitable[Optional[bool]]]] = None)",
+    "close_stdin": "(self, request_timeout: Optional[float] = None) -> None",
+    "disconnect": "(self) -> None",
+    "error": "property",
+    "exit_code": "property",
+    "kill": "(self) -> bool",
+    "pid": "property",
+    "send_stdin": "(self, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None",
+    "stderr": "property",
+    "stdout": "property",
+    "wait": "(self) -> e2b.sandbox.commands.command_handle.CommandResult"
+   }
+  },
+  "e2b.sandbox_async.commands.command_input_handle.AsyncCommandInputHandle": {
+   "error": "ModuleNotFoundError",
+   "kind": "missing"
+  },
+  "e2b.sandbox_async.filesystem.watch_handle.AsyncWatchHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, events: AsyncGenerator[e2b.envd.filesystem.filesystem_pb.WatchDirResponse, Any], on_event: Union[Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], NoneType], Callable[[e2b.sandbox.filesystem.watch_handle.FilesystemEvent], Awaitable[NoneType]]], on_exit: Union[Callable[[Optional[Exception]], NoneType], Callable[[Optional[Exception]], Awaitable[NoneType]], NoneType] = None, check_health: Optional[Callable[[], Awaitable[Optional[bool]]]] = None)",
+    "stop": "(self)"
+   }
+  },
+  "e2b.sandbox_domains": {
+   "kind": "module"
+  },
+  "e2b.sandbox_sync": {
+   "kind": "module"
+  },
+  "e2b.sandbox_sync.commands.command_handle.CommandHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, pid: int, handle_kill: Callable[[], bool], events: Generator[Union[e2b.envd.process.process_pb.StartResponse, e2b.envd.process.process_pb.ConnectResponse], Any, NoneType], handle_send_stdin: Optional[Callable[[Union[str, bytes], Optional[float]], NoneType]] = None, handle_close_stdin: Optional[Callable[[Optional[float]], NoneType]] = None, check_health: Optional[Callable[[], Optional[bool]]] = None)",
+    "close_stdin": "(self, request_timeout: Optional[float] = None) -> None",
+    "disconnect": "(self) -> None",
+    "kill": "(self) -> bool",
+    "pid": "property",
+    "send_stdin": "(self, data: Union[str, bytes], request_timeout: Optional[float] = None) -> None",
+    "wait": "(self, on_pty: Optional[Callable[[bytes], NoneType]] = None, on_stdout: Optional[Callable[[str], NoneType]] = None, on_stderr: Optional[Callable[[str], NoneType]] = None) -> e2b.sandbox.commands.command_handle.CommandResult"
+   }
+  },
+  "e2b.sandbox_sync.commands.pty.Pty": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, envd_api_url: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, envd_api: httpx.Client) -> None",
+    "connect": "(self, pid: int, timeout: Optional[float] = 60, request_timeout: Optional[float] = None) -> e2b.sandbox_sync.commands.command_handle.CommandHandle",
+    "create": "(self, size: e2b.sandbox.commands.command_handle.PtySize, user: Optional[str] = None, cwd: Optional[str] = None, envs: Optional[Dict[str, str]] = None, timeout: Optional[float] = 60, request_timeout: Optional[float] = None) -> e2b.sandbox_sync.commands.command_handle.CommandHandle",
+    "kill": "(self, pid: int, request_timeout: Optional[float] = None) -> bool",
+    "resize": "(self, pid: int, size: e2b.sandbox.commands.command_handle.PtySize, request_timeout: Optional[float] = None) -> None",
+    "send_stdin": "(self, pid: int, data: bytes, request_timeout: Optional[float] = None) -> None"
+   }
+  },
+  "e2b.sandbox_sync.filesystem.watch_handle.WatchHandle": {
+   "bases": [
+    "object"
+   ],
+   "kind": "class",
+   "members": {
+    "__init__": "(self, rpc: e2b.envd.filesystem.filesystem_connect.FilesystemClientSync, watcher_id: str, connection_config: e2b.connection_config.ConnectionConfig, envd_version: packaging.version.Version, user: Optional[str] = None, check_health: Optional[Callable[[], Optional[bool]]] = None)",
+    "get_new_events": "(self, request_timeout: Optional[float] = None) -> List[e2b.sandbox.filesystem.watch_handle.FilesystemEvent]",
+    "stop": "(self, request_timeout: Optional[float] = None)"
+   }
+  },
+  "e2b.secret": {
+   "kind": "module"
+  },
+  "e2b.template": {
+   "kind": "module"
+  },
+  "e2b.template_async": {
+   "kind": "module"
+  },
+  "e2b.template_sync": {
+   "kind": "module"
+  },
+  "e2b.volume": {
+   "kind": "module"
+  },
+  "e2b.wait_for_file": {
+   "kind": "function",
+   "signature": "(filename: str)"
+  },
+  "e2b.wait_for_port": {
+   "kind": "function",
+   "signature": "(port: int)"
+  },
+  "e2b.wait_for_process": {
+   "kind": "function",
+   "signature": "(process_name: str)"
+  },
+  "e2b.wait_for_timeout": {
+   "kind": "function",
+   "signature": "(timeout: int)"
+  },
+  "e2b.wait_for_url": {
+   "kind": "function",
+   "signature": "(url: str, status_code: int = 200)"
+  }
+ },
+ "routes": [
+  "DELETE /sandboxes/{sandbox_id}",
+  "DELETE /secrets/{secret_id}",
+  "DELETE /templates/tags",
+  "DELETE /templates/{template_id}",
+  "DELETE /volumes/{volume_id}",
+  "GET /sandboxes",
+  "GET /sandboxes/metrics",
+  "GET /sandboxes/{sandbox_id}",
+  "GET /sandboxes/{sandbox_id}/logs",
+  "GET /sandboxes/{sandbox_id}/metrics",
+  "GET /secrets",
+  "GET /secrets/{secret_id}",
+  "GET /snapshots",
+  "GET /templates",
+  "GET /templates/aliases/{alias}",
+  "GET /templates/{template_id}",
+  "GET /templates/{template_id}/builds/{build_id}/logs",
+  "GET /templates/{template_id}/builds/{build_id}/status",
+  "GET /templates/{template_id}/files/{hash_}",
+  "GET /templates/{template_id}/tags",
+  "GET /v2/sandboxes",
+  "GET /v2/sandboxes/{sandbox_id}/logs",
+  "GET /v2/templates",
+  "GET /volumes",
+  "GET /volumes/{volume_id}",
+  "PATCH /templates/{template_id}",
+  "PATCH /v2/templates/{template_id}",
+  "POST /filesystem.Filesystem/CreateWatcher",
+  "POST /filesystem.Filesystem/GetWatcherEvents",
+  "POST /filesystem.Filesystem/ListDir",
+  "POST /filesystem.Filesystem/MakeDir",
+  "POST /filesystem.Filesystem/Move",
+  "POST /filesystem.Filesystem/Remove",
+  "POST /filesystem.Filesystem/RemoveWatcher",
+  "POST /filesystem.Filesystem/Stat",
+  "POST /filesystem.Filesystem/WatchDir",
+  "POST /process.Process/CloseStdin",
+  "POST /process.Process/Connect",
+  "POST /process.Process/List",
+  "POST /process.Process/SendInput",
+  "POST /process.Process/SendSignal",
+  "POST /process.Process/Start",
+  "POST /process.Process/StreamInput",
+  "POST /process.Process/Update",
+  "POST /sandboxes",
+  "POST /sandboxes/{sandbox_id}/connect",
+  "POST /sandboxes/{sandbox_id}/fork",
+  "POST /sandboxes/{sandbox_id}/pause",
+  "POST /sandboxes/{sandbox_id}/refreshes",
+  "POST /sandboxes/{sandbox_id}/resume",
+  "POST /sandboxes/{sandbox_id}/snapshots",
+  "POST /sandboxes/{sandbox_id}/timeout",
+  "POST /secrets",
+  "POST /secrets/{secret_id}",
+  "POST /templates/tags",
+  "POST /v2/sandboxes",
+  "POST /v2/sandboxes/{sandbox_id}/connect",
+  "POST /v2/templates/{template_id}/builds/{build_id}",
+  "POST /v3/templates",
+  "POST /volumes",
+  "PUT /sandboxes/{sandbox_id}/network"
+ ]
+}

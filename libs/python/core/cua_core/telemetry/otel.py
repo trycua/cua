@@ -12,11 +12,14 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable, Dict, Generator, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, Generator, Optional, TypeVar
+
+from cua_core.telemetry._config import sanitize_model_name, telemetry_enabled_from_env
 
 logger = logging.getLogger("core.telemetry.otel")
 
@@ -50,35 +53,55 @@ _tokens_total: Optional[Any] = None  # Counter
 def is_otel_enabled() -> bool:
     """Check if OpenTelemetry is enabled.
 
-    Canonical opt-out: ``CUA_TELEMETRY_ENABLED=false``.
-    ``CUA_TELEMETRY_DISABLED`` is deprecated — a warning is emitted on first
-    use and the value is honoured for backwards compatibility.
+    Follows the shared Cua rules (``DO_NOT_TRACK``, ``CUA_TELEMETRY``, legacy
+    ``CUA_TELEMETRY_ENABLED``/``CUA_TELEMETRY_DISABLED``, CI default off). See
+    :mod:`cua_core.telemetry._config`. ``CUA_TELEMETRY_DISABLED`` is deprecated
+    and emits a single warning when set.
     """
     import warnings
 
     global _deprecation_warning_emitted
 
-    disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
-    if disabled_val:
-        if not _deprecation_warning_emitted:
-            with _deprecation_warning_lock:
-                if not _deprecation_warning_emitted:
-                    warnings.warn(
-                        "CUA_TELEMETRY_DISABLED is deprecated. "
-                        "Use CUA_TELEMETRY_ENABLED=false instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    _deprecation_warning_emitted = True
-        if disabled_val.lower() in {"1", "true", "yes", "on"}:
-            return False
+    if os.environ.get("CUA_TELEMETRY_DISABLED", "") and not _deprecation_warning_emitted:
+        with _deprecation_warning_lock:
+            if not _deprecation_warning_emitted:
+                warnings.warn(
+                    "CUA_TELEMETRY_DISABLED is deprecated. Use CUA_TELEMETRY=0 instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                _deprecation_warning_emitted = True
 
-    return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return telemetry_enabled_from_env()
+
+
+# Only these attribute keys may be attached to metrics. Everything else
+# (step numbers, ids, names, paths) is dropped to avoid high cardinality and
+# accidental personal data.
+ALLOWED_ATTRIBUTE_KEYS = frozenset(
+    {"operation", "status", "model", "os_type", "error_type", "token_type", "operation_type"}
+)
+_SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:\-]{1,64}$")
+
+
+def _safe_value(value: Any) -> str:
+    """Coarse label value: short identifier-like strings only."""
+    text = str(value)
+    return text if _SAFE_VALUE.match(text) else "other"
+
+
+def _build_attributes(
+    base: Dict[str, Any], extra: Optional[Dict[str, Any]] = None
+) -> Dict[str, str]:
+    attributes: Dict[str, str] = {}
+    for key, value in {**(extra or {}), **base}.items():
+        if value is None or key not in ALLOWED_ATTRIBUTE_KEYS:
+            continue
+        if key == "model":
+            attributes[key] = sanitize_model_name(str(value)) or "unknown"
+        else:
+            attributes[key] = _safe_value(value)
+    return attributes
 
 
 def _get_otel_endpoint() -> str:
@@ -114,12 +137,11 @@ def _initialize_otel() -> bool:
             return False
 
         if not is_otel_enabled():
-            logger.debug("OpenTelemetry disabled via CUA_TELEMETRY_DISABLED")
+            logger.debug("OpenTelemetry disabled")
             return False
 
         try:
             # Import OTEL packages lazily
-            from opentelemetry import metrics, trace
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
                 OTLPMetricExporter,
             )
@@ -154,8 +176,9 @@ def _initialize_otel() -> bool:
                 resource=resource,
                 metric_readers=[metric_reader],
             )
-            metrics.set_meter_provider(_meter_provider)
-            _meter = metrics.get_meter("cua-sdk", _get_sdk_version())
+            # Module-local provider: never installed as the global provider,
+            # so host applications' own OpenTelemetry setup is not hijacked.
+            _meter = _meter_provider.get_meter("cua-sdk", _get_sdk_version())
 
             # Set up tracing
             trace_exporter = OTLPSpanExporter(
@@ -163,8 +186,7 @@ def _initialize_otel() -> bool:
             )
             _tracer_provider = TracerProvider(resource=resource)
             _tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
-            trace.set_tracer_provider(_tracer_provider)
-            _tracer = trace.get_tracer("cua-sdk", _get_sdk_version())
+            _tracer = _tracer_provider.get_tracer("cua-sdk", _get_sdk_version())
 
             # Create metrics instruments
             _operation_duration = _meter.create_histogram(
@@ -201,7 +223,7 @@ def _initialize_otel() -> bool:
             atexit.register(_shutdown_otel)
 
             _initialized = True
-            logger.info(f"OpenTelemetry initialized with endpoint: {endpoint}")
+            logger.debug(f"OpenTelemetry initialized with endpoint: {endpoint}")
             return True
 
         except ImportError as e:
@@ -214,7 +236,7 @@ def _initialize_otel() -> bool:
             return False
         except Exception as e:
             _init_failed = True
-            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+            logger.debug(f"Failed to initialize OpenTelemetry: {type(e).__name__}")
             return False
 
 
@@ -261,22 +283,16 @@ def record_operation(
         status: Operation status ("success" or "error")
         model: Model name if applicable
         os_type: OS type if applicable
-        **extra_attributes: Additional attributes to record
+        **extra_attributes: Additional attributes; only keys in
+            ``ALLOWED_ATTRIBUTE_KEYS`` are kept, everything else is dropped
     """
     if not _initialize_otel():
         return
 
-    attributes: Dict[str, str] = {
-        "operation": operation,
-        "status": status,
-    }
-    if model:
-        attributes["model"] = model
-    if os_type:
-        attributes["os_type"] = os_type
-    for key, value in extra_attributes.items():
-        if value is not None:
-            attributes[key] = str(value)
+    attributes = _build_attributes(
+        {"operation": operation, "status": status, "model": model, "os_type": os_type},
+        extra_attributes,
+    )
 
     try:
         if _operation_duration is not None:
@@ -304,15 +320,10 @@ def record_error(
     if not _initialize_otel():
         return
 
-    attributes: Dict[str, str] = {
-        "error_type": error_type,
-        "operation": operation,
-    }
-    if model:
-        attributes["model"] = model
-    for key, value in extra_attributes.items():
-        if value is not None:
-            attributes[key] = str(value)
+    attributes = _build_attributes(
+        {"error_type": error_type, "operation": operation, "model": model},
+        extra_attributes,
+    )
 
     try:
         if _errors_total is not None:
@@ -341,12 +352,12 @@ def record_tokens(
             if prompt_tokens > 0:
                 _tokens_total.add(
                     prompt_tokens,
-                    {"token_type": "prompt", "model": model or "unknown"},
+                    _build_attributes({"token_type": "prompt", "model": model or "unknown"}),
                 )
             if completion_tokens > 0:
                 _tokens_total.add(
                     completion_tokens,
-                    {"token_type": "completion", "model": model or "unknown"},
+                    _build_attributes({"token_type": "completion", "model": model or "unknown"}),
                 )
     except Exception as e:
         logger.debug(f"Failed to record token metric: {e}")
@@ -368,7 +379,7 @@ def track_concurrent(operation_type: str) -> Generator[None, None, None]:
         yield
         return
 
-    attributes = {"operation_type": operation_type}
+    attributes = _build_attributes({"operation_type": operation_type})
 
     try:
         if _concurrent_operations is not None:
@@ -412,7 +423,8 @@ def create_span(
 
     _yielded = False
     try:
-        with _tracer.start_as_current_span(name, attributes=attributes) as span:
+        span_attributes = _build_attributes(attributes or {})
+        with _tracer.start_as_current_span(name, attributes=span_attributes) as span:
             _yielded = True
             yield span
     except Exception as e:

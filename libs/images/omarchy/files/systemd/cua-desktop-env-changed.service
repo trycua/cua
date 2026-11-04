@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart cua-spacesd for a new Omarchy session
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart cua-spacesd.service

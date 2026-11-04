@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+
+// The guest accessibility tree (macOS AX, Windows UI Automation, Linux
+// AT-SPI via cua-driver platform-linux).
+//
+// Every read returns a snapshot id. Element ids are only meaningful together
+// with the snapshot id they came from; acting on an element from an older
+// snapshot fails with `ERROR_REASON_STALE_SNAPSHOT` unless the server can
+// prove the element is unchanged. Requires capability "a11y".
+service AccessibilityService {
+  // Returns the accessibility tree of a window (or the focused window).
+  rpc GetTree(GetTreeRequest) returns (GetTreeResponse);
+  // Finds elements matching a query.
+  rpc Find(FindRequest) returns (FindResponse);
+  // Performs an accessibility action on an element.
+  rpc Act(ActRequest) returns (ActResponse);
+}
+
+// One accessibility element. Trees are returned flattened in pre-order
+// (parents before children) to avoid unbounded message nesting.
+message AccessibilityNode {
+  // Element id, unique within its snapshot.
+  string element_id = 1;
+  // Parent element id, empty for the root.
+  string parent_id = 2;
+  // Depth below the root (root is 0).
+  uint32 depth = 3;
+  // Normalized role, for example "button", "text_field", "menu_item",
+  // "window". Platform roles are mapped to one vocabulary.
+  string role = 4;
+  // The platform's native role string (for example "AXButton",
+  // "ControlType.Button", "push button"), for debugging.
+  string native_role = 5;
+  // Accessible name / label.
+  string name = 6;
+  // Current value (text content, slider value), when it has one.
+  string value = 7;
+  // Accessible description / help text.
+  string description = 8;
+  // Frame in global logical points, when known.
+  Rect bounds = 9;
+  // Normalized states, for example "focused", "enabled", "selected",
+  // "checked", "expanded", "editable", "offscreen".
+  repeated string states = 10;
+  // Actions the element supports (see `AccessibilityAction`).
+  repeated AccessibilityAction actions = 11;
+  // Other attributes the platform exposes, stringified.
+  map<string, string> attributes = 12;
+}
+
+// Request for `AccessibilityService.GetTree`.
+message GetTreeRequest {
+  // Window whose tree to read. Unset means the focused window.
+  WindowRef window = 1;
+  // Maximum depth below the root. 0 means unlimited (subject to the
+  // server's node limit).
+  uint32 max_depth = 2;
+  // Include elements that are offscreen or not visible.
+  bool include_hidden = 3;
+  // Stop after this many nodes. 0 means the server limit (normally 5000).
+  uint32 max_nodes = 4;
+}
+
+// Response for `AccessibilityService.GetTree`.
+message GetTreeResponse {
+  // Snapshot id for later `Act` calls.
+  string snapshot_id = 1;
+  // The window the tree belongs to.
+  WindowRef window = 2;
+  // Nodes in pre-order.
+  repeated AccessibilityNode nodes = 3;
+  // True if `max_depth` or `max_nodes` cut the tree short.
+  bool truncated = 4;
+}
+
+// Query for `AccessibilityService.Find`. All set fields must match.
+message AccessibilityQuery {
+  // Normalized role.
+  string role = 1;
+  // Exact accessible name.
+  string name = 2;
+  // Case-insensitive substring of the accessible name.
+  string name_contains = 3;
+  // Case-insensitive substring of the value.
+  string value_contains = 4;
+  // Required states.
+  repeated string states = 5;
+}
+
+// Request for `AccessibilityService.Find`.
+message FindRequest {
+  // Window to search. Unset means the focused window.
+  WindowRef window = 1;
+  // What to look for.
+  AccessibilityQuery query = 2;
+  // Maximum matches. 0 means 50.
+  uint32 max_results = 3;
+}
+
+// Response for `AccessibilityService.Find`.
+message FindResponse {
+  // Snapshot id for later `Act` calls.
+  string snapshot_id = 1;
+  // Matching elements (their `parent_id` refers to elements not
+  // necessarily included).
+  repeated AccessibilityNode nodes = 2;
+}
+
+// Accessibility action.
+enum AccessibilityAction {
+  // Not set. Rejected.
+  ACCESSIBILITY_ACTION_UNSPECIFIED = 0;
+  // Press / invoke / click.
+  ACCESSIBILITY_ACTION_PRESS = 1;
+  // Move keyboard focus to the element.
+  ACCESSIBILITY_ACTION_FOCUS = 2;
+  // Replace the element's value with `ActRequest.value`.
+  ACCESSIBILITY_ACTION_SET_VALUE = 3;
+  // Increment (sliders, steppers).
+  ACCESSIBILITY_ACTION_INCREMENT = 4;
+  // Decrement.
+  ACCESSIBILITY_ACTION_DECREMENT = 5;
+  // Open the element's context menu.
+  ACCESSIBILITY_ACTION_SHOW_MENU = 6;
+  // Expand (tree items, disclosure triangles, combo boxes).
+  ACCESSIBILITY_ACTION_EXPAND = 7;
+  // Collapse.
+  ACCESSIBILITY_ACTION_COLLAPSE = 8;
+  // Select (list items, tabs).
+  ACCESSIBILITY_ACTION_SELECT = 9;
+  // Scroll the element into view.
+  ACCESSIBILITY_ACTION_SCROLL_INTO_VIEW = 10;
+  // A platform-specific action named by `ActRequest.custom_action`.
+  ACCESSIBILITY_ACTION_CUSTOM = 11;
+}
+
+// Reference to an element within a snapshot.
+message ElementRef {
+  // Snapshot the element id came from.
+  string snapshot_id = 1;
+  // Element id.
+  string element_id = 2;
+}
+
+// Request for `AccessibilityService.Act`.
+message ActRequest {
+  // Which element.
+  ElementRef element = 1;
+  // Which action.
+  AccessibilityAction action = 2;
+  // New value for `ACCESSIBILITY_ACTION_SET_VALUE`.
+  string value = 3;
+  // Native action name for `ACCESSIBILITY_ACTION_CUSTOM`.
+  string custom_action = 4;
+  // Delivery mode. Accessibility actions are background-safe on most
+  // platforms; `DELIVERY_FOREGROUND` activates the window first.
+  Delivery delivery = 5;
+}
+
+// Response for `AccessibilityService.Act`.
+message ActResponse {
+  // What actually happened.
+  DeliveryReport report = 1;
+}

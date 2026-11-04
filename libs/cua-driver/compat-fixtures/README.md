@@ -26,6 +26,21 @@ Additive manifest fields, tools, and package metadata are permitted. Removing
 or changing an item recorded here requires an explicit compatibility decision
 and an intentional fixture update.
 
+RFC 3682 accepts a breaking native SDK click change: `ClickInput` now requires
+an `ActionTarget`, a `ClickPosition` (coordinates or an element token), and an
+explicit background/foreground `InputDeliveryMode`. `click` returns
+`ActionResult` directly and raises `DriverError.Tool` for tool refusals. The
+Python click signature is updated accordingly; the TypeScript baseline did not
+freeze that method. Current language tests cover the new signatures and typed
+native-window discovery and observation. All other frozen package signatures,
+the CLI/MCP fixtures, and the baseline application fixtures remain unchanged.
+
+The released `cua-driver-rs-v0.28.2` UniFFI wire order is also frozen:
+`ClickPosition` uses `1=Coordinates` and `2=Element`; `CapturedCoordinates` is
+appended as ordinal 3. `GetWindowStateInput.max_image_dimension` is appended to
+the existing record fields. Future UniFFI enum variants and record fields must
+remain append-only unless an explicit compatibility decision says otherwise.
+
 RFC 2549 independently accepts one additive CLI change: `cua-driver mcp
 --direct`. Bare MCP behavior remains platform-defined (direct on Windows and
 Linux, signed app service on macOS), while `--socket` continues to select an

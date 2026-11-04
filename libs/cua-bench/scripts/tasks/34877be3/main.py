@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 34877be3-b628-4b67-bfef-6ac7007e4514."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Please draw a clean schematic in KiCAD for a 9V battery driving two infrared LN271 LEDs.  The battery positive terminal is first connected to a 100 ohm current limiting resistor followed by the two LEDs.',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="Please draw a clean schematic in KiCAD for a 9V battery driving two infrared LN271 LEDs.  The battery positive terminal is first connected to a 100 ohm current limiting resistor followed by the two LEDs.",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

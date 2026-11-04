@@ -18,7 +18,7 @@ import {
   getTelemetryEnabled,
 } from './settings.js';
 import { runOnboarding } from './onboarding.js';
-import { sendTelemetryToServer } from './telemetry.js';
+import { cliSubcommandLabel, sendTelemetryToServer } from './telemetry.js';
 import { checkDependencies } from './utils.js';
 import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
@@ -72,11 +72,11 @@ async function sendCliTelemetry(port: number): Promise<void> {
   if (cliTelemetrySent || !getTelemetryEnabled()) return;
   cliTelemetrySent = true;
 
+  // Only the known subcommand word (or "other"); never cwd or raw argv.
   await sendTelemetryToServer(port, {
     type: 'cli_invocation',
     timestamp: Date.now(),
-    cli_args: args,
-    cwd: process.cwd(),
+    subcommand: cliSubcommandLabel(args),
   });
 }
 

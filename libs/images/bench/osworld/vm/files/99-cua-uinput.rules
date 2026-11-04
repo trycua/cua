@@ -1,0 +1,4 @@
+# cua-driver's X11 background input route creates a virtual keyboard/pointer via
+# uinput and attaches it to its own XI2 master pair, so the user's focus and
+# pointer are never touched. The driver runs as the desktop user.
+KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"

@@ -1,0 +1,36 @@
+---
+title: Lume
+description: 'Create and run macOS and Linux VMs on Apple silicon from the CLI, a local HTTP API or MCP.'
+landing:
+  summary: 'macOS and Linux virtual machines on Apple silicon.'
+---
+
+Lume runs macOS and Linux virtual machines (VMs) on an Apple silicon Mac, using
+Apple's Virtualization.framework. It builds a vanilla macOS VM straight from
+Apple's restore image, with SSH and autologin ready. You control the same VMs
+from the `lume` command, a local HTTP API or an MCP server for AI clients.
+
+```bash test="cli-shape" id="lume-overview"
+lume create macos-tahoe --ipsw latest --unattended tahoe
+lume run macos-tahoe
+lume ssh macos-tahoe 'sw_vers'
+```
+
+The [cua SDK](/cua-sdk) installs and drives Lume for you when you ask for a
+local macOS sandbox. Use Lume directly when you want to manage the VMs
+yourself.
+
+| Requirement | Detail |
+|---|---|
+| Host | Apple silicon, macOS 13 or later |
+| Memory | 8 GB free (16 GB for an 8 GB guest) |
+| Disk | 50 GB free per macOS guest plus its restore image |
+| Concurrency | Up to two macOS guests at a time (Apple's limit) |
+
+## Next
+
+- [Quickstart](/lume/quickstart): install Lume, create a Tahoe VM, SSH in.
+- [Manage VMs](/lume/guides/manage-vms): run, share folders, clone, resize, turn SIP off, update, and use the HTTP API or MCP.
+- [GPU passthrough](/lume/guides/gpu-passthrough): unlock more Metal features for one workload.
+- [Linux guests](/lume/guides/linux-guests): Omarchy on ARM64, and an OpenClaw gateway.
+- [How Lume works](/lume/concepts/how-lume-works): unattended setup, SIP, disk growth and telemetry.

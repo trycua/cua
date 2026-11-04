@@ -1,0 +1,42 @@
+[
+  {
+    "check": "omarchy edge packages and loaded cua-hyprland-plugin",
+    "pass": true,
+    "detail": "omarchy-dev 4.0.0.r2186.gee8ebf6-1, cua-driver-bin 0.28.2-1, cua-hyprland-plugin 0.26.1-6, hyprland 0.56.2-3"
+  },
+  {
+    "check": "SDK launch_app: foot on Hyprland",
+    "pass": true,
+    "detail": "0x561def4520f0 at [12, 38] size [1256, 750]"
+  },
+  {
+    "check": "SDK click focuses the window",
+    "pass": true,
+    "detail": "focused cua-e2e-foot at (322,413); overlay 191 coloured px"
+  },
+  {
+    "check": "SDK type + key into foot",
+    "pass": true,
+    "detail": "cua-e2e-typed-004fd1"
+  },
+  {
+    "check": "SDK Hyprland window action (maximize)",
+    "pass": true,
+    "detail": "size [621, 750] -> [1256, 750]"
+  },
+  {
+    "check": "cua-driver MCP via cua-spacesd /mcp",
+    "pass": false,
+    "detail": "cua sb mcp cua-e2e-omarchy-fixb env tools -> 1: \u001b[2m2026-09-25T23:20:41.940464Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mrmcp::transport::worker\u001b[0m\u001b[2m:\u001b[0m worker quit with fatal: Transport channel closed, when UnexpectedServerResponse(\"HTTP 401 Unauthorized: missing or invalid bearer token\")\ncua: http: mcp: connect http://127.0.0.1:50141/mcp: Send message error Transport [rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<reqwest::async_impl::client::Client>>] error: unexpected server response: HTTP 401 Unauthorized: missing or invalid bearer token, when send discover request"
+  },
+  {
+    "check": "Omarchy built-in cua-driver MCP (stdio)",
+    "pass": true,
+    "detail": "/usr/bin/cua-driver mcp: 60 tools"
+  },
+  {
+    "check": "Omarchy built-in cua-driver click",
+    "pass": true,
+    "detail": "route global_input; Hyprland pointer at (900,300); overlay 196 coloured px"
+  }
+]

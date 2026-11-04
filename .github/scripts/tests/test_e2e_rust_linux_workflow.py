@@ -321,3 +321,16 @@ def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> Non
         )
         == 4
     )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """The release driver and Tauri units of the shared leg live in their own entry.
+
+    In the default libs-cua-driver-rust family the day's entry is saved first by
+    debug-only unit jobs; the shared leg then gets an exact hit, never saves, and
+    rebuilds its release units on every run.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    shared = workflow.split("\n  shared:\n", 1)[1].split("\n  native:\n", 1)[0]
+    assert "shared-key: cua-driver-e2e-shared" in shared
+    assert workflow.count("shared-key: cua-driver-e2e-shared") == 1

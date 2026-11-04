@@ -386,10 +386,12 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     );
 }
 
-#[tokio::test]
+// The paused clock moves only when the batch sleeps, so a slow runner cannot
+// push the elapsed time past the upper bound.
+#[tokio::test(start_paused = true)]
 async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     harness
         .run(json!({"delay_ms": 120, "steps": [
             {"tool": "click", "args": {"pid": 42}},

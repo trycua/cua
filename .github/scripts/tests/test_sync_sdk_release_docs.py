@@ -31,3 +31,25 @@ def test_sync_sdk_release_docs_updates_standalone_versions(tmp_path: Path):
     for path in paths:
         assert path.read_text() == expected
     assert outside.read_text() == content
+
+
+def test_sync_sdk_release_docs_leaves_the_contract_version(tmp_path: Path):
+    version = tmp_path / "libs/cua/VERSION"
+    version.parent.mkdir(parents=True)
+    version.write_text("0.8.0\n")
+    page = tmp_path / "docs/content/docs/cua-cli/reference/mcp-tools.mdx"
+    page.parent.mkdir(parents=True)
+    page.write_text(
+        "  Version: 0.7.0\n"
+        "Contract version 0.7.0; MCP protocol revision 2025-06-18.\n"
+    )
+    spec = tmp_path / "scripts/docs-generators/cli-specs/cua.json"
+    spec.parent.mkdir(parents=True)
+    spec.write_text('{"version": "0.7.0"}\n')
+
+    assert main(["--repo-root", str(tmp_path), "--from", "0.7.0"]) == 0
+
+    assert page.read_text() == (
+        "  Version: 0.8.0\n"
+        "Contract version 0.7.0; MCP protocol revision 2025-06-18.\n"
+    )

@@ -25,12 +25,39 @@ use crate::{Error, Result, now_ms, sha256_hex};
 #[derive(Clone, Debug)]
 pub struct FsBackend {
     root: PathBuf,
+    /// The store existed at some point in this process (it was there when
+    /// opened, or a write created it). A store that was there and is gone
+    /// was removed on purpose (its home was deleted): a later write must
+    /// not bring the whole directory chain back.
+    seen: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FsBackend {
     /// A store rooted at `root` (created on first write).
     pub fn new(root: impl Into<PathBuf>) -> FsBackend {
-        FsBackend { root: root.into() }
+        let root = root.into();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(root.is_dir()));
+        FsBackend { root, seen }
+    }
+
+    /// Refuses (as `NotFound`) when the store was there and was removed;
+    /// otherwise the store directory exists afterwards.
+    fn ensure_root(&self) -> Result<()> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.root.is_dir() {
+            self.seen.store(true, SeqCst);
+            return Ok(());
+        }
+        if self.seen.load(SeqCst) {
+            return Err(Error::NotFound(format!(
+                "the store {} was removed",
+                self.root.display()
+            )));
+        }
+        cua_home::guard_write(&self.root)?;
+        fs::create_dir_all(&self.root)?;
+        self.seen.store(true, SeqCst);
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -71,7 +98,7 @@ impl FsBackend {
     }
 
     fn lock(&self) -> Result<File> {
-        fs::create_dir_all(&self.root)?;
+        self.ensure_root()?;
         let path = self.root.join(".lock");
         cua_home::guard_write(&path)?;
         let f = OpenOptions::new()
@@ -121,8 +148,21 @@ impl FsBackend {
         Ok(())
     }
 
-    fn new_version() -> String {
-        format!("{:013}-{:08x}", now_ms(), rand::random::<u32>())
+    /// A fresh version id (time-ordered, unique).
+    pub fn new_version() -> String {
+        // Strictly increasing within the process: two writes in the same
+        // millisecond must still sort in write order, so the random suffix
+        // only keeps ids apart across processes.
+        static LAST_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now = now_ms();
+        let ms = LAST_MS
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |last| Some(now.max(last + 1)),
+            )
+            .map_or(now, |last| now.max(last + 1));
+        format!("{:013}-{:08x}", ms, rand::random::<u32>())
     }
 
     fn check(cond: &Condition, current: Option<&ObjectMeta>, key: &str) -> Result<()> {
@@ -163,7 +203,29 @@ impl FsBackend {
         };
         Self::atomic_write_with(&self.versions_dir(key)?.join(&version), bytes, full)?;
         Self::atomic_write_with(&self.head_path(key)?, &serde_json::to_vec(&meta)?, full)?;
+        if key.starts_with(crate::feed::DEVICES_PREFIX) {
+            self.drop_older_versions(key, &version);
+        }
         Ok(meta)
+    }
+
+    /// A device's presence record (`.cua-devices/<id>.json`) is a heartbeat
+    /// written every 30 seconds with only `last_seen_ms` changed: its
+    /// history is no use to anyone and grew by thousands of files a day, so
+    /// only the newest version is kept. A failed removal is not an error;
+    /// the next write tries again.
+    fn drop_older_versions(&self, key: &str, keep: &str) {
+        let Ok(dir) = self.versions_dir(key) else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy() != keep {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Many unconditional writes under one lock, on a few threads (each file
@@ -207,21 +269,20 @@ impl FsBackend {
         Ok(out)
     }
 
-    fn delete_blocking(&self, key: &str, cond: Condition) -> Result<()> {
+    fn delete_blocking(&self, key: &str, cond: Condition) -> Result<String> {
         let _lock = self.lock()?;
         let current = self.read_head(key)?;
         if current.is_none() && cond == Condition::None {
             return Err(Error::NotFound(key.to_string()));
         }
         Self::check(&cond, current.as_ref(), key)?;
-        let marker = self
-            .versions_dir(key)?
-            .join(format!("{}.del", Self::new_version()));
+        let version = Self::new_version();
+        let marker = self.versions_dir(key)?.join(format!("{version}.del"));
         Self::atomic_write(&marker, b"")?;
         let head = self.head_path(key)?;
         cua_home::guard_write(&head)?;
         fs::remove_file(head)?;
-        Ok(())
+        Ok(version)
     }
 
     fn get_blocking(&self, key: &str, version: Option<&str>) -> Result<(Vec<u8>, ObjectMeta)> {
@@ -374,6 +435,7 @@ impl FsBackend {
         use sha2::Digest as _;
         use std::io::Read as _;
         let dir = self.versions_dir(key)?;
+        self.ensure_root()?;
         fs::create_dir_all(&dir)?;
         let tmp = dir.join(format!(".tmp-{}", crate::new_id()));
         cua_home::guard_write(&tmp)?;
@@ -429,6 +491,7 @@ impl FsBackend {
             .read_head(from)?
             .ok_or_else(|| Error::NotFound(from.to_string()))?;
         let dir = self.versions_dir(to)?;
+        self.ensure_root()?;
         fs::create_dir_all(&dir)?;
         let version = Self::new_version();
         let dst = dir.join(&version);
@@ -490,6 +553,211 @@ impl FsBackend {
         files.sort_by(|a, b| a.key.cmp(&b.key));
         folders.sort();
         Ok((files, folders))
+    }
+}
+
+/// Where the bytes of an applied version come from.
+pub enum ApplySource {
+    /// In memory.
+    Bytes(Vec<u8>),
+    /// A finished file the store takes: moved (same file system) or copied.
+    /// With `link` the file stays where it is and the store gets a hard link
+    /// (a copy where hard links are not possible).
+    File { path: PathBuf, link: bool },
+}
+
+/// What replication needs from the local store: writes that keep the
+/// owner's version ids (so history, etags and preconditions mean the same
+/// on every machine), heads moved back to an earlier version, and the paths
+/// of version files. None of this changes the [`Backend`] contract.
+impl FsBackend {
+    /// Deletes `key` like [`Backend::delete`] and returns the delete marker's
+    /// version id (what replication ships).
+    pub async fn delete_versioned(&self, key: &str, cond: Condition) -> Result<String> {
+        let (me, key) = (self.clone(), key.to_string());
+        blocking(move || me.delete_blocking(&key, cond)).await
+    }
+
+    /// The file holding `version` of `key`.
+    pub fn version_file(&self, key: &str, version: &str) -> Result<PathBuf> {
+        self.version_path(key, version)
+    }
+
+    fn install_version(
+        &self,
+        key: &str,
+        version: &str,
+        src: ApplySource,
+        full: bool,
+    ) -> Result<()> {
+        let dst = self.version_path(key, version)?;
+        if dst.is_file() {
+            // Already there (a replayed record).
+            if let ApplySource::File { path, link: false } = src {
+                let _ = fs::remove_file(path);
+            }
+            return Ok(());
+        }
+        let dir = dst
+            .parent()
+            .ok_or_else(|| Error::Invalid("no parent".into()))?;
+        self.ensure_root()?;
+        cua_home::guard_write(&dst)?;
+        fs::create_dir_all(dir)?;
+        match src {
+            ApplySource::Bytes(b) => Self::atomic_write_with(&dst, &b, full)?,
+            ApplySource::File { path, link } => {
+                let tmp = dir.join(format!(".tmp-{}", crate::new_id()));
+                if link {
+                    if fs::hard_link(&path, &tmp).is_err() {
+                        fs::copy(&path, &tmp)?;
+                    }
+                } else if fs::rename(&path, &tmp).is_err() {
+                    fs::copy(&path, &tmp)?;
+                    let _ = fs::remove_file(&path);
+                }
+                // Opened for writing: Windows refuses FlushFileBuffers on a
+                // read-only handle (Access is denied).
+                OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
+                fs::rename(&tmp, &dst).inspect_err(|_| {
+                    let _ = fs::remove_file(&tmp);
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Makes `meta` (a version the owner assigned) the head of its key,
+    /// storing its bytes under that version. Idempotent.
+    pub async fn apply_put(&self, meta: ObjectMeta, src: ApplySource) -> Result<ObjectMeta> {
+        let me = self.clone();
+        blocking(move || {
+            let _lock = me.lock()?;
+            me.install_version(&meta.key, &meta.version, src, true)?;
+            Self::atomic_write(&me.head_path(&meta.key)?, &serde_json::to_vec(&meta)?)?;
+            Ok(meta)
+        })
+        .await
+    }
+
+    /// [`FsBackend::apply_put`] for many small objects at once: one lock, one
+    /// disk barrier at the end (each file is still written and renamed whole,
+    /// so a crash leaves each either old or new).
+    pub async fn apply_many(&self, items: Vec<(ObjectMeta, Vec<u8>)>) -> Result<()> {
+        let me = self.clone();
+        blocking(move || {
+            let _lock = me.lock()?;
+            for (meta, bytes) in &items {
+                me.install_version(
+                    &meta.key,
+                    &meta.version,
+                    ApplySource::Bytes(bytes.clone()),
+                    false,
+                )?;
+                Self::atomic_write_with(
+                    &me.head_path(&meta.key)?,
+                    &serde_json::to_vec(meta)?,
+                    false,
+                )?;
+            }
+            if !items.is_empty() {
+                OpenOptions::new()
+                    .write(true)
+                    .open(me.root.join(".lock"))?
+                    .sync_all()?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Records the owner's delete marker `version` and removes the head.
+    /// Idempotent.
+    pub async fn apply_delete(&self, key: &str, version: &str) -> Result<()> {
+        let (me, key, version) = (self.clone(), key.to_string(), version.to_string());
+        blocking(move || {
+            let _lock = me.lock()?;
+            let marker = me.versions_dir(&key)?.join(format!("{version}.del"));
+            if !marker.is_file() {
+                Self::atomic_write(&marker, b"")?;
+            }
+            let head = me.head_path(&key)?;
+            match fs::remove_file(head) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e.into()),
+            }
+        })
+        .await
+    }
+
+    /// Moves the head of `key` to `to` (a version this store still holds;
+    /// `None`: no head). Versions are never removed, so nothing is lost.
+    pub async fn set_head(&self, key: &str, to: Option<ObjectMeta>) -> Result<()> {
+        let (me, key) = (self.clone(), key.to_string());
+        blocking(move || {
+            let _lock = me.lock()?;
+            let head = me.head_path(&key)?;
+            match to {
+                Some(m) => {
+                    if !me.version_path(&key, &m.version)?.is_file() {
+                        return Err(Error::NotFound(format!("{key} version {}", m.version)));
+                    }
+                    Self::atomic_write(&head, &serde_json::to_vec(&m)?)
+                }
+                None => match fs::remove_file(head) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(e.into()),
+                },
+            }
+        })
+        .await
+    }
+
+    /// Removes one version's bytes (a finished spool entry; never used on
+    /// the data store).
+    pub async fn purge_version(&self, key: &str, version: &str) -> Result<()> {
+        let (me, key, version) = (self.clone(), key.to_string(), version.to_string());
+        blocking(move || {
+            let p = me.version_path(&key, &version)?;
+            match fs::remove_file(&p) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            if let Ok(Some(h)) = me.read_head(&key)
+                && h.version == version
+            {
+                let _ = fs::remove_file(me.head_path(&key)?);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Free bytes on the file system holding the store (best effort).
+    pub fn free_bytes(&self) -> Option<u64> {
+        #[cfg(unix)]
+        {
+            let probe = if self.root.exists() {
+                self.root.clone()
+            } else {
+                self.root.parent()?.to_path_buf()
+            };
+            let c = std::ffi::CString::new(probe.to_string_lossy().as_bytes()).ok()?;
+            // SAFETY: an all-zero statvfs is a valid value to pass as an out pointer.
+            let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+            // SAFETY: `c` is a valid C string and `st` a valid out pointer.
+            if unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0 {
+                return Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64));
+            }
+            None
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
     }
 }
 
@@ -560,8 +828,7 @@ impl Backend for FsBackend {
     }
 
     async fn delete(&self, key: &str, cond: Condition) -> Result<()> {
-        let (me, key) = (self.clone(), key.to_string());
-        blocking(move || me.delete_blocking(&key, cond)).await
+        self.delete_versioned(key, cond).await.map(|_| ())
     }
 
     async fn versions(&self, key: &str) -> Result<Vec<VersionInfo>> {
@@ -602,6 +869,80 @@ impl Backend for FsBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The heartbeat a device writes every 30 s keeps no history, while any
+    /// other key keeps all of its versions.
+    #[tokio::test]
+    async fn a_presence_record_keeps_only_its_newest_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = FsBackend::new(dir.path().join("data"));
+        let key = format!("{}d1.json", crate::feed::DEVICES_PREFIX);
+        for i in 0..5 {
+            b.put(
+                &key,
+                format!("{{\"last_seen_ms\":{i}}}").into_bytes(),
+                Condition::None,
+            )
+            .await
+            .unwrap();
+        }
+        let versions = b.versions(&key).await.unwrap();
+        assert_eq!(versions.len(), 1, "{versions:?}");
+        let (body, meta) = b.get(&key, None).await.unwrap();
+        assert_eq!(body, b"{\"last_seen_ms\":4}");
+        assert_eq!(meta.version, versions[0].version);
+        for i in 0..3 {
+            b.put("notes.txt", vec![i], Condition::None).await.unwrap();
+        }
+        assert_eq!(b.versions("notes.txt").await.unwrap().len(), 3);
+    }
+
+    /// A store whose home was deleted stays deleted: a device heartbeat
+    /// (a write every 30 s) must not bring the directory chain back, and a
+    /// store that never existed is still created on its first write.
+    #[tokio::test]
+    async fn a_removed_store_is_not_brought_back_by_a_later_write() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home
+            .path()
+            .join("env")
+            .join("home")
+            .join("volume")
+            .join("data");
+        let b = FsBackend::new(&root);
+        // First write on a store that never existed creates it.
+        b.put(".cua-devices/d1.json", b"{}".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert!(root.is_dir());
+        // Its home is torn down.
+        std::fs::remove_dir_all(home.path().join("env")).unwrap();
+        for _ in 0..2 {
+            let e = b
+                .put(".cua-devices/d1.json", b"{}".to_vec(), Condition::None)
+                .await
+                .unwrap_err();
+            assert_eq!(e.tag(), "not_found", "{e}");
+        }
+        assert!(
+            !home.path().join("env").exists(),
+            "nothing was recreated, not even a lock file"
+        );
+        // A clone shares the knowledge; a store opened on the path later
+        // starts fresh (a home that is set up again is a new home).
+        assert!(
+            b.clone()
+                .put("k", b"v".to_vec(), Condition::None)
+                .await
+                .is_err()
+        );
+        assert!(!home.path().join("env").exists());
+        FsBackend::new(&root)
+            .put("k", b"v".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert!(root.is_dir());
+    }
 
     #[tokio::test]
     async fn versions_preconditions_and_s3_shaped_keys() {

@@ -122,11 +122,11 @@ fn set_at(path: &std::path::Path, channel: ReleaseChannel) -> Result<(), String>
 }
 
 pub fn state_path() -> Result<PathBuf, String> {
-    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME") {
+    if let Some(home) = crate::env_vars::var_os("CUA_DRIVER_RS_HOME") {
         return Ok(PathBuf::from(home).join(FILE_NAME));
     }
-    let root = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    let root = crate::env_vars::var_os("HOME")
+        .or_else(|| crate::env_vars::var_os("USERPROFILE"))
         .ok_or_else(|| "neither HOME nor USERPROFILE is set".to_owned())?;
     Ok(PathBuf::from(root)
         .join(crate::bundle::user_home_subdirectory())

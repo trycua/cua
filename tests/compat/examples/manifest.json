@@ -1,0 +1,4257 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "e2b-py-sdk-unit",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/test_api_client_transport.py",
+          "tests/test_api_exception.py",
+          "tests/test_api_key.py",
+          "tests/test_client.py",
+          "tests/test_command_handle.py",
+          "tests/test_connection_config.py",
+          "tests/test_env_var_parsing.py",
+          "tests/test_envd_api_exception.py",
+          "tests/test_envd_client_transport.py",
+          "tests/test_envd_codec.py",
+          "tests/test_envd_interceptors.py",
+          "tests/test_envd_plain_http_errors.py",
+          "tests/test_envd_retry_transport.py",
+          "tests/test_envd_rpc_exception.py",
+          "tests/test_envd_stream_capacity.py",
+          "tests/test_envd_stream_request_timeout.py",
+          "tests/test_envd_stream_reset.py",
+          "tests/test_envd_utils.py",
+          "tests/test_file_stream_reader.py",
+          "tests/test_filesystem_models.py",
+          "tests/test_io_utils.py",
+          "tests/test_logging_option.py",
+          "tests/test_paginator.py",
+          "tests/shared/api",
+          "tests/shared/git"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "Pure client-side tests (no sandbox, no gateway). Expect 0 failures. shared/git tests may create sandboxes: if so they use base template + git; mark any that need network to github as expected_fail with reason."
+      },
+      "why": "Guards that the pinned SDK installs and imports inside a job Space with the gateway env (no regression from CA bundle / env injection).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "env_unset": [
+        "E2B_API_URL",
+        "E2B_SANDBOX_URL",
+        "E2B_DOMAIN",
+        "E2B_API_KEY",
+        "E2B_DEBUG",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE"
+      ],
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-sync-commands",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/sync/sandbox_sync/commands"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: test_sandbox_killed_during_run (kill mid-run semantics). Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none)."
+      },
+      "why": "Official E2B sync SDK tests for commands: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-sync-files",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/sync/sandbox_sync/files"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [
+          "test_file_symlink"
+        ],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: test_secured/test_watch (signed URLs, fs watch). Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none). test_file_symlink is an expected upstream-test difference: real E2B (recorded by the gateway agent, fixtures/cases-py-2.58.0.json files_symlinks/files_get_info) returns type=symlink for SDK 2.56 and 2.58, but the test asserts FILE (it matches the 2.42 envd); allowed with this reason."
+      },
+      "why": "Official E2B sync SDK tests for files: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-async-commands",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/async/sandbox_async/commands"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: test_sandbox_killed_during_run (kill mid-run semantics). Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none)."
+      },
+      "why": "Official E2B async SDK tests for commands: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-async-files",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/async/sandbox_async/files"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [
+          "test_file_symlink"
+        ],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: test_secured/test_watch (signed URLs, fs watch). Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none). test_file_symlink is an expected upstream-test difference: real E2B (recorded by the gateway agent, fixtures/cases-py-2.58.0.json files_symlinks/files_get_info) returns type=symlink for SDK 2.56 and 2.58, but the test asserts FILE (it matches the 2.42 envd); allowed with this reason."
+      },
+      "why": "Official E2B async SDK tests for files: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-sync-pty",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/sync/sandbox_sync/pty"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: resize/connect semantics. Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none)."
+      },
+      "why": "Official E2B sync SDK tests for pty: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-async-pty",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/async/sandbox_async/pty"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "All tests in the dir must pass; known E2B-only candidates to triage on first run: resize/connect semantics. Env from gateway: E2B_API_KEY, E2B_API_URL/E2B_DOMAIN, SSL_CERT_FILE. conftest uses template 'base'; sandbox_test_id metadata; pytest-dotenv reads .env if present (none)."
+      },
+      "why": "Official E2B async SDK tests for pty: the behaviours the real SDK asserts (exit codes, streaming order, encoding, permissions).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-sync-lifecycle",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/sync/sandbox_sync/test_connect.py",
+          "tests/sync/sandbox_sync/test_kill.py",
+          "tests/sync/sandbox_sync/test_timeout.py",
+          "tests/sync/sandbox_sync/test_host.py",
+          "tests/sync/sandbox_sync/test_secure.py",
+          "tests/sync/sandbox_sync/test_metrics.py",
+          "tests/sync/sandbox_sync/test_config_propagation.py",
+          "tests/sync/sandbox_sync/test_internet_access.py",
+          "tests/sync/sandbox_sync/test_create.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "test_create::test_mcp_gateway_* expects a base template without mcp-gateway (SandboxException); test_internet_access/test_metrics may need egress control and metrics endpoint. Anything failing = BUG unless Cua truly cannot (then assert provider-native error)."
+      },
+      "why": "create/connect/kill/timeout/host/secure/metrics lifecycle semantics.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-async-lifecycle",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/async/sandbox_async/test_connect.py",
+          "tests/async/sandbox_async/test_kill.py",
+          "tests/async/sandbox_async/test_timeout.py",
+          "tests/async/sandbox_async/test_host.py",
+          "tests/async/sandbox_async/test_secure.py",
+          "tests/async/sandbox_async/test_metrics.py",
+          "tests/async/sandbox_async/test_config_propagation.py",
+          "tests/async/sandbox_async/test_internet_access.py",
+          "tests/async/sandbox_async/test_create.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "test_create::test_mcp_gateway_* expects a base template without mcp-gateway (SandboxException); test_internet_access/test_metrics may need egress control and metrics endpoint. Anything failing = BUG unless Cua truly cannot (then assert provider-native error)."
+      },
+      "why": "create/connect/kill/timeout/host/secure/metrics lifecycle semantics.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-sync-api",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/sync/api_sync",
+          "--ignore=tests/sync/api_sync/test_sbx_snapshot.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "info/kill/list REST endpoints incl. pagination and metadata query filters (snapshot test excluded here; see snapshot entry)."
+      },
+      "why": "REST API: GET/DELETE /sandboxes, list filters and paging.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "e2b-py-async-api",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/python-sdk/tests"
+      },
+      "also_fetch": [
+        "packages/python-sdk/pyproject.toml",
+        "packages/python-sdk/pytest.ini"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/python-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/python-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT License; pyproject.toml license = \"MIT\"; repo root LICENSE = Apache-2.0 (package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/python-sdk",
+        "file_sha256": "38db71fd15b98fa0b498f8c5ee705a49570e3111085c277fb89b5ea107ec4dcb"
+      },
+      "sdk_specs": [
+        "e2b==2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "packages/python-sdk",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=180",
+          "-q",
+          "--junitxml={junit}",
+          "tests/async/api_async",
+          "--ignore=tests/async/api_async/test_sbx_snapshot.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "passed"
+        ],
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "info/kill/list REST endpoints incl. pagination and metadata query filters (snapshot test excluded here; see snapshot entry)."
+      },
+      "why": "REST API: GET/DELETE /sandboxes, list filters and paging.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1500,
+      "tree": "3cae3721c845777fb4ca4cf6fb696678d2936ae8"
+    },
+    {
+      "id": "daytona-ex-py-exec",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command",
+        "cmd": [
+          "python",
+          "exec.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello World!",
+          "Hello World from exec!",
+          "Initialized counter = 1",
+          "Counter after second call = 2",
+          "Isolated context value: stored in isolated context",
+          "Value still available: stored in isolated context",
+          "NameError",
+          "Timed out as expected"
+        ],
+        "notes": "Order: code_run output, exec output, then the stateful interpreter section. Counter state persists in the default context (2); the isolated ctx keeps its own value; reading `value` from the default ctx must raise NameError via the error callback ('[ERROR] NameError'); the 1s timeout on a 5s sleep must surface DaytonaTimeoutError. 'Finished!' must NOT appear. No 'Error:' line from the first two calls."
+      },
+      "why": "Core Daytona flow: image-based create (python:3.9.23-slim), process.code_run, process.exec, the stateful code interpreter with contexts and callbacks.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "b4eff8386bf7097dad4a93c29c74df83e7d80c76"
+    },
+    {
+      "id": "daytona-ex-py-exec-session",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command",
+        "cmd": [
+          "python",
+          "exec_session.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "exec-session-1",
+          "BAR",
+          "[STDOUT]: BAR",
+          "[STDERR]:"
+        ],
+        "notes": "Session state is shared: `export FOO=BAR` in command 1 makes `echo $FOO` in command 2 print BAR; get_session_command_logs returns the same BAR on stdout; list_sessions prints the session; delete_session succeeds. No 'Error:' line."
+      },
+      "why": "Stateful sessions and per-command logs.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "b4eff8386bf7097dad4a93c29c74df83e7d80c76"
+    },
+    {
+      "id": "daytona-ex-py-exec-linked",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command",
+        "cmd": [
+          "python",
+          "exec_linked.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Owner sandbox ready",
+          "Follower sandbox ready",
+          "READY",
+          "Response from owner: hello from owner"
+        ],
+        "notes": "A follower sandbox (ephemeral, linked_sandbox=owner.id) reaches the owner's HTTP server on :3000 by the owner's name over a link network. Both sandboxes deleted at the end. If linking is unsupported the first create with linked_sandbox must fail with a Daytona-shaped DaytonaError (then assert exit_code 1 and 'linked' in stderr) - decide by gateway capability, not by skipping."
+      },
+      "why": "Daytona-only feature (sandbox-to-sandbox DNS link). Cua can build it with a shared Space network, so a real pass is the target.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "b4eff8386bf7097dad4a93c29c74df83e7d80c76"
+    },
+    {
+      "id": "daytona-ex-py-lifecycle",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/lifecycle"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/lifecycle",
+        "cmd": [
+          "python",
+          "lifecycle.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Creating sandbox",
+          "Stopping sandbox",
+          "Sandbox stopped",
+          "Starting sandbox",
+          "Sandbox started",
+          "Hello World from exec!",
+          "Removing sandbox",
+          "Sandbox removed"
+        ],
+        "notes": "create -> set_labels -> stop -> start -> get(id) -> exec in /home/daytona (cwd must exist: home of default user) -> list with filters (labels env=dev, STARTED: nothing printed, since labels differ) -> delete. Assert no 'Error:' line and stderr empty of tracebacks."
+      },
+      "why": "Lifecycle: stop/start must preserve the Space and its state; get by id; cwd=/home/daytona; list query objects.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "140da7cce5eeb70fb57bd0190029c3c3305b9886"
+    },
+    {
+      "id": "daytona-ex-py-auto-delete",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/auto-delete"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/auto-delete",
+        "cmd": [
+          "python",
+          "auto_delete.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "60",
+          "0",
+          "-1",
+          "1440"
+        ],
+        "notes": "Lines after set_auto_delete_interval: 60, then 0, then -1; second sandbox created with auto_delete_interval=1440 prints 1440. The first printed value is the server default (do not assert its value, only that a line is printed). Sandboxes are not deleted by the script (the runner must sweep them)."
+      },
+      "why": "Round-trip of lifecycle policy fields through the REST API.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "e2748e5fcf6a20dfcee72eafc8e29b80010e4105"
+    },
+    {
+      "id": "daytona-ex-py-auto-archive",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/auto-archive"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/auto-archive",
+        "cmd": [
+          "python",
+          "auto_archive.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "60",
+          "1440"
+        ],
+        "notes": "Prints the default, 60 after set_auto_archive_interval(60), the value for interval=0 (documented as 'max': real Daytona normalises 0 to 7 days = 10080; do not assert, only that an integer line is printed), and 1440. All three sandboxes are deleted at the end."
+      },
+      "why": "Archive interval fields.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "eea731666c510f7a8b95cd02ad94a0535b58596d"
+    },
+    {
+      "id": "daytona-ex-py-pagination-sandbox",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/pagination"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/pagination",
+        "cmd": [
+          "python",
+          "sandbox.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "notes": "list(ListSandboxesQuery(limit=10, labels env=dev, states=[STARTED], sort CREATEDAT desc)) iterates without error on an empty result; stdout is empty; stderr has no traceback."
+      },
+      "why": "Query/sort/filter serialisation of the list endpoint.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "4411ed0996597e1393f7614e1aea8b31b9d77ff5"
+    },
+    {
+      "id": "daytona-ex-py-pagination-snapshot",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/pagination"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/pagination",
+        "cmd": [
+          "python",
+          "snapshot.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "notes": "snapshot.list(page=2, limit=10) returns an object with .items (possibly empty) and does not raise; stdout lines (if any) match '<name> (<image>)'."
+      },
+      "why": "Snapshot list endpoint and paging shape.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "4411ed0996597e1393f7614e1aea8b31b9d77ff5"
+    },
+    {
+      "id": "daytona-ex-py-network-settings",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/network-settings"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/network-settings",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "network_block_all: False",
+          "network_block_all: True",
+          "network_allow_list: 192.168.1.0/16,10.0.0.0/24"
+        ],
+        "notes": "Default sandbox: block_all False; block_all=True sandbox echoes True; allow-list sandbox echoes the exact comma string. If egress filtering cannot be enforced the gateway must refuse the create with a Daytona error (then expect exit 1) rather than echoing fake settings."
+      },
+      "why": "Network policy fields must be honest (enforced or rejected), never faked.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "04c35b34d8047e0dad11a061cfcc42c4512cb986"
+    },
+    {
+      "id": "daytona-ex-py-pty",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/pty"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/pty",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Enter your name:",
+          "Hello, Alice",
+          "PTY session exited with code: 0",
+          "PTY session terminated. Exit code:"
+        ],
+        "notes": "First PTY: interactive read prompt, answer Alice, resize, ls -la, exit -> exit code 0. Second PTY: infinite loop streaming 'Running...' lines for ~3s, kill() ends it. 'Error executing PTY commands' must NOT appear (the script swallows the exception and still exits 0)."
+      },
+      "why": "PTY create/resize/send_input/iterate/kill over the websocket.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "6d5ae2e767fcd5084cf09462ff4215b7d34ca8dc"
+    },
+    {
+      "id": "daytona-ex-py-file-operations",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/file-operations"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/file-operations",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Created sandbox with ID",
+          "Verifying uploaded files:",
+          "example.txt",
+          "config.json",
+          "script.sh",
+          "Hello from script!",
+          "JSON files found:",
+          "Config content:",
+          "\"debug\": false",
+          "Streaming upload with progress:",
+          "uploaded 49152 / 49152 bytes",
+          "Streamed content:"
+        ],
+        "notes": "Uploads 3 files (path + bytes), chmod +x and run script (prints 'Hello from script!'), search_files(*.json) finds config.json, replace_in_files flips debug to false, downloads (batch/single/stream) return exact content, stream upload of 48 KiB reports the final progress 49152/49152. Local scratch files are removed. 'Error downloading' must not appear."
+      },
+      "why": "Largest single-file filesystem coverage: batch multipart upload, download modes, search/replace, streaming with progress, permissions.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "51f42309a1be6b531fa9b9800188e20ba1b8c189"
+    },
+    {
+      "id": "daytona-ex-py-volumes",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/volumes"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/volumes",
+        "cmd": [
+          "python",
+          "volume.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Files:",
+          "new-file.txt",
+          "File: b'Hello, World!'"
+        ],
+        "notes": "A volume 'my-volume' is created, mounted at /home/daytona/volume in sandbox 1 (file written), mounted at a second path in sandbox 2 (list shows new-file.txt, download returns b'Hello, World!'), and a subpath mount works. The volume itself is not deleted by the script (runner deletes it)."
+      },
+      "why": "Volumes map to Cua Volume (Cua extra: survives Spaces).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "b791797d7d0868d702081544360ab878965559c7"
+    },
+    {
+      "id": "daytona-ex-py-charts",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/charts"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/charts",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "chart"
+        ],
+        "notes": "Runs matplotlib plotting code in a debian_slim(3.13)+matplotlib image; response.artifacts.charts must be non-empty (script prints 'No charts found' otherwise; assert that string is ABSENT) and charts decode to PNG (base64 starts iVBOR). Exact printed titles are in the script; assert at least one chart title line."
+      },
+      "why": "Toolbox chart-artifact extraction from code_run (Daytona-specific).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 720,
+      "tree": "1d633bbb26ee302f209be9564c04fbdabd468b8c"
+    },
+    {
+      "id": "daytona-ex-py-declarative-image",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/declarative-image"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/declarative-image",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "=== Creating Snapshot:",
+          "Creating Sandbox from Pre-built Image",
+          "Python 3.12",
+          "numpy",
+          "My Environment Variable"
+        ],
+        "notes": "Snapshot create from a declarative image (pip_install of 6 data-science packages, run_commands, workdir, env, add_local_file); sandbox from that snapshot reports Python 3.12, lists numpy in pip list, MY_ENV_VAR visible, and file_example.txt present under the workdir with 'Hello, World!'."
+      },
+      "why": "Declarative image builder + snapshots (the E2B-template analogue).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "22ebf51115b29225c83b5d24bceb6d8b9fe6e968"
+    },
+    {
+      "id": "daytona-ex-py-git-lsp",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/git-lsp"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/git-lsp",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Matches:",
+          "Symbols:",
+          "Completions:"
+        ],
+        "notes": "Clones github.com/panaverse/learn-typescript (needs outbound network), find_files locates the line, typescript LSP server starts and returns document symbols and completions. The script swallows errors and exits 0: assert 'Error executing example' is ABSENT."
+      },
+      "why": "git clone/pull + find_files + LSP server (Daytona-specific).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1260,
+      "tree": "6f002d68ef738a1647bd1cc85814b58867f1b0e5"
+    },
+    {
+      "id": "daytona-ex-py-region",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/region"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/region",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Creating snapshot us-",
+          "Creating snapshot eu-",
+          "Creating sandbox from snapshot"
+        ],
+        "notes": "Multi-region snapshots (region_id us / eu). Cua has one 'region' (the pool). Expected: each create either succeeds or prints a Daytona-shaped error line (the script catches). Assert the four section headers and that no Python traceback appears. Real behaviour on Daytona with an unpermitted region is a printed API error."
+      },
+      "why": "Truly provider-specific (regions): documents that unsupported regions fail with a provider-shaped error, not silently.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "f27fa1a8fcbd1692f0134b81d1f63c7e621cf37a"
+    },
+    {
+      "id": "daytona-ex-py-async-exec",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command/_async",
+        "cmd": [
+          "python",
+          "exec.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello World!",
+          "Hello World from exec!",
+          "Counter after second call = 2",
+          "Timed out as expected"
+        ],
+        "notes": "Same observable output as the sync exec example but through AsyncDaytona."
+      },
+      "why": "AsyncDaytona + aiohttp/httpx-ws paths.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "bd3b6a5b825990b425f9b487c00ed5788695a090"
+    },
+    {
+      "id": "daytona-ex-py-async-exec-logs",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command/_async",
+        "cmd": [
+          "python",
+          "exec_logs_async.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "notes": "Streams session command logs asynchronously (read the script for the exact echo markers; assert every echoed marker appears once and in order, no traceback)."
+      },
+      "why": "Async log streaming order.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "bd3b6a5b825990b425f9b487c00ed5788695a090"
+    },
+    {
+      "id": "daytona-ex-py-async-exec-session",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/exec-command/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/exec-command/_async",
+        "cmd": [
+          "python",
+          "exec_session.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "BAR"
+        ],
+        "notes": "As sync exec_session."
+      },
+      "why": "Async sessions.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "bd3b6a5b825990b425f9b487c00ed5788695a090"
+    },
+    {
+      "id": "daytona-ex-py-async-file-operations",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/file-operations/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/file-operations/_async",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello from script!",
+          "Config content:",
+          "\"debug\": false"
+        ],
+        "notes": "As sync file-operations."
+      },
+      "why": "Async multipart and streaming file ops.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "b43ddb856107fed1b33716eb80f2940a407af100"
+    },
+    {
+      "id": "daytona-ex-py-async-pty",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/pty/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/pty/_async",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello, Alice",
+          "PTY session exited with code: 0"
+        ],
+        "notes": "As sync pty; 'Error executing PTY commands' absent."
+      },
+      "why": "Async PTY.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "ce270337a94d91edf6f0fa0b51cc21e608b46b82"
+    },
+    {
+      "id": "daytona-ex-py-async-lifecycle",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/lifecycle/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/lifecycle/_async",
+        "cmd": [
+          "python",
+          "lifecycle.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Sandbox stopped",
+          "Sandbox started",
+          "Hello World from exec!",
+          "Sandbox removed"
+        ],
+        "notes": "As sync lifecycle."
+      },
+      "why": "Async lifecycle.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "85c585883896c488a8be5763b30c040cf3dd5baf"
+    },
+    {
+      "id": "daytona-ex-py-async-network-settings",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/network-settings/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/network-settings/_async",
+        "cmd": [
+          "python",
+          "main.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "network_block_all: True",
+          "network_allow_list: 192.168.1.0/16,10.0.0.0/24"
+        ],
+        "notes": "As sync."
+      },
+      "why": "Async network fields.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "7d605e9b62cad25519f716b76df429a33eecba44"
+    },
+    {
+      "id": "daytona-ex-py-async-volumes",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/python/volumes/_async"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/python/volumes/_async",
+        "cmd": [
+          "python",
+          "volume.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Files:",
+          "new-file.txt"
+        ],
+        "notes": "As sync volumes."
+      },
+      "why": "Async volume mounts.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "0cfcc54386317fcbf2343acd60ab98a423c40d69"
+    },
+    {
+      "id": "daytona-ex-ts-exec",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/exec-command"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/exec-command",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello World from code!"
+        ],
+        "notes": "codeRun on a TypeScript snippet prints the greeting; the script also runs executeCommand, sessions with env/argv and code-interpreter style calls. main().catch(console.error) means exit 0 on failure: assert stdout markers and that stderr has no 'DaytonaError'. Finalise the full marker list when the runner reads the file (206 lines)."
+      },
+      "why": "TS SDK (axios + WebSocket paths) on the central process API.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 450,
+      "tree": "51b5e3a75f3964aea928440916607ebc95f4046c"
+    },
+    {
+      "id": "daytona-ex-ts-exec-linked",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/exec-command"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/exec-command",
+        "cmd": [
+          "npx",
+          "tsx",
+          "linked.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "hello from owner"
+        ],
+        "notes": "As the Python linked example."
+      },
+      "why": "Linked sandboxes via TS.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "51b5e3a75f3964aea928440916607ebc95f4046c"
+    },
+    {
+      "id": "daytona-ex-ts-lifecycle",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/lifecycle"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/lifecycle",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Sandbox deleted"
+        ],
+        "notes": "create/stop/start/get/list-with-sort/delete. stderr (console.error from main().catch) must be empty."
+      },
+      "why": "TS lifecycle + async iterator for list.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "c4cf30adfcd6f407f14b835ae2c80cfd73e2520f"
+    },
+    {
+      "id": "daytona-ex-ts-auto-delete",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/auto-delete"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/auto-delete",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "60",
+          "-1",
+          "1440"
+        ],
+        "notes": "As Python."
+      },
+      "why": "TS lifecycle intervals.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "95b58973b174b55a73a725972d0c0f8cf85b9de0"
+    },
+    {
+      "id": "daytona-ex-ts-auto-archive",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/auto-archive"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/auto-archive",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "60",
+          "1440"
+        ],
+        "notes": "As Python."
+      },
+      "why": "TS archive intervals.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "3570cdbb1468dafb7c24c9fda503052e83fefb02"
+    },
+    {
+      "id": "daytona-ex-ts-network-settings",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/network-settings"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/network-settings",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "192.168.1.0/16,10.0.0.0/24"
+        ],
+        "notes": "As Python."
+      },
+      "why": "TS network fields.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "e555cd0c422c4e10c536b1e4d40489062ca363fd"
+    },
+    {
+      "id": "daytona-ex-ts-domain-allow-list",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/domain-allow-list"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/domain-allow-list",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "domainAllowList: google.com,*.google.com",
+          "allowed  https://www.google.com",
+          "allowed  https://google.com",
+          "blocked  https://example.com",
+          "Updating allow list to \"example.com\":",
+          "allowed  https://example.com"
+        ],
+        "notes": "Domain-level egress allow list with wildcard, then live update via updateNetworkSettings. Requires real enforcement; the sandbox needs outbound internet. If domain-based egress filtering cannot be done the create (or updateNetworkSettings) must fail with a Daytona-shaped error: assert that, never print fake 'blocked'."
+      },
+      "why": "Provider-specific network feature that tests honesty.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 720,
+      "tree": "6714c0bba130fbbb80abb4747df2cc9069a339a8"
+    },
+    {
+      "id": "daytona-ex-ts-pagination-sandbox",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/pagination"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/pagination",
+        "cmd": [
+          "npx",
+          "tsx",
+          "sandbox.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "notes": "list with paging/sort enums; no output on empty."
+      },
+      "why": "TS list query serialisation.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "c1d5210902449f498016be18829cd60d1205e04e"
+    },
+    {
+      "id": "daytona-ex-ts-pagination-snapshot",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/pagination"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/pagination",
+        "cmd": [
+          "npx",
+          "tsx",
+          "snapshot.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "notes": "snapshot.list page 2."
+      },
+      "why": "TS snapshot list.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "c1d5210902449f498016be18829cd60d1205e04e"
+    },
+    {
+      "id": "daytona-ex-ts-pty",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/pty"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/pty",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello, Alice"
+        ],
+        "notes": "As Python PTY; assert interactive answer echoed and the kill path terminates."
+      },
+      "why": "TS PTY handle.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "12d5c12b861ab941d47a78ba833bc1bcca286daf"
+    },
+    {
+      "id": "daytona-ex-ts-file-operations",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/file-operations"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/file-operations",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello from script!",
+          "\"debug\": false"
+        ],
+        "notes": "As Python (158 lines; finalise exact markers on read)."
+      },
+      "why": "TS multipart upload/download.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 300,
+      "tree": "400543f9b31868f44f8b70424a16718510bfac00"
+    },
+    {
+      "id": "daytona-ex-ts-volumes",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/volumes"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/volumes",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello, World!"
+        ],
+        "notes": "As Python."
+      },
+      "why": "TS volumes.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 360,
+      "tree": "947e6481397f03e1e46fa1f51c471d90fa0e6bac"
+    },
+    {
+      "id": "daytona-ex-ts-git-lsp",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/git-lsp"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/git-lsp",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Matches",
+          "Symbols",
+          "Completions"
+        ],
+        "notes": "As Python."
+      },
+      "why": "TS LSP.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1260,
+      "tree": "a3718e42c8b967be7b3aa1ddf1741e2727d835d5"
+    },
+    {
+      "id": "daytona-ex-ts-charts",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/charts"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/charts",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "chart"
+        ],
+        "notes": "As Python charts."
+      },
+      "why": "TS chart artifacts.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 720,
+      "tree": "f13fc30f8f683b9986de343a101bb0fc70e96a54"
+    },
+    {
+      "id": "daytona-ex-ts-declarative-image",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "examples/typescript/declarative-image"
+      },
+      "license": {
+        "spdx": "AGPL-3.0-only",
+        "file": "LICENSE",
+        "evidence": [
+          "LICENSE@01c502bb (repo root, GNU AFFERO GPL v3)",
+          "no license/copyright/SPDX header in any examples/python or examples/typescript file (grep -i license|copyright|spdx: 0 hits)",
+          "no examples/LICENSE; only libs/sdk-*/LICENSE and apps/docs/LICENSE are Apache-2.0 (those do not cover examples/)",
+          "repo archived by Daytona, README: remains public and free to use, fork and build on under the LICENSE (v0.190.0)"
+        ],
+        "scope": "Effective license of examples/ is the repo-root AGPL-3.0. We fetch+run unmodified at test time only; never copy, vendor, modify or redistribute. AGPL s13 network clause is not triggered (no modified version offered to users). Keep, but flag: if counsel disagrees, drop all 'daytona-ex-*' ids (one-line filter).",
+        "file_sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "examples/typescript/declarative-image",
+        "cmd": [
+          "npx",
+          "tsx",
+          "index.ts"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Creating Snapshot"
+        ],
+        "notes": "As Python declarative-image."
+      },
+      "why": "TS Image builder.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "0cd4fbef8d1a324db5f6929c4e2244b8056200ca"
+    },
+    {
+      "id": "e2b-ci-quickstart-py",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "driver_ci_quickstart.py",
+      "source": {
+        "repo": "https://github.com/e2b-dev/code-interpreter",
+        "commit": "2f3f0b705e91acc71b53402b071308f453a98f9a",
+        "path": "README.md"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "LICENSE",
+        "evidence": [
+          "e2b-dev/code-interpreter LICENSE@2f3f0b705e91acc71b53402b071308f453a98f9a = Apache License 2.0 (root); the README the driver mirrors is Apache-2.0 too"
+        ],
+        "scope": "repo",
+        "file_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "sdk_specs": [
+        "e2b-code-interpreter==2.11.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "driver_ci_quickstart.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "PASS state persists across run_code",
+          "PASS error name",
+          "PASS context isolation",
+          "PASS plot returns a result"
+        ],
+        "stdout_not_contains": [
+          "FAIL "
+        ],
+        "notes": "The code-interpreter template (jupyter on :49999) must exist; our driver follows the README quickstart."
+      },
+      "why": "The most used E2B package after the core SDK: the quickstart flow of e2b-code-interpreter.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "245673e0c185257b1eb6feed12c8107e864217c5"
+    },
+    {
+      "id": "e2b-ci-quickstart-ts",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "driver",
+      "driver": "driver_ci_quickstart.mjs",
+      "source": {
+        "repo": "https://github.com/e2b-dev/code-interpreter",
+        "commit": "2f3f0b705e91acc71b53402b071308f453a98f9a",
+        "path": "README.md"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "LICENSE",
+        "evidence": [
+          "e2b-dev/code-interpreter LICENSE@2f3f0b705e91acc71b53402b071308f453a98f9a = Apache License 2.0 (root); the README the driver mirrors is Apache-2.0 too"
+        ],
+        "scope": "repo",
+        "file_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "sdk_specs": [
+        "e2b@2.42.0",
+        "@e2b/code-interpreter@2.9.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "node",
+          "driver_ci_quickstart.mjs"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "PASS state persists across runCode",
+          "PASS error name",
+          "PASS context isolation"
+        ],
+        "stdout_not_contains": [
+          "FAIL "
+        ],
+        "notes": "TypeScript twin of the Python quickstart driver."
+      },
+      "why": "Same flow through the npm package.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "245673e0c185257b1eb6feed12c8107e864217c5"
+    },
+    {
+      "id": "crewai-e2b-sandbox-tools",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "driver_crewai_e2b.py",
+      "source": {
+        "repo": "https://github.com/crewAIInc/crewAI",
+        "commit": "eb15c66cef12073d8d06d6942eecc35e7fd6c783",
+        "path": "lib/crewai-tools/src/crewai_tools/tools/e2b_sandbox_tool"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "crewAIInc/crewAI LICENSE@eb15c66cef12073d8d06d6942eecc35e7fd6c783 = MIT (Copyright 2025 crewAI, Inc.)"
+        ],
+        "scope": "repo",
+        "file_sha256": "28868731966f4aa37f02879839aabc797137e27ddde4e274ef9cf965f9a71774"
+      },
+      "sdk_specs": [
+        "crewai-tools[e2b]==1.15.28"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "driver_crewai_e2b.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "PASS read round trip",
+          "PASS binary round trip",
+          "PASS exec ok",
+          "PASS cwd and envs honoured"
+        ],
+        "stdout_not_contains": [
+          "FAIL "
+        ],
+        "notes": "crewai-tools pins e2b ~=2.20: extra SDK version coverage. Our driver calls the tools' public run() API; no LLM."
+      },
+      "why": "crewAI (60k stars) E2B exec/file tools: the integration agent builders actually use.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "83254fa8e8271cc025586cb338594b83206940be"
+    },
+    {
+      "id": "openai-agents-e2b-runner",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/openai/openai-agents-python",
+        "commit": "17d994bd3045dae71acda676a4ef4762ed8ecd94",
+        "path": "examples/sandbox/misc"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "openai/openai-agents-python LICENSE@17d994bd3045dae71acda676a4ef4762ed8ecd94 = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "13df7812ca53ecaae1cb4a868844bb598373047ae1d580e4debfbef1dd5b6915"
+      },
+      "also_fetch": [
+        "examples/__init__.py",
+        "examples/sandbox/__init__.py",
+        "examples/sandbox/extensions/__init__.py",
+        "examples/sandbox/extensions/e2b_runner.py"
+      ],
+      "sdk_specs": [
+        "openai-agents[e2b]==0.24.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": "mock",
+      "env": {
+        "OPENAI_AGENTS_DISABLE_TRACING": "1"
+      },
+      "run": {
+        "cwd": ".",
+        "cmd": [
+          "sh",
+          "-c",
+          "python examples/sandbox/extensions/e2b_runner.py --model gpt-test --timeout 300; rc=$?; echo '--- mock trace'; cat \"$JOB/mock-trace.log\" 2>/dev/null; exit $rc"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "snapshot round-trip ok (e2b, tar)",
+          "mock-llm: done.",
+          "TOOL_OUTPUT"
+        ],
+        "notes": "The example creates a sandbox from a manifest, writes a file, stops and resumes it, then runs a SandboxAgent whose shell tool the mock model calls once; TOOL_OUTPUT is the tool's real result from the sandbox (README.md etc.). The extra pins e2b==2.31.0."
+      },
+      "why": "OpenAI Agents SDK (30k stars) E2B sandbox example, unmodified: manifest, stop/resume, agent shell tool.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "89970a3b8c4abd739e5b692995496ff37857b696"
+    },
+    {
+      "id": "openai-agents-daytona-runner",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/openai/openai-agents-python",
+        "commit": "17d994bd3045dae71acda676a4ef4762ed8ecd94",
+        "path": "examples/sandbox/misc"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "openai/openai-agents-python LICENSE@17d994bd3045dae71acda676a4ef4762ed8ecd94 = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "13df7812ca53ecaae1cb4a868844bb598373047ae1d580e4debfbef1dd5b6915"
+      },
+      "also_fetch": [
+        "examples/__init__.py",
+        "examples/sandbox/__init__.py",
+        "examples/sandbox/extensions/__init__.py",
+        "examples/sandbox/extensions/daytona/__init__.py",
+        "examples/sandbox/extensions/daytona/daytona_runner.py"
+      ],
+      "sdk_specs": [
+        "openai-agents[daytona]==0.24.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": "mock",
+      "env": {
+        "OPENAI_AGENTS_DISABLE_TRACING": "1"
+      },
+      "run": {
+        "cwd": ".",
+        "cmd": [
+          "sh",
+          "-c",
+          "python examples/sandbox/extensions/daytona/daytona_runner.py --model gpt-test; rc=$?; echo '--- mock trace'; cat \"$JOB/mock-trace.log\" 2>/dev/null; exit $rc"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "mock-llm: done.",
+          "TOOL_OUTPUT"
+        ],
+        "notes": "Daytona twin: the runner creates a Daytona sandbox from a manifest and drives the agent's shell tool once."
+      },
+      "why": "OpenAI Agents SDK Daytona sandbox example, unmodified.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "89970a3b8c4abd739e5b692995496ff37857b696"
+    },
+    {
+      "id": "daytona-doc-py-create",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/getting-started.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/getting-started.mdx",
+          "### Create a sandbox",
+          "python"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_regex": [
+          "Sandbox ID: \\S+"
+        ]
+      },
+      "why": "Daytona getting-started: create a sandbox.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "265c0821b8e1de93f038074f29b9f26f6e253ad4"
+    },
+    {
+      "id": "daytona-doc-ts-create",
+      "provider": "daytona",
+      "lang": "ts",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/getting-started.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "@daytona/sdk@0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python3",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/getting-started.mdx",
+          "### Create a sandbox",
+          "typescript"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_regex": [
+          "Sandbox ID: \\S+"
+        ]
+      },
+      "why": "Same in TypeScript.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "265c0821b8e1de93f038074f29b9f26f6e253ad4"
+    },
+    {
+      "id": "daytona-doc-py-run-code",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/process-code-execution.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/process-code-execution.mdx",
+          "### Run code (stateless)",
+          "python",
+          "--prelude",
+          "daytona"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Hello, Daytona!"
+        ]
+      },
+      "why": "Stateless code_run.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "c22c07683ff690cded89b47d796748c01b648256"
+    },
+    {
+      "id": "daytona-doc-py-exec",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/process-code-execution.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/process-code-execution.mdx",
+          "### Execute commands",
+          "python",
+          "--prelude",
+          "daytona"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "DAYTONA"
+        ],
+        "stdout_not_contains": [
+          "Traceback"
+        ]
+      },
+      "why": "exec with cwd, timeout and env.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "c22c07683ff690cded89b47d796748c01b648256"
+    },
+    {
+      "id": "daytona-doc-py-error-handling",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/process-code-execution.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/process-code-execution.mdx",
+          "## Error handling",
+          "python",
+          "--prelude",
+          "daytona"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Exit code:"
+        ],
+        "stdout_not_contains": [
+          "Traceback"
+        ]
+      },
+      "why": "A failing code_run reports exit code and output, not an exception.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "c22c07683ff690cded89b47d796748c01b648256"
+    },
+    {
+      "id": "daytona-doc-py-stateful",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "driver",
+      "driver": "docs_snippet.py",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "apps/docs/src/content/docs/en/process-code-execution.mdx"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "apps/docs/LICENSE",
+        "evidence": [
+          "daytonaio/daytona apps/docs/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0 (tag v0.190.0; repo root is AGPL-3.0 but the docs tree carries its own Apache-2.0 LICENSE)"
+        ],
+        "scope": "apps/docs",
+        "file_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "@job",
+        "cmd": [
+          "python",
+          "docs_snippet.py",
+          "src/apps/docs/src/content/docs/en/process-code-execution.mdx",
+          "### Run code (stateful)",
+          "python"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "[STDOUT] Counter initialized at 1",
+          "stored in ctx"
+        ]
+      },
+      "why": "Stateful code interpreter with contexts.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 600,
+      "tree": "c22c07683ff690cded89b47d796748c01b648256"
+    },
+    {
+      "id": "e2b-ts-client-unit",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [
+        "E2B_API_URL",
+        "E2B_SANDBOX_URL",
+        "E2B_DOMAIN",
+        "E2B_API_KEY",
+        "E2B_DEBUG"
+      ],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/client.test.ts",
+          "tests/is.test.ts",
+          "tests/logs.test.ts",
+          "tests/paginator.test.ts",
+          "tests/retry.test.ts",
+          "tests/stripAnsi.test.ts",
+          "tests/utils.test.ts",
+          "tests/undici.test.ts",
+          "tests/envd"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "e2b-ts-commands",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/sandbox/commands"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "e2b-ts-files",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/sandbox/files"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "e2b-ts-pty",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/sandbox/pty"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "e2b-ts-lifecycle",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/sandbox/connect.test.ts",
+          "tests/sandbox/create.test.ts",
+          "tests/sandbox/kill.test.ts",
+          "tests/sandbox/timeout.test.ts",
+          "tests/sandbox/host.test.ts",
+          "tests/sandbox/secure.test.ts",
+          "tests/sandbox/metrics.test.ts",
+          "tests/sandbox/configPropagation.test.ts",
+          "tests/sandbox/internetAccess.test.ts",
+          "tests/sandbox/urls.test.ts",
+          "tests/api"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "e2b-ts-git",
+      "provider": "e2b",
+      "lang": "ts",
+      "kind": "vitest",
+      "source": {
+        "repo": "https://github.com/e2b-dev/E2B",
+        "commit": "7433b8c61641f9a1b2511a3a165141ab61018b9d",
+        "path": "packages/js-sdk"
+      },
+      "also_fetch": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        "tsconfig.sdk.json",
+        "vitest.sdk.config.mts",
+        "packages/dockerfile-utils-js",
+        ".oxlintrc.json",
+        "tsdown.sdk.config.mts"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "file": "packages/js-sdk/LICENSE",
+        "evidence": [
+          "e2b-dev/E2B packages/js-sdk/LICENSE@7433b8c61641f9a1b2511a3a165141ab61018b9d = MIT; repo root LICENSE = Apache-2.0 (the package license governs this path); test files carry no conflicting headers"
+        ],
+        "scope": "packages/js-sdk",
+        "file_sha256": "567f93024b3b25ae4fde9c4f161c8956e3153f5630e933e9a0115c556eafe429"
+      },
+      "sdk_specs": [
+        "e2b@2.58.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env_unset": [],
+      "env": {
+        "E2B_TEST_MAX_WORKERS": "1",
+        "ENABLE_GIT_TESTS": "1"
+      },
+      "run": {
+        "cwd": "packages/js-sdk",
+        "install": "cd src && npx --yes pnpm@10.34.5 install --filter './packages/js-sdk...' --filter './packages/dockerfile-utils-js...' --no-frozen-lockfile --ignore-scripts && cd packages/dockerfile-utils-js && npx --yes pnpm@10.34.5 build",
+        "cmd": [
+          "npx",
+          "vitest",
+          "run",
+          "--project",
+          "unit",
+          "--reporter=junit",
+          "--outputFile={junit}",
+          "tests/sandbox/git"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "The official TypeScript SDK tests (they import the in-tree 2.58.0 sources); the Python twin is the e2b-py-* entry of the same area."
+      },
+      "why": "The official TypeScript SDK test suite against the gateway.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "112cd9c0abcea043b95b72894d77935338dccc21"
+    },
+    {
+      "id": "smolagents-e2b-executor-tests",
+      "provider": "e2b",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/huggingface/smolagents",
+        "commit": "12c1bc820eca50ace6f80a21d90426d41d74f845",
+        "path": "tests/utils"
+      },
+      "also_fetch": [
+        "tests/__init__.py",
+        "tests/test_remote_executors.py"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "LICENSE",
+        "evidence": [
+          "huggingface/smolagents LICENSE@12c1bc820eca50ace6f80a21d90426d41d74f845 = Apache-2.0; tests/utils/markers.py header = Apache-2.0"
+        ],
+        "scope": "repo",
+        "file_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "sdk_specs": [
+        "smolagents[e2b,docker]==1.26.0"
+      ],
+      "extra_deps": [
+        "pillow",
+        "numpy"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "env": {
+        "RUN_ALL": "1"
+      },
+      "run": {
+        "cwd": ".",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=600",
+          "-q",
+          "--junitxml={junit}",
+          "tests/test_remote_executors.py",
+          "-k",
+          "E2BExecutor"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 7,
+        "allowed_failures": [],
+        "notes": "2 mocked unit tests + 5 integration cases (final_answer patterns, custom final answer tools) through smolagents' E2BExecutor on the code-interpreter template."
+      },
+      "why": "Hugging Face smolagents (30k stars): its own E2B executor tests, unmodified.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 1800,
+      "tree": "e7d33345d6de38b5bf6e03b53e57ac9b6329dde5"
+    },
+    {
+      "id": "daytona-sdk-py-e2e",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "libs/sdk-python/tests"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "libs/sdk-python/LICENSE",
+        "evidence": [
+          "daytonaio/daytona libs/sdk-python/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0; every test file starts with '# SPDX-License-Identifier: Apache-2.0' (tag v0.190.0)"
+        ],
+        "scope": "libs/sdk-python",
+        "file_sha256": "42bc3ff6fade06927d99431c07907b00b0de7191e045c8ae3aa4b404f7e98a17"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "libs/sdk-python",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=900",
+          "-q",
+          "-m",
+          "e2e",
+          "--junitxml={junit}",
+          "-c",
+          "tests/pytest.ini",
+          "tests/test_e2e.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "Daytona's own end-to-end SDK tests (they need a real Daytona API: here the gateway)."
+      },
+      "why": "The official Daytona Python SDK end-to-end suite, unmodified.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 2400,
+      "tree": "8303b95afb0bed3ee38dc58dde9331ca09ea6f8d"
+    },
+    {
+      "id": "daytona-sdk-py-e2e-async",
+      "provider": "daytona",
+      "lang": "py",
+      "kind": "pytest",
+      "source": {
+        "repo": "https://github.com/daytonaio/daytona",
+        "commit": "01c502bb1f1ff8f2885d0cd490e043736083dca8",
+        "path": "libs/sdk-python/tests"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "file": "libs/sdk-python/LICENSE",
+        "evidence": [
+          "daytonaio/daytona libs/sdk-python/LICENSE@01c502bb1f1ff8f2885d0cd490e043736083dca8 = Apache-2.0; every test file starts with '# SPDX-License-Identifier: Apache-2.0' (tag v0.190.0)"
+        ],
+        "scope": "libs/sdk-python",
+        "file_sha256": "42bc3ff6fade06927d99431c07907b00b0de7191e045c8ae3aa4b404f7e98a17"
+      },
+      "sdk_specs": [
+        "daytona==0.225.0"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "libs/sdk-python",
+        "cmd": [
+          "python",
+          "-m",
+          "pytest",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=900",
+          "-q",
+          "-m",
+          "e2e",
+          "--junitxml={junit}",
+          "-c",
+          "tests/pytest.ini",
+          "tests/test_async_e2e.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "min_passed": 1,
+        "allowed_failures": [],
+        "notes": "Daytona's own end-to-end SDK tests (they need a real Daytona API: here the gateway)."
+      },
+      "why": "The official Daytona Python SDK end-to-end suite, unmodified.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 2400,
+      "tree": "8303b95afb0bed3ee38dc58dde9331ca09ea6f8d"
+    },
+    {
+      "id": "modal-ex-safe-code-execution",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "safe_code_execution.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Sandbox ID: sb-",
+          "hello from bash",
+          "hello from python",
+          "hello from nodejs",
+          "hello from ruby",
+          "hello from php",
+          "The sum of the random numbers is: "
+        ],
+        "notes": "Image debian_slim(3.11).apt_install(nodejs, ruby, php) => the image spec must be honoured (a build step or an equivalent guest provisioning), then six exec calls: each prints its greeting on its own line in order; the pipe python|node line has a sum between 10 and 1000; 10 streamed Ruby lines 'Line 1:'..'Line 10:' arrive incrementally (~5s total, iterating proc.stdout); last exec `rm -rf / --no-preserve-root` is fire-and-forget then terminate() succeeds. (Runs destructive rm inside a Space only.)"
+      },
+      "why": "The canonical Modal Sandbox quickstart: image build, exec argv, stdout streaming, terminate.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-simple-code-interpreter",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "simple_code_interpreter.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "hello, world!",
+          "The result is: 15",
+          "Attempting to divide by zero..."
+        ],
+        "notes": "Interactive stdin/stdout JSON loop over one long-lived exec with bufsize=1: stdin.write + drain, readline from p.stdout. stdout must contain the three lines in this order; the 1/0 case writes 'Execution Error: division by zero' to the SANDBOX stderr JSON field, which the script prints to its own stderr (assert on stderr, with ANSI red codes)."
+      },
+      "why": "Open stdin on exec + line-buffered streaming: the shape most agent code-interpreters use.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-jupyter-sandbox",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "jupyter_sandbox.py"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Sandbox ID: sb-",
+          "Jupyter notebook is running at: ",
+          "Jupyter is up and running!"
+        ],
+        "notes": "Image debian_slim(3.12).uv_pip_install('jupyter~=1.1.0'), Sandbox.create with an entrypoint command, encrypted_ports=[8888], secrets=[Secret.from_dict(...)] (env JUPYTER_TOKEN), then tunnels()[8888].url polled from the JOB over https until /api/status says started. 'Timed out waiting' must be absent. Script never terminates the sandbox: runner deletes it (it has timeout=5min)."
+      },
+      "why": "Tunnels/encrypted ports + secrets-as-env + entrypoint command: the web-app-in-a-sandbox pattern (same as E2B get_host).",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-harbor-evals",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "uv",
+          "run",
+          "--script",
+          "harbor_evals.py",
+          "--n-parallel",
+          "2"
+        ]
+      },
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Running 2 trials on 2 concurrent Modal Sandboxes",
+          "Mean"
+        ],
+        "notes": "uv run --script (PEP 723 deps: harbor + modal per the file header) writes a trivial task (ubuntu:24.04, answer.txt must equal 'ok'), then shells out to `harbor run --agent oracle --env modal` with n-parallel 2. Harbor's own Modal environment creates 2 sandboxes from an ubuntu:24.04 registry image, uploads the task files, runs solve.sh and test.sh, reads reward. Assert both trials reward 1.0 (the summary line printed by harbor; confirm format at pin time) and exit 0. Needs MODAL_TOKEN_ID/SECRET env, which the gateway env supplies."
+      },
+      "why": "RL/eval harness over parallel Modal Sandboxes (Harbor/Terminal-Bench): a parallel-sandbox rollout pattern.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-sidecar-redis",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "sidecar_redis.py"
+        ]
+      },
+      "expect": {
+        "native_error": {
+          "contains": [
+            "modal.exception.ImageBuildError",
+            "cannot run on Cua Spaces"
+          ]
+        },
+        "notes": "Needs Modal Functions / web endpoints / Queue / schedules, which a Cua Space cannot provide: the run must end with Modal's own UnimplementedError naming the feature; any other failure (an import error, a different exception, exit 0) is a failure."
+      },
+      "why": "Multi-container Sandbox (experimental API): could be built on Cua multi-Space networking; otherwise native error from the experimental call.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "extra_deps": [
+        "fastapi[standard]"
+      ],
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-sandbox-pool",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "sandbox_pool.py",
+          "demo"
+        ]
+      },
+      "expect": {
+        "native_error": {
+          "contains": [
+            "modal.exception.UnimplementedError",
+            "web endpoints is not available on Cua Spaces"
+          ]
+        },
+        "notes": "Needs Modal Functions / web endpoints / Queue / schedules, which a Cua Space cannot provide: the run must end with Modal's own UnimplementedError naming the feature; any other failure (an import error, a different exception, exit 0) is a failure."
+      },
+      "why": "Documents the boundary: serverless Functions/Queues are out of scope; error must be provider-native, not a hang.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "extra_deps": [
+        "fastapi[standard]"
+      ],
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-sandbox-secret-injection",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "sandbox_secret_injection.py"
+        ]
+      },
+      "expect": {
+        "native_error": {
+          "contains": [
+            "modal.exception.UnimplementedError"
+          ]
+        },
+        "notes": "Needs Modal Functions / web endpoints / Queue / schedules, which a Cua Space cannot provide: the run must end with Modal's own UnimplementedError naming the feature; any other failure (an import error, a different exception, exit 0) is a failure."
+      },
+      "why": "Boundary test: outbound policy + Function web endpoint.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "extra_deps": [
+        "fastapi[standard]"
+      ],
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-sidecar-traffic-routing",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "sidecar_traffic_routing.py"
+        ]
+      },
+      "expect": {
+        "native_error": {
+          "contains": [
+            "modal.exception.UnimplementedError",
+            "web endpoints is not available on Cua Spaces"
+          ]
+        },
+        "notes": "Needs Modal Functions / web endpoints / Queue / schedules, which a Cua Space cannot provide: the run must end with Modal's own UnimplementedError naming the feature; any other failure (an import error, a different exception, exit 0) is a failure."
+      },
+      "why": "Boundary: Functions + sidecars.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "extra_deps": [
+        "fastapi[standard]"
+      ],
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    },
+    {
+      "id": "modal-ex-sidecar-secrets-injection",
+      "provider": "modal",
+      "lang": "py",
+      "kind": "script",
+      "source": {
+        "repo": "https://github.com/modal-labs/modal-examples",
+        "commit": "950e463ff84455430a6cef7a7ebf5fd99bebefba",
+        "path": "13_sandboxes"
+      },
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "evidence": [
+          "modal-labs/modal-examples LICENSE@950e463ff84455430a6cef7a7ebf5fd99bebefba = MIT"
+        ],
+        "scope": "repo",
+        "file_sha256": "ec16bcbc0a845e676683b060e78a57848bcdc7f0ad66a362f6b10a198e18faa9"
+      },
+      "sdk_specs": [
+        "modal==1.6.2"
+      ],
+      "needs_secrets": [],
+      "needs_llm": false,
+      "run": {
+        "cwd": "13_sandboxes",
+        "cmd": [
+          "python",
+          "sidecar_secrets_injection.py"
+        ]
+      },
+      "expect": {
+        "native_error": {
+          "contains": [
+            "modal.exception.UnimplementedError"
+          ]
+        },
+        "notes": "Needs Modal Functions / web endpoints / Queue / schedules, which a Cua Space cannot provide: the run must end with Modal's own UnimplementedError naming the feature; any other failure (an import error, a different exception, exit 0) is a failure."
+      },
+      "why": "Boundary: secrets objects + sidecar proxy.",
+      "lanes": [
+        "nightly"
+      ],
+      "timeout_s": 900,
+      "extra_deps": [
+        "fastapi[standard]"
+      ],
+      "tree": "e5a0f8ca624a242d6d1e44ee97fdfa6cddd3ad4c"
+    }
+  ]
+}

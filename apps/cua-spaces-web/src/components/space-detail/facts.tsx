@@ -2,25 +2,26 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, CopyIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import type { SpaceFact } from "@/bridge";
-import { SettingsGroup } from "@/components/settings-group";
+import { GroupedSection } from "@/components/ui/grouped";
 import { Tooltip } from "@/components/ui/tooltip";
 
 /** A Space's facts as the core lists them (`sidebar.detail`): Status,
  * Image, Identifier, System, Kind, Architecture, Memory, Storage. */
-export function FactList({ title, facts }: { title: string; facts: SpaceFact[] }) {
+export function FactList({ title, facts, extra }: { title: string; facts: SpaceFact[]; extra?: ReactNode }) {
   return (
-    <SettingsGroup title={title}>
+    <GroupedSection title={title}>
       {facts.map((f) => (
         <FactRow key={f.label} fact={f} />
       ))}
-    </SettingsGroup>
+      {extra}
+    </GroupedSection>
   );
 }
 
-function FactRow({ fact }: { fact: SpaceFact }) {
+export function FactRow({ fact }: { fact: SpaceFact }) {
   // The tooltip holds the full value, and an image's digest on its own line.
   const help = fact.help && fact.help !== fact.value ? fact.help : null;
   const value = (

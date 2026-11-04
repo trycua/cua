@@ -164,6 +164,15 @@ impl Cua {
                 .unwrap_or_else(cua_daemon::cua_home);
             rt.spaces().set_relay(Some(session_relay_account(&home)));
         }
+        // With a session: at most every few hours per machine, in the
+        // background, ask the Spaces API for the signed-in account's
+        // usage-data id (CUA-1881); nothing while usage data is off.
+        #[cfg(feature = "host")]
+        if config.account_from_session {
+            runtime().spawn(async {
+                super::telemetry::sync_account_if_due(&cua_auth::Session::from_env()).await;
+            });
+        }
         Ok(Arc::new(Self {
             backend: Backend::Embedded(rt),
         }))
@@ -185,6 +194,17 @@ impl Cua {
     /// start` replaces it.
     #[uniffi::constructor]
     pub fn auto(config: CuaConfig) -> Result<Arc<Self>> {
+        // Inside a Space with children on: its spawn channel (every Space
+        // made through it is a child of that Space).
+        if let Some(addr) = cua_daemon::client::spawn_channel() {
+            let client = {
+                let _guard = runtime().enter();
+                DaemonClient::new(addr)?
+            };
+            return Ok(Arc::new(Self {
+                backend: Backend::Daemon(client),
+            }));
+        }
         // A daemon that is starting is waited for (bounded), not raced with
         // an embedded runtime.
         match cua_daemon::client::wait_for_starting(std::time::Duration::from_secs(30))? {

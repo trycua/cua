@@ -15,7 +15,7 @@
       {
         "name": "bob",
         "harness": "claude-code",
-        "space": "cloud:bob",
+        "space": "direct:bob",
         "paused": true,
         "spaceState": "released",
         "savedMs": 1789900000000
@@ -308,7 +308,7 @@
           {
             "name": "bob",
             "harness": "claude-code",
-            "space": "cloud:bob",
+            "space": "direct:bob",
             "paused": true,
             "spaceState": "released",
             "savedMs": 1789900000000

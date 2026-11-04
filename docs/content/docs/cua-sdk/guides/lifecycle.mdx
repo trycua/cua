@@ -4,7 +4,7 @@ description: Create, keep, reconnect to, list, suspend and delete sandboxes, run
 ---
 
 Sandboxes run on this machine by default, so the examples pass no location.
-To use [your own cloud](/cua-sdk/guides/local-runtimes#your-own-cloud), pass
+To use [your own cloud](/cua-sdk/guides/your-cloud), pass
 `on="aws"` (or `"gcp"`, `"modal"`) to `Sandbox.create`.
 
 ## Ephemeral or kept
@@ -70,7 +70,7 @@ cua sb rm dev -f
 ```
 
 Local sandboxes run until you delete them. In your own cloud, a sandbox
-deletes itself at its [time limit](/cua-sdk/guides/local-runtimes#time-limits-and-cleanup).
+deletes itself at its [time limit](/cua-sdk/guides/your-cloud#time-limits-and-cleanup).
 
 ## Run many at once
 
@@ -78,6 +78,49 @@ deletes itself at its [time limit](/cua-sdk/guides/local-runtimes#time-limits-an
 Cap concurrency with an `asyncio.Semaphore` (every local sandbox uses host CPU,
 memory and disk) and pass `return_exceptions=True` so one failure does not
 cancel the rest.
+
+## Keep sandboxes ready (pools)
+
+A local create restores a snapshot when the image has one (under a second for
+gVisor containers) and boots otherwise. When creates of one shape repeat, the
+cua daemon keeps a few sandboxes of that shape ready on its own and a create
+takes one in about 0.1 s; `cua daemon status` says what it keeps and why. It
+keeps none for one-off creates, on battery, or when memory is short.
+
+A pool asks for ready sandboxes explicitly: `min` of them at all times (one
+starts again as soon as one is taken), up to `max` while creates come faster
+than sandboxes start, and none after `idle` without a create. Pools run on
+this machine, are kept by the cua daemon (`cua daemon start`) and survive its
+restarts.
+
+```python skip="no-runner"
+from cua_sandbox import Image, Sandbox, create_pool
+
+pool = await create_pool(Image.linux(), name="agents", min=2, max=8, idle=600)
+sb = await pool.create()                  # or Sandbox.create(pool="agents")
+await sb.shell.run("uname -a")
+await sb.destroy()                        # the pool starts a replacement
+await pool.delete()
+```
+
+```bash test="cli-shape" id="cua-sb-pool"
+cua sb pool create linux --name agents --min 2 --max 8 --idle 10m
+cua sb create --pool agents --name a1
+cua sb pool ls
+cua sb pool rm agents
+```
+
+- A create from a pool gets the pool's image and size; asking for another
+  image or size is an error.
+- `max` counts only ready sandboxes, not those created from the pool.
+- Each ready sandbox holds memory and a little CPU while it waits; size `min`
+  for the bursts you expect.
+- `list_pools()`, `get_pool(name)` and `delete_pool(name)` (CLI `cua sb pool
+  ls` / `rm`, MCP `sandbox_pool_*`) manage them; deleting a pool deletes its
+  ready sandboxes, not the ones created from it.
+- TypeScript, Swift and Kotlin: `cua.sandboxes().createPool(image, options)`,
+  `listPools()`, `getPool(name)`, `deletePool(name)`, and `pool` on
+  `SandboxCreateOptions`.
 
 ## Disk usage and cleanup
 

@@ -72,6 +72,11 @@ const DOM_CLICK_READBACK: &str = r#"function() {
 }"#;
 
 const DOM_CLICK_READBACK_DEADLINE: Duration = Duration::from_millis(400);
+/// The pre-click baseline gets a larger budget than the post-click polls: a
+/// loaded Windows Edge can take longer than 400 ms to answer the first
+/// `Runtime.callFunctionOn`, and a missed baseline turns a verifiable click
+/// into "readback unavailable" for the whole action.
+const DOM_CLICK_BASELINE_DEADLINE: Duration = Duration::from_millis(1_000);
 const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 
 struct DomClickObservation {
@@ -290,7 +295,7 @@ pub(crate) async fn browser_protected_resource_scope(
     engine: &BrowserEngine,
     args: &Value,
     tool_name: &str,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
     let session = args
         .get("session")
         .and_then(Value::as_str)
@@ -311,8 +316,7 @@ pub(crate) async fn browser_protected_resource_scope(
         .unwrap_or_else(|| session.to_owned());
     let (validated, live_origin) = engine
         .attest_protected_tab(&runtime_session, target_id, tab_id)
-        .await
-        .map_err(|error| error.message)?;
+        .await?;
     let target = validated.record;
     let tab = validated.tab;
     let requested_origin = if tool_name == "browser_navigate" {
@@ -492,7 +496,7 @@ impl Tool for GetBrowserStateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "private_observation"
             && args.get("target_id").and_then(Value::as_str).is_some()
         {
@@ -1051,7 +1055,7 @@ impl Tool for BrowserNavigateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
         } else {
@@ -1208,7 +1212,7 @@ impl Tool for BrowserClickTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_click").await
         } else {
@@ -1403,7 +1407,7 @@ impl Tool for BrowserClickTool {
                 }
             }
             let before =
-                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_READBACK_DEADLINE).await;
+                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
             return match conn
                 .call(
                     Some(cdp),
@@ -1873,7 +1877,7 @@ impl Tool for BrowserTypeTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_type").await
         } else {
@@ -2467,7 +2471,7 @@ impl Tool for BrowserSelectTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_select").await
         } else {
@@ -2666,7 +2670,7 @@ impl Tool for BrowserDialogTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if matches!(
             adapter_id,
             "private_observation" | "browser_consequential_action"
@@ -3793,11 +3797,12 @@ mod tests {
     #[tokio::test]
     async fn heuristic_bindings_refuse_mutation() {
         use crate::browser::types::{BindingQuality, Rect};
+        use indexmap::IndexMap;
         use std::collections::HashMap;
 
         let e = engine();
         // Seed a heuristic binding directly into the store.
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         let tab_id = e.store.mint_tab_id();
         tabs.insert(
             tab_id.clone(),
@@ -3854,10 +3859,11 @@ mod tests {
     #[tokio::test]
     async fn stale_fingerprint_refuses_before_any_cdp_traffic() {
         use crate::browser::types::{BindingQuality, Rect};
+        use indexmap::IndexMap;
         use std::collections::HashMap;
 
         let e = engine();
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         let tab_id = e.store.mint_tab_id();
         tabs.insert(
             tab_id.clone(),
@@ -3914,7 +3920,6 @@ mod tests {
     #[tokio::test]
     async fn session_end_hook_drops_the_capability_namespace() {
         use crate::browser::types::{BindingQuality, Rect};
-        use std::collections::HashMap;
 
         let e = engine();
         let sid = "browser-store-cleanup-session-771";
@@ -3941,7 +3946,7 @@ mod tests {
                 cdp_target_id: "C".into(),
                 cdp_window_id: Some(1),
                 quality: BindingQuality::Exact,
-                tabs: HashMap::new(),
+                tabs: indexmap::IndexMap::new(),
             },
         );
         assert_eq!(e.store.target_count(sid), 1);

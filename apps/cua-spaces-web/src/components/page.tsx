@@ -5,9 +5,24 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-export function Page({ children, className }: { children: ReactNode; className?: string }) {
+/**
+ * `contained`: the page does not scroll as a whole. The header stays put and
+ * the page's own panes (a list and its detail) scroll on their own, each at
+ * the full height that is left.
+ */
+export function Page({ children, className, contained }: { children: ReactNode; className?: string; contained?: boolean }) {
+  if (contained) {
+    return (
+      <div className="h-full overflow-hidden" data-page-contained="">
+        <div className={cn("mx-auto flex h-full w-full max-w-5xl flex-col px-8 pt-6", className)}>{children}</div>
+      </div>
+    );
+  }
+  // The gutter is always reserved: otherwise a page that scrolls (Settings >
+  // General) is narrower than one that doesn't, and the centred column jumps
+  // sideways between them.
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
       <div className={cn("mx-auto w-full max-w-5xl px-8 pt-6 pb-16", className)}>{children}</div>
     </div>
   );
@@ -27,8 +42,8 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 export function EmptyState({ icon, title, children, action }: { icon: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed px-8 py-20 text-center">
-      <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
+    <div className="flex flex-col items-center justify-center rounded-lg px-8 py-20 text-center">
+      <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
       <h2 className="text-[15px] font-semibold">{title}</h2>
       {children ? <p className="mt-1.5 max-w-sm text-[13px] text-muted-foreground">{children}</p> : null}
       {action ? <div className="mt-5">{action}</div> : null}

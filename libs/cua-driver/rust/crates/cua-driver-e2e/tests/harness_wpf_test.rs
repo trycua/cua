@@ -48,10 +48,11 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, IsIconic, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE, WS_EX_TOPMOST,
+    GetCursorPos, GetWindowLongPtrW, GetWindowRect, IsIconic, SetCursorPos, SetWindowPos,
+    ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE,
+    WS_EX_TOPMOST,
 };
 
 #[path = "support/foreground_text_oracle.rs"]
@@ -1193,18 +1194,49 @@ fn harness_wpf_right_click() {
         Vec::new(),
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
-            let snap = snapshot(driver, pid, wid);
+            let snap = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid, "window_id": wid, "full_output": true}),
+            );
             let idx = ax::element_index_by_id(snap.text(), "border-click-target")
                 .expect("border-click-target not in snapshot");
+            let frame = &snap.structured()["elements"]
+                .as_array()
+                .expect("structured elements")
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(idx))
+                .expect("right-click target frame")["frame"];
+            let click_x = frame["x"].as_f64().unwrap() + frame["w"].as_f64().unwrap() / 2.0;
+            let click_y = frame["y"].as_f64().unwrap() + frame["h"].as_f64().unwrap() / 2.0;
+            let mut window_rect = RECT::default();
+            unsafe {
+                GetWindowRect(HWND(wid as *mut _), &mut window_rect).expect("read harness bounds");
+                SetCursorPos(window_rect.left + 10, window_rect.top + 10)
+                    .expect("place cursor away from right-click target");
+            }
             // Same delivery_mode:foreground rationale as type_text — PostMessage
             // WM_RBUTTONDOWN doesn't always reach WPF's MouseRightButtonDown
             // routed-event chain (intermittent in batch runs).
+            let mut cursor_before = POINT::default();
+            unsafe { GetCursorPos(&mut cursor_before) }.expect("read cursor before click");
+            assert!(
+                (cursor_before.x as f64 - click_x).abs() > 2.0
+                    || (cursor_before.y as f64 - click_y).abs() > 2.0,
+                "cursor must start away from the injected point"
+            );
             let resp = driver.call(
                 "right_click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
+            );
+            let mut cursor_after = POINT::default();
+            unsafe { GetCursorPos(&mut cursor_after) }.expect("read cursor after click");
+            assert_eq!(
+                (cursor_after.x, cursor_after.y),
+                (cursor_before.x, cursor_before.y),
+                "foreground right click left the real cursor at the target"
             );
             println!("right_click: {}", resp.text());
             std::thread::sleep(Duration::from_millis(400));
@@ -1732,6 +1764,93 @@ fn harness_wpf_slider_drag() {
                     .join(" / ")
             );
             println!("✅ harness_wpf_slider_drag: thumb tracked via SendInput drag");
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_slider_drag_holds_modifier() {
+    // A foreground drag holds `modifier` keys through SendInput from press to
+    // release. The fixture records WPF's Keyboard.Modifiers (live GetKeyState)
+    // on each thumb move, and a plain F5 afterwards still matches its
+    // unmodified binding, so Ctrl was released rather than latched. The drag
+    // grabs the thumb itself, which at value 0 spans from the slider's left
+    // edge to the IncreaseLarge track button; a press on the track would only
+    // step the value.
+    run_foreground_case(
+        "slider_drag_modifier",
+        Targeting::Px,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let pre = snapshot(driver, pid, wid);
+            assert!(
+                pre.text().contains("slider_value=0") && pre.text().contains("accel_fired=0"),
+                "fixture did not start at slider_value=0 and accel_fired=0"
+            );
+            let bounds = window_bounds(driver, pid, wid);
+            let (x, y, width, height) = pixel_frame(&pre, "sld-value", bounds);
+            let (track_x, ..) = pixel_frame(&pre, "IncreaseLarge", bounds);
+
+            let drag = driver.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "from_x": (x + track_x) / 2.0, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.75, "to_y": y + height / 2.0,
+                    "duration_ms": 700, "steps": 40,
+                    "modifier": ["ctrl"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !drag.is_error(),
+                "modified foreground drag failed: {}",
+                drag.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let post = snapshot(driver, pid, wid);
+                let line = fixture_state_line(post.text(), "slider_value=");
+                // The suffix appears only once the thumb moves; a value past
+                // the first steps shows the thumb followed the pointer.
+                let value = line
+                    .split("slider_value=")
+                    .nth(1)
+                    .and_then(|rest| rest.split(' ').next())
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(0);
+                if value >= 50 && line.contains("modifiers=Control") {
+                    println!("drag with ctrl observed: {}", line.trim());
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "WPF did not observe a thumb drag with Ctrl: {line}; tool said: {}",
+                    drag.text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+
+            let key = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "key": "f5",
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(!key.is_error(), "post-drag plain F5 failed: {}", key.text());
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("accel_fired=1"),
+                "plain F5 did not match after the modified drag; Ctrl may be latched: {}",
+                snapshot_lines_containing(post.text(), &["accel_fired"])
+            );
+            println!("✅ harness_wpf_slider_drag_holds_modifier: Ctrl held, then released");
             Vec::new()
         },
     );

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
 import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
+import { useAgentMenu } from "@/hooks/use-agent-menu";
 import { useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
 import { currentWhere, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
@@ -61,7 +63,10 @@ export function AskFirstHome() {
   // account is the app's own choice (kept by the host), so a run uses the one shown.
   const connectors = useConnectors();
   const keys = useAgentKeys();
-  const agents = useMemo(() => (core ? agentsView(core, connectors.input) : null), [core, connectors.input]);
+  // Which apps the menu lists is the person's choice (Settings, Connections); an app they connect shows again.
+  const menu = useAgentMenu(connectors);
+  const navigate = useNavigate();
+  const agents = useMemo(() => (core ? agentsView(core, connectors.input, menu.prefs) : null), [core, connectors.input, menu.prefs]);
   const picked = usePickedAgent();
   const selected = resolveAgent(agents, picked);
   const { current: repo } = useRepos();
@@ -123,6 +128,7 @@ export function AskFirstHome() {
           onPickAccount={useAccount}
           onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
           onSignIn={(g) => void connectors.connectApp(g.app)}
+          onConfigure={() => void navigate({ to: "/settings/connections" })}
           accounts={accountActions}
           repo={repo}
           where={where}

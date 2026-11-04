@@ -97,6 +97,17 @@ export interface SettingsValues {
    * in pin order. Absent where the host keeps no core settings (the page keeps them
    * for this session). */
   notchPinned?: string[];
+  /** Which coding apps Home's agent menu shows (`AppSettings.agentMenu*`, the core's
+   * `agent_menu`). Absent where the host keeps no core settings (the page keeps it
+   * for this session). */
+  agentMenu?: AgentMenuPrefs;
+}
+
+/** The apps whose default the person changed (`agent_menu::AgentMenuPrefs`). */
+export interface AgentMenuPrefs {
+  shown: string[];
+  hidden: string[];
+  seen: string[];
 }
 
 export type UpdateChannel = "stable" | "beta";

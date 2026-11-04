@@ -5016,6 +5016,34 @@
               "items": {
                 "type": "string"
               }
+            },
+            "agentMenu": {
+              "type": "object",
+              "properties": {
+                "shown": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "seen": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shown",
+                "hidden",
+                "seen"
+              ]
             }
           },
           "required": [
@@ -7845,6 +7873,34 @@
           "items": {
             "type": "string"
           }
+        },
+        "agentMenu": {
+          "type": "object",
+          "properties": {
+            "shown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hidden": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "seen": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "shown",
+            "hidden",
+            "seen"
+          ]
         },
         "runtimes": {
           "anyOf": [

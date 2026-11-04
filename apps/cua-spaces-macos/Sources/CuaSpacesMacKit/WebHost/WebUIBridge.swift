@@ -689,6 +689,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "tips": ["off": model.settings.tips.off, "done": model.settings.tips.done] as [String: Any],
             // The Spaces and machine desktops pinned to the notch, in pin order.
             "notchPinned": model.settings.notchPinned,
+            // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+            "agentMenu": [
+                "shown": model.settings.agentMenuShown,
+                "hidden": model.settings.agentMenuHidden,
+                "seen": model.settings.agentMenuSeen,
+            ] as [String: Any],
         ]
     }
 
@@ -1279,7 +1285,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     // MARK: - The core's own settings
 
     /// `settings.update`: each key given is saved as is (`tips`:
-    /// `{off, done}`; `notchPinned`: the pinned ids in pin order).
+    /// `{off, done}`; `notchPinned`: the pinned ids in pin order; `agentMenu`:
+    /// `{shown, hidden, seen}`, which coding apps the agent menu shows).
     func updateSettings(_ args: [String: Any]) throws {
         var next = model.settings
         if let raw = args["tips"] {
@@ -1289,6 +1296,15 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         if let raw = args["notchPinned"] {
             guard let ids = raw as? [String] else { throw Failure.badArgs("notchPinned: string[]") }
             next.notchPinned = ids
+        }
+        if let raw = args["agentMenu"] {
+            guard let m = raw as? [String: Any], let shown = m["shown"] as? [String],
+                  let hidden = m["hidden"] as? [String], let seen = m["seen"] as? [String] else {
+                throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}")
+            }
+            next.agentMenuShown = shown
+            next.agentMenuHidden = hidden
+            next.agentMenuSeen = seen
         }
         guard next != model.settings else { return }
         let pinned = next.notchPinned

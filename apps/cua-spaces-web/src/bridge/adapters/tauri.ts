@@ -263,6 +263,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
         // The app core's own settings file is the Mac and Electron apps'; the page keeps this for the session.
         case "tips":
         case "notchPinned":
+        case "agentMenu":
           throw new UnsupportedOperationError("tauri", `settings.set ${key}`);
       }
       return readSettings();

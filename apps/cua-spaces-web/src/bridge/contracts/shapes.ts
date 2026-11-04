@@ -80,7 +80,7 @@ import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, Thr
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
+import type { AgentMenuPrefs, CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -391,6 +391,9 @@ const SessionShape = ref(
 /** `AppSettings.tips` (`tips::TipsState`). */
 const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
 
+/** `AppSettings.agentMenu*` (`agent_menu::AgentMenuPrefs`). */
+const AgentMenuPrefsShape = obj<AgentMenuPrefs>()({ shown: strings, hidden: strings, seen: strings });
+
 const RuntimePathCheckShape = ref(
   "RuntimePathCheck",
   obj<RuntimePathCheck>()({
@@ -444,6 +447,7 @@ const SettingsShape = ref(
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
       notchPinned: opt(strings),
+      agentMenu: opt(AgentMenuPrefsShape),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -1850,6 +1854,7 @@ const WkSettingsShape = ref(
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
     notchPinned: opt(strings),
+    agentMenu: opt(AgentMenuPrefsShape),
     runtimes: optNull(RuntimesInputShape),
   }),
 );

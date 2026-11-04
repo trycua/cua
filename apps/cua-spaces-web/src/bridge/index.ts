@@ -98,6 +98,7 @@ export {
   type OpName,
   type SettingKey,
   type SettingsValues,
+  type AgentMenuPrefs,
   type UpdateChannel,
 } from "./protocol";
 

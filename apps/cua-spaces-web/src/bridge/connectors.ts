@@ -10,6 +10,7 @@
  */
 
 import type { CoreClient } from "./core";
+import type { AgentMenuPrefs } from "./protocol";
 import type { AgentSetupRow } from "./contracts/agents";
 import { hostOs, type HostOs } from "./host-os";
 import type { AgentKeysInput, AgentKeyRowView } from "./agent-keys";
@@ -399,8 +400,49 @@ export interface AgentsView {
   empty: string | null;
 }
 
-export const agentsView = (core: CoreClient, input: ConnectorsInput): AgentsView | null =>
-  core.tryCall<AgentsView>("connectors.agents", { input: input as unknown as Json }) ?? null;
+export const agentsView = (core: CoreClient, input: ConnectorsInput, menu?: AgentMenuPrefs): AgentsView | null =>
+  core.tryCall<AgentsView>("connectors.agents", { input: input as unknown as Json, ...(menu ? { menu: menu as unknown as Json } : {}) }) ?? null;
+
+/** One coding app in Settings, Connections, Agent menu (`agentMenu.view`). */
+export interface AgentMenuRow {
+  app: string;
+  label: string;
+  /** The app is in the agent menu. */
+  shown: boolean;
+  /** "Signed in", "Sign in again" or "Not signed in". */
+  status: string;
+  /** The last app shown: its switch cannot be turned off. */
+  locked: boolean;
+}
+
+export interface AgentMenuSettings {
+  title: string;
+  switchLabel: string;
+  help: string;
+  rows: AgentMenuRow[];
+  /** Said while one app is left: why it stays. */
+  lastNote: string | null;
+}
+
+export interface AgentMenuChange {
+  prefs: AgentMenuPrefs;
+  /** Said when the switch was refused (the last app cannot be hidden). */
+  refused: string | null;
+}
+
+const menuArgs = (input: ConnectorsInput, menu: AgentMenuPrefs) => ({ input: input as unknown as Json, menu: menu as unknown as Json });
+
+/** The rows of the agent menu switches (`agentMenu.view`). */
+export const agentMenuView = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuSettings | null =>
+  core.tryCall<AgentMenuSettings>("agentMenu.view", menuArgs(input, menu)) ?? null;
+
+/** The choice after switching `app` on or off (`agentMenu.choose`). */
+export const agentMenuChoose = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs, app: string, on: boolean): AgentMenuChange | null =>
+  core.tryCall<AgentMenuChange>("agentMenu.choose", { ...menuArgs(input, menu), app, on }) ?? null;
+
+/** The choice after the accounts changed: an app that gained an account is shown again (`agentMenu.sync`). */
+export const agentMenuSync = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuPrefs | null =>
+  core.tryCall<AgentMenuPrefs>("agentMenu.sync", menuArgs(input, menu)) ?? null;
 
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;

@@ -38,6 +38,7 @@ export function AgentPicker({
   onPick,
   onModel,
   onSignIn,
+  onConfigure,
   accounts,
 }: {
   view: AgentsView | null;
@@ -46,6 +47,8 @@ export function AgentPicker({
   onModel: (model: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
+  /** Opens where the menu's apps are chosen (Settings, Connections). */
+  onConfigure?: () => void;
   accounts: AccountActions;
 }) {
   const [open, setOpen] = useState(false);
@@ -166,6 +169,22 @@ export function AgentPicker({
                   {selected.model.label}
                 </span>
                 <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              </button>
+            </>
+          ) : null}
+          {onConfigure ? (
+            <>
+              {selected && selected.account.models.length > 1 ? null : <PopoverDivider />}
+              <button
+                type="button"
+                data-agent-configure=""
+                onClick={() => {
+                  setOpen(false);
+                  onConfigure();
+                }}
+                className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                Configure agents
               </button>
             </>
           ) : null}

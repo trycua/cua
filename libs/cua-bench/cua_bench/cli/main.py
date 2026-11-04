@@ -127,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     # Shared arguments for task and dataset subcommands
     def add_common_run_args(parser):
         """Agent, target and output arguments shared by task and dataset."""
+        from cua_bench.runner.batch_runner import DEFAULT_VARIANT_TIMEOUT_S
+
         parser.add_argument("--agent", help="Agent to use for evaluation (e.g., cua-agent)")
         parser.add_argument(
             "--agent-import-path",
@@ -176,6 +178,18 @@ def build_parser() -> argparse.ArgumentParser:
             default=0,
             help="Retry a variant that failed before evaluation (sandbox start, connection) "
             "up to this many times, with backoff (default: 0)",
+        )
+        parser.add_argument(
+            "--variant-timeout",
+            dest="variant_timeout",
+            type=float,
+            default=None,
+            metavar="SECONDS",
+            help="Time bound on one variant's setup, agent and evaluation "
+            "(not sandbox start): a variant past it is cancelled the way "
+            "Ctrl-C cancels it and recorded failed (default: at least "
+            f"{DEFAULT_VARIANT_TIMEOUT_S:g}, higher with a larger "
+            "CUA_BENCH_HARNESS_TIMEOUT; 0 = no limit)",
         )
         parser.add_argument(
             "--dry-run",

@@ -1343,10 +1343,7 @@ fn spawn_stderr_pump(
     let reader_diagnostics = diagnostics.clone();
     let reader = tokio::spawn(async move {
         let mut buffer = [0_u8; 8192];
-        loop {
-            let Ok(count) = stderr.read(&mut buffer).await else {
-                break;
-            };
+        while let Ok(count) = stderr.read(&mut buffer).await {
             if count == 0 {
                 break;
             }

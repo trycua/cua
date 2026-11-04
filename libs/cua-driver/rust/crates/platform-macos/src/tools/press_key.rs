@@ -268,6 +268,9 @@ impl Tool for PressKeyTool {
             };
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
+            if let Some(refusal) = super::security_prompt::frontmost_refusal() {
+                return refusal;
+            }
             let key_for_input = key.clone();
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();

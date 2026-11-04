@@ -205,6 +205,9 @@ impl Tool for HotkeyTool {
                 );
             };
             let display = raw_keys.join("+");
+            if let Some(refusal) = super::security_prompt::frontmost_refusal() {
+                return refusal;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::keyboard::press_key_global(&key, &modifier_refs)

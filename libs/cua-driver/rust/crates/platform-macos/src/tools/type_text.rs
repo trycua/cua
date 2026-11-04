@@ -152,6 +152,9 @@ impl Tool for TypeTextTool {
             ) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
+            if let Some(refusal) = super::security_prompt::frontmost_refusal() {
+                return refusal;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::keyboard::type_text_global(&text, delay_ms)
             })

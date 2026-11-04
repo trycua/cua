@@ -434,6 +434,15 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &[crate::security_prompt::SECURITY_PROMPT_PROTECTED],
+        build: |_| {
+            RecoveryHint::new(
+                "That is a system security or consent prompt, and answering it is the user's call. Do \
+                 not click, type into or work around it: tell the user what it asks and wait.",
+            )
+        },
+    },
+    Rule {
         codes: &["os_permission_prompt_requires_trusted_host"],
         build: |_| {
             RecoveryHint::new(

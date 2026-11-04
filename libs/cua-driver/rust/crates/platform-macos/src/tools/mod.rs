@@ -20,6 +20,7 @@ mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
+mod security_prompt;
 mod set_value;
 mod set_window_frame;
 mod type_text;
@@ -1009,17 +1010,24 @@ impl ToolState {
 
 /// The target pid of an element-addressable call. An explicit `pid` wins; a
 /// call that carries only an `element_token` takes the pid the token was
-/// minted for, as the schemas promise ("the token carries it").
+/// minted for, as the schemas promise ("the token carries it"). A pid that
+/// draws a system security or consent prompt is refused: its windows are the
+/// user's to answer.
 pub(super) fn target_pid(
     state: &ToolState,
     args: &serde_json::Value,
 ) -> Result<i32, cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool_args::ArgsExt;
-    if args.get("pid").is_some_and(|pid| !pid.is_null()) {
-        return args.require_i32("pid");
-    }
-    if let Some(pid) = state.snapshots.pid_for_token(args) {
-        return Ok(pid);
+    let pid = if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        Some(args.require_i32("pid")?)
+    } else {
+        state.snapshots.pid_for_token(args)
+    };
+    if let Some(pid) = pid {
+        return match security_prompt::refusal_for_pid(pid) {
+            Some(refusal) => Err(refusal),
+            None => Ok(pid),
+        };
     }
     if args
         .get("element_token")

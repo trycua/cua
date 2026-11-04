@@ -959,6 +959,9 @@ impl Tool for InvokeMenuTool {
             Ok(pid) => pid,
             Err(_) => return refusal("invoke_menu: pid is out of range".into()),
         };
+        if let Some(refusal) = super::security_prompt::refusal_for_pid(pid) {
+            return refusal;
+        }
         let window_id = match u32::try_from(input.window_id) {
             Ok(window_id) => window_id,
             Err(_) => return refusal("invoke_menu: window_id is out of range".into()),

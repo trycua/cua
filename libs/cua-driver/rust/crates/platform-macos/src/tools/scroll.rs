@@ -464,6 +464,17 @@ impl Tool for ScrollTool {
             .await;
         }
 
+        if let Some(refusal) = super::security_prompt::foreground_refusal(
+            delivery_mode.is_foreground(),
+            wheel_target
+                .iter()
+                .map(|target| (target.screen_x, target.screen_y))
+                .collect(),
+        )
+        .await
+        {
+            return refusal;
+        }
         if let Some(target) = wheel_target {
             if !delivery_mode.is_foreground() {
                 if let Some(wid) = target.wid {

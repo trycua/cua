@@ -1150,6 +1150,14 @@ impl ClickTool {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).
                 (cx, cy, cx, cy)
             };
+            if let Some(refusal) = super::security_prompt::foreground_refusal(
+                delivery_mode.is_foreground(),
+                vec![(screen_x, screen_y)],
+            )
+            .await
+            {
+                return refusal;
+            }
 
             // ── Exact-target background gate (macOS background input v1) ──
             // A window-addressed background pixel action targets coordinates,

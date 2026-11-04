@@ -160,7 +160,7 @@ mod win {
     /// Assign one of our spawned children to the kill-on-close job.
     pub(super) fn assign_child(child: &Child) {
         unsafe {
-            let h = HANDLE(child.as_raw_handle() as *mut c_void);
+            let h = HANDLE(child.as_raw_handle());
             if let Err(error) = AssignProcessToJobObject(job(), h) {
                 eprintln!(
                     "[testkit] could not assign child {} to job: {error}",

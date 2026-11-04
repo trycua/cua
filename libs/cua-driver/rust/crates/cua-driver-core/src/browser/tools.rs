@@ -3274,10 +3274,12 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform::default()))
     }
 
+    #[cfg(unix)]
     fn launching_engine() -> Arc<BrowserEngine> {
         slow_launching_engine(std::time::Duration::ZERO)
     }
 
+    #[cfg(unix)]
     fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
         static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
         PROFILE_ROOT.call_once(|| {
@@ -3292,6 +3294,7 @@ mod tests {
         }))
     }
 
+    #[cfg(unix)]
     fn start_lifecycle_session(idle_ttl: Option<std::time::Duration>) -> (String, String) {
         use crate::session::{SessionClientKind, SessionTransport};
         let session = format!("browser-lifecycle-{}", uuid::Uuid::new_v4());
@@ -3319,6 +3322,7 @@ mod tests {
         (session, owner)
     }
 
+    #[cfg(unix)]
     async fn prepare_isolated(
         engine: &Arc<BrowserEngine>,
         session: &str,

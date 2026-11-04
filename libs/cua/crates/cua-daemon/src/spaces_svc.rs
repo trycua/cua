@@ -152,6 +152,8 @@ pub(crate) mod imp {
                 .egress_enforced
                 .map(|e| e.as_str().to_string())
                 .unwrap_or_default(),
+            clipboard: info.clipboard.as_str().into(),
+            volume: info.volume_setting.as_str().into(),
             volumes: info.volumes.iter().map(Into::into).collect(),
             sharing: info.sharing.as_ref().map(Into::into),
             network_settings: info
@@ -181,6 +183,12 @@ pub(crate) mod imp {
                 .map(|t| t.origin.clone())
                 .unwrap_or_default(),
             children: false,
+            tree_address: info
+                .id
+                .strip_prefix("local:")
+                .and_then(cua_vmm::tree::address_by_name)
+                .map(|a| a.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -242,6 +250,8 @@ pub(crate) mod imp {
             labels: r.labels.into_iter().collect(),
             instance_type: opt(r.instance_type),
             region: opt(r.region),
+            // A tree of another computer is joined only through a host create.
+            tree: None,
             egress: r
                 .egress
                 .map(|e| cua_spaces::egress::EgressPolicy {
@@ -893,6 +903,30 @@ pub(crate) mod imp {
             })
         }
 
+        async fn get_space_network_log(
+            &self,
+            req: tonic::Request<pb::GetSpaceNetworkLogRequest>,
+        ) -> R<pb::GetSpaceNetworkLogResponse> {
+            let r = req.into_inner();
+            let events = self
+                .spaces()
+                .network_events(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::GetSpaceNetworkLogResponse {
+                events: events
+                    .into_iter()
+                    .map(|e| pb::NetworkEvent {
+                        reason: e.reason,
+                        dst: e.dst,
+                        proto: e.proto.unwrap_or_default(),
+                        count: e.count,
+                        last_unix: e.last_unix.unwrap_or(0),
+                    })
+                    .collect(),
+            })
+        }
+
         async fn set_space_network(
             &self,
             req: tonic::Request<pb::SetSpaceNetworkRequest>,
@@ -918,6 +952,35 @@ pub(crate) mod imp {
                 .into(),
                 network: Some(cua_spaces::network::info_to_pb(&info)),
             })
+        }
+
+        async fn set_space_clipboard(
+            &self,
+            req: tonic::Request<pb::SetSpaceClipboardRequest>,
+        ) -> R<pb::SetSpaceClipboardResponse> {
+            let r = req.into_inner();
+            let setting: cua_spaces::clipboard::ClipboardSetting = r
+                .clipboard
+                .parse()
+                .map_err(|e: cua_spaces::Error| st(e.into()))?;
+            self.spaces()
+                .set_clipboard(&r.space, setting)
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceClipboardResponse {})
+        }
+
+        async fn set_space_volume(
+            &self,
+            req: tonic::Request<pb::SetSpaceVolumeRequest>,
+        ) -> R<pb::SetSpaceVolumeResponse> {
+            let r = req.into_inner();
+            let setting =
+                cua_spaces::registry::VolumeSetting::parse(&r.volume).map_err(|e| st(e.into()))?;
+            self.spaces()
+                .set_volume_setting(&r.space, setting)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceVolumeResponse {})
         }
 
         async fn get_tree_budget(
@@ -1544,6 +1607,12 @@ mod imp {
             off()
         }
 
+        async fn get_space_network_log(
+            &self,
+            _: tonic::Request<pb::GetSpaceNetworkLogRequest>,
+        ) -> R<pb::GetSpaceNetworkLogResponse> {
+            off()
+        }
         async fn list_orphans(
             &self,
             _: tonic::Request<pb::ListOrphansRequest>,
@@ -1567,6 +1636,18 @@ mod imp {
             &self,
             _: tonic::Request<pb::LeaveSpacesRequest>,
         ) -> R<pb::LeaveSpacesResponse> {
+            off()
+        }
+        async fn set_space_clipboard(
+            &self,
+            _: tonic::Request<pb::SetSpaceClipboardRequest>,
+        ) -> R<pb::SetSpaceClipboardResponse> {
+            off()
+        }
+        async fn set_space_volume(
+            &self,
+            _: tonic::Request<pb::SetSpaceVolumeRequest>,
+        ) -> R<pb::SetSpaceVolumeResponse> {
             off()
         }
         async fn rename_space(

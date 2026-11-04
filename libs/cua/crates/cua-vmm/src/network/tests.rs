@@ -292,7 +292,7 @@ fn the_old_open_default_is_what_you_get_until_secure_spaces_is_on() {
     assert!(!r.allows(ip("1.1.1.1")));
     let p = plan(
         &NetworkSettings::internet(),
-        network_support(BackendKind::Vz, "macos", Placement::Local),
+        NetworkSupport::NoNetworkOnly { why: "test" },
         &ctx(),
         Mode::Legacy,
     )
@@ -441,7 +441,8 @@ fn reason_ids_are_unique_and_round_trip() {
         | Reason::DefaultHost
         | Reason::DefaultLan
         | Reason::DefaultReserved
-        | Reason::DefaultNone => Reason::ALL.contains(&r),
+        | Reason::DefaultNone
+        | Reason::DefaultExit => Reason::ALL.contains(&r),
     };
     assert!(Reason::ALL.into_iter().all(listed));
 }
@@ -459,14 +460,14 @@ fn golden_support_table() {
     };
     // (kind, linux, macos, windows) on this computer or a pool host.
     let local = [
-        (BackendKind::Lume, "R", "R", "R"),
-        (BackendKind::Qemu, "E", "N", "N"),
+        (BackendKind::Lume, "R", "E", "R"),
+        (BackendKind::Qemu, "E", "E", "E"),
         (BackendKind::QemuDocker, "R", "R", "R"),
         (BackendKind::Container, "E", "E", "E"),
         (BackendKind::Managed, "E", "E", "E"),
         (BackendKind::Firecracker, "E", "R", "R"),
         (BackendKind::Containerization, "R", "R", "R"),
-        (BackendKind::Vz, "R", "N", "R"),
+        (BackendKind::Vz, "R", "E", "R"),
     ];
     assert_eq!(local.len(), BACKENDS.len());
     for (kind, l, m, w) in local {
@@ -496,7 +497,7 @@ fn golden_support_table() {
         "{md}"
     );
     assert!(
-        md.contains("| vz | this computer or one of yours | Refused | No network only | Refused |"),
+        md.contains("| vz | this computer or one of yours | Refused | Enforced | Refused |"),
         "{md}"
     );
 }
@@ -519,7 +520,13 @@ fn plan_fails_closed() {
     );
     // Can't enforce: no network, with the note.
     assert_eq!(
-        plan(&internet, local(BackendKind::Vz, "macos"), &c, Mode::Secure).unwrap(),
+        plan(
+            &internet,
+            NetworkSupport::NoNetworkOnly { why: "test" },
+            &c,
+            Mode::Secure
+        )
+        .unwrap(),
         NetworkPlan::NoNetwork {
             note: Some(NO_NETWORK_NOTE)
         }
@@ -528,15 +535,12 @@ fn plan_fails_closed() {
     assert_eq!(
         plan(
             &NetworkSettings::none(),
-            local(BackendKind::Lume, "macos"),
+            NetworkSupport::NoNetworkOnly { why: "test" },
             &c,
             Mode::Secure
         )
         .unwrap(),
-        // Cua reaches a macOS VM over its network, so even none is refused.
-        NetworkPlan::Refuse(
-            "macOS VMs can't protect your network yet, and Cua reaches a macOS VM over its network, so it can't start without one. Choose No protection to start it."
-        )
+        NetworkPlan::NoNetwork { note: None }
     );
     // Refused, in plain words.
     match plan(
@@ -565,7 +569,7 @@ fn plan_fails_closed() {
     assert_eq!(
         plan(
             &NetworkSettings::preset(NetworkPreset::Unprotected),
-            local(BackendKind::Vz, "macos"),
+            NetworkSupport::NoNetworkOnly { why: "test" },
             &c,
             Mode::Secure
         )
@@ -801,4 +805,312 @@ fn vms_forward_listed_localhost_ports_only() {
     assert!(e.0.contains("list them"), "{e}");
     assert_eq!(pasta_out_spec(&[]), "none");
     assert_eq!(pasta_out_spec(&[3000, 5432]), "3000,5432");
+}
+
+#[test]
+fn names_go_to_the_gateway_and_are_refused_by_the_host_firewall() {
+    use crate::egress::{EgressPolicy, is_domain};
+    assert!(is_domain("pypi.org"));
+    assert!(is_domain("*.github.com"));
+    assert!(is_domain("Example.COM."));
+    assert!(!is_domain("10.0.0.1"));
+    assert!(!is_domain("10.0.0.0/8"));
+    assert!(!is_domain("localhost"));
+    assert!(!is_domain("all"));
+    let mut s = NetworkSettings::preset(NetworkPreset::Custom);
+    s.custom_base = NetworkPreset::None;
+    s.custom = EgressPolicy {
+        allow: vec!["pypi.org".into(), "*.github.com".into(), "1.1.1.1".into()],
+        deny: vec!["bad.github.com".into()],
+    };
+    assert!(s.validate().is_ok(), "names are valid entries");
+    // The host's firewall judges addresses: a name is refused, never ignored.
+    let e = compile_mode(&s, &NetworkContext::default(), Mode::Secure).unwrap_err();
+    assert!(e.0.contains("gateway"), "{e}");
+    // Behind the gateway: the addresses compile, the names go with them.
+    let (rules, names) = compile_named(&s, &NetworkContext::default(), Mode::Secure).unwrap();
+    assert!(rules.allows(ip("1.1.1.1")));
+    assert!(!rules.allows(ip("8.8.8.8")), "custom from none");
+    assert_eq!(names.allow, vec!["pypi.org", "*.github.com"]);
+    assert_eq!(names.deny, vec!["bad.github.com"]);
+    // A child keeps a name only where its parent lets it through.
+    let parent = NetworkSettings::none();
+    let child = s.intersect(&parent);
+    assert!(
+        child.custom.allow.iter().all(|e| !is_domain(e)),
+        "{child:?}"
+    );
+    let open = NetworkSettings::internet();
+    let child = s.intersect(&open);
+    assert!(
+        child.custom.allow.contains(&"pypi.org".to_string()),
+        "{child:?}"
+    );
+}
+
+/// A tree on its own network: the parent at .2, two siblings at .3 and .4.
+fn tree_ctx() -> NetworkContext {
+    NetworkContext {
+        tree: vec![net("172.30.0.0/24")],
+        ..ctx()
+    }
+}
+
+fn in_tree(s: &NetworkSettings) -> Rules {
+    compile_mode(s, &tree_ctx(), Mode::Secure).unwrap()
+}
+
+const PARENT: &str = "172.30.0.2";
+const SIBLING: &str = "172.30.0.3";
+const OTHER_SIBLING: &str = "172.30.0.4";
+
+#[test]
+fn a_deny_of_a_sibling_blocks_it_and_only_it() {
+    let r = in_tree(&custom(NetworkPreset::Internet, &[], &[SIBLING]));
+    assert!(!r.allows(ip(SIBLING)));
+    assert_eq!(
+        r.decide(ip(SIBLING), None, None).map(|r| r.reason),
+        Some(Reason::UserDeny)
+    );
+    for ok in [PARENT, OTHER_SIBLING, "1.1.1.1"] {
+        assert!(r.allows(ip(ok)), "{ok}");
+    }
+}
+
+#[test]
+fn a_deny_of_the_parent_blocks_the_parent() {
+    let r = in_tree(&custom(NetworkPreset::Internet, &[], &[PARENT]));
+    assert!(!r.allows(ip(PARENT)));
+    assert!(r.allows(ip(SIBLING)) && r.allows(ip(OTHER_SIBLING)));
+}
+
+#[test]
+fn a_deny_of_the_whole_tree_blocks_every_member_but_not_the_internet() {
+    let r = in_tree(&custom(NetworkPreset::Internet, &[], &["172.30.0.0/24"]));
+    for blocked in [PARENT, SIBLING, OTHER_SIBLING] {
+        assert!(!r.allows(ip(blocked)), "{blocked}");
+    }
+    assert!(r.allows(ip("1.1.1.1")));
+    // An allow inside it is still an exception.
+    let r = in_tree(&custom(
+        NetworkPreset::Internet,
+        &[SIBLING],
+        &["172.30.0.0/24"],
+    ));
+    assert!(r.allows(ip(SIBLING)) && !r.allows(ip(PARENT)));
+}
+
+#[test]
+fn a_deny_that_matches_nothing_in_the_tree_changes_nothing_there() {
+    let plain = in_tree(&NetworkSettings::internet());
+    let r = in_tree(&custom(NetworkPreset::Internet, &[], &["198.51.100.7"]));
+    for member in [PARENT, SIBLING, OTHER_SIBLING] {
+        assert_eq!(r.allows(ip(member)), plain.allows(ip(member)), "{member}");
+        assert!(r.allows(ip(member)), "{member}");
+        assert_eq!(
+            r.decide(ip(member), None, None).map(|r| r.reason),
+            Some(Reason::Tree)
+        );
+    }
+    assert!(!r.allows(ip("198.51.100.7")));
+}
+
+#[test]
+fn a_parents_deny_is_inherited_and_a_childs_own_deny_holds() {
+    let parent = custom(NetworkPreset::Internet, &[], &[SIBLING]);
+    // Inherited: a child on the default keeps its parent's deny.
+    let child = NetworkSettings::internet().intersect(&parent);
+    let r = in_tree(&child);
+    assert!(!r.allows(ip(SIBLING)) && r.allows(ip(OTHER_SIBLING)));
+    // Its own deny, under an open parent.
+    let child =
+        custom(NetworkPreset::Internet, &[], &[PARENT]).intersect(&NetworkSettings::internet());
+    let r = in_tree(&child);
+    assert!(!r.allows(ip(PARENT)) && r.allows(ip(SIBLING)));
+    // Both.
+    let child = custom(NetworkPreset::Internet, &[], &[PARENT]).intersect(&parent);
+    let r = in_tree(&child);
+    assert!(!r.allows(ip(PARENT)) && !r.allows(ip(SIBLING)) && r.allows(ip(OTHER_SIBLING)));
+}
+
+#[test]
+fn a_widened_child_keeps_only_its_own_denies() {
+    // `--widen` skips the intersection: the parent's deny is not carried,
+    // and the child's own deny still beats the tree's allow.
+    let open = NetworkSettings {
+        widened_by: Some("test".into()),
+        ..NetworkSettings::internet()
+    };
+    assert!(in_tree(&open).allows(ip(SIBLING)));
+    let own = NetworkSettings {
+        widened_by: Some("test".into()),
+        ..custom(NetworkPreset::Internet, &[], &[SIBLING])
+    };
+    let r = in_tree(&own);
+    assert!(!r.allows(ip(SIBLING)) && r.allows(ip(PARENT)));
+}
+
+#[test]
+fn platform_denies_still_beat_user_lists_and_the_tree() {
+    let s = custom(
+        NetworkPreset::Internet,
+        &["172.30.1.0/24", "169.254.169.254", "10.0.2.2"],
+        &[SIBLING],
+    );
+    let r = in_tree(&s);
+    let why = |a: &str| r.decide(ip(a), None, None).map(|r| r.reason);
+    assert_eq!(why("172.30.1.9"), Some(Reason::PlatformOtherTree));
+    assert_eq!(why("169.254.169.254"), Some(Reason::PlatformMetadata));
+    assert_eq!(why("10.0.2.2"), Some(Reason::DefaultHostLoopback));
+    assert_eq!(why(SIBLING), Some(Reason::UserDeny));
+    // The order: platform, then the user's lists, then the tree.
+    let pos = |f: &dyn Fn(&Rule) -> bool| r.rules.iter().position(f).unwrap();
+    let deny = pos(&|r| r.reason == Reason::UserDeny);
+    assert!(pos(&|r| r.reason == Reason::PlatformOtherTree) < deny);
+    assert!(pos(&|r| r.reason == Reason::PlatformMetadata) < deny);
+    assert!(deny < pos(&|r| r.reason == Reason::Tree));
+}
+
+#[test]
+fn custom_from_none_keeps_its_own_tree_and_none_does_not() {
+    // `custom:none` is "own tree only, no internet" (plus its allow list).
+    let r = in_tree(&custom(NetworkPreset::None, &[], &[]));
+    for member in [PARENT, SIBLING, OTHER_SIBLING] {
+        assert!(r.allows(ip(member)), "{member}");
+    }
+    assert!(!r.allows(ip("1.1.1.1")));
+    // `none` reaches nothing, its tree included.
+    let r = in_tree(&NetworkSettings::none());
+    for member in [PARENT, SIBLING, OTHER_SIBLING] {
+        assert!(!r.allows(ip(member)), "{member}");
+    }
+    // A deny inside `custom:none` blocks that member only.
+    let r = in_tree(&custom(NetworkPreset::None, &[], &[SIBLING]));
+    assert!(!r.allows(ip(SIBLING)) && r.allows(ip(PARENT)));
+}
+
+#[test]
+fn exit_words_parse_and_print() {
+    assert_eq!(EgressVia::parse("").unwrap(), None);
+    assert_eq!(EgressVia::parse("internet").unwrap(), None);
+    for w in ["this-computer", "this-machine", "hotspot", "this"] {
+        assert_eq!(
+            EgressVia::parse(w).unwrap(),
+            Some(EgressVia::ThisMachine),
+            "{w}"
+        );
+    }
+    assert_eq!(
+        EgressVia::parse("space:local:proxy").unwrap(),
+        Some(EgressVia::Space("local:proxy".into()))
+    );
+    let s = EgressVia::parse("socks5://u:p@10.0.0.5:1080")
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.as_word(), "socks5://u:p@10.0.0.5:1080");
+    // Credentials never show in the label.
+    assert_eq!(s.label(), "SOCKS5 proxy 10.0.0.5:1080");
+    for bad in [
+        "space:",
+        "socks5://nohost",
+        "socks5://h:0",
+        "http://proxy:8080",
+        "elsewhere",
+    ] {
+        assert!(EgressVia::parse(bad).is_err(), "{bad}");
+    }
+    let t = socks5_target("socks5h://[::1]:9050").unwrap();
+    assert_eq!((t.host.as_str(), t.port, t.remote_dns), ("::1", 9050, true));
+    // Kept as its word.
+    let json = serde_json::to_string(&EgressVia::ThisMachine).unwrap();
+    assert_eq!(json, "\"this-computer\"");
+}
+
+fn exiting(via: EgressVia) -> NetworkSettings {
+    NetworkSettings {
+        via: Some(via),
+        ..custom(
+            NetworkPreset::Internet,
+            &["198.51.100.9"],
+            &["203.0.113.50"],
+        )
+    }
+}
+
+#[test]
+fn an_exit_closes_the_spaces_own_internet_and_keeps_its_tree() {
+    let s = exiting(EgressVia::ThisMachine);
+    let r = in_tree(&s);
+    // The internet only through the exit: nothing public leaves directly,
+    // not even what the user allowed (the exit applies the allows).
+    for blocked in ["1.1.1.1", "198.51.100.9", "2606:4700::1111"] {
+        assert!(!r.allows(ip(blocked)), "{blocked}");
+    }
+    assert_eq!(
+        r.decide(ip("1.1.1.1"), None, None).map(|r| r.reason),
+        Some(Reason::DefaultExit)
+    );
+    // Its tree and its resolver stay direct; a user deny still applies here.
+    assert!(r.allows(ip(SIBLING)));
+    assert!(r.allows_port(ip("10.0.2.3"), Proto::Udp, 53));
+    assert_eq!(
+        r.decide(ip("203.0.113.50"), None, None).map(|r| r.reason),
+        Some(Reason::UserDeny)
+    );
+    // The exit applies the Space's own rules, allows included.
+    let at_exit =
+        compile_mode(&s.exit_settings(), &NetworkContext::default(), Mode::Secure).unwrap();
+    assert!(at_exit.allows(ip("1.1.1.1")));
+    assert!(at_exit.allows(ip("198.51.100.9")));
+    assert!(!at_exit.allows(ip("203.0.113.50")));
+    assert!(!at_exit.allows(ip("169.254.169.254")));
+    assert!(
+        !at_exit.allows(ip("192.168.1.20")),
+        "internet only: no LAN at the exit either"
+    );
+}
+
+#[test]
+fn a_child_keeps_its_parents_exit_and_cant_leave_it() {
+    let parent = NetworkSettings {
+        via: Some(EgressVia::Space("local:proxy".into())),
+        ..NetworkSettings::internet()
+    };
+    // A child with no exit of its own takes the parent's.
+    let child = NetworkSettings::internet().intersect(&parent);
+    assert_eq!(child.via, parent.via);
+    // A child asking for another exit still gets the parent's.
+    let other = NetworkSettings {
+        via: Some(EgressVia::ThisMachine),
+        ..NetworkSettings::internet()
+    };
+    assert_eq!(other.intersect(&parent).via, parent.via);
+    // Under a parent without one, a child may pick its own.
+    assert_eq!(
+        other.intersect(&NetworkSettings::internet()).via,
+        Some(EgressVia::ThisMachine)
+    );
+    // `none` has no exit.
+    assert_eq!(NetworkSettings::none().intersect(&parent).via, None);
+    let bad = NetworkSettings {
+        via: Some(EgressVia::ThisMachine),
+        ..NetworkSettings::none()
+    };
+    assert!(bad.validate().is_err());
+}
+
+#[test]
+fn the_summary_names_the_exit() {
+    assert_eq!(
+        exiting(EgressVia::ThisMachine).summary(),
+        "Custom, from internet only, through This computer"
+    );
+    assert_eq!(
+        NetworkSettings {
+            via: Some(EgressVia::Space("local:proxy".into())),
+            ..NetworkSettings::internet()
+        }
+        .summary(),
+        "Internet only, through the Space proxy"
+    );
 }

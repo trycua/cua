@@ -816,6 +816,15 @@ impl Runtime {
                     })
                     .collect()
             };
+            #[cfg(feature = "spaces")]
+            let held: Vec<(String, SandboxRef)> = held
+                .into_iter()
+                .chain(
+                    self.registered_direct()
+                        .into_iter()
+                        .filter_map(|(id, n)| Some((n, SandboxRef::parse(&id).ok()?))),
+                )
+                .collect();
             return Ok(self
                 .inner
                 .sandboxes
@@ -955,6 +964,28 @@ impl Runtime {
         Ok(record_of(&key, h, status))
     }
 
+    /// `(id, name)` of the cua-spacesd Spaces added by address (`cua
+    /// spaces add`): sandboxes too, though no state file records them.
+    #[cfg(feature = "spaces")]
+    fn registered_direct(&self) -> Vec<(String, String)> {
+        let registry = self.inner.spaces.registry();
+        registry
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| {
+                s.id.strip_prefix("direct:")
+                    .is_some_and(|a| cua_spaces::id::routed_host(a).is_none())
+                    && registry
+                        .credential(&s.id)
+                        .ok()
+                        .flatten()
+                        .is_none_or(|c| c.service_urls.is_empty())
+            })
+            .map(|s| (s.id, s.name))
+            .collect()
+    }
+
     /// Every known sandbox: state files, local instances and live handles.
     pub async fn list(&self, provider: Option<ProviderKind>) -> Result<Vec<SandboxRecord>> {
         // A sandbox deleted behind this runtime is not listed as running.
@@ -1009,6 +1040,29 @@ impl Runtime {
                     stop_reason: info.stop_reason.map(|r| r.words()),
                 },
             );
+        }
+        #[cfg(feature = "spaces")]
+        for (id, name) in self.registered_direct() {
+            out.entry(id.clone()).or_insert_with(|| SandboxRecord {
+                location: location_of(ProviderKind::Direct).into(),
+                id,
+                kind: String::new(),
+                runtime: String::new(),
+                name,
+                provider: ProviderKind::Direct,
+                runtime_type: "direct".into(),
+                status: Status::Running,
+                ephemeral: false,
+                services: BTreeMap::new(),
+                image: None,
+                labels: BTreeMap::new(),
+                endpoints: BTreeMap::new(),
+                created_at: None,
+                expires_at: None,
+                provider_details: BTreeMap::new(),
+                image_info: None,
+                stop_reason: None,
+            });
         }
         {
             let handles = self.inner.handles.lock().unwrap();

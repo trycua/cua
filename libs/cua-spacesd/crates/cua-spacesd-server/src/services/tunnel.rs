@@ -34,6 +34,14 @@ pub const FORWARD_DEFAULT_TTL: Duration = Duration::from_secs(10 * 60);
 pub const HOTSPOT_DEFAULT_TTL: Duration = Duration::from_secs(60);
 /// The capability a guest with the spawn channel advertises.
 pub const SPAWN_FEATURE: &str = "spawn";
+/// The capability a guest that can be its tree's exit advertises
+/// (`StartExit`).
+pub const EXIT_FEATURE: &str = "exit";
+/// The capability a guest that publishes host ports on its loopback
+/// advertises (`StartHostPorts`).
+pub const HOST_PORTS_FEATURE: &str = "host_ports";
+/// Default host ports ticket lifetime.
+pub const HOST_PORTS_DEFAULT_TTL: Duration = Duration::from_secs(60);
 /// Default spawn ticket lifetime.
 pub const SPAWN_DEFAULT_TTL: Duration = Duration::from_secs(60);
 /// The host end every spawn connection is opened to (the host serves its
@@ -69,6 +77,20 @@ struct Spawn {
     files: super::spawn::SpawnFiles,
 }
 
+/// Host ports published on guest loopback, carried by the host.
+struct HostPorts {
+    id: String,
+    hub: Hub,
+    stop: CancellationToken,
+}
+
+/// This Space as its tree's exit: a SOCKS5 listener on guest loopback that
+/// connects from the Space's own network.
+struct Exit {
+    socks_address: SocketAddr,
+    stop: CancellationToken,
+}
+
 /// State shared by the gRPC service and the WebSocket routes.
 #[derive(Clone)]
 pub struct TunnelState {
@@ -76,6 +98,10 @@ pub struct TunnelState {
     forwards: Arc<Mutex<HashMap<String, Arc<Forward>>>>,
     hotspot: Arc<Mutex<Option<Arc<Hotspot>>>>,
     spawn: Arc<Mutex<Option<Arc<Spawn>>>>,
+    exit: Arc<Mutex<Option<Arc<Exit>>>>,
+    host_ports: Arc<Mutex<Option<Arc<HostPorts>>>>,
+    /// Public TCP shares served from this Space's share slots.
+    slots: super::share_slots::ShareSlots,
 }
 
 impl TunnelState {
@@ -86,6 +112,9 @@ impl TunnelState {
             forwards: Arc::default(),
             hotspot: Arc::default(),
             spawn: Arc::default(),
+            exit: Arc::default(),
+            host_ports: Arc::default(),
+            slots: super::share_slots::ShareSlots::default(),
         };
         // Revoked sessions (token file rotated or emptied): stop every
         // forward and the hotspot.
@@ -96,6 +125,8 @@ impl TunnelState {
                 Arc::downgrade(&state.forwards),
                 Arc::downgrade(&state.hotspot),
                 Arc::downgrade(&state.spawn),
+                Arc::downgrade(&state.exit),
+                Arc::downgrade(&state.host_ports),
             );
             let ctx = state.ctx.clone();
             handle.spawn(async move {
@@ -104,9 +135,13 @@ impl TunnelState {
                         changed = revoked.changed() => if changed.is_err() { return },
                         _ = shutdown.cancelled() => return,
                     }
-                    let (Some(forwards), Some(hotspot), Some(spawn)) =
-                        (weak.0.upgrade(), weak.1.upgrade(), weak.2.upgrade())
-                    else {
+                    let (Some(forwards), Some(hotspot), Some(spawn), Some(exit), Some(host_ports)) = (
+                        weak.0.upgrade(),
+                        weak.1.upgrade(),
+                        weak.2.upgrade(),
+                        weak.3.upgrade(),
+                        weak.4.upgrade(),
+                    ) else {
                         return;
                     };
                     let state = TunnelState {
@@ -114,6 +149,9 @@ impl TunnelState {
                         forwards,
                         hotspot,
                         spawn,
+                        exit,
+                        host_ports,
+                        slots: Default::default(),
                     };
                     state.revoke_all();
                 }
@@ -126,6 +164,8 @@ impl TunnelState {
     /// new token is a new owner: the old Space's capability must not stay).
     pub fn revoke_all(&self) {
         self.stop_spawn(None);
+        self.stop_exit();
+        self.stop_host_ports();
         let forwards: Vec<_> = self
             .forwards
             .lock()
@@ -147,6 +187,28 @@ impl TunnelState {
             .lock()
             .expect("forwards")
             .retain(|_, f| f.expires_at > now || f.active.load(Ordering::SeqCst) > 0);
+    }
+
+    fn stop_host_ports(&self) -> bool {
+        match self.host_ports.lock().expect("host ports").take() {
+            Some(h) => {
+                h.stop.cancel();
+                tracing::info!(session = %h.id, "host ports stopped");
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn stop_exit(&self) -> bool {
+        match self.exit.lock().expect("exit").take() {
+            Some(exit) => {
+                exit.stop.cancel();
+                tracing::info!(address = %exit.socks_address, "exit stopped");
+                true
+            }
+            None => false,
+        }
     }
 
     fn stop_spawn(&self, id: Option<&str>) -> bool {
@@ -538,6 +600,160 @@ impl TunnelService for TunnelServiceImpl {
         }))
     }
 
+    async fn start_exit(
+        &self,
+        request: Request<StartExitRequest>,
+    ) -> Result<GrpcResponse<StartExitResponse>, Status> {
+        if let Some(exit) = self.state.exit.lock().expect("exit").as_ref() {
+            return Ok(GrpcResponse::new(StartExitResponse {
+                socks_address: exit.socks_address.to_string(),
+            }));
+        }
+        let port = match request.into_inner().socks_port {
+            p if p > u16::MAX as u32 => {
+                return Err(crate::error::invalid("socks_port out of range"))
+            }
+            p => p as u16,
+        };
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .map_err(|e| {
+                status(
+                    Code::FailedPrecondition,
+                    ErrorReason::Unspecified,
+                    format!("cannot bind the exit's listener on 127.0.0.1:{port}: {e}"),
+                )
+            })?;
+        let socks_address = listener
+            .local_addr()
+            .map_err(|e| crate::error::internal(e.to_string()))?;
+        let stop = CancellationToken::new();
+        // Every connection leaves from this Space's own network: what it may
+        // reach is what its host's rules let it.
+        let policy: cua_spacesd_socks::Policy = Arc::new(|_, _| Route::Direct);
+        {
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    result = cua_spacesd_socks::serve_socks(listener, Hub::new(), policy) => {
+                        if let Err(error) = result {
+                            tracing::warn!(%error, "exit SOCKS listener failed");
+                        }
+                    }
+                    _ = stop.cancelled() => {}
+                }
+            });
+        }
+        tracing::info!(address = %socks_address, "exit started");
+        *self.state.exit.lock().expect("exit") = Some(Arc::new(Exit {
+            socks_address,
+            stop,
+        }));
+        Ok(GrpcResponse::new(StartExitResponse {
+            socks_address: socks_address.to_string(),
+        }))
+    }
+
+    async fn stop_exit(
+        &self,
+        _request: Request<StopExitRequest>,
+    ) -> Result<GrpcResponse<StopExitResponse>, Status> {
+        self.state.stop_exit();
+        Ok(GrpcResponse::new(StopExitResponse {}))
+    }
+
+    async fn start_host_ports(
+        &self,
+        request: Request<StartHostPortsRequest>,
+    ) -> Result<GrpcResponse<StartHostPortsResponse>, Status> {
+        let caller = caller(&request);
+        // Only the host that runs this Space carries its host ports.
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may publish its host ports",
+            ));
+        }
+        let body = request.into_inner();
+        if body.ports.len() > 64 {
+            return Err(crate::error::invalid("at most 64 host ports"));
+        }
+        self.state.stop_host_ports();
+        let id = format!("hp-{}", crate::util::random_id(9));
+        let hub = Hub::new();
+        let stop = CancellationToken::new();
+        let mut listening = Vec::new();
+        let mut skipped = Vec::new();
+        for port in body.ports {
+            let Ok(p) = u16::try_from(port) else {
+                skipped.push(HostPortSkipped {
+                    port,
+                    reason: "not a port".into(),
+                });
+                continue;
+            };
+            if p == 0 {
+                continue;
+            }
+            match tokio::net::TcpListener::bind(("127.0.0.1", p)).await {
+                Ok(listener) => {
+                    let (hub, stop) = (hub.clone(), stop.clone());
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            r = cua_spacesd_socks::serve_forward(listener, hub, "127.0.0.1".into(), p) => {
+                                if let Err(error) = r {
+                                    tracing::warn!(%error, port = p, "host port listener failed");
+                                }
+                            }
+                            _ = stop.cancelled() => {}
+                        }
+                    });
+                    listening.push(port);
+                }
+                Err(e) => skipped.push(HostPortSkipped {
+                    port,
+                    reason: if e.kind() == std::io::ErrorKind::AddrInUse {
+                        "something in the Space listens there".into()
+                    } else {
+                        e.to_string()
+                    },
+                }),
+            }
+        }
+        let ttl = duration(body.ticket_ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(HOST_PORTS_DEFAULT_TTL);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::HostPorts,
+            &id,
+            caller.principal.as_ref(),
+            None,
+            ttl,
+        );
+        *self.state.host_ports.lock().expect("host ports") = Some(Arc::new(HostPorts {
+            id: id.clone(),
+            hub,
+            stop,
+        }));
+        tracing::info!(session = %id, ?listening, "host ports published");
+        Ok(GrpcResponse::new(StartHostPortsResponse {
+            session_id: id,
+            ws_path: ticket_path(cua_proto::metadata::HOST_PORTS_WS_PATH, &ticket),
+            ticket,
+            listening,
+            skipped,
+        }))
+    }
+
+    async fn stop_host_ports(
+        &self,
+        _request: Request<StopHostPortsRequest>,
+    ) -> Result<GrpcResponse<StopHostPortsResponse>, Status> {
+        self.state.stop_host_ports();
+        Ok(GrpcResponse::new(StopHostPortsResponse {}))
+    }
+
     async fn start_spawn(
         &self,
         request: Request<StartSpawnRequest>,
@@ -669,6 +885,105 @@ impl TunnelService for TunnelServiceImpl {
             address: spawn.address.clone(),
             active_connections: spawn.hub.stats().active_connections.load(Ordering::Relaxed),
         }))
+    }
+
+    async fn publish_share_slot(
+        &self,
+        request: Request<PublishShareSlotRequest>,
+    ) -> Result<GrpcResponse<PublishShareSlotResponse>, Status> {
+        let caller = caller(&request);
+        // The Space's host (its token) or its owner through the relay;
+        // never a viewer or someone it is shared with.
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may share its ports publicly",
+            ));
+        }
+        let r = request.into_inner();
+        let spec = super::share_slots::check(
+            super::share_slots::slot_range(),
+            r.slot,
+            r.port,
+            &r.allow,
+            &r.expect_hosts,
+            duration(r.ttl.as_ref()),
+            r.max_bytes,
+        )
+        .map_err(|m| status(Code::InvalidArgument, ErrorReason::Unspecified, &m))?;
+        let slot = spec.slot;
+        let expires = self.state.slots.publish(spec).await.map_err(|e| {
+            status(
+                Code::Unavailable,
+                ErrorReason::Unspecified,
+                format!("cannot serve slot {slot}: {e}"),
+            )
+        })?;
+        Ok(GrpcResponse::new(PublishShareSlotResponse {
+            slot: u32::from(slot),
+            expires_at: Some(timestamp(expires)),
+        }))
+    }
+
+    async fn unpublish_share_slot(
+        &self,
+        request: Request<UnpublishShareSlotRequest>,
+    ) -> Result<GrpcResponse<UnpublishShareSlotResponse>, Status> {
+        let caller = caller(&request);
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may stop sharing its ports",
+            ));
+        }
+        let slot = u16::try_from(request.into_inner().slot).map_err(|_| {
+            status(
+                Code::InvalidArgument,
+                ErrorReason::Unspecified,
+                "slot out of range",
+            )
+        })?;
+        self.state.slots.unpublish(slot);
+        Ok(GrpcResponse::new(UnpublishShareSlotResponse {}))
+    }
+
+    async fn list_share_slots(
+        &self,
+        request: Request<cua_proto::env::v1::ListShareSlotsRequest>,
+    ) -> Result<GrpcResponse<cua_proto::env::v1::ListShareSlotsResponse>, Status> {
+        let caller = caller(&request);
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may list its share slots",
+            ));
+        }
+        let slots = self
+            .state
+            .slots
+            .stats()
+            .into_iter()
+            .map(|s| cua_proto::env::v1::ShareSlot {
+                slot: u32::from(s.slot),
+                port: u32::from(s.port),
+                bytes: s.bytes,
+                max_bytes: s.max_bytes,
+                connections: s.connections,
+                expires_at: Some(timestamp(s.expires)),
+            })
+            .collect();
+        Ok(GrpcResponse::new(
+            cua_proto::env::v1::ListShareSlotsResponse { slots },
+        ))
     }
 }
 
@@ -831,6 +1146,49 @@ pub async fn hotspot_ws(
                 _ = hotspot.stop.cancelled() => {}
             }
             state.stop_hotspot(Some(&hotspot.id));
+        })
+}
+
+/// `/hostports`: the host's end of the published host ports.
+pub async fn host_ports_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::HostPorts)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let session = state.host_ports.lock().expect("host ports").clone();
+    let Some(session) = session.filter(|s| s.id == claims.resource) else {
+        return (StatusCode::GONE, "host ports stopped").into_response();
+    };
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let (ws_tx, ws_rx) = socket.split();
+            let source = ws_rx
+                .take_while(|m| {
+                    futures_util::future::ready(!matches!(m, Err(_) | Ok(Message::Close(_))))
+                })
+                .filter_map(|m| async move {
+                    match m {
+                        Ok(Message::Binary(data)) => Some(data.to_vec()),
+                        _ => None,
+                    }
+                });
+            let sink = ws_tx.with(|data: Vec<u8>| async move {
+                Ok::<_, axum::Error>(Message::Binary(data.into()))
+            });
+            tokio::select! {
+                _ = session.hub.run_peer(Box::pin(source), Box::pin(sink)) => {}
+                _ = session.stop.cancelled() => {}
+            }
         })
 }
 

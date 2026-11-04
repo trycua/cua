@@ -101,17 +101,29 @@ fn managed_roots_preserve_verified_tls() {
             ] {
                 child.env_remove(key);
             }
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            drop(listener);
-            let output = child
-                .env(MODE, &mode)
-                .env(FIXTURE, dir.path())
-                .env("SSL_CERT_FILE", dir.path().join("roots.pem"))
-                .env("HTTPS_PROXY", format!("http://{address}"))
-                .env("CUA_TEST_NATIVE_ROOTS_PROXY", address.to_string())
-                .output()
-                .unwrap();
+            // The proxy port is picked by bind-and-drop, so another process can
+            // take it before the child binds it. Retry with a fresh port then.
+            let mut attempt = 0;
+            let output = loop {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                drop(listener);
+                let output = child
+                    .env(MODE, &mode)
+                    .env(FIXTURE, dir.path())
+                    .env("SSL_CERT_FILE", dir.path().join("roots.pem"))
+                    .env("HTTPS_PROXY", format!("http://{address}"))
+                    .env("CUA_TEST_NATIVE_ROOTS_PROXY", address.to_string())
+                    .output()
+                    .unwrap();
+                attempt += 1;
+                if output.status.success()
+                    || attempt >= 5
+                    || !String::from_utf8_lossy(&output.stderr).contains("AddrInUse")
+                {
+                    break output;
+                }
+            };
             if !output.status.success() {
                 failures.push(format!(
                     "{mode}: {}\n{}",

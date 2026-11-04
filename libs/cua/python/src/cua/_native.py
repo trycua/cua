@@ -695,9 +695,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_approve_share() != 32419:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_check_share() != 37820:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_deny_share() != 53987:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -705,9 +709,17 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_mode() != 63626:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_remove_share_edge() != 8456:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 892:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_set_share_settings() != 40470:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_share() != 50100:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_share_settings() != 39281:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_cua_share_tcp() != 49424:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_shares() != 39646:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1257,6 +1269,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_network() != 41208:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_network_log() != 25916:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications() != 10964:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477:
@@ -1305,6 +1319,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_clipboard() != 38931:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609:
@@ -1312,6 +1328,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_volume() != 17976:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_space() != 26355:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2822,6 +2840,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_cua_agent_setup.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_agent_setup.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_approve_share.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_approve_share.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_auth.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2833,6 +2857,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_cua_check_share.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_check_share.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_deny_share.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_deny_share.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_info.argtypes = (
     ctypes.c_uint64,
 )
@@ -2847,11 +2876,20 @@ _UniffiLib.uniffi_cua_sdk_fn_method_cua_mode.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_mode.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_remove_share_edge.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_remove_share_edge.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_sandboxes.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_sandboxes.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_set_share_settings.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_set_share_settings.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_share.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -2860,6 +2898,22 @@ _UniffiLib.uniffi_cua_sdk_fn_method_cua_share.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_share.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_share_settings.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_share_settings.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_share_tcp.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_cua_share_tcp.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_shares.argtypes = (
     ctypes.c_uint64,
 )
@@ -4290,6 +4344,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_network.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_network.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_network_log.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_network_log.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -4426,6 +4485,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children.argtypes = (
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_clipboard.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_clipboard.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_egress.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4453,6 +4518,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_volume.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_volume.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_space.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5319,12 +5390,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_constructor_cua_embedded.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_agent_setup.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_agent_setup.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_approve_share.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_approve_share.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_auth.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_auth.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_check_share.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_check_share.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_deny_share.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_deny_share.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_info.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_info.restype = ctypes.c_uint16
@@ -5334,12 +5411,24 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_cua_local.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_mode.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_mode.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_remove_share_edge.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_remove_share_edge.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_sandboxes.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_sandboxes.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_set_share_settings.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_set_share_settings.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_share.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_share.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_share_settings.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_share_settings.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_share_tcp.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_cua_share_tcp.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_shares.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_shares.restype = ctypes.c_uint16
@@ -6162,6 +6251,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.restype = ctypes
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_network.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_network.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_network_log.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_network_log.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.restype = ctypes.c_uint16
@@ -6234,6 +6326,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_routines.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_children.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_children.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_clipboard.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_clipboard.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_egress.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_egress.restype = ctypes.c_uint16
@@ -6246,6 +6341,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_network.restype = ctypes.c_
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_volume.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_volume.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_space.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_space.restype = ctypes.c_uint16
@@ -19245,6 +19343,64 @@ class _UniffiFfiConverterTypeNamedVolume(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.mounted_in, buf)
 
 @dataclass
+class NetworkEvent:
+    """
+    One kind of connection a Space tried and its network refused
+    ([`Spaces::network_log`]).
+"""
+    def __init__(self, *, reason:str, dst:str, proto:typing.Optional[str], count:int, last_unix:typing.Optional[int]):
+        self.reason = reason
+        self.dst = dst
+        self.proto = proto
+        self.count = count
+        self.last_unix = last_unix
+
+
+
+
+    def __str__(self):
+        return "NetworkEvent(reason={}, dst={}, proto={}, count={}, last_unix={})".format(self.reason, self.dst, self.proto, self.count, self.last_unix)
+    def __eq__(self, other):
+        if self.reason != other.reason:
+            return False
+        if self.dst != other.dst:
+            return False
+        if self.proto != other.proto:
+            return False
+        if self.count != other.count:
+            return False
+        if self.last_unix != other.last_unix:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeNetworkEvent(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return NetworkEvent(
+            reason=_UniffiFfiConverterString.read(buf),
+            dst=_UniffiFfiConverterString.read(buf),
+            proto=_UniffiFfiConverterOptionalString.read(buf),
+            count=_UniffiFfiConverterUInt64.read(buf),
+            last_unix=_UniffiFfiConverterOptionalUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.reason)
+        _UniffiFfiConverterString.check_lower(value.dst)
+        _UniffiFfiConverterOptionalString.check_lower(value.proto)
+        _UniffiFfiConverterUInt64.check_lower(value.count)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.last_unix)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.reason, buf)
+        _UniffiFfiConverterString.write(value.dst, buf)
+        _UniffiFfiConverterOptionalString.write(value.proto, buf)
+        _UniffiFfiConverterUInt64.write(value.count, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.last_unix, buf)
+
+@dataclass
 class NetworkSettings:
     """
     A Space's network settings: a preset and the user's own lists. The host
@@ -19265,7 +19421,7 @@ class NetworkSettings:
     says so (`SpaceInfo.network_note`); it never starts it open unless the
     preset is `unprotected`.
 """
-    def __init__(self, *, preset:str = "", localhost_ports:typing.List[int] = _DEFAULT, all_localhost_ports:bool = False, allow:typing.List[str] = _DEFAULT, deny:typing.List[str] = _DEFAULT, custom_base:str = "", widened_by:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, preset:str = "", localhost_ports:typing.List[int] = _DEFAULT, all_localhost_ports:bool = False, allow:typing.List[str] = _DEFAULT, deny:typing.List[str] = _DEFAULT, custom_base:str = "", widened_by:typing.Optional[str] = _DEFAULT, via:typing.Optional[str] = _DEFAULT):
         self.preset = preset
         if localhost_ports is _DEFAULT:
             self.localhost_ports = []
@@ -19285,12 +19441,16 @@ class NetworkSettings:
             self.widened_by = None
         else:
             self.widened_by = widened_by
+        if via is _DEFAULT:
+            self.via = None
+        else:
+            self.via = via
 
 
 
 
     def __str__(self):
-        return "NetworkSettings(preset={}, localhost_ports={}, all_localhost_ports={}, allow={}, deny={}, custom_base={}, widened_by={})".format(self.preset, self.localhost_ports, self.all_localhost_ports, self.allow, self.deny, self.custom_base, self.widened_by)
+        return "NetworkSettings(preset={}, localhost_ports={}, all_localhost_ports={}, allow={}, deny={}, custom_base={}, widened_by={}, via={})".format(self.preset, self.localhost_ports, self.all_localhost_ports, self.allow, self.deny, self.custom_base, self.widened_by, self.via)
     def __eq__(self, other):
         if self.preset != other.preset:
             return False
@@ -19306,6 +19466,8 @@ class NetworkSettings:
             return False
         if self.widened_by != other.widened_by:
             return False
+        if self.via != other.via:
+            return False
         return True
 
 class _UniffiFfiConverterTypeNetworkSettings(_UniffiConverterRustBuffer):
@@ -19319,6 +19481,7 @@ class _UniffiFfiConverterTypeNetworkSettings(_UniffiConverterRustBuffer):
             deny=_UniffiFfiConverterSequenceString.read(buf),
             custom_base=_UniffiFfiConverterString.read(buf),
             widened_by=_UniffiFfiConverterOptionalString.read(buf),
+            via=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -19330,6 +19493,7 @@ class _UniffiFfiConverterTypeNetworkSettings(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.deny)
         _UniffiFfiConverterString.check_lower(value.custom_base)
         _UniffiFfiConverterOptionalString.check_lower(value.widened_by)
+        _UniffiFfiConverterOptionalString.check_lower(value.via)
 
     @staticmethod
     def write(value, buf):
@@ -19340,6 +19504,7 @@ class _UniffiFfiConverterTypeNetworkSettings(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.deny, buf)
         _UniffiFfiConverterString.write(value.custom_base, buf)
         _UniffiFfiConverterOptionalString.write(value.widened_by, buf)
+        _UniffiFfiConverterOptionalString.write(value.via, buf)
 
 @dataclass
 class NotificationInfo:
@@ -23491,7 +23656,7 @@ class SpaceNetworkInfo:
     """
     A Space's network as `cua network show` says it ([`Spaces::network`]).
 """
-    def __init__(self, *, settings:NetworkSettings, summary:str, widenings:typing.List[str], enforcement:str, point:str, note:typing.Optional[str], parent:typing.Optional[str], root:typing.Optional[str], always_blocked:typing.List[str], notice_pending:bool):
+    def __init__(self, *, settings:NetworkSettings, summary:str, widenings:typing.List[str], enforcement:str, point:str, note:typing.Optional[str], parent:typing.Optional[str], root:typing.Optional[str], always_blocked:typing.List[str], notice_pending:bool, tree_address:typing.Optional[str] = _DEFAULT, topology_json:str = ""):
         self.settings = settings
         self.summary = summary
         self.widenings = widenings
@@ -23502,12 +23667,17 @@ class SpaceNetworkInfo:
         self.root = root
         self.always_blocked = always_blocked
         self.notice_pending = notice_pending
+        if tree_address is _DEFAULT:
+            self.tree_address = None
+        else:
+            self.tree_address = tree_address
+        self.topology_json = topology_json
 
 
 
 
     def __str__(self):
-        return "SpaceNetworkInfo(settings={}, summary={}, widenings={}, enforcement={}, point={}, note={}, parent={}, root={}, always_blocked={}, notice_pending={})".format(self.settings, self.summary, self.widenings, self.enforcement, self.point, self.note, self.parent, self.root, self.always_blocked, self.notice_pending)
+        return "SpaceNetworkInfo(settings={}, summary={}, widenings={}, enforcement={}, point={}, note={}, parent={}, root={}, always_blocked={}, notice_pending={}, tree_address={}, topology_json={})".format(self.settings, self.summary, self.widenings, self.enforcement, self.point, self.note, self.parent, self.root, self.always_blocked, self.notice_pending, self.tree_address, self.topology_json)
     def __eq__(self, other):
         if self.settings != other.settings:
             return False
@@ -23529,6 +23699,10 @@ class SpaceNetworkInfo:
             return False
         if self.notice_pending != other.notice_pending:
             return False
+        if self.tree_address != other.tree_address:
+            return False
+        if self.topology_json != other.topology_json:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceNetworkInfo(_UniffiConverterRustBuffer):
@@ -23545,6 +23719,8 @@ class _UniffiFfiConverterTypeSpaceNetworkInfo(_UniffiConverterRustBuffer):
             root=_UniffiFfiConverterOptionalString.read(buf),
             always_blocked=_UniffiFfiConverterSequenceString.read(buf),
             notice_pending=_UniffiFfiConverterBoolean.read(buf),
+            tree_address=_UniffiFfiConverterOptionalString.read(buf),
+            topology_json=_UniffiFfiConverterString.read(buf),
         )
 
     @staticmethod
@@ -23559,6 +23735,8 @@ class _UniffiFfiConverterTypeSpaceNetworkInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.root)
         _UniffiFfiConverterSequenceString.check_lower(value.always_blocked)
         _UniffiFfiConverterBoolean.check_lower(value.notice_pending)
+        _UniffiFfiConverterOptionalString.check_lower(value.tree_address)
+        _UniffiFfiConverterString.check_lower(value.topology_json)
 
     @staticmethod
     def write(value, buf):
@@ -23572,6 +23750,8 @@ class _UniffiFfiConverterTypeSpaceNetworkInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.root, buf)
         _UniffiFfiConverterSequenceString.write(value.always_blocked, buf)
         _UniffiFfiConverterBoolean.write(value.notice_pending, buf)
+        _UniffiFfiConverterOptionalString.write(value.tree_address, buf)
+        _UniffiFfiConverterString.write(value.topology_json, buf)
 
 @dataclass
 class SetNetworkResult:
@@ -23722,7 +23902,7 @@ class Share:
     """
     One share.
 """
-    def __init__(self, *, id:str, url:str, name:typing.Optional[str], access:ShareAccess, kind:str, target:str, owner:str, created_at_unix:typing.Optional[int], expires_at_unix:typing.Optional[int], notices:typing.List[str]):
+    def __init__(self, *, id:str, url:str, name:typing.Optional[str], access:ShareAccess, kind:str, target:str, owner:str, created_at_unix:typing.Optional[int], expires_at_unix:typing.Optional[int], notices:typing.List[str], tcp_connect_with:typing.Optional[str], tcp_address:typing.Optional[str], route:typing.Optional[str], route_line:typing.Optional[str], allow:typing.List[str], waiting:typing.Optional[str], waiting_text:typing.Optional[str]):
         self.id = id
         self.url = url
         self.name = name
@@ -23733,12 +23913,19 @@ class Share:
         self.created_at_unix = created_at_unix
         self.expires_at_unix = expires_at_unix
         self.notices = notices
+        self.tcp_connect_with = tcp_connect_with
+        self.tcp_address = tcp_address
+        self.route = route
+        self.route_line = route_line
+        self.allow = allow
+        self.waiting = waiting
+        self.waiting_text = waiting_text
 
 
 
 
     def __str__(self):
-        return "Share(id={}, url={}, name={}, access={}, kind={}, target={}, owner={}, created_at_unix={}, expires_at_unix={}, notices={})".format(self.id, self.url, self.name, self.access, self.kind, self.target, self.owner, self.created_at_unix, self.expires_at_unix, self.notices)
+        return "Share(id={}, url={}, name={}, access={}, kind={}, target={}, owner={}, created_at_unix={}, expires_at_unix={}, notices={}, tcp_connect_with={}, tcp_address={}, route={}, route_line={}, allow={}, waiting={}, waiting_text={})".format(self.id, self.url, self.name, self.access, self.kind, self.target, self.owner, self.created_at_unix, self.expires_at_unix, self.notices, self.tcp_connect_with, self.tcp_address, self.route, self.route_line, self.allow, self.waiting, self.waiting_text)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -23760,6 +23947,20 @@ class Share:
             return False
         if self.notices != other.notices:
             return False
+        if self.tcp_connect_with != other.tcp_connect_with:
+            return False
+        if self.tcp_address != other.tcp_address:
+            return False
+        if self.route != other.route:
+            return False
+        if self.route_line != other.route_line:
+            return False
+        if self.allow != other.allow:
+            return False
+        if self.waiting != other.waiting:
+            return False
+        if self.waiting_text != other.waiting_text:
+            return False
         return True
 
 class _UniffiFfiConverterTypeShare(_UniffiConverterRustBuffer):
@@ -23776,6 +23977,13 @@ class _UniffiFfiConverterTypeShare(_UniffiConverterRustBuffer):
             created_at_unix=_UniffiFfiConverterOptionalInt64.read(buf),
             expires_at_unix=_UniffiFfiConverterOptionalInt64.read(buf),
             notices=_UniffiFfiConverterSequenceString.read(buf),
+            tcp_connect_with=_UniffiFfiConverterOptionalString.read(buf),
+            tcp_address=_UniffiFfiConverterOptionalString.read(buf),
+            route=_UniffiFfiConverterOptionalString.read(buf),
+            route_line=_UniffiFfiConverterOptionalString.read(buf),
+            allow=_UniffiFfiConverterSequenceString.read(buf),
+            waiting=_UniffiFfiConverterOptionalString.read(buf),
+            waiting_text=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -23790,6 +23998,13 @@ class _UniffiFfiConverterTypeShare(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalInt64.check_lower(value.created_at_unix)
         _UniffiFfiConverterOptionalInt64.check_lower(value.expires_at_unix)
         _UniffiFfiConverterSequenceString.check_lower(value.notices)
+        _UniffiFfiConverterOptionalString.check_lower(value.tcp_connect_with)
+        _UniffiFfiConverterOptionalString.check_lower(value.tcp_address)
+        _UniffiFfiConverterOptionalString.check_lower(value.route)
+        _UniffiFfiConverterOptionalString.check_lower(value.route_line)
+        _UniffiFfiConverterSequenceString.check_lower(value.allow)
+        _UniffiFfiConverterOptionalString.check_lower(value.waiting)
+        _UniffiFfiConverterOptionalString.check_lower(value.waiting_text)
 
     @staticmethod
     def write(value, buf):
@@ -23803,6 +24018,13 @@ class _UniffiFfiConverterTypeShare(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalInt64.write(value.created_at_unix, buf)
         _UniffiFfiConverterOptionalInt64.write(value.expires_at_unix, buf)
         _UniffiFfiConverterSequenceString.write(value.notices, buf)
+        _UniffiFfiConverterOptionalString.write(value.tcp_connect_with, buf)
+        _UniffiFfiConverterOptionalString.write(value.tcp_address, buf)
+        _UniffiFfiConverterOptionalString.write(value.route, buf)
+        _UniffiFfiConverterOptionalString.write(value.route_line, buf)
+        _UniffiFfiConverterSequenceString.write(value.allow, buf)
+        _UniffiFfiConverterOptionalString.write(value.waiting, buf)
+        _UniffiFfiConverterOptionalString.write(value.waiting_text, buf)
 
 @dataclass
 class ShareCheck:
@@ -23854,6 +24076,159 @@ class _UniffiFfiConverterTypeShareCheck(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.status, buf)
         _UniffiFfiConverterString.write(value.via, buf)
         _UniffiFfiConverterString.write(value.detail, buf)
+
+
+
+
+
+
+class ShareLanding(enum.Enum):
+    """
+    Where public TCP shares land.
+"""
+
+    AUTO = 0
+    """
+    The Space's own cloud host, else a share edge, else Cua's relay.
+"""
+
+    ONLY_MY_CLOUD = 1
+    """
+    Only through your own clouds.
+"""
+
+    ALLOW_RELAY = 2
+    """
+    Cua's relay unless the Space runs on its own cloud host.
+"""
+
+
+
+class _UniffiFfiConverterTypeShareLanding(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ShareLanding.AUTO
+        if variant == 2:
+            return ShareLanding.ONLY_MY_CLOUD
+        if variant == 3:
+            return ShareLanding.ALLOW_RELAY
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ShareLanding.AUTO:
+            return
+        if value == ShareLanding.ONLY_MY_CLOUD:
+            return
+        if value == ShareLanding.ALLOW_RELAY:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ShareLanding.AUTO:
+            buf.write_i32(1)
+        if value == ShareLanding.ONLY_MY_CLOUD:
+            buf.write_i32(2)
+        if value == ShareLanding.ALLOW_RELAY:
+            buf.write_i32(3)
+
+
+
+@dataclass
+class ShareSettings:
+    """
+    The share settings.
+"""
+    def __init__(self, *, landing:ShareLanding, relay_fallback:bool, daily_cap_mib:int, default_allow:typing.List[str], approve_agent_shares:bool, always_allow_spaces:typing.List[str], edge_consent:typing.List[str], used_today:int, edge_cloud:typing.Optional[str], edge_host:typing.Optional[str], edge_monthly_usd:typing.Optional[float]):
+        self.landing = landing
+        self.relay_fallback = relay_fallback
+        self.daily_cap_mib = daily_cap_mib
+        self.default_allow = default_allow
+        self.approve_agent_shares = approve_agent_shares
+        self.always_allow_spaces = always_allow_spaces
+        self.edge_consent = edge_consent
+        self.used_today = used_today
+        self.edge_cloud = edge_cloud
+        self.edge_host = edge_host
+        self.edge_monthly_usd = edge_monthly_usd
+
+
+
+
+    def __str__(self):
+        return "ShareSettings(landing={}, relay_fallback={}, daily_cap_mib={}, default_allow={}, approve_agent_shares={}, always_allow_spaces={}, edge_consent={}, used_today={}, edge_cloud={}, edge_host={}, edge_monthly_usd={})".format(self.landing, self.relay_fallback, self.daily_cap_mib, self.default_allow, self.approve_agent_shares, self.always_allow_spaces, self.edge_consent, self.used_today, self.edge_cloud, self.edge_host, self.edge_monthly_usd)
+    def __eq__(self, other):
+        if self.landing != other.landing:
+            return False
+        if self.relay_fallback != other.relay_fallback:
+            return False
+        if self.daily_cap_mib != other.daily_cap_mib:
+            return False
+        if self.default_allow != other.default_allow:
+            return False
+        if self.approve_agent_shares != other.approve_agent_shares:
+            return False
+        if self.always_allow_spaces != other.always_allow_spaces:
+            return False
+        if self.edge_consent != other.edge_consent:
+            return False
+        if self.used_today != other.used_today:
+            return False
+        if self.edge_cloud != other.edge_cloud:
+            return False
+        if self.edge_host != other.edge_host:
+            return False
+        if self.edge_monthly_usd != other.edge_monthly_usd:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeShareSettings(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ShareSettings(
+            landing=_UniffiFfiConverterTypeShareLanding.read(buf),
+            relay_fallback=_UniffiFfiConverterBoolean.read(buf),
+            daily_cap_mib=_UniffiFfiConverterUInt64.read(buf),
+            default_allow=_UniffiFfiConverterSequenceString.read(buf),
+            approve_agent_shares=_UniffiFfiConverterBoolean.read(buf),
+            always_allow_spaces=_UniffiFfiConverterSequenceString.read(buf),
+            edge_consent=_UniffiFfiConverterSequenceString.read(buf),
+            used_today=_UniffiFfiConverterUInt64.read(buf),
+            edge_cloud=_UniffiFfiConverterOptionalString.read(buf),
+            edge_host=_UniffiFfiConverterOptionalString.read(buf),
+            edge_monthly_usd=_UniffiFfiConverterOptionalFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeShareLanding.check_lower(value.landing)
+        _UniffiFfiConverterBoolean.check_lower(value.relay_fallback)
+        _UniffiFfiConverterUInt64.check_lower(value.daily_cap_mib)
+        _UniffiFfiConverterSequenceString.check_lower(value.default_allow)
+        _UniffiFfiConverterBoolean.check_lower(value.approve_agent_shares)
+        _UniffiFfiConverterSequenceString.check_lower(value.always_allow_spaces)
+        _UniffiFfiConverterSequenceString.check_lower(value.edge_consent)
+        _UniffiFfiConverterUInt64.check_lower(value.used_today)
+        _UniffiFfiConverterOptionalString.check_lower(value.edge_cloud)
+        _UniffiFfiConverterOptionalString.check_lower(value.edge_host)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.edge_monthly_usd)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeShareLanding.write(value.landing, buf)
+        _UniffiFfiConverterBoolean.write(value.relay_fallback, buf)
+        _UniffiFfiConverterUInt64.write(value.daily_cap_mib, buf)
+        _UniffiFfiConverterSequenceString.write(value.default_allow, buf)
+        _UniffiFfiConverterBoolean.write(value.approve_agent_shares, buf)
+        _UniffiFfiConverterSequenceString.write(value.always_allow_spaces, buf)
+        _UniffiFfiConverterSequenceString.write(value.edge_consent, buf)
+        _UniffiFfiConverterUInt64.write(value.used_today, buf)
+        _UniffiFfiConverterOptionalString.write(value.edge_cloud, buf)
+        _UniffiFfiConverterOptionalString.write(value.edge_host, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.edge_monthly_usd, buf)
 
 @dataclass
 class SiteLoginOptions:
@@ -25216,7 +25591,7 @@ class SpaceInfo:
     """
     A registered Space.
 """
-    def __init__(self, *, id:str, name:str, display_name:str = "", provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str, durable:str = "", stop_reason:str = "", labels:dict[str, str], expires_at_unix:int, on_expire:str, created_at_unix:int, egress:EgressPolicy, egress_enforced:typing.Optional[EgressEnforcement], network:typing.Optional[NetworkSettings], network_note:typing.Optional[str], network_notice_pending:bool, parent:typing.Optional[str], root:typing.Optional[str], depth:int, volumes:typing.List[VolumeMount], sharing:typing.Optional[SpaceSharing] = None):
+    def __init__(self, *, id:str, name:str, display_name:str = "", provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str, durable:str = "", stop_reason:str = "", labels:dict[str, str], expires_at_unix:int, on_expire:str, created_at_unix:int, egress:EgressPolicy, egress_enforced:typing.Optional[EgressEnforcement], network:typing.Optional[NetworkSettings], network_note:typing.Optional[str], network_notice_pending:bool, parent:typing.Optional[str], root:typing.Optional[str], depth:int, children:bool = False, tree_address:typing.Optional[str] = _DEFAULT, clipboard:str, volume:str, volumes:typing.List[VolumeMount], sharing:typing.Optional[SpaceSharing] = None):
         self.id = id
         self.name = name
         self.display_name = display_name
@@ -25253,6 +25628,13 @@ class SpaceInfo:
         self.parent = parent
         self.root = root
         self.depth = depth
+        self.children = children
+        if tree_address is _DEFAULT:
+            self.tree_address = None
+        else:
+            self.tree_address = tree_address
+        self.clipboard = clipboard
+        self.volume = volume
         self.volumes = volumes
         self.sharing = sharing
 
@@ -25260,7 +25642,7 @@ class SpaceInfo:
 
 
     def __str__(self):
-        return "SpaceInfo(id={}, name={}, display_name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={}, durable={}, stop_reason={}, labels={}, expires_at_unix={}, on_expire={}, created_at_unix={}, egress={}, egress_enforced={}, network={}, network_note={}, network_notice_pending={}, parent={}, root={}, depth={}, volumes={}, sharing={})".format(self.id, self.name, self.display_name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete, self.durable, self.stop_reason, self.labels, self.expires_at_unix, self.on_expire, self.created_at_unix, self.egress, self.egress_enforced, self.network, self.network_note, self.network_notice_pending, self.parent, self.root, self.depth, self.volumes, self.sharing)
+        return "SpaceInfo(id={}, name={}, display_name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={}, durable={}, stop_reason={}, labels={}, expires_at_unix={}, on_expire={}, created_at_unix={}, egress={}, egress_enforced={}, network={}, network_note={}, network_notice_pending={}, parent={}, root={}, depth={}, children={}, tree_address={}, clipboard={}, volume={}, volumes={}, sharing={})".format(self.id, self.name, self.display_name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete, self.durable, self.stop_reason, self.labels, self.expires_at_unix, self.on_expire, self.created_at_unix, self.egress, self.egress_enforced, self.network, self.network_note, self.network_notice_pending, self.parent, self.root, self.depth, self.children, self.tree_address, self.clipboard, self.volume, self.volumes, self.sharing)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -25334,6 +25716,14 @@ class SpaceInfo:
             return False
         if self.depth != other.depth:
             return False
+        if self.children != other.children:
+            return False
+        if self.tree_address != other.tree_address:
+            return False
+        if self.clipboard != other.clipboard:
+            return False
+        if self.volume != other.volume:
+            return False
         if self.volumes != other.volumes:
             return False
         if self.sharing != other.sharing:
@@ -25380,6 +25770,10 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
             parent=_UniffiFfiConverterOptionalString.read(buf),
             root=_UniffiFfiConverterOptionalString.read(buf),
             depth=_UniffiFfiConverterUInt32.read(buf),
+            children=_UniffiFfiConverterBoolean.read(buf),
+            tree_address=_UniffiFfiConverterOptionalString.read(buf),
+            clipboard=_UniffiFfiConverterString.read(buf),
+            volume=_UniffiFfiConverterString.read(buf),
             volumes=_UniffiFfiConverterSequenceTypeVolumeMount.read(buf),
             sharing=_UniffiFfiConverterOptionalTypeSpaceSharing.read(buf),
         )
@@ -25422,6 +25816,10 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.parent)
         _UniffiFfiConverterOptionalString.check_lower(value.root)
         _UniffiFfiConverterUInt32.check_lower(value.depth)
+        _UniffiFfiConverterBoolean.check_lower(value.children)
+        _UniffiFfiConverterOptionalString.check_lower(value.tree_address)
+        _UniffiFfiConverterString.check_lower(value.clipboard)
+        _UniffiFfiConverterString.check_lower(value.volume)
         _UniffiFfiConverterSequenceTypeVolumeMount.check_lower(value.volumes)
         _UniffiFfiConverterOptionalTypeSpaceSharing.check_lower(value.sharing)
 
@@ -25463,6 +25861,10 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.parent, buf)
         _UniffiFfiConverterOptionalString.write(value.root, buf)
         _UniffiFfiConverterUInt32.write(value.depth, buf)
+        _UniffiFfiConverterBoolean.write(value.children, buf)
+        _UniffiFfiConverterOptionalString.write(value.tree_address, buf)
+        _UniffiFfiConverterString.write(value.clipboard, buf)
+        _UniffiFfiConverterString.write(value.volume, buf)
         _UniffiFfiConverterSequenceTypeVolumeMount.write(value.volumes, buf)
         _UniffiFfiConverterOptionalTypeSpaceSharing.write(value.sharing, buf)
 
@@ -42581,6 +42983,29 @@ class _UniffiFfiConverterSequenceTypeSpacesHost(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeSpacesHost.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeNetworkEvent(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeNetworkEvent.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeNetworkEvent.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeNetworkEvent.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypeNotificationInfo(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -43678,6 +44103,12 @@ class SpacesProtocol(typing.Protocol):
         enforced (or why its network is cut), and what is always blocked.
 """
         raise NotImplementedError
+    async def network_log(self, space: str) -> typing.List[NetworkEvent]:
+        """
+        What a Space on the daemon's computer tried to reach and its network
+        refused, most recent first (`cua network log`).
+"""
+        raise NotImplementedError
     async def notifications(self, unread_only: bool,since_ms: typing.Optional[int]) -> typing.List[NotificationInfo]:
         """
         The notifications feed, newest first.
@@ -43836,6 +44267,8 @@ class SpacesProtocol(typing.Protocol):
         this runtime runs itself.
 """
         raise NotImplementedError
+    async def set_clipboard(self, space: str,clipboard: str) -> None:
+        raise NotImplementedError
     async def set_egress(self, space: str,policy: EgressPolicy) -> None:
         """
         Replaces a Space's egress policy; an empty one removes it (see
@@ -43867,6 +44300,18 @@ class SpacesProtocol(typing.Protocol):
         Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
         memory its children may hold at once, and what they may cost. A child
         that does not fit is refused with what is left. All `None` removes it.
+"""
+        raise NotImplementedError
+    async def set_volume(self, space: str,volume: str) -> None:
+        """
+        Sets when a Space's viewers may move the clipboard between this
+        computer and the Space: `viewing` (only while you're viewing, the
+        default), `ask` or `off`. It applies to viewers opened afterwards.
+        The agent tools `computer_clipboard_*` act inside the Space and are
+        not affected. Another word is `InvalidArgument`.
+        Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+        `off`. Applies now: `off` unmounts the Volume (named volumes it
+        mounted stay).
 """
         raise NotImplementedError
     async def space(self, space: str) -> Space:
@@ -45161,6 +45606,27 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def network_log(self, space: str) -> typing.List[NetworkEvent]:
+        """
+        What a Space on the daemon's computer tried to reach and its network
+        refused, most recent first (`cua network log`).
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeNetworkEvent.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_network_log(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def notifications(self, unread_only: bool,since_ms: typing.Optional[int]) -> typing.List[NotificationInfo]:
         """
         The notifications feed, newest first.
@@ -45727,6 +46193,26 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def set_clipboard(self, space: str,clipboard: str) -> None:
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterString.check_lower(clipboard)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterString.lower(clipboard),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_clipboard(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def set_egress(self, space: str,policy: EgressPolicy) -> None:
         """
         Replaces a Space's egress policy; an empty one removes it (see
@@ -45838,6 +46324,36 @@ class Spaces(SpacesProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def set_volume(self, space: str,volume: str) -> None:
+        """
+        Sets when a Space's viewers may move the clipboard between this
+        computer and the Space: `viewing` (only while you're viewing, the
+        default), `ask` or `off`. It applies to viewers opened afterwards.
+        The agent tools `computer_clipboard_*` act inside the Space and are
+        not affected. Another word is `InvalidArgument`.
+        Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+        `off`. Applies now: `off` unmounts the Volume (named volumes it
+        mounted stay).
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterString.check_lower(volume)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterString.lower(volume),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_volume(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -46609,6 +47125,13 @@ class CuaProtocol(typing.Protocol):
         configure the cua MCP server for the current user.
 """
         raise NotImplementedError
+    async def approve_share(self, id: str,always: bool = False) -> Share:
+        """
+        Lets a waiting share go live (an agent's public share, or the first
+        through a share edge). `always`: its Space may share without asking
+        from now on.
+"""
+        raise NotImplementedError
     def auth(self, ) -> Auth:
         """
         Sign-in and the shared session (`CUA_OIDC_ISSUER`,
@@ -46619,6 +47142,11 @@ class CuaProtocol(typing.Protocol):
         """
         Opens a share's link once, as its owner, so a link is known to work
         before it is handed to anyone. `path` is below the link.
+"""
+        raise NotImplementedError
+    async def deny_share(self, id: str) -> None:
+        """
+        Turns down a waiting share.
 """
         raise NotImplementedError
     async def info(self, ) -> CuaInfo:
@@ -46637,9 +47165,20 @@ class CuaProtocol(typing.Protocol):
         Topology.
 """
         raise NotImplementedError
+    async def remove_share_edge(self, ) -> typing.List[str]:
+        """
+        Removes the share edge from your cloud now. Returns the ids of the
+        shares that ended with it.
+"""
+        raise NotImplementedError
     def sandboxes(self, ) -> Sandboxes:
         """
         Sandboxes (local, direct, your own cloud).
+"""
+        raise NotImplementedError
+    async def set_share_settings(self, settings: ShareSettings) -> ShareSettings:
+        """
+        Saves the share settings (the read-only fields are ignored).
 """
         raise NotImplementedError
     async def share(self, target: str,access: typing.Union[object, typing.Optional[ShareAccess]] = _DEFAULT,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,name: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> Share:
@@ -46651,6 +47190,32 @@ class CuaProtocol(typing.Protocol):
         `access` defaults to private; a public share lasts one hour unless
         `ttl_seconds` (60 to 86400) says otherwise. The cua daemon owns the
         share, so it keeps working after this process exits.
+"""
+        raise NotImplementedError
+    async def share_settings(self, ) -> ShareSettings:
+        """
+        The share settings, with today's data and the share edge.
+"""
+        raise NotImplementedError
+    async def share_tcp(self, target: str,service: typing.Union[object, typing.Optional[str]] = _DEFAULT,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,name: typing.Union[object, typing.Optional[str]] = _DEFAULT,route: typing.Union[object, typing.Optional[str]] = _DEFAULT,allow: typing.Union[object, typing.Optional[typing.List[str]]] = _DEFAULT,check_host: bool = False,consent: bool = False) -> Share:
+        """
+        Shares a raw TCP service in a Space (a game server, for example) at a
+        public address anyone can connect to, and returns it
+        (`tcp_connect_with`). `target` is a port in a Space
+        (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+        own. `service` (`"minecraft"`) adds a name people can type instead of
+        the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+        less. It reaches only that one port of that Space; admin and
+        remote-access ports are refused. An experiment (Public TCP shares),
+        off unless turned on.
+
+        `route` is `auto` (default: the Space's own host in your cloud,
+        else a share edge in your linked cloud, else Cua's relay), `host`,
+        `edge` or `relay`. `allow` limits who may connect (CIDRs).
+        `check_host` (Minecraft) drops connections that did not dial this
+        address. `consent` agrees to a share edge's cost now; without it the
+        first share through a new edge comes back `waiting` until
+        `approve_share`.
 """
         raise NotImplementedError
     async def shares(self, ) -> typing.List[Share]:
@@ -46816,6 +47381,31 @@ class Cua(CuaProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def approve_share(self, id: str,always: bool = False) -> Share:
+        """
+        Lets a waiting share go live (an agent's public share, or the first
+        through a share edge). `always`: its Space may share without asking
+        from now on.
+"""
+
+        _UniffiFfiConverterString.check_lower(id)
+
+        _UniffiFfiConverterBoolean.check_lower(always)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+            _UniffiFfiConverterBoolean.lower(always),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeShare.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_approve_share(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     def auth(self, ) -> Auth:
         """
         Sign-in and the shared session (`CUA_OIDC_ISSUER`,
@@ -46855,6 +47445,26 @@ class Cua(CuaProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def deny_share(self, id: str) -> None:
+        """
+        Turns down a waiting share.
+"""
+
+        _UniffiFfiConverterString.check_lower(id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_deny_share(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -46906,6 +47516,24 @@ class Cua(CuaProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def remove_share_edge(self, ) -> typing.List[str]:
+        """
+        Removes the share edge from your cloud now. Returns the ids of the
+        shares that ended with it.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_remove_share_edge(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     def sandboxes(self, ) -> Sandboxes:
         """
         Sandboxes (local, direct, your own cloud).
@@ -46921,6 +47549,26 @@ class Cua(CuaProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def set_share_settings(self, settings: ShareSettings) -> ShareSettings:
+        """
+        Saves the share settings (the read-only fields are ignored).
+"""
+
+        _UniffiFfiConverterTypeShareSettings.check_lower(settings)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeShareSettings.lower(settings),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeShareSettings.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_set_share_settings(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def share(self, target: str,access: typing.Union[object, typing.Optional[ShareAccess]] = _DEFAULT,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,name: typing.Union[object, typing.Optional[str]] = _DEFAULT) -> Share:
         """
         Shares `target` and returns a link that opens on the owner's other
@@ -46956,6 +47604,90 @@ class Cua(CuaProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_cua_share(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def share_settings(self, ) -> ShareSettings:
+        """
+        The share settings, with today's data and the share edge.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeShareSettings.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_share_settings(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def share_tcp(self, target: str,service: typing.Union[object, typing.Optional[str]] = _DEFAULT,ttl_seconds: typing.Union[object, typing.Optional[int]] = _DEFAULT,name: typing.Union[object, typing.Optional[str]] = _DEFAULT,route: typing.Union[object, typing.Optional[str]] = _DEFAULT,allow: typing.Union[object, typing.Optional[typing.List[str]]] = _DEFAULT,check_host: bool = False,consent: bool = False) -> Share:
+        """
+        Shares a raw TCP service in a Space (a game server, for example) at a
+        public address anyone can connect to, and returns it
+        (`tcp_connect_with`). `target` is a port in a Space
+        (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+        own. `service` (`"minecraft"`) adds a name people can type instead of
+        the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+        less. It reaches only that one port of that Space; admin and
+        remote-access ports are refused. An experiment (Public TCP shares),
+        off unless turned on.
+
+        `route` is `auto` (default: the Space's own host in your cloud,
+        else a share edge in your linked cloud, else Cua's relay), `host`,
+        `edge` or `relay`. `allow` limits who may connect (CIDRs).
+        `check_host` (Minecraft) drops connections that did not dial this
+        address. `consent` agrees to a share edge's cost now; without it the
+        first share through a new edge comes back `waiting` until
+        `approve_share`.
+"""
+
+        _UniffiFfiConverterString.check_lower(target)
+
+        if service is _DEFAULT:
+            service = None
+        _UniffiFfiConverterOptionalString.check_lower(service)
+
+        if ttl_seconds is _DEFAULT:
+            ttl_seconds = None
+        _UniffiFfiConverterOptionalUInt32.check_lower(ttl_seconds)
+
+        if name is _DEFAULT:
+            name = None
+        _UniffiFfiConverterOptionalString.check_lower(name)
+
+        if route is _DEFAULT:
+            route = None
+        _UniffiFfiConverterOptionalString.check_lower(route)
+
+        if allow is _DEFAULT:
+            allow = None
+        _UniffiFfiConverterOptionalSequenceString.check_lower(allow)
+
+        _UniffiFfiConverterBoolean.check_lower(check_host)
+
+        _UniffiFfiConverterBoolean.check_lower(consent)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(target),
+            _UniffiFfiConverterOptionalString.lower(service),
+            _UniffiFfiConverterOptionalUInt32.lower(ttl_seconds),
+            _UniffiFfiConverterOptionalString.lower(name),
+            _UniffiFfiConverterOptionalString.lower(route),
+            _UniffiFfiConverterOptionalSequenceString.lower(allow),
+            _UniffiFfiConverterBoolean.lower(check_host),
+            _UniffiFfiConverterBoolean.lower(consent),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeShare.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_cua_share_tcp(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -48823,6 +49555,7 @@ __all__ = [
     "SandboxPhase",
     "ImageFormat",
     "ShareAccess",
+    "ShareLanding",
     "EgressEnforcement",
     "CuaError",
     "ForkBatchEvent",
@@ -48969,6 +49702,7 @@ __all__ = [
     "MediaOpenOptions",
     "MediaStats",
     "NamedVolume",
+    "NetworkEvent",
     "NetworkSettings",
     "NotificationInfo",
     "Overlay",
@@ -49016,6 +49750,7 @@ __all__ = [
     "SetupStep",
     "Share",
     "ShareCheck",
+    "ShareSettings",
     "SiteLoginOptions",
     "SiteLoginReport",
     "SnapshotSyncProgress",

@@ -1339,6 +1339,7 @@ mod tests {
             network: None,
             netns: false,
             pasta_pid: None,
+            gateway_control: None,
         }
     }
 

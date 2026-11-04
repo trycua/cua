@@ -2170,7 +2170,7 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
 }
 
 /// Reads the settings file (defaults when missing or damaged). The
-/// experiments the daemon enforces (Secure Spaces, Child Spaces) are what
+/// experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
 /// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2193,6 +2193,18 @@ fn sync_experiments_from_home(
     if let Some(on) = switch(home, Gate::ChildSpaces) {
         experiments.child_spaces = on;
     }
+    if let Some(on) = switch(home, Gate::AskFirst) {
+        experiments.ask_first = on;
+    }
+    if let Some(on) = switch(home, Gate::CiRunners) {
+        experiments.ci_runners = on;
+    }
+    if let Some(on) = switch(home, Gate::TcpShares) {
+        experiments.tcp_shares = on;
+    }
+    if let Some(on) = switch(home, Gate::Mobile) {
+        experiments.mobile = on;
+    }
     experiments
 }
 
@@ -2204,7 +2216,11 @@ fn sync_experiments_to_home(
 ) -> std::io::Result<()> {
     use cua_spaces::experiments::{Gate, set_switch};
     set_switch(home, Gate::SecureSpaces, experiments.secure_spaces)?;
-    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)
+    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
+    set_switch(home, Gate::AskFirst, experiments.ask_first)?;
+    set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
+    set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
+    set_switch(home, Gate::Mobile, experiments.mobile)
 }
 
 /// Writes the settings file, and keeps the experiments the daemon enforces
@@ -2227,6 +2243,7 @@ mod experiment_sync_tests {
         // Nothing kept: the app's own file decides.
         let mine = AppExperiments {
             child_spaces: true,
+            ci_runners: true,
             ..Default::default()
         };
         assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
@@ -2238,7 +2255,7 @@ mod experiment_sync_tests {
         )
         .unwrap();
         let seen = sync_experiments_from_home(mine, home.path());
-        assert!(seen.secure_spaces && seen.child_spaces);
+        assert!(seen.secure_spaces && seen.child_spaces && seen.ci_runners);
         // The app's switches land in the home for the daemon.
         sync_experiments_to_home(&seen, home.path()).unwrap();
         assert_eq!(
@@ -2248,15 +2265,19 @@ mod experiment_sync_tests {
             ),
             Some(true)
         );
-        // Only the daemon's two experiments are kept there.
+        // Only the daemon's experiments are kept there.
         let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            kept.iter()
-                .all(|n| n == "secure-spaces" || n == "child-spaces"),
+            kept.iter().all(|n| n == "secure-spaces"
+                || n == "child-spaces"
+                || n == "ask-first"
+                || n == "ci-runners"
+                || n == "tcp-shares"
+                || n == "mobile"),
             "{kept:?}"
         );
     }

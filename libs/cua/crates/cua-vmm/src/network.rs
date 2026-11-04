@@ -20,12 +20,18 @@
 //!    `addrtype LOCAL`). Only the `localhost` preset opens the aliases, and
 //!    only on the ports it lists. A custom allow does not lift these, so a
 //!    child can never reach the host past its parent through a numeric
-//!    allow. Then the Space's own tree is allowed.
+//!    allow.
 //! 4. The user's allow list, then deny list (an allow is an exception to a
-//!    deny, as before). User rules never beat layers 1 to 3.
-//! 5. Default denies: private, link-local, CGNAT, loopback, multicast and
+//!    deny, as before). User rules never beat layers 1 to 3. A child's
+//!    lists hold its parent's denies too ([`NetworkSettings::intersect`]).
+//! 5. The Space's own tree is allowed. After the user's lists: an explicit
+//!    deny that names a member of the tree (or its whole range) blocks it;
+//!    a deny that matches nothing in the tree changes nothing. On a tree's
+//!    own bridge, members talk frame to frame, so those denies are enforced
+//!    on the bridge as well ([`crate::egress::engine_ruleset`]).
+//! 6. Default denies: private, link-local, CGNAT, loopback, multicast and
 //!    other reserved ranges (`lan` lifts the private and link-local ones).
-//! 6. Default action: accept, or drop for `none` and `custom` from `none`.
+//! 7. Default action: accept, or drop for `none` and `custom` from `none`.
 //!
 //! **Trees.** A child Space's settings are the intersection of its own and
 //! its parent's ([`NetworkSettings::intersect`]): it can only tighten.
@@ -130,6 +136,146 @@ impl std::fmt::Display for NetworkPreset {
 /// Most ports the `localhost` preset lists.
 pub const MAX_LOCALHOST_PORTS: usize = 64;
 
+/// Where a Space's internet traffic leaves ("Exit through"): this computer
+/// (the hotspot), another Space of its tree, or a SOCKS5 proxy. `None` on
+/// [`NetworkSettings::via`] is the Space's own network (the default).
+///
+/// With an exit the Space reaches the internet only through it: its own
+/// direct internet is closed ([`compile`] drops it), the exit applies the
+/// Space's rules first ([`NetworkSettings::exit_rules`]), and when the exit
+/// goes away the Space has no internet (fail closed). Its tree, its
+/// resolver and the host ports it may reach stay direct.
+/// ([`NetworkSettings::exit_settings`] are the rules the exit applies.)
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum EgressVia {
+    /// This computer's network (what the hotspot gives a Space).
+    ThisMachine,
+    /// Another Space of the tree, by id (it must offer the `exit` feature).
+    Space(String),
+    /// A SOCKS5 proxy: `socks5://[user:pass@]host:port` (`socks5h://` too).
+    Socks5(String),
+}
+
+impl EgressVia {
+    /// The word: `this-computer`, `space:<id>` or the proxy's URL.
+    pub fn as_word(&self) -> String {
+        match self {
+            EgressVia::ThisMachine => "this-computer".into(),
+            EgressVia::Space(id) => format!("space:{id}"),
+            EgressVia::Socks5(url) => url.clone(),
+        }
+    }
+
+    /// Parses [`EgressVia::as_word`]'s words (`hotspot` and `this` mean this
+    /// machine). `internet` or empty is `None`: the Space's own network.
+    pub fn parse(word: &str) -> Result<Option<EgressVia>, PolicyError> {
+        let w = word.trim();
+        match w.to_ascii_lowercase().as_str() {
+            "" | "internet" | "direct" => return Ok(None),
+            "this-computer" | "this-machine" | "this" | "hotspot" | "this computer" => {
+                return Ok(Some(EgressVia::ThisMachine));
+            }
+            _ => {}
+        }
+        if let Some(id) = w.strip_prefix("space:") {
+            let id = id.trim();
+            if id.is_empty() {
+                return Err(PolicyError(
+                    "space: names the exit Space (space:<id or name>)".into(),
+                ));
+            }
+            return Ok(Some(EgressVia::Space(id.to_string())));
+        }
+        let lower = w.to_ascii_lowercase();
+        if lower.starts_with("socks5://") || lower.starts_with("socks5h://") {
+            socks5_target(w)?;
+            return Ok(Some(EgressVia::Socks5(w.to_string())));
+        }
+        Err(PolicyError(format!(
+            "exit {w:?}: internet, this-computer, space:<name> or socks5://host:port"
+        )))
+    }
+
+    /// One plain line ("This computer", "the Space research-swarm",
+    /// "SOCKS5 proxy 10.0.0.5:1080"), credentials left out.
+    pub fn label(&self) -> String {
+        match self {
+            EgressVia::ThisMachine => "This computer".into(),
+            EgressVia::Space(id) => format!("the Space {}", id.rsplit(':').next().unwrap_or(id)),
+            EgressVia::Socks5(url) => match socks5_target(url) {
+                Ok(t) => format!("SOCKS5 proxy {}:{}", t.host, t.port),
+                Err(_) => "a SOCKS5 proxy".into(),
+            },
+        }
+    }
+}
+
+impl TryFrom<String> for EgressVia {
+    type Error = PolicyError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        EgressVia::parse(&s)?.ok_or_else(|| PolicyError("an exit, not internet".into()))
+    }
+}
+
+impl From<EgressVia> for String {
+    fn from(v: EgressVia) -> String {
+        v.as_word()
+    }
+}
+
+/// A SOCKS5 proxy's address and credentials, from its URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Socks5Target {
+    pub host: String,
+    pub port: u16,
+    pub user: Option<String>,
+    pub pass: Option<String>,
+    /// `socks5h`: names are resolved by the proxy (always, for this exit).
+    pub remote_dns: bool,
+}
+
+/// Parses `socks5://[user:pass@]host:port`.
+pub fn socks5_target(url: &str) -> Result<Socks5Target, PolicyError> {
+    let bad = || PolicyError(format!("{url:?}: socks5://[user:pass@]host:port"));
+    let (scheme, rest) = url.split_once("://").ok_or_else(bad)?;
+    let remote_dns = match scheme.to_ascii_lowercase().as_str() {
+        "socks5" => false,
+        "socks5h" => true,
+        _ => return Err(bad()),
+    };
+    let rest = rest.trim_end_matches('/');
+    let (creds, hostport) = match rest.rsplit_once('@') {
+        Some((c, h)) => (Some(c), h),
+        None => (None, rest),
+    };
+    let (host, port) = if let Some(r) = hostport.strip_prefix('[') {
+        let (h, p) = r.split_once("]:").ok_or_else(bad)?;
+        (h.to_string(), p)
+    } else {
+        let (h, p) = hostport.rsplit_once(':').ok_or_else(bad)?;
+        (h.to_string(), p)
+    };
+    let port: u16 = port.parse().ok().filter(|p| *p > 0).ok_or_else(bad)?;
+    if host.is_empty() || host.contains('/') {
+        return Err(bad());
+    }
+    let (user, pass) = match creds {
+        Some(c) => {
+            let (u, p) = c.split_once(':').unwrap_or((c, ""));
+            (Some(u.to_string()), Some(p.to_string()))
+        }
+        None => (None, None),
+    };
+    Ok(Socks5Target {
+        host,
+        port,
+        user,
+        pass,
+        remote_dns,
+    })
+}
+
 /// A Space's network settings: stored with the Space, carried to its
 /// runtime in the start spec, and compiled to [`Rules`] by [`compile`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +302,11 @@ pub struct NetworkSettings {
     /// who and when (`user@2026-10-26T12:00:00Z`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widened_by: Option<String>,
+    /// Where its internet traffic leaves ([`EgressVia`]); `None`: its own
+    /// network. A child takes its parent's and can't leave it
+    /// ([`NetworkSettings::intersect`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<EgressVia>,
 }
 
 impl NetworkSettings {
@@ -180,7 +331,18 @@ impl NetworkSettings {
     /// Checks the settings: the lists parse, `custom_base` is `internet` or
     /// `none`, and `localhost` names its ports (or says all).
     pub fn validate(&self) -> Result<(), PolicyError> {
-        self.custom.parse()?;
+        // Names (`example.com`, `*.example.com`) are checked by
+        // `is_domain`; everything else must be an address.
+        let (addresses, domains) = self.custom.split_domains();
+        addresses.parse()?;
+        if domains.allow.len() > crate::egress::MAX_ENTRIES
+            || domains.deny.len() > crate::egress::MAX_ENTRIES
+        {
+            return Err(PolicyError(format!(
+                "at most {} names in a list",
+                crate::egress::MAX_ENTRIES
+            )));
+        }
         if !matches!(
             self.custom_base,
             NetworkPreset::Internet | NetworkPreset::None
@@ -219,7 +381,26 @@ impl NetworkSettings {
                 self.localhost_ports.len()
             )));
         }
+        if self.via.is_some() && self.preset == NetworkPreset::None {
+            return Err(PolicyError(
+                "no network has no exit; pick another preset to exit through".into(),
+            ));
+        }
+        if let Some(EgressVia::Socks5(url)) = &self.via {
+            socks5_target(url)?;
+        }
         Ok(())
+    }
+
+    /// The rules the exit applies to each connection it makes for the
+    /// Space ([`EgressVia`]): the Space's own settings as if it had no exit,
+    /// lists and preset included. Its tree, the host and the platform's
+    /// denies stay closed there too.
+    pub fn exit_settings(&self) -> NetworkSettings {
+        NetworkSettings {
+            via: None,
+            ..self.clone()
+        }
     }
 
     /// What the preset starts from, `custom` resolved: `none` for `none`
@@ -303,7 +484,7 @@ impl NetworkSettings {
             }
             NetworkPreset::Internet | NetworkPreset::None | NetworkPreset::Custom => {}
         }
-        if let Ok(rules) = self.custom.parse() {
+        if let Ok(rules) = self.custom.split_domains().0.parse() {
             for r in rules.rules.iter().filter(|r| r.accept) {
                 let lan = default_lan().iter().any(|n| n.overlaps(&r.net));
                 let reserved = default_reserved().iter().any(|n| n.overlaps(&r.net));
@@ -318,8 +499,17 @@ impl NetworkSettings {
     }
 
     /// One plain line for people ("Internet only", "Allow this computer's
-    /// localhost (ports 5432, 3000)").
+    /// localhost (ports 5432, 3000)", "Internet only, through This
+    /// machine").
     pub fn summary(&self) -> String {
+        let base = self.preset_summary();
+        match &self.via {
+            Some(v) => format!("{base}, through {}", v.label()),
+            None => base,
+        }
+    }
+
+    fn preset_summary(&self) -> String {
         match self.preset {
             NetworkPreset::Localhost if self.all_localhost_ports => {
                 format!("{} (all ports)", self.preset.label())
@@ -373,23 +563,41 @@ impl NetworkSettings {
             }
         }
         let ctx = NetworkContext::default();
-        let mine = compile_mode(self, &ctx, Mode::Secure).unwrap_or_else(|_| drop_all());
-        let theirs = compile_mode(parent, &ctx, Mode::Secure).unwrap_or_else(|_| drop_all());
-        let keep = |list: &[String], other: &Rules| -> Vec<String> {
-            list.iter()
-                .filter(|e| match Net::parse(e) {
-                    Ok(net) => other.allows_net(&net),
-                    // `all` (both families): kept only if the other side
-                    // allows both.
-                    Err(_) => ["0.0.0.0/0", "::/0"]
-                        .iter()
-                        .all(|a| other.allows_net(&Net::parse(a).expect("valid"))),
-                })
-                .cloned()
-                .collect()
+        let compiled = |s: &NetworkSettings| {
+            compile_named(s, &ctx, Mode::Secure)
+                .map(|(r, _)| r)
+                .unwrap_or_else(|_| drop_all())
         };
-        let mut allow = keep(&self.custom.allow, &theirs);
-        for e in keep(&parent.custom.allow, &mine) {
+        let mine = compiled(self);
+        let theirs = compiled(parent);
+        // A name stays allowed only where the other side lets it through
+        // too: it names it, or it reaches the internet and doesn't block it.
+        let name_ok = |other: &NetworkSettings, name: &str| {
+            let (_, d) = other.custom.split_domains();
+            let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
+            if d.deny.contains(&name) {
+                false
+            } else {
+                d.allow.contains(&name) || !other.default_drops()
+            }
+        };
+        let keep =
+            |list: &[String], other: &Rules, other_settings: &NetworkSettings| -> Vec<String> {
+                list.iter()
+                    .filter(|e| match Net::parse(e) {
+                        _ if crate::egress::is_domain(e) => name_ok(other_settings, e),
+                        Ok(net) => other.allows_net(&net),
+                        // `all` (both families): kept only if the other side
+                        // allows both.
+                        Err(_) => ["0.0.0.0/0", "::/0"]
+                            .iter()
+                            .all(|a| other.allows_net(&Net::parse(a).expect("valid"))),
+                    })
+                    .cloned()
+                    .collect()
+            };
+        let mut allow = keep(&self.custom.allow, &theirs, parent);
+        for e in keep(&parent.custom.allow, &mine, self) {
             if !allow.contains(&e) {
                 allow.push(e);
             }
@@ -402,6 +610,10 @@ impl NetworkSettings {
         }
         if out.preset != P::None {
             out.custom = EgressPolicy { allow, deny };
+            // The exit: the parent's, which a child can't leave (a parent
+            // sends its whole tree through a proxy Space); else the child's
+            // own.
+            out.via = parent.via.clone().or_else(|| self.via.clone());
         }
         out
     }
@@ -709,6 +921,72 @@ impl Mode {
     }
 }
 
+/// Whether a Space with `settings` (`None`: none recorded) is held to the
+/// secure default: it is while Secure Spaces is on ([`Mode::from_env`]),
+/// unless the user chose No protection.
+pub fn protects(settings: Option<&NetworkSettings>) -> bool {
+    Mode::from_env() == Mode::Secure
+        && settings.is_none_or(|s| s.preset != NetworkPreset::Unprotected)
+}
+
+/// Why rules by name are refused where the host's firewall enforces a
+/// Space's network: it judges addresses, and no resolver of ours stands
+/// between the guest and its answers there yet.
+pub const DOMAINS_GATEWAY_ONLY: &str = "rules by name (example.com) are kept only by the Cua \
+     network gateway (macOS microVMs and VMs, QEMU on macOS and Windows); on this runtime use \
+     addresses or CIDRs";
+
+/// [`compile_mode`] for a runtime behind the Cua network gateway, which is
+/// the guest's resolver and so keeps rules by name too: the address rules,
+/// and the names (empty under the old default).
+pub fn compile_named(
+    settings: &NetworkSettings,
+    ctx: &NetworkContext,
+    mode: Mode,
+) -> Result<(Rules, crate::egress::Domains), PolicyError> {
+    let (addresses, domains) = settings.custom.split_domains();
+    let plain = NetworkSettings {
+        custom: addresses,
+        ..settings.clone()
+    };
+    let rules = compile_mode(&plain, ctx, mode)?;
+    Ok((
+        rules,
+        if mode == Mode::Secure {
+            domains
+        } else {
+            Default::default()
+        },
+    ))
+}
+
+/// [`vm_rules`] for a VM behind the Cua network gateway: with the names.
+pub fn vm_rules_named(
+    settings: Option<&NetworkSettings>,
+    legacy: Option<&EgressPolicy>,
+    restrict_network: bool,
+    ctx: &NetworkContext,
+) -> Result<(Rules, crate::egress::Domains), PolicyError> {
+    match Mode::from_env() {
+        Mode::Secure => {
+            let s = match settings {
+                Some(s) => s.clone(),
+                None => {
+                    NetworkSettings::migrate(&legacy.cloned().unwrap_or_default(), restrict_network)
+                }
+            };
+            compile_named(&s, ctx, Mode::Secure)
+        }
+        Mode::Legacy => Ok((
+            match legacy {
+                Some(p) => p.parse()?,
+                None => Rules::default(),
+            },
+            Default::default(),
+        )),
+    }
+}
+
 /// Compiles `settings` for a runtime whose facts are `ctx`, under the mode
 /// the environment says ([`Mode::from_env`]).
 pub fn compile(settings: &NetworkSettings, ctx: &NetworkContext) -> Result<Rules, PolicyError> {
@@ -722,10 +1000,21 @@ pub fn compile_mode(
     mode: Mode,
 ) -> Result<Rules, PolicyError> {
     settings.validate()?;
-    let user = settings.custom.parse()?;
+    let (addresses, domains) = settings.custom.split_domains();
+    if !domains.is_empty() {
+        return Err(PolicyError(DOMAINS_GATEWAY_ONLY.into()));
+    }
+    let mut user = addresses.parse()?;
+    // With an exit, the Space's internet goes only through it: the user's
+    // allows are the exit's to apply ([`NetworkSettings::exit_settings`]);
+    // its denies still close a destination here too.
+    let exits = settings.via.is_some();
+    if exits {
+        user.rules.retain(|r| !r.accept);
+    }
     if mode == Mode::Legacy {
         let mut rules = user;
-        if settings.default_drops() {
+        if settings.default_drops() || exits {
             rules.rules.extend(drop_all().rules);
         }
         return Ok(rules);
@@ -787,15 +1076,16 @@ pub fn compile_mode(
         // Every address of the enforcing host, whatever it is.
         r.push(Rule::host_local(false, Reason::DefaultHost));
     }
-    // The Space's own tree.
+    // 4. The user's lists: an explicit deny beats the tree's own allow.
+    r.extend(user.rules);
+    // 5. The Space's own tree (`custom` from `none` keeps it: own tree
+    //    only, no internet).
     if !none {
         for n in &ctx.tree {
             r.push(Rule::net(*n, true, Reason::Tree));
         }
     }
-    // 4. The user's lists.
-    r.extend(user.rules);
-    // 5. Default denies.
+    // 6. Default denies.
     if !unprotected {
         for n in default_reserved() {
             r.push(Rule::net(n, false, Reason::DefaultReserved));
@@ -806,9 +1096,16 @@ pub fn compile_mode(
             }
         }
     }
-    // 6. The default action.
+    // 7. The default action. With an exit, nothing else leaves directly:
+    //    if the exit goes away the Space has no internet (fail closed).
     if settings.default_drops() {
         r.extend(drop_all().rules);
+    } else if exits {
+        r.extend(
+            all_nets()
+                .into_iter()
+                .map(|n| Rule::net(n, false, Reason::DefaultExit)),
+        );
     }
     Ok(Rules { rules: r })
 }
@@ -884,13 +1181,16 @@ pub const ENGINE_POINT: &str = "nftables in the container engine's own network n
 /// The namespace point of the Linux VMs.
 pub const NS_POINT: &str = "iptables in the network namespace pasta creates around the VM process";
 
-const WHY_VZ: &str = "Apple's microVM network can't be filtered per Space yet";
 const WHY_QEMU: &str = "QEMU on this system can't filter one VM's connections yet";
 /// Why a macOS VM (Lume) is refused under the secure default.
 pub const WHY_LUME: &str = "macOS VMs can't protect your network yet, and Cua reaches a macOS \
      VM over its network, so it can't start without one. Choose No protection to start it.";
-const WHY_CONTAINERIZATION: &str = "Apple's Containerization can't protect your network yet. \
-     Use the standard microVM (the default) or choose No protection.";
+/// Why Apple's Containerization is refused under the secure default.
+pub const WHY_CONTAINERIZATION: &str = "Apple's Containerization can't protect your network: its \
+     guests sit on Apple's vmnet network, which only pf can filter (pf needs root), and a firewall \
+     inside the guest would not hold against the Space's own root. Use the Cua microVM monitor \
+     (`--runtime vz`: cua-vz and cua-microvm-init, which the Cua Spaces app ships next to `cua`) \
+     or choose No protection.";
 const WHY_QEMU_DOCKER: &str = "QEMU in a container isn't supported by this build";
 const WHY_FIRECRACKER_OS: &str = "Firecracker microVMs run on Linux only";
 const WHY_VZ_OS: &str = "Apple microVMs run on a Mac only";
@@ -932,11 +1232,19 @@ pub fn network_support(kind: BackendKind, os: &str, placement: Placement) -> Net
             why: WHY_FIRECRACKER_OS,
         },
         BackendKind::Qemu if linux => Enforced { point: NS_POINT },
+        BackendKind::Qemu if mac || os == "windows" => Enforced {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Qemu => NoNetworkOnly { why: WHY_QEMU },
-        BackendKind::Vz if mac => NoNetworkOnly { why: WHY_VZ },
+        BackendKind::Vz if mac => Enforced {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Vz => Refuse { why: WHY_VZ_OS },
-        // Not "no network only": Cua reaches a macOS VM over its network.
-        BackendKind::Lume if mac => Refuse { why: WHY_LUME },
+        // Behind its own gateway; Cua reaches it through the gateway's
+        // forwards.
+        BackendKind::Lume if mac => Enforced {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Lume => Refuse { why: WHY_MAC_OS },
         BackendKind::Containerization => Refuse {
             why: WHY_CONTAINERIZATION,

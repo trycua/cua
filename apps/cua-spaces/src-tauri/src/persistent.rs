@@ -23,6 +23,11 @@ pub const TOOLS: &[&str] = &[
     "agent_keys.set",
     "agent_keys.remove",
     "agent_keys.use",
+    // Settings → Connections → GitHub: the sign-in an approved push uses (names, accounts and scopes; never a token).
+    "github.status",
+    "github.rescan",
+    "github.use",
+    "github.enable",
     "persistent_agent_list",
     "persistent_agent_save",
     "agent_pause",

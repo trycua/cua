@@ -57,15 +57,27 @@ fn pacman_owns_path(path: &std::path::Path, pacman: &std::path::Path) -> bool {
     use std::process::Stdio;
     use std::time::{Duration, Instant};
 
-    let Ok(mut child) = Command::new(pacman)
-        .args(["-Qoq", "--"])
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
+    // A just-written executable is briefly ETXTBSY while a concurrent fork
+    // still holds its write descriptor; that is not an answer, so retry.
+    let mut attempts = 0;
+    let mut child = loop {
+        match Command::new(pacman)
+            .args(["-Qoq", "--"])
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => break child,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
+            {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return false,
+        }
     };
     let deadline = Instant::now() + Duration::from_millis(500);
     loop {

@@ -113,22 +113,41 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     pid: Option<i32>,
     deadline: Instant,
 ) -> Result<()> {
-    let mut focused: Option<IpcWindow> = None;
+    // The last focus niri reported, `None` until a read-back answers.
+    let mut focused: Option<Option<IpcWindow>> = None;
     if interaction::confirm(deadline, |deadline| {
-        focused = ipc.query_until(Request::FocusedWindow, deadline)?;
+        let window: Option<IpcWindow> = match ipc.query_until(Request::FocusedWindow, deadline) {
+            Ok(window) => window,
+            // The read-back shares the confirm deadline: one it cut off
+            // means niri did not confirm in time, not that IPC failed.
+            Err(error) if timed_out(&error) => return anyhow::Ok(false),
+            Err(error) => return Err(error),
+        };
+        let observed = window.as_ref().map(|window| (window.pid, window.id));
+        focused = Some(window);
         anyhow::Ok(interaction::policy::focused(
             &(pid, id),
-            &interaction::facts::Fact::Known(
-                focused.as_ref().map(|window| (window.pid, window.id)),
-            ),
+            &interaction::facts::Fact::Known(observed),
         ))
     })? {
         return Ok(());
     }
     Err(foreground_unavailable(format!(
         "niri did not confirm focus on window {id} (focused: {})",
-        focused.map_or_else(|| "none".to_owned(), |focused| focused.id.to_string())
+        match focused {
+            None => "unknown".to_owned(),
+            Some(None) => "none".to_owned(),
+            Some(Some(focused)) => focused.id.to_string(),
+        }
     )))
+}
+
+fn timed_out(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::TimedOut)
+    })
 }
 
 /// Focus an exact niri window for input, confirmed by read-back.
@@ -672,6 +691,65 @@ mod tests {
         let fake = fake.lock().unwrap();
         assert!(fake.active(1) && !fake.active(2));
         assert_eq!(fake.focused(), Some(5));
+    }
+
+    #[test]
+    fn a_read_back_the_deadline_cuts_off_still_refuses_as_unconfirmed() {
+        // niri answers two read-backs without the window, then is too slow
+        // for the rest of the budget.
+        let mut ipc = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    for _ in 0..2 {
+                        let deadline = Instant::now() + Duration::from_secs(2);
+                        if !matches!(lines.next(deadline), Ok(Some(_))) {
+                            return;
+                        }
+                        let reply = b"{\"Ok\":{\"FocusedWindow\":null}}\n";
+                        if lines.stream.write_all(reply).is_err() {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut ipc,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: none)"
+        );
+        // Without any answer, nothing is known about niri's focus.
+        let mut held = Vec::new();
+        let mut silent = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                held.push(server);
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut silent,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: unknown)"
+        );
     }
 
     #[test]

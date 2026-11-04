@@ -18,26 +18,54 @@ use std::path::{Component, Path};
 use cua_proto::env::v1 as pb;
 use serde::{Deserialize, Serialize};
 
+use crate::registry::VolumeSetting;
 use crate::{Error, Result, Spaces};
 
 /// Most volumes one Space mounts.
 pub const MAX_MOUNTS: usize = 32;
 
 /// A named volume mounted in a Space.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Under Secure Spaces mounts are read-only unless asked for read-write: a
+/// field left out of a request, and [`VolumeMount::new`], mean read-only.
+/// A mount a Space saved before this was the rule keeps the mode it was
+/// saved with. Without the experiment a mount that does not say is
+/// read-write, as it always was.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VolumeMount {
     /// The volume: 1 to 63 of `a-z`, `0-9`, `.`, `_`, `-`, starting with a
     /// letter or digit.
     pub name: String,
     /// Where it appears in the Space (absolute).
     pub path: String,
-    /// Mounted read-only.
-    #[serde(default)]
+    /// Mounted read-only (the default under Secure Spaces; `false` is the
+    /// explicit `:rw`).
+    #[serde(default = "read_only_by_default")]
     pub read_only: bool,
     /// A folder inside the volume to mount instead of all of it (relative;
     /// no `..`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub subpath: String,
+}
+
+fn read_only_by_default() -> bool {
+    default_read_only(cua_vmm::network::Mode::from_env())
+}
+
+/// Whether a mount that does not say is read-only, under `mode`.
+pub fn default_read_only(mode: cua_vmm::network::Mode) -> bool {
+    mode == cua_vmm::network::Mode::Secure
+}
+
+impl Default for VolumeMount {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            path: String::new(),
+            read_only: read_only_by_default(),
+            subpath: String::new(),
+        }
+    }
 }
 
 /// Whether `name` is a valid volume name.
@@ -58,13 +86,20 @@ pub fn folder_of(name: &str) -> String {
 }
 
 impl VolumeMount {
-    /// A mount of all of `name` at `path`.
+    /// A read-only mount of all of `name` at `path` ([`Self::writable`]
+    /// makes it read-write).
     pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             path: path.into(),
             ..Default::default()
         }
+    }
+
+    /// This mount, read-write.
+    pub fn writable(mut self) -> Self {
+        self.read_only = false;
+        self
     }
 
     /// The folder this mount covers, as a Cua Volume key:
@@ -235,6 +270,54 @@ impl Spaces {
         Ok(out)
     }
 
+    /// The id the Cua Volume names `space`'s folder after: its id and its
+    /// immutable uid (`local:work--0a1b2c3d`). Under Secure Spaces a Space
+    /// from before uids gets one now, and its folder is moved on its next
+    /// attach. Without the experiment a Space keeps the folder it has: the
+    /// bare id, unless it was already moved to one with its uid.
+    pub fn volume_space_id(&self, space: &str) -> Result<String> {
+        let id = self.resolve(space)?.to_string();
+        if crate::network::Mode::from_env() == crate::network::Mode::Legacy {
+            return Ok(match self.inner.registry.meta(&id) {
+                Some(m) if !m.uid.is_empty() && !m.volume_legacy => m.volume_id(&id),
+                _ => id,
+            });
+        }
+        let uid = self.inner.registry.ensure_uid(&id)?;
+        Ok(crate::registry::volume_id_of(&id, &uid))
+    }
+
+    /// What the Space's Volume shows it ([`VolumeSetting`]).
+    pub fn volume_setting(&self, space: &str) -> VolumeSetting {
+        self.resolve(space)
+            .ok()
+            .and_then(|id| self.inner.registry.meta(&id.to_string()))
+            .map(|m| m.volume)
+            .unwrap_or_default()
+    }
+
+    /// Sets whether the Space gets its own Volume folder, and applies it
+    /// now: `off` unmounts the Volume (named volumes it mounted stay), `own`
+    /// mounts it.
+    pub async fn set_volume_setting(&self, space: &str, setting: VolumeSetting) -> Result<()> {
+        crate::clipboard::require_secure("The Volume setting")?;
+        let id = self.resolve(space)?.to_string();
+        self.inner
+            .registry
+            .update_meta(&id, |m| m.volume = setting)?;
+        // Without the Cua Volume extension there is nothing mounted to
+        // change; the setting applies whenever it is there.
+        if self.inner.extensions.iter().any(|e| e.name() == "drive") {
+            self.call_extension(
+                "Cua Volume",
+                "volume.refresh",
+                serde_json::json!({ "space": id }),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Remembers the mounts of a Space about to be registered (its record
     /// does not exist yet; the volume attaches the moment it connects).
     pub(crate) fn expect_volumes(&self, id: &str, mounts: Vec<VolumeMount>) {
@@ -319,7 +402,25 @@ mod tests {
         let b = binds(&[sub]);
         assert_eq!(b[0].source, "volumes/shared/data/in/");
         assert_eq!(b[0].target, "/mnt/s");
-        assert!(!b[0].read_only);
+        // A mount made here says its mode; `writable` is read-write.
+        assert!(!m("shared", "/mnt/s").writable().read_only);
+    }
+
+    #[test]
+    fn a_request_without_a_mode_is_read_only_and_a_saved_rw_mount_stays() {
+        use cua_vmm::network::Mode;
+        // Under Secure Spaces a request without a mode is read-only; without
+        // it, read-write as it always was.
+        assert!(default_read_only(Mode::Secure));
+        assert!(!default_read_only(Mode::Legacy));
+        // What an older version saved has `read_only: false` spelled out.
+        let saved: VolumeMount =
+            serde_json::from_str(r#"{"name":"shared","path":"/mnt/s","read_only":false}"#).unwrap();
+        assert!(!saved.read_only);
+        let asked: VolumeMount =
+            serde_json::from_str(r#"{"name":"shared","path":"/mnt/s","read_only":true}"#).unwrap();
+        assert!(binds(&[asked])[0].read_only);
+        assert!(!binds(&[saved])[0].read_only);
     }
 
     #[test]

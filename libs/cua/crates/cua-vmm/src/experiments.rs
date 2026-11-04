@@ -24,17 +24,45 @@ pub enum Gate {
     /// Child Spaces: a Space makes Spaces of its own through a channel only
     /// it can reach, inside a budget for its tree (`cua spaces children`).
     ChildSpaces,
+    /// Ask first: what an agent does that leaves its Space (a push to
+    /// GitHub) waits for a card only its owner can answer.
+    AskFirst,
+    /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`).
+    CiRunners,
+    /// Public TCP shares: a raw TCP service in a Space (a game server) at a
+    /// public address (`cua share --tcp`).
+    TcpShares,
+    /// Mobile: the Cua Spaces phone app. The daemon answers a phone's tools
+    /// (starting a task, tool rows, changes and diffs, approval scopes) and
+    /// reports events for its push alerts.
+    Mobile,
+    /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
+    /// AWS x86 pool host with nested KVM.
+    WindowsKvm,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
-    pub const ALL: &'static [Gate] = &[Gate::SecureSpaces, Gate::ChildSpaces];
+    pub const ALL: &'static [Gate] = &[
+        Gate::SecureSpaces,
+        Gate::ChildSpaces,
+        Gate::AskFirst,
+        Gate::CiRunners,
+        Gate::TcpShares,
+        Gate::Mobile,
+        Gate::WindowsKvm,
+    ];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
             Gate::SecureSpaces => "secure-spaces",
             Gate::ChildSpaces => "child-spaces",
+            Gate::AskFirst => "ask-first",
+            Gate::CiRunners => "ci-runners",
+            Gate::TcpShares => "tcp-shares",
+            Gate::Mobile => "mobile",
+            Gate::WindowsKvm => "windows-kvm",
         }
     }
 
@@ -43,6 +71,11 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "secure_spaces",
             Gate::ChildSpaces => "child_spaces",
+            Gate::AskFirst => "ask_first",
+            Gate::CiRunners => "ci_runners",
+            Gate::TcpShares => "tcp_shares",
+            Gate::Mobile => "mobile",
+            Gate::WindowsKvm => "windows_kvm",
         }
     }
 
@@ -57,6 +90,11 @@ impl Gate {
         match self {
             Gate::SecureSpaces => "Secure Spaces",
             Gate::ChildSpaces => "Child Spaces",
+            Gate::AskFirst => "Ask first",
+            Gate::CiRunners => "CI runners",
+            Gate::TcpShares => "Public TCP shares",
+            Gate::Mobile => "Phone app",
+            Gate::WindowsKvm => "Windows on KVM",
         }
     }
 
@@ -68,6 +106,21 @@ impl Gate {
             }
             Gate::ChildSpaces => {
                 "A Space can make Spaces of its own, inside a budget, and keep a command running."
+            }
+            Gate::AskFirst => {
+                "An agent asks you on a card before anything leaves its Space, such as a push to GitHub, and the host does it only after your answer."
+            }
+            Gate::CiRunners => {
+                "Run GitHub Actions jobs in a fresh Space each, on your computers, with `cua ci`."
+            }
+            Gate::TcpShares => {
+                "Share a raw TCP service in a Space, such as a game server, at a public address."
+            }
+            Gate::Mobile => {
+                "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
+            }
+            Gate::WindowsKvm => {
+                "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
             }
         }
     }
@@ -108,6 +161,50 @@ pub fn set_enabled(gate: Gate, on: Option<bool>) {
         Some(true) => 2,
     };
     GATE_OVERRIDES[gate.slot()].store(v, Ordering::Relaxed);
+}
+
+/// Holds `gate` on or off until dropped, then follows the environment and the
+/// file again. The override is process-wide and test harnesses run tests on
+/// parallel threads, so holders of the same gate take turns: a test that
+/// flips a gate takes one of these instead of calling [`set_enabled`].
+#[must_use = "the override ends when this is dropped"]
+pub struct Override {
+    gate: Gate,
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
+
+/// One turn lock per gate (as many as [`GATE_OVERRIDES`]).
+static GATE_TURNS: [std::sync::Mutex<()>; 8] = [
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+    std::sync::Mutex::new(()),
+];
+
+/// Waits for `gate`'s turn, then holds it `on` (see [`Override`]).
+pub fn hold(gate: Gate, on: bool) -> Override {
+    let turn = GATE_TURNS[gate.slot()]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    set_enabled(gate, Some(on));
+    Override { gate, _turn: turn }
+}
+
+impl Override {
+    /// Switches the held gate without giving up the turn.
+    pub fn set(&self, on: bool) {
+        set_enabled(self.gate, Some(on));
+    }
+}
+
+impl Drop for Override {
+    fn drop(&mut self) {
+        set_enabled(self.gate, None);
+    }
 }
 
 /// What [`EXPERIMENTS_ENV`] says about `gate`: `Some(true)` when listed,
@@ -194,6 +291,21 @@ mod tests {
     }
 
     #[test]
+    fn windows_kvm_is_a_named_experiment_and_off_by_default() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(Gate::parse("windows_kvm"), Some(Gate::WindowsKvm));
+        assert_eq!(Gate::WindowsKvm.name(), "windows-kvm");
+        assert!(Gate::ALL.contains(&Gate::WindowsKvm));
+        assert!(
+            !super::enabled_in(home.path(), Gate::WindowsKvm)
+                || super::env_says(
+                    std::env::var(EXPERIMENTS_ENV).ok().as_deref(),
+                    Gate::WindowsKvm
+                ) == Some(true)
+        );
+    }
+
+    #[test]
     fn the_environment_list_names_experiments_on_or_off() {
         let g = Gate::SecureSpaces;
         assert_eq!(super::env_says(None, g), None);
@@ -207,5 +319,7 @@ mod tests {
         assert_eq!(super::env_says(Some("-secure_spaces"), g), Some(false));
         assert_eq!(Gate::parse("SECURE_SPACES"), Some(g));
         assert_eq!(Gate::parse("nope"), None);
+        assert_eq!(Gate::parse("Mobile"), Some(Gate::Mobile));
+        assert_eq!(Gate::Mobile.id(), "mobile");
     }
 }

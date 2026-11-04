@@ -509,7 +509,8 @@ pub const CREATE_PHASES: &[&str] = &[
 /// too coarse (`cua_create_failure::retry::Subclass`): a local runtime that
 /// did not start this time, Cua's service that did not take the create, an
 /// image download that stopped partway, macOS Local Network privacy off, a
-/// VPN routing the VM's network away. `none` when there is nothing finer.
+/// VPN routing the VM's network away, a machine with no room (held by Cua
+/// VMs, or by other programs). `none` when there is nothing finer.
 pub const ERROR_SUBCLASSES: &[&str] = &[
     "none",
     "runtime_start",
@@ -517,6 +518,58 @@ pub const ERROR_SUBCLASSES: &[&str] = &[
     "pull_interrupted",
     "local_network_denied",
     "local_network_vpn",
+    "capacity_vms",
+    "capacity_other",
+    // The built-in runtime (Lume) or a VM, split by what failed: its
+    // download, checksum or unpacking; its signature; a `lume serve` that
+    // started and never answered; one older than macOS Spaces need; an
+    // error answer from its API; a VM that never started or stopped while
+    // booting; a request the VM configuration refused; a host command
+    // (`codesign`, `lume`) that exited with an error.
+    "runtime_install_failed",
+    "runtime_not_signed",
+    "runtime_unresponsive",
+    "runtime_too_old",
+    "runtime_api_error",
+    "vm_never_started",
+    "vm_config_invalid",
+    "host_command_failed",
+];
+/// The step inside the create phase a failed create stopped at, derived on
+/// device from the failure's fixed words (phase, `error_kind`,
+/// `error_subclass`), never from text: the machine's checks before anything
+/// starts, the local runtime, Cua's background service, the image lookup,
+/// its download, the VM disk, the container, the VM or container settings,
+/// the VM boot, the connection to the Space's services. `unknown` when
+/// nothing narrows the phase down; `none` when the create did not fail.
+pub const FAILED_STEPS: &[&str] = &[
+    "none",
+    "check_host",
+    "start_runtime",
+    "reach_daemon",
+    "resolve_image",
+    "pull_image",
+    "clone_disk",
+    "create_container",
+    "configure_vm",
+    "start_vm",
+    "connect_services",
+    "unknown",
+];
+/// The step a failed sign-in stopped at (`cua_onboarding_step` `signed_in`
+/// with outcome `error`), derived on device from its fixed `error_kind`,
+/// never from text: reaching Cua's sign-in service, confirming in the
+/// browser, the code exchange, saving the session on this computer, or
+/// stopped by the person. `unknown` when the kind says nothing about it;
+/// `none` for every other step and outcome.
+pub const SIGN_IN_STEPS: &[&str] = &[
+    "none",
+    "reach_service",
+    "confirm_in_browser",
+    "exchange_code",
+    "save_session",
+    "cancelled",
+    "unknown",
 ];
 /// Time from create to ready (or to the failure), bucketed finely enough
 /// for median and p90 estimates.
@@ -660,6 +713,10 @@ pub const EXPERIMENTS: &[&str] = &[
     "sharing",
     "secure_spaces",
     "child_spaces",
+    "ask_first",
+    "ci_runners",
+    "tcp_shares",
+    "mobile",
 ];
 /// The Spaces app's interface language, as a fixed set: the languages it
 /// ships or plans to; any other language reads `other`. No region, no text.
@@ -1312,7 +1369,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::ONBOARDING_STEP,
-        version: 3,
+        version: 4,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &[
@@ -1339,7 +1396,12 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "error_kind",
                 Kind::Enum(ERROR_KINDS),
-                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, other); none otherwise. Never the message.",
+                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, http, internal, other); none otherwise. Never the message.",
+            ),
+            p(
+                "failed_step",
+                Kind::Enum(SIGN_IN_STEPS),
+                "A failed signed_in: the step it stopped at (reach_service, confirm_in_browser, exchange_code, save_session, cancelled), from its error_kind; unknown when the kind does not say; none otherwise.",
             ),
         ],
         purpose: "Install and onboarding funnel: where people drop off.",
@@ -1753,7 +1815,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiments_on",
                 Kind::Set(EXPERIMENTS),
-                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, joined with +), or none.",
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, joined with +), or none.",
             ),
             p(
                 "ui_locale",
@@ -1883,7 +1945,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 4,
+        version: 5,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1897,6 +1959,11 @@ pub const EVENTS: &[EventSpec] = &[
                 "failed_phase",
                 Kind::Enum(CREATE_PHASES),
                 "The create phase it failed or was cancelled in (pulling, booting, ...); none when it succeeded.",
+            ),
+            p(
+                "failed_step",
+                Kind::Enum(FAILED_STEPS),
+                "The step inside that phase a failure stopped at (start_runtime, clone_disk, start_vm, connect_services, ...), from the failure's fixed words; unknown when nothing narrows it down; none when it succeeded or was cancelled.",
             ),
             p(
                 "stalled",
@@ -1917,7 +1984,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "error_subclass",
                 Kind::Enum(ERROR_SUBCLASSES),
-                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, local_network_denied, local_network_vpn); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
+                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, runtime_install_failed, vm_never_started, local_network_denied, capacity_vms, ...); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
             ),
         ],
         purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts, and how often one automatic retry saves a create.",
@@ -2183,7 +2250,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiment",
                 Kind::Enum(EXPERIMENTS),
-                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces or child_spaces.",
+                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares or mobile.",
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",

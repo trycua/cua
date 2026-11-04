@@ -89,6 +89,8 @@
       "presence.cursor_shape",
       "hotspot",
       "spawn",
+      "exit",
+      "host_ports",
       "process.services",
       "relay_attach",
       "tunnel.forward",

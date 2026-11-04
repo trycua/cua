@@ -67,6 +67,7 @@ const EXISTING_PROFILE_METHODS: &[&str] = &[
     "Target.activateTarget",
     "Target.attachToTarget",
     "Target.detachFromTarget",
+    "Target.getTargetInfo",
     "Target.getTargets",
     "Target.setAutoAttach",
 ];
@@ -356,6 +357,19 @@ impl CdpConnection {
         method: &str,
         params: Value,
     ) -> anyhow::Result<Value> {
+        self.call_with_timeout(session_id, method, params, CALL_TIMEOUT)
+            .await
+    }
+
+    /// [`Self::call`] with a caller-chosen reply deadline, for best-effort
+    /// commands that must not hold up the caller when the renderer is blocked.
+    pub async fn call_with_timeout(
+        &self,
+        session_id: Option<&str>,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
         let policy = self.method_policy();
         if !policy.allows(method) {
             anyhow::bail!(
@@ -389,10 +403,10 @@ impl CdpConnection {
             anyhow::bail!("CDP send failed during {method}: {e}");
         }
 
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Err(_) => {
                 self.demux.pending.lock().unwrap().remove(&id);
-                anyhow::bail!("CDP {method} timed out after {CALL_TIMEOUT:?}")
+                anyhow::bail!("CDP {method} timed out after {timeout:?}")
             }
             Ok(Err(_)) => anyhow::bail!("CDP socket closed during {method}"),
             Ok(Ok(CallOutcome::Result(v))) => Ok(v),

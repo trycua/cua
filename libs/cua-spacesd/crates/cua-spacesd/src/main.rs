@@ -9,6 +9,7 @@
 mod doctor;
 #[cfg(not(cua_headless))]
 mod legacy;
+mod phone;
 #[cfg(target_os = "linux")]
 mod volume_mount;
 
@@ -87,6 +88,9 @@ enum Command {
     /// (exit 0 pass, 1 fail, 2 the doctor itself failed).
     #[cfg(not(cua_headless))]
     Doctor(doctor::DoctorArgs),
+    /// The machine owner's side of phones: the kill switch (`off`, `on`) and
+    /// the log of what phones did.
+    Phone(phone::PhoneArgs),
     /// Print what this binary was built with (version, protocol revision,
     /// linked cua-driver, tool schema hash, compiled encoders) as JSON. Image
     /// builds record it in /etc/cua-image/manifest.json.
@@ -428,6 +432,9 @@ fn main() {
     if let Command::Supervise(args) = command {
         std::process::exit(supervise(args));
     }
+    if let Command::Phone(args) = command {
+        std::process::exit(phone::run(args));
+    }
     if let Command::BuildInfo = command {
         println!(
             "{}",
@@ -513,6 +520,7 @@ fn run(command: Command) -> Result<Exit, BoxError> {
             #[cfg(not(cua_headless))]
             Command::Legacy { .. } => unreachable!(),
             Command::BuildInfo => unreachable!(),
+            Command::Phone(_) => unreachable!(),
         }
     })
 }
@@ -937,6 +945,11 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     );
 
     let shutdown = ctx.shutdown_token();
+    // In a macOS VM, the host reaches this server over vsock as well as
+    // over the VM network (which macOS Local Network privacy and VPNs can
+    // block on the host).
+    #[cfg(target_os = "macos")]
+    cua_spacesd::vsock_agent::start();
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {
@@ -1019,7 +1032,14 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
                 machine_id.clone(),
                 join_config.account.clone(),
                 host_policy,
-            ),
+            )
+            // Phones are answered only while the `mobile` experiment is on, and
+            // reach what a Space is, never this computer's own services.
+            .with_phone(Arc::new(
+                cua_spacesd_server::phone_control::PhoneControl::in_data_dir(
+                    &ctx.config().data_dir,
+                ),
+            )),
         ));
         ctx.mark_joined_at_start();
         tracing::info!(relay = %join.relay, machine = %machine_id, "joining relay; clients connect to <relay>/m/{machine_id}");

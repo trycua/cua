@@ -294,6 +294,22 @@ pub struct HostPolicy {
     /// The daemon's share gateway socket (`<cua home>/share/gateway.sock`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shares_gateway: Option<String>,
+    /// Share edges in the owner's own cloud this computer joins, so public
+    /// TCP shares of its Spaces reach players without Cua's relay
+    /// (CUA-2602). Written by the cua daemon; read by cua-spacesd.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<ShareEdgeJoin>,
+}
+
+/// One share edge to join (see [`HostPolicy::edges`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareEdgeJoin {
+    /// `wss://<edge host>`.
+    pub url: String,
+    /// The edge's token, in a file only the owner can read.
+    pub token_file: PathBuf,
+    /// This computer's id on the edge.
+    pub machine_id: String,
 }
 
 /// How a host in direct mode provides Spaces (see [`crate::direct`]).
@@ -605,6 +621,13 @@ pub const META_ARCH: &str = "cua.host.arch";
 /// coordinates the pool places `--on <cloud>` work on it by this.
 pub const META_CLOUD: &str = "cua.host.cloud";
 
+/// The relay machine meta key saying this machine's Cua Spaces can answer the
+/// phone app's requests (`1`): the Spaces it runs, their threads, a task. It
+/// answers them only while the person has the phone app turned on
+/// (`cua experiments enable mobile`); the key is the build's ability. A
+/// machine without it is told to update, and its Spaces are not faked.
+pub const META_PHONE_FEED: &str = "cua.host.phone";
+
 /// `CUA_HOST_CLOUD`, when it names a cloud (lowercase letters and digits).
 fn host_cloud() -> Option<String> {
     cloud_word(std::env::var("CUA_HOST_CLOUD").ok())
@@ -640,6 +663,7 @@ fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String>
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
     )]);
+    meta.insert(META_PHONE_FEED.to_string(), "1".to_string());
     for (key, value) in [(META_OS, os_family()), (META_ARCH, arch())] {
         if !value.is_empty() {
             meta.insert(key.to_string(), value.to_string());
@@ -1506,6 +1530,7 @@ impl Host {
                         dedicated: opts.dedicated,
                         shares: true,
                         shares_gateway: Some(self.shares_gateway()),
+                        edges: Vec::new(),
                     },
                 )?;
                 config.mode = "relay".into();
@@ -1723,6 +1748,7 @@ impl Host {
             dedicated: false,
             shares: false,
             shares_gateway: None,
+            edges: Vec::new(),
         }
     }
 
@@ -1822,6 +1848,59 @@ impl Host {
         }
         policy.shares = true;
         policy.shares_gateway = Some(gateway);
+        write_json(&self.paths.policy(), &policy)?;
+        Ok(true)
+    }
+
+    /// Sets the share edges this computer joins (the cua daemon, for public
+    /// TCP shares through the owner's own cloud). The edge token goes to a
+    /// file only the owner can read; the policy holds its path. Returns
+    /// whether the policy changed. A machine without a host policy has no
+    /// cua-spacesd to join with, so this is a no-op there.
+    pub fn set_share_edges(&self, edges: &[(String, String)]) -> Result<bool> {
+        let Some(mut policy) = self.policy()? else {
+            return Ok(false);
+        };
+        let machine_id = load_or_create_machine_id(&self.paths.machine_id)?;
+        let dir = self.paths.machine_id.with_file_name("edges");
+        let mut want = Vec::new();
+        for (url, token) in edges {
+            let name: String = url
+                .trim_start_matches("wss://")
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let token_file = dir.join(format!("{name}.token"));
+            write_secret(&token_file, &format!("{token}\n"))?;
+            want.push(ShareEdgeJoin {
+                url: url.clone(),
+                token_file,
+                machine_id: machine_id.clone(),
+            });
+        }
+        // An edge reaches Spaces only through the share gateway.
+        let gateway = self.shares_gateway();
+        let gateway_ok = want.is_empty()
+            || (policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()));
+        if policy.edges == want && gateway_ok {
+            return Ok(false);
+        }
+        if !want.is_empty() {
+            policy.shares = true;
+            policy.shares_gateway = Some(gateway);
+        }
+        for old in &policy.edges {
+            if !want.iter().any(|w| w.token_file == old.token_file) {
+                let _ = std::fs::remove_file(&old.token_file);
+            }
+        }
+        policy.edges = want;
         write_json(&self.paths.policy(), &policy)?;
         Ok(true)
     }
@@ -3237,6 +3316,48 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn share_edges_go_into_the_policy_with_owner_only_token_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host::new(dir.path());
+        // No host policy: nothing to join with.
+        assert!(
+            !host
+                .set_share_edges(&[("wss://e.example".into(), "t".into())])
+                .unwrap()
+        );
+        std::fs::create_dir_all(dir.path().join("host")).unwrap();
+        std::fs::write(host.paths.policy(), r#"{"owner":"acct-1"}"#).unwrap();
+        let edges = [(
+            "wss://ec2-1-2-3-4.compute.amazonaws.com".to_string(),
+            "secret".to_string(),
+        )];
+        assert!(host.set_share_edges(&edges).unwrap());
+        // The same edges again: no change.
+        assert!(!host.set_share_edges(&edges).unwrap());
+        let p = host.policy().unwrap().unwrap();
+        assert_eq!(p.edges.len(), 1);
+        assert!(p.shares && p.shares_gateway.is_some());
+        assert!(valid_machine_id(&p.edges[0].machine_id));
+        let tf = &p.edges[0].token_file;
+        assert_eq!(std::fs::read_to_string(tf).unwrap().trim(), "secret");
+        assert_eq!(
+            std::fs::metadata(tf).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // The token is never in the policy itself.
+        assert!(
+            !std::fs::read_to_string(host.paths.policy())
+                .unwrap()
+                .contains("secret")
+        );
+        // Leaving every edge removes the token file.
+        assert!(host.set_share_edges(&[]).unwrap());
+        assert!(host.policy().unwrap().unwrap().edges.is_empty());
+        assert!(!tf.exists());
     }
 
     #[tokio::test]

@@ -9,7 +9,9 @@ import { Minimize2Icon } from "lucide-react";
 import { Tooltip } from "@/components/ui/tooltip";
 import { isMacPlatform } from "@/lib/utils";
 
+import { markAsked, usePreparedQueue, usePrepare } from "@/lib/prepare/store";
 import { harnessName, queuedNote, summonPlan, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
+import { useNetworkSheetFor } from "@/components/network/use-network";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toast";
 
@@ -52,6 +54,7 @@ export function SpaceCall({
   thread,
   identity,
   facts,
+  detailsExtra,
   more,
   windows,
   desktop,
@@ -88,6 +91,8 @@ export function SpaceCall({
   thread: SpaceThread;
   identity: string | null;
   facts: readonly SpaceFact[];
+  /** Rows after the facts, before More (the Network row). */
+  detailsExtra?: ReactNode;
   /** The classic page's sections (resources, all facts, Teleport, windows, runs). */
   more: ReactNode;
   /** The Space's windows (Stream rows without the desktop). */
@@ -113,6 +118,11 @@ export function SpaceCall({
   const { core, data } = useBridge();
   const [folded, setFolded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // One dialog at a time: the Network sheet replaces the details it was opened from.
+  const networkOpen = useNetworkSheetFor() !== null;
+  useEffect(() => {
+    if (networkOpen) setMoreOpen(false);
+  }, [networkOpen]);
   const [addOpen, setAddOpen] = useState(false);
   const roster = useMemo(
     () => buildRoster({ members: thread.members, shares: thread.shares, entries: thread.entries, me: thread.me, identity, role: thread.role, owner, harnessName: (h) => harnessName(core, h) }),
@@ -157,12 +167,16 @@ export function SpaceCall({
   const queued = useQueued(spaceId);
   const myName = roster.people.find((p) => p.me)?.label ?? "";
   const queuedLine = queuedNote(core, creating);
+  // Messages kept for the home being prepared send when its agent is ready, which is later than the Space.
+  const prepared = usePrepare();
+  const preparedQueue = usePreparedQueue(spaceId);
+  const preparedWords = preparedQueue.length ? prepared.view?.queued[0]?.note : undefined;
   const items = useMemo(() => [...thread.items, ...queuedItems(queued, thread.me ?? "me", myName)], [thread.items, thread.me, queued, myName]);
   const after = (seq: number) =>
     seq < 0 ? (
       <div data-queued-note="" data-only-you="" className="-mt-0.5 mb-1 ml-11 w-fit rounded-lg bg-brand-surface px-2.5 py-1.5">
         <OnlyYou label={queuedLine?.onlyYouLabel ?? ""} />
-        <p className="text-xs text-muted-foreground">{queuedLine?.text}</p>
+        <p className="text-xs text-muted-foreground">{preparedWords ?? queuedLine?.text}</p>
       </div>
     ) : (
       notes?.filter((n) => n.seq === seq).map(noteView)
@@ -293,7 +307,7 @@ export function SpaceCall({
               ? undefined
               : { handles: addressee.handles, label: nameOf, problem: problemOf, agentHandles, onRemove: (h) => unpinAgent(spaceId, h, addressee.source) }
           }
-          onSend={(text) => (creating ? thread.post(text).then(() => undefined) : sendResolved(text))}
+          onSend={(text) => (creating ? thread.post(text).then(() => undefined) : (markAsked(spaceId), sendResolved(text)))}
           disabled={thread.status !== "ready"}
           disabledReason={thread.role === "guest" ? GUEST_COMPOSER : null}
         />
@@ -356,6 +370,7 @@ export function SpaceCall({
           roster={roster}
           presence={presence}
           facts={panelFacts(facts)}
+          extra={detailsExtra}
           onMore={() => setMoreOpen(true)}
           windows={windows}
           desktop={desktop}

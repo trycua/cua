@@ -1849,7 +1849,7 @@ pub(super) async fn guest_bytes(
 
 /// Whether file operations for `user` must go through `sudo`.
 fn switched(driver: &str, user: &str) -> bool {
-    driver != "root" && user != driver
+    !crate::guest::without_sudo(driver) && user != driver
 }
 
 async fn create_folder(
@@ -1881,7 +1881,7 @@ async fn create_folder(
             Err(e) => e,
         };
     }
-    let from = if driver == "root" && user != "root" {
+    let from = if crate::guest::without_sudo(&driver) && user != "root" {
         crate::guestfs::first_missing(&c, &path).await
     } else {
         None

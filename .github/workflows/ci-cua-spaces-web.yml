@@ -74,6 +74,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          # pnpm's store, keyed on both lockfiles (pnpm is installed above).
+          cache: pnpm
+          cache-dependency-path: |
+            apps/cua-spaces-web/pnpm-lock.yaml
+            apps/cua-spaces-desktop/pnpm-lock.yaml
       - name: Install (web UI, Electron shell)
         run: |
           (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
@@ -137,6 +142,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          # pnpm's store, keyed on both lockfiles (pnpm is installed above).
+          cache: pnpm
+          cache-dependency-path: |
+            apps/cua-spaces-web/pnpm-lock.yaml
+            apps/cua-spaces-desktop/pnpm-lock.yaml
       - name: Install
         run: |
           (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)

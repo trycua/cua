@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { electronUpdater } from "./electron-updater";
 import type { UpdaterDriving } from "./model/updates";
+import { describeUpdateError } from "./update-error";
 import { readSettings, writeSettings } from "./settings";
 import { autoCheckPref, autoInstallPref, channelPref, type UpdateChannel } from "./update-prefs";
 import { initialUpdateState, reduceUpdate, UPDATE_POLL_MS, UPDATE_STARTUP_DELAY_MS, type UpdateEvent, type UpdateStateValue } from "./update-state";
@@ -211,7 +212,15 @@ export class ElectronUpdater implements UpdaterDriving {
     this.onChange?.();
     try {
       const u = await this.updater();
-      await u.checkForUpdates();
+      const result = await u.checkForUpdates();
+      // autoDownload starts the download behind this check and hands back its
+      // promise. Nothing awaits it (a check ends when the update is found), so
+      // a failed download would reject unhandled and Sentry would report it as
+      // a crash. It is a handled failure: the "error" event has already fed
+      // the state machine; this only catches the rejection.
+      result?.downloadPromise?.catch((error: unknown) => {
+        if (!this.reported) this.failed(error instanceof Error ? error : new Error(String(error)));
+      });
     } catch (error) {
       if (!this.reported) this.failed(error instanceof Error ? error : new Error(String(error)));
     } finally {
@@ -247,9 +256,10 @@ export class ElectronUpdater implements UpdaterDriving {
     this.onUpdateEvent?.("failed");
     const user = this.userCheck || install;
     this.userCheck = false;
-    console.warn(`[cua-spaces] update: ${error.message}`);
-    this.report({ type: "error", message: error.message });
+    const reason = describeUpdateError(error);
+    console.warn(`[cua-spaces] update: ${reason}`);
+    this.report({ type: "error", message: reason });
     if (!user) return;
-    void message({ type: "warning", message: "Update Error!", detail: `An error occurred while updating: ${error.message}`, buttons: ["OK"] });
+    void message({ type: "warning", message: "Update Error!", detail: `An error occurred while updating: ${reason}`, buttons: ["OK"] });
   }
 }

@@ -333,6 +333,36 @@
       "published": true
     },
     {
+      "ref": "ghcr.io/trycua/agent-home:24.04",
+      "group": "distro",
+      "os": "linux",
+      "name": "Agent home",
+      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
+      "variant": "container",
+      "summary": "The slim Linux image plus the cua CLI: a home an agent makes child Spaces from.",
+      "spacesd": true,
+      "browsers": ["chromium"],
+      "arch": ["amd64", "arm64"],
+      "local": "container",
+      "cloud": "gvisor",
+      "published": false
+    },
+    {
+      "ref": "ghcr.io/trycua/agent-home:24.04-disk",
+      "group": "distro",
+      "os": "linux",
+      "name": "Agent home VM",
+      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
+      "variant": "vm",
+      "summary": "The same agent home as a full VM.",
+      "spacesd": true,
+      "browsers": ["chromium"],
+      "arch": ["amd64", "arm64"],
+      "local": "qemu",
+      "cloud": "kubevirt",
+      "published": false
+    },
+    {
       "ref": "ghcr.io/trycua/bench-web:1.0",
       "group": "benchmark",
       "os": "linux",

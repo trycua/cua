@@ -267,6 +267,8 @@ mod tests {
             egress_enforced: None,
             network: None,
             tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
             volumes: Vec::new(),
         }

@@ -15,10 +15,14 @@
 //!   UI of every shell, so it has no row; the key stays so the macOS shell
 //!   can report it ([`crate::settings::resolve_new_ui`]).
 //! - Secure Spaces ([`Experiment::SecureSpaces`]) and Child Spaces
-//!   ([`Experiment::ChildSpaces`]): enforced, not only hidden. Their switches
+//!   ([`Experiment::ChildSpaces`]) and CI runners ([`Experiment::CiRunners`]): enforced, not only hidden. Their switches
 //!   are also kept in the cua home, where the daemon and `cua experiments`
 //!   read them; the shells load and save them through the app export
 //!   (`app_settings_load` and `app_settings_save`).
+//! - Ask first ([`Experiment::AskFirst`]): enforced the same way. An agent
+//!   asks on a card before something leaves its Space (a push to GitHub),
+//!   and the host acts only after its owner answers.
+//! - Public TCP shares ([`Experiment::TcpShares`]): enforced the same way.
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -56,6 +60,22 @@ pub struct Experiments {
     /// Child Spaces: a Space may make Spaces of its own. Off unless turned
     /// on; the daemon enforces it (the switch is kept in the cua home).
     pub child_spaces: bool,
+    /// Ask first: an agent asks on a card before something leaves its Space
+    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
+    /// switch is kept in the cua home).
+    pub ask_first: bool,
+    /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+    /// and the CI Runners page). Off unless turned on; the daemon and the
+    /// `cua` command enforce it (the switch is kept in the cua home).
+    pub ci_runners: bool,
+    /// Public TCP shares: a raw TCP service in a Space (a game server) at a
+    /// public address. Off unless turned on; the daemon enforces it (the
+    /// switch is kept in the cua home).
+    pub tcp_shares: bool,
+    /// Mobile: the computer answers the Cua Spaces phone app (its tools and
+    /// push events). Off unless turned on; the daemon enforces it (the switch
+    /// is kept in the cua home).
+    pub mobile: bool,
 }
 
 impl Default for Experiments {
@@ -67,6 +87,10 @@ impl Default for Experiments {
             web_ui: false,
             secure_spaces: false,
             child_spaces: false,
+            ask_first: false,
+            ci_runners: false,
+            tcp_shares: false,
+            mobile: false,
         }
     }
 }
@@ -87,16 +111,28 @@ pub enum Experiment {
     SecureSpaces,
     /// Child Spaces.
     ChildSpaces,
+    /// Ask first.
+    AskFirst,
+    /// CI runners.
+    CiRunners,
+    /// Public TCP shares.
+    TcpShares,
+    /// Mobile.
+    Mobile,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 6] = [
+pub const ALL: [Experiment; 10] = [
     Experiment::CuaVolume,
     Experiment::YourCloud,
     Experiment::Sharing,
     Experiment::WebUi,
     Experiment::SecureSpaces,
     Experiment::ChildSpaces,
+    Experiment::AskFirst,
+    Experiment::CiRunners,
+    Experiment::TcpShares,
+    Experiment::Mobile,
 ];
 
 impl Experiment {
@@ -110,6 +146,10 @@ impl Experiment {
             Experiment::WebUi => "web_ui",
             Experiment::SecureSpaces => "secure_spaces",
             Experiment::ChildSpaces => "child_spaces",
+            Experiment::AskFirst => "ask_first",
+            Experiment::CiRunners => "ci_runners",
+            Experiment::TcpShares => "tcp_shares",
+            Experiment::Mobile => "mobile",
         }
     }
 
@@ -127,6 +167,10 @@ impl Experiment {
             Experiment::WebUi => "New UI",
             Experiment::SecureSpaces => "Secure Spaces",
             Experiment::ChildSpaces => "Child Spaces",
+            Experiment::AskFirst => "Ask first",
+            Experiment::CiRunners => "CI runners",
+            Experiment::TcpShares => "Public TCP shares",
+            Experiment::Mobile => "Phone app",
         }
     }
 
@@ -145,6 +189,18 @@ impl Experiment {
             Experiment::ChildSpaces => {
                 "A Space can make Spaces of its own, inside a budget you set."
             }
+            Experiment::AskFirst => {
+                "An agent asks you on a card before anything leaves its Space, such as a push to GitHub."
+            }
+            Experiment::CiRunners => {
+                "Run GitHub Actions jobs in a fresh Space each, on this computer."
+            }
+            Experiment::TcpShares => {
+                "Share a game server or another TCP service in a Space at a public address."
+            }
+            Experiment::Mobile => {
+                "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
+            }
         }
     }
 }
@@ -159,6 +215,10 @@ impl Experiments {
             Experiment::WebUi => self.web_ui,
             Experiment::SecureSpaces => self.secure_spaces,
             Experiment::ChildSpaces => self.child_spaces,
+            Experiment::AskFirst => self.ask_first,
+            Experiment::CiRunners => self.ci_runners,
+            Experiment::TcpShares => self.tcp_shares,
+            Experiment::Mobile => self.mobile,
         }
     }
 
@@ -171,6 +231,10 @@ impl Experiments {
             Experiment::WebUi => self.web_ui = on,
             Experiment::SecureSpaces => self.secure_spaces = on,
             Experiment::ChildSpaces => self.child_spaces = on,
+            Experiment::AskFirst => self.ask_first = on,
+            Experiment::CiRunners => self.ci_runners = on,
+            Experiment::TcpShares => self.tcp_shares = on,
+            Experiment::Mobile => self.mobile = on,
         }
         self
     }
@@ -284,6 +348,14 @@ mod tests {
                 "experiment:secure_spaces-note",
                 "experiment:child_spaces",
                 "experiment:child_spaces-note",
+                "experiment:ask_first",
+                "experiment:ask_first-note",
+                "experiment:ci_runners",
+                "experiment:ci_runners-note",
+                "experiment:tcp_shares",
+                "experiment:tcp_shares-note",
+                "experiment:mobile",
+                "experiment:mobile-note",
             ]
         );
         for r in switches(&p) {
@@ -327,7 +399,11 @@ mod tests {
                 "sharing",
                 "web_ui",
                 "secure_spaces",
-                "child_spaces"
+                "child_spaces",
+                "ask_first",
+                "ci_runners",
+                "tcp_shares",
+                "mobile"
             ]
         );
     }
@@ -363,7 +439,7 @@ mod tests {
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false, "secureSpaces": false, "childSpaces": false})
+            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false, "secureSpaces": false, "childSpaces": false, "askFirst": false, "ciRunners": false, "tcpShares": false, "mobile": false})
         );
         // An explicit off is kept.
         let off: Experiments = serde_json::from_str(r#"{"yourCloud":false}"#).unwrap();

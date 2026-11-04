@@ -567,3 +567,37 @@ test("drift guard: the env contract and the ledger records match the design", ()
   assert.deepEqual([...written].sort(), [...documented].sort());
   assert.deepEqual([...written].sort(), ["duplicate", "intent", "may_have_run", "outcome", "rerun", "started"]);
 });
+
+// ---- the model a message names ---------------------------------------------
+
+const modelEvents = (box) => box.agentLog().filter((l) => l.ev === "set_config_option").map((l) => l.value);
+
+async function followUp(box, msg, extra = {}) {
+  fs.mkdirSync(path.join(box.run, "inbox"), { recursive: true });
+  fs.writeFileSync(path.join(box.run, "inbox", "0000000000001-0001.json"), JSON.stringify({ op: "prompt", files: [], ...msg }));
+  box.config({ idleExitSecs: 2, ...extra });
+  return box.go({ epoch: 1, resume: false });
+}
+
+t("a message that names a model the agent offers switches the open session to it before the turn", async (box) => {
+  box.script({ models: ["small", "large"], prompts: [{ match: ".", steps: [{ say: "ok" }] }] });
+  const r = await followUp(box, { text: "second", model: "large" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(modelEvents(box), ["large"]);
+  assert.ok(box.events().some((e) => e.type === "model" || e.ev === "model" || JSON.stringify(e).includes('"modelId":"large"')));
+});
+
+t("a message that names the model the session already has changes nothing", async (box) => {
+  box.script({ models: ["small", "large"], prompts: [{ match: ".", steps: [{ say: "ok" }] }] });
+  const r = await followUp(box, { text: "second", model: "small" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(modelEvents(box), []);
+});
+
+t("a model the agent does not offer is kept as it is, with a notice", async (box) => {
+  box.script({ models: ["small", "large"], prompts: [{ match: ".", steps: [{ say: "ok" }] }] });
+  const r = await followUp(box, { text: "second", model: "huge" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(modelEvents(box), []);
+  assert.ok(JSON.stringify(box.events()).includes("does not offer the model huge"));
+});

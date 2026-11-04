@@ -31,6 +31,8 @@ import type {
   SpaceCreateProgress,
   Share,
   ShareAccess,
+  ShareLanding,
+  ShareSettings,
   SpaceShares,
   SpaceWindow,
   SpaceLike,
@@ -55,6 +57,64 @@ export interface ShareLinkRow {
   owner: string;
   createdAtUnix: number | null;
   expiresAtUnix: number | null;
+  /** A public TCP share: what people connect to (a name or host:port). */
+  tcpConnectWith: string | null;
+  /** A public TCP share: host:port on the relay. */
+  tcpAddress: string | null;
+  /** A public TCP share's route: `host`, `edge` or `relay`. */
+  route: string | null;
+  /** The route in plain words ("Through your AWS account", "Through Cua"). */
+  routeLine: string | null;
+  /** Addresses (CIDRs) that may connect; empty: anyone. */
+  allow: string[];
+  /** `approval` or `consent` while the share is not live. */
+  waiting: "approval" | "consent" | null;
+  waitingText: string | null;
+}
+
+/** Options of a public TCP share beyond its target and game. */
+export interface TcpShareOptions {
+  route?: string | null;
+  allow?: string[] | null;
+  checkHost?: boolean;
+  consent?: boolean;
+}
+
+/** The share settings as the page's `shares.settings.*` operations carry them. */
+export interface ShareSettingsRow {
+  landing: "auto" | "only_my_cloud" | "allow_relay";
+  relayFallback: boolean;
+  dailyCapMib: number;
+  defaultAllow: string[];
+  approveAgentShares: boolean;
+  alwaysAllowSpaces: string[];
+  edgeConsent: string[];
+  usedToday: number;
+  edgeCloud: string | null;
+  edgeHost: string | null;
+  edgeMonthlyUsd: number | null;
+}
+
+/** The binding's enum values are its words, spelled its own way ("OnlyMyCloud", "only_my_cloud"): compare without case or underscores. */
+const landingWord = (l: ShareLanding): ShareSettingsRow["landing"] => {
+  const w = String(l).toLowerCase().replace(/[^a-z]/g, "");
+  return w === "onlymycloud" ? "only_my_cloud" : w === "allowrelay" ? "allow_relay" : "auto";
+};
+
+export function shareSettingsRow(s: ShareSettings): ShareSettingsRow {
+  return {
+    landing: landingWord(s.landing),
+    relayFallback: s.relayFallback,
+    dailyCapMib: Number(s.dailyCapMib),
+    defaultAllow: s.defaultAllow,
+    approveAgentShares: s.approveAgentShares,
+    alwaysAllowSpaces: s.alwaysAllowSpaces,
+    edgeConsent: s.edgeConsent,
+    usedToday: Number(s.usedToday),
+    edgeCloud: s.edgeCloud ?? null,
+    edgeHost: s.edgeHost ?? null,
+    edgeMonthlyUsd: s.edgeMonthlyUsd ?? null,
+  };
 }
 
 export function linkRow(s: Share): ShareLinkRow {
@@ -70,6 +130,13 @@ export function linkRow(s: Share): ShareLinkRow {
     owner: s.owner,
     createdAtUnix: n(s.createdAtUnix),
     expiresAtUnix: n(s.expiresAtUnix),
+    tcpConnectWith: s.tcpConnectWith ?? null,
+    tcpAddress: s.tcpAddress ?? null,
+    route: s.route ?? null,
+    routeLine: s.routeLine ?? null,
+    allow: s.allow ?? [],
+    waiting: s.waiting === "approval" || s.waiting === "consent" ? s.waiting : null,
+    waitingText: s.waitingText ?? null,
   };
 }
 
@@ -154,6 +221,21 @@ export interface SpacesBackend {
   leave(ids: string[]): Promise<BulkResult[]>;
   /** Gives a Space a new name (the SDK's `Spaces.rename`); its id stays the same. */
   rename(id: string, name: string): Promise<void>;
+  /** A Space's network, clipboard and Volume settings, as the web page's
+   * `network.get` reads them (the SDK's `Spaces.network` and the Space's
+   * row). Absent in a backend without the SDK. */
+  network?(id: string): Promise<SpaceNetworkJson>;
+  /** `network.set`: the preset word and lists (the SDK's `Spaces.set_network`). */
+  setNetwork?(id: string, word: string, allow: string[], deny: string[], widen: boolean, tree: boolean, via?: string): Promise<"now" | "next_start">;
+  /** `network.log`: what a Space tried to reach and its network blocked. */
+  networkLog?(id: string): Promise<NetworkEventJson[]>;
+  /** The Spaces on this machine whose internet traffic exits through it
+   * ("Exit through: This Mac"), for the notch's hotspot indicator. */
+  exitsThroughThisMachine?(): Promise<string[]>;
+  /** `network.ackNotice`: the one-time notice about the new default was shown. */
+  ackNetworkNotice?(id: string): Promise<void>;
+  /** `spaces.setAccess`: a Space's clipboard and/or Volume setting. */
+  setAccess?(id: string, clipboard: string | null, volume: string | null): Promise<void>;
   /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
   relayUnregister(machineId: string): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
@@ -209,6 +291,18 @@ export interface SpacesBackend {
   links(): Promise<ShareLinkRow[]>;
   /** Shares `target` (a port, `space:NAME:PORT`, an absolute path) and returns the link. */
   createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null): Promise<ShareLinkRow>;
+  /** Shares a TCP service in a Space (`space:NAME:PORT`) at a public address (Labs: Public TCP shares). Optional: hosts without it refuse. */
+  createTcpLink?(target: string, service: string | null, ttlSeconds: number | null, name: string | null, options?: TcpShareOptions): Promise<ShareLinkRow>;
+  /** A waiting TCP share goes live; `always`: its Space may share without asking from now on. Optional: hosts without it refuse. */
+  approveLink?(id: string, always: boolean): Promise<ShareLinkRow>;
+  /** Turns down a waiting TCP share. */
+  denyLink?(id: string): Promise<void>;
+  /** The public TCP share settings, with today's data and the share edge. */
+  shareSettings?(): Promise<ShareSettingsRow>;
+  /** Saves the settings (the read-only fields are ignored); the saved ones. */
+  setShareSettings?(settings: ShareSettingsRow): Promise<ShareSettingsRow>;
+  /** Removes the share edge from the owner's cloud; the ids of the shares that ended. */
+  removeShareEdge?(): Promise<string[]>;
   /** Stops one link, or every link for `"all"`; the ids stopped. */
   stopLink(id: string): Promise<string[]>;
   /** One of the daemon's Spaces tools (`agent_*`, `volume_*`, `cloud_*`), its JSON answer. */
@@ -471,8 +565,12 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async create(args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void): Promise<string> {
+    // The New Space's Network choice (`config.network`), by create id.
+    // Kept until the whole create is over: the model runs a failed one once more.
+    const network = createNetworks.get(createId);
     const result = await this.cua.spaces().createWithProgress(
       {
+        ...(network ? { networkSettings: networkSettingsOf(network, [], []) } : {}),
         image: args.image,
         on: args.on,
         kind: args.kind,
@@ -532,6 +630,69 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async rename(id: string, name: string): Promise<void> {
     await this.cua.spaces().rename(id, name);
+  }
+
+  async network(id: string): Promise<SpaceNetworkJson> {
+    const spaces = this.cua.spaces();
+    const n = await spaces.network(id);
+    const row = (await spaces.list()).find((s) => s.id === id);
+    return {
+      preset: n.settings.preset || "internet",
+      localhostPorts: [...n.settings.localhostPorts],
+      allLocalhostPorts: n.settings.allLocalhostPorts,
+      allow: [...n.settings.allow],
+      deny: [...n.settings.deny],
+      customBase: n.settings.customBase,
+      widenedBy: n.settings.widenedBy ?? null,
+      summary: n.summary,
+      widenings: [...n.widenings],
+      enforcement: n.enforcement,
+      point: n.point,
+      note: n.note ?? null,
+      parent: n.parent ?? null,
+      root: n.root ?? null,
+      alwaysBlocked: [...n.alwaysBlocked],
+      noticePending: n.noticePending,
+      via: n.settings.via ?? null,
+      topologyJson: n.topologyJson ?? "",
+      clipboard: row?.clipboard || "viewing",
+      volume: row?.volume || "own",
+    };
+  }
+
+  async setNetwork(id: string, word: string, allow: string[], deny: string[], widen: boolean, tree: boolean, via?: string): Promise<"now" | "next_start"> {
+    const r = await this.cua.spaces().setNetwork(id, networkSettingsOf(word, allow, deny, via), widen, tree);
+    return r.applied === "now" ? "now" : "next_start";
+  }
+
+  async exitsThroughThisMachine(): Promise<string[]> {
+    const spaces = this.cua.spaces();
+    const local = (await spaces.list()).filter((s) => s.id.startsWith("local:"));
+    const out: string[] = [];
+    for (const s of local) {
+      const n = await spaces.network(s.id).catch(() => null);
+      if (n?.settings.via === "this-machine") out.push(s.id);
+    }
+    return out;
+  }
+
+  async networkLog(id: string): Promise<NetworkEventJson[]> {
+    return (await this.cua.spaces().networkLog(id)).map((e) => ({
+      reason: e.reason,
+      dst: e.dst,
+      proto: e.proto ?? null,
+      count: Number(e.count),
+      lastUnix: e.lastUnix === undefined || e.lastUnix === null ? null : Number(e.lastUnix),
+    }));
+  }
+
+  async ackNetworkNotice(id: string): Promise<void> {
+    await this.cua.spaces().ackNetworkNotice(id);
+  }
+
+  async setAccess(id: string, clipboard: string | null, volume: string | null): Promise<void> {
+    if (clipboard) await this.cua.spaces().setClipboard(id, clipboard);
+    if (volume) await this.cua.spaces().setVolume(id, volume);
   }
 
   async relayUnregister(machineId: string): Promise<void> {
@@ -715,6 +876,49 @@ export class LiveSpacesBackend implements SpacesBackend {
     return linkRow(await this.cua.share(target, a, ttlSeconds ?? undefined, name ?? undefined));
   }
 
+  async createTcpLink(target: string, service: string | null, ttlSeconds: number | null, name: string | null, options: TcpShareOptions = {}): Promise<ShareLinkRow> {
+    const allow = options.allow && options.allow.length > 0 ? options.allow : undefined;
+    return linkRow(
+      await this.cua.shareTcp(target, service ?? undefined, ttlSeconds ?? undefined, name ?? undefined, options.route ?? undefined, allow, options.checkHost === true, options.consent === true),
+    );
+  }
+
+  async approveLink(id: string, always: boolean): Promise<ShareLinkRow> {
+    return linkRow(await this.cua.approveShare(id, always));
+  }
+
+  async denyLink(id: string): Promise<void> {
+    await this.cua.denyShare(id);
+  }
+
+  async shareSettings(): Promise<ShareSettingsRow> {
+    return shareSettingsRow(await this.cua.shareSettings());
+  }
+
+  async setShareSettings(s: ShareSettingsRow): Promise<ShareSettingsRow> {
+    // The binding's enum values (a runtime import: the native library is already loaded here).
+    const { ShareLanding: Landing } = await import("../native/generated/index");
+    const landing = s.landing === "only_my_cloud" ? Landing.OnlyMyCloud : s.landing === "allow_relay" ? Landing.AllowRelay : Landing.Auto;
+    const saved = await this.cua.setShareSettings({
+      landing,
+      relayFallback: s.relayFallback,
+      dailyCapMib: BigInt(Math.max(0, Math.floor(s.dailyCapMib))),
+      defaultAllow: s.defaultAllow,
+      approveAgentShares: s.approveAgentShares,
+      alwaysAllowSpaces: s.alwaysAllowSpaces,
+      edgeConsent: s.edgeConsent,
+      usedToday: 0n,
+      edgeCloud: undefined,
+      edgeHost: undefined,
+      edgeMonthlyUsd: undefined,
+    });
+    return shareSettingsRow(saved);
+  }
+
+  async removeShareEdge(): Promise<string[]> {
+    return this.cua.removeShareEdge();
+  }
+
   async stopLink(id: string): Promise<string[]> {
     return id === "all" ? this.cua.stopAllShares() : this.cua.stopShare(id);
   }
@@ -750,4 +954,63 @@ export class LiveSpacesBackend implements SpacesBackend {
       return requests.map(() => null);
     }
   }
+}
+
+/** A Space's network as the web page's `network.get` answers it. */
+export interface SpaceNetworkJson {
+  preset: string;
+  localhostPorts: number[];
+  allLocalhostPorts: boolean;
+  allow: string[];
+  deny: string[];
+  customBase: string;
+  widenedBy: string | null;
+  summary: string;
+  widenings: string[];
+  enforcement: string;
+  point: string;
+  note: string | null;
+  parent: string | null;
+  root: string | null;
+  alwaysBlocked: string[];
+  noticePending: boolean;
+  /** Where its internet traffic leaves; null: its own network. */
+  via: string | null;
+  /** Its topology (name, exit, host ports, paths) as JSON text. */
+  topologyJson: string;
+  clipboard: string;
+  volume: string;
+}
+
+/** One kind of blocked connection, as `network.log` answers it. */
+export interface NetworkEventJson {
+  reason: string;
+  dst: string;
+  proto: string | null;
+  count: number;
+  lastUnix: number | null;
+}
+
+/** The New Space's Network choice by create id, until its create runs. */
+export const createNetworks = new Map<string, string>();
+
+/** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
+ * `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
+ * `unprotected`) and lists. `via`: where its internet traffic leaves
+ * (`internet`, `this-machine`, `space:<id>`, `socks5://...`); left out:
+ * the exit it has. */
+export function networkSettingsOf(word: string, allow: string[], deny: string[], via?: string) {
+  const [preset, rest = ""] = word.trim().toLowerCase().split(":", 2) as [string, string?];
+  const all = preset === "localhost" && rest === "all";
+  const ports = preset === "localhost" && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
+  return {
+    preset,
+    localhostPorts: ports,
+    allLocalhostPorts: all,
+    allow,
+    deny,
+    customBase: preset === "custom" && rest === "none" ? "none" : "",
+    widenedBy: undefined,
+    via,
+  };
 }

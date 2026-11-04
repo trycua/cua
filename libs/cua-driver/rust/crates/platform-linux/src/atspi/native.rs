@@ -1427,7 +1427,7 @@ async fn resolve_window_frame(
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
 ///
-/// Issue #22865: caps protect against Electron / large web apps that produce
+/// These caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
@@ -1868,7 +1868,7 @@ async fn collect_visited_bounded_opts<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // Honor max_depth: skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth < d).unwrap_or(true);
         // A menu that is not open (a menubar entry that is not expanded, or
@@ -2510,7 +2510,7 @@ pub struct WalkedTree {
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
 /// `max_elements = None` keeps the historical 5 000-node default; `max_depth
-/// = None` keeps the historical unbounded depth. Issue #22865.
+/// = None` keeps the historical unbounded depth.
 pub fn walk_tree_bounded(
     pid: u32,
     xid: u64,
@@ -5534,6 +5534,64 @@ pub enum OptionPick {
     Unavailable,
 }
 
+/// A pick was sent to the toolkit, which then failed or did not answer in
+/// time: the option may be set. Not a failure to route around
+/// or report as "nothing changed".
+#[derive(Debug)]
+pub struct OptionPickSent(pub String);
+impl std::fmt::Display for OptionPickSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for OptionPickSent {}
+
+/// Send a pick and read the toolkit's answer: `true` picked, `false` refused
+/// (nothing changed). A reply saying the option is gone means it never ran.
+/// Any other error reply, or no answer, is [`OptionPickSent`].
+async fn send_pick(
+    request: &str,
+    name: &str,
+    pick: impl std::future::Future<Output = atspi::zbus::Result<bool>>,
+) -> Result<OptionPick> {
+    // `call` gives up without sending once the deadline has passed.
+    if deadline_passed() {
+        return Err(anyhow!(
+            "{request} for option {name:?} was not sent in time"
+        ));
+    }
+    let error = match call(pick).await {
+        Some(Ok(true)) => {
+            return Ok(OptionPick::Picked {
+                name: name.to_owned(),
+            })
+        }
+        Some(Ok(false)) => return Err(anyhow!("{request} was refused for option {name:?}")),
+        Some(Err(error)) => error,
+        None => {
+            return Err(OptionPickSent(format!(
+                "{request} for option {name:?} did not answer in time"
+            ))
+            .into())
+        }
+    };
+    let failed = format!("{request} for option {name:?} failed: {error}");
+    match &error {
+        atspi::zbus::Error::MethodError(reply, ..)
+            if matches!(
+                reply.as_str(),
+                "org.freedesktop.DBus.Error.UnknownObject"
+                    | "org.freedesktop.DBus.Error.UnknownMethod"
+                    | "org.freedesktop.DBus.Error.UnknownInterface"
+                    | "org.freedesktop.DBus.Error.ServiceUnknown"
+            ) =>
+        {
+            Err(anyhow!(failed))
+        }
+        _ => Err(OptionPickSent(failed).into()),
+    }
+}
+
 struct OptionNode {
     oref: RawObjectRef,
     name: String,
@@ -5641,18 +5699,12 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
                 .selection()
                 .await
                 .map_err(|e| anyhow!("Selection unavailable: {e}"))?;
-            match call(selection.select_child(option.index)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!(
-                    "Selection.SelectChild({}) was refused for option {:?}",
-                    option.index,
-                    option.name
-                )),
-                Some(Err(e)) => Err(anyhow!("Selection.SelectChild failed: {e}")),
-                None => Err(anyhow!("Selection.SelectChild did not answer in time")),
-            }
+            send_pick(
+                &format!("Selection.SelectChild({})", option.index),
+                &option.name,
+                selection.select_child(option.index),
+            )
+            .await
         },
         || Err(anyhow!("select option (cached element) timed out")),
     )
@@ -5696,14 +5748,12 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
             let chosen = activation_index(&role, &actions).ok_or_else(|| {
                 anyhow!("option {:?} advertises no activation action", option.name)
             })?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!("option {:?} refused its action", option.name)),
-                Some(Err(e)) => Err(anyhow!("option action failed: {e}")),
-                None => Err(anyhow!("option action did not answer in time")),
-            }
+            send_pick(
+                "the option's action",
+                &option.name,
+                ap.do_action(chosen as i32),
+            )
+            .await
         },
         || Err(anyhow!("activate option (cached element) timed out")),
     )

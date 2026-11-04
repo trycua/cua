@@ -212,7 +212,9 @@ impl Connection {
     pub fn hotspot_start(&self, space_id: &str) -> Result<HotspotStatus> {
         Ok(HotspotStatus::decode(&self.call_object(
             "hotspot_start",
-            json!({ "space": space_id }),
+            // This call is the user's own explicit start; the tool's
+            // `confirm` guards agents that reach it without asking.
+            json!({ "space": space_id, "confirm": true }),
         )?))
     }
 

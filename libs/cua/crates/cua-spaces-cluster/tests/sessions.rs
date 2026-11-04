@@ -163,10 +163,14 @@ async fn a_session_whose_host_is_killed_resumes_on_another_host() {
     lab.hosts[first].kill();
     let v = lab
         .until("work", "resumed elsewhere", Duration::from_secs(60), |v| {
-            v.epoch == 2 && v.state == sstate::RUNNING
+            v.epoch == 2 && v.state == sstate::RUNNING && !v.node.is_empty()
         })
         .await;
-    let second = lab.starts().iter().find(|(_, e)| *e == 2).unwrap().0;
+    // A session reads running, then placed, before its driver reaches the host.
+    let second = wait_for("epoch 2 started", T, async || {
+        lab.starts().iter().find(|(_, e)| *e == 2).map(|s| s.0)
+    })
+    .await;
     assert_ne!(first, second, "{v:?}");
     assert_eq!(v.node, lab.hosts[second].name);
     assert_eq!(lab.starts_of(2), 1);

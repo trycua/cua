@@ -61,7 +61,71 @@ impl From<PolicyError> for crate::VmmError {
     }
 }
 
+/// Rules by name ([`EgressPolicy::split_domains`]): `example.com`, or
+/// `*.example.com` for its subdomains. Only the Cua network gateway keeps
+/// them (it is the guest's resolver); see [`crate::network`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Domains {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
+}
+
+impl Domains {
+    pub fn is_empty(&self) -> bool {
+        self.allow.is_empty() && self.deny.is_empty()
+    }
+}
+
+/// Whether `entry` is a rule by name: `example.com` or `*.example.com`
+/// (letters, digits and `-` in at least two labels; not an address).
+pub fn is_domain(entry: &str) -> bool {
+    let e = entry.trim().trim_end_matches('.').to_ascii_lowercase();
+    let e = e.strip_prefix("*.").unwrap_or(&e);
+    if e.parse::<IpAddr>().is_ok() || e.len() > 253 {
+        return false;
+    }
+    let labels: Vec<&str> = e.split('.').collect();
+    labels.len() >= 2
+        && labels
+            .last()
+            .is_some_and(|tld| tld.chars().any(|c| c.is_ascii_alphabetic()))
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+}
+
 impl EgressPolicy {
+    /// The address entries as a policy of their own, and the rules by name
+    /// (lowercase, no trailing dot).
+    pub fn split_domains(&self) -> (EgressPolicy, Domains) {
+        let split = |list: &[String]| -> (Vec<String>, Vec<String>) {
+            let (names, addrs): (Vec<&String>, Vec<&String>) =
+                list.iter().partition(|e| is_domain(e));
+            (
+                addrs.into_iter().cloned().collect(),
+                names
+                    .into_iter()
+                    .map(|n| n.trim().trim_end_matches('.').to_ascii_lowercase())
+                    .collect(),
+            )
+        };
+        let (allow, allow_names) = split(&self.allow);
+        let (deny, deny_names) = split(&self.deny);
+        (
+            EgressPolicy { allow, deny },
+            Domains {
+                allow: allow_names,
+                deny: deny_names,
+            },
+        )
+    }
+
     /// No allow and no deny entries: no policy.
     pub fn is_empty(&self) -> bool {
         self.allow.is_empty() && self.deny.is_empty()
@@ -244,11 +308,15 @@ pub enum Reason {
     /// Everything else, under a preset without network (`none`).
     #[serde(rename = "default:none")]
     DefaultNone,
+    /// Everything else, for a Space with an exit: its internet goes only
+    /// through the exit ([`crate::network::EgressVia`]).
+    #[serde(rename = "default:exit")]
+    DefaultExit,
 }
 
 impl Reason {
     /// Every reason, for drift guards.
-    pub const ALL: [Reason; 13] = [
+    pub const ALL: [Reason; 14] = [
         Reason::PlatformMetadata,
         Reason::PlatformDaemon,
         Reason::PlatformOtherTree,
@@ -262,6 +330,7 @@ impl Reason {
         Reason::DefaultLan,
         Reason::DefaultReserved,
         Reason::DefaultNone,
+        Reason::DefaultExit,
     ];
 
     /// The id (`platform:metadata`).
@@ -280,6 +349,7 @@ impl Reason {
             Reason::DefaultLan => "default:lan",
             Reason::DefaultReserved => "default:reserved",
             Reason::DefaultNone => "default:none",
+            Reason::DefaultExit => "default:exit",
         }
     }
 
@@ -300,6 +370,7 @@ impl Reason {
             Reason::DefaultLan => 11,
             Reason::DefaultReserved => 12,
             Reason::DefaultNone => 13,
+            Reason::DefaultExit => 14,
         }
     }
 
@@ -544,6 +615,34 @@ impl Rules {
         self.rules.iter().any(|r| !r.accept)
     }
 
+    /// The user's rules that touch the Space's own tree (an allow or deny
+    /// whose network overlaps a [`Reason::Tree`] network), in order, when
+    /// at least one of them is a deny; else none. Members of a tree on its
+    /// own bridge talk frame to frame, past the host's IP rules, so these
+    /// are enforced on the bridge too ([`engine_ruleset`]).
+    pub fn user_rules_in_tree(&self) -> Vec<&Rule> {
+        let tree: Vec<&Net> = self
+            .rules
+            .iter()
+            .filter(|r| r.reason == Reason::Tree)
+            .map(|r| &r.net)
+            .collect();
+        let touching: Vec<&Rule> = self
+            .rules
+            .iter()
+            .filter(|r| {
+                matches!(r.reason, Reason::UserAllow | Reason::UserDeny)
+                    && !r.host_local
+                    && tree.iter().any(|t| t.overlaps(&r.net))
+            })
+            .collect();
+        if touching.iter().any(|r| !r.accept) {
+            touching
+        } else {
+            Vec::new()
+        }
+    }
+
     /// The rule that decides a connection to `ip` (an IPv4-mapped IPv6
     /// address is judged as its IPv4 address), or `None` when no rule
     /// matches (accepted).
@@ -645,8 +744,36 @@ const NS_POINT: &str = "iptables in the network namespace pasta creates around t
 /// Where `backend` enforces an egress policy on the OS this was built for,
 /// or why it refuses one. Every backend has an answer: the match has no
 /// wildcard, so a new backend does not build until it says.
+///
+/// Without the Secure Spaces experiment ([`crate::network::Mode::Legacy`])
+/// the macOS and Windows runtimes keep the network they always had, which
+/// cannot filter by destination: they refuse a policy as before.
 pub fn support(backend: BackendKind) -> Support {
-    support_on(backend, std::env::consts::OS)
+    let os = std::env::consts::OS;
+    if crate::network::Mode::from_env() == crate::network::Mode::Legacy
+        && let Some(open) = legacy_support_on(backend, os)
+    {
+        return open;
+    }
+    support_on(backend, os)
+}
+
+/// What [`support_on`] says for the runtimes that enforce through the Cua
+/// network gateway, when that gateway is not in use (the experiment is
+/// off): their own network cannot filter one VM's connections.
+pub fn legacy_support_on(backend: BackendKind, os: &str) -> Option<Support> {
+    match backend {
+        BackendKind::Qemu if os == "macos" || os == "windows" => Some(Support::Unsupported {
+            why: "an egress policy (QEMU's user-mode network makes the guest's connections from \
+                  the QEMU process itself, and this OS has no way to filter one process's \
+                  connections without root: pf on macOS, WFP on Windows)",
+        }),
+        BackendKind::Vz if os == "macos" => Some(Support::Unsupported {
+            why: "an egress policy (a macOS microVM's network goes through vmnet or its userspace \
+                  proxy, and neither filters by destination for one VM without root)",
+        }),
+        _ => None,
+    }
 }
 
 /// [`support`] for host OS `os` (`linux`, `macos`, `windows`).
@@ -661,10 +788,11 @@ pub fn support_on(backend: BackendKind, os: &str) -> Support {
             why: "an egress policy (Firecracker microVMs run on Linux only)",
         },
         BackendKind::Qemu if linux => Support::Host { point: NS_POINT },
+        BackendKind::Qemu if os == "macos" || os == "windows" => Support::Host {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Qemu => Support::Unsupported {
-            why: "an egress policy (QEMU's user-mode network makes the guest's connections from \
-                  the QEMU process itself, and this OS has no way to filter one process's \
-                  connections without root: pf on macOS, WFP on Windows)",
+            why: "an egress policy (QEMU VMs run on Linux, macOS and Windows hosts only)",
         },
         BackendKind::Lume => Support::Unsupported {
             why: "an egress policy (macOS VMs share Apple's vmnet NAT, which only pf can filter, \
@@ -674,9 +802,11 @@ pub fn support_on(backend: BackendKind, os: &str) -> Support {
             why: "an egress policy (Apple's container network, vmnet, can only be filtered with \
                   pf, which needs root)",
         },
+        BackendKind::Vz if os == "macos" => Support::Host {
+            point: crate::netgw::POINT,
+        },
         BackendKind::Vz => Support::Unsupported {
-            why: "an egress policy (a macOS microVM's network goes through vmnet or its userspace \
-                  proxy, and neither filters by destination for one VM without root)",
+            why: "an egress policy (macOS microVMs run on macOS only)",
         },
         BackendKind::QemuDocker => Support::Unsupported {
             why: "an egress policy (no runtime of this build starts QEMU inside a container)",
@@ -811,7 +941,13 @@ pub fn engine_remove(table: &str) -> String {
 ///   another address, are dropped (it cannot pass for another container);
 /// - `inet` table, before NAT and filtering: packets from that MAC on the
 ///   bridge go through the policy (replies to connections made to the
-///   sandbox and IPv6 neighbor discovery pass; then allow, then deny).
+///   sandbox and IPv6 neighbor discovery pass; then allow, then deny);
+/// - on a tree's own bridge, the user's denies that name members of the
+///   tree ([`Rules::user_rules_in_tree`]) in the `bridge` table as well:
+///   frames between members never reach the `inet` table. Replies to
+///   connections the member accepted pass (`ct` in the bridge family needs
+///   the kernel's `nf_conntrack_bridge`; without it the engine's host
+///   refuses the rules, and the Space does not start with them).
 pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
     let mut out = engine_remove(&t.table);
     if !rules.blocks_anything() {
@@ -835,6 +971,21 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
     if t.isolate_l2 {
         pre.push_str(&format!("    ether saddr {mac} jump l2\n"));
     }
+    let in_tree = rules.user_rules_in_tree();
+    let mut tree_chain = String::new();
+    if !in_tree.is_empty() {
+        pre.push_str(&format!("    ether saddr {mac} jump tree\n"));
+        tree_chain.push_str(&format!(
+            "\x20 chain tree {{\n\
+             \x20   ct direction reply return\n\
+             \x20   ether daddr {gw} return\n",
+            gw = t.gateway_mac,
+        ));
+        for rule in in_tree {
+            tree_chain.push_str(&nft_bridge_rule(rule));
+        }
+        tree_chain.push_str("  }\n");
+    }
     out.push_str(&format!(
         "table bridge {table} {{\n\
          \x20 chain pre {{\n\
@@ -846,6 +997,7 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
          \x20   ether daddr & ff:ff:00:00:00:00 == 33:33:00:00:00:00 return\n\
          \x20   drop\n\
          \x20 }}\n\
+         {tree_chain}\
          }}\n",
         gw = t.gateway_mac,
     ));
@@ -878,13 +1030,21 @@ pub fn nft_rule(rule: &Rule) -> String {
         (false, false) => format!("ip daddr {}", net.cidr()),
         (false, true) => format!("ip6 daddr {}", net.cidr()),
     };
+    let l4 = nft_l4(rule);
+    // Drops are counted (`cua network log`); accepts are not.
+    let counter = if rule.accept { "" } else { " counter" };
+    format!("    {dest}{l4}{counter} {verdict}\n")
+}
+
+/// A rule's protocol and ports as an nft match (empty: any).
+fn nft_l4(rule: &Rule) -> String {
     let ports = |list: &[u16]| {
         list.iter()
             .map(u16::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let l4 = match (rule.proto, &rule.ports) {
+    match (rule.proto, &rule.ports) {
         (None, None) => String::new(),
         (Some(p), None) => format!(" meta l4proto {}", p.as_str()),
         (Some(p), Some(list)) => format!(" {} dport {{ {} }}", p.as_str(), ports(list)),
@@ -892,8 +1052,244 @@ pub fn nft_rule(rule: &Rule) -> String {
             " meta l4proto {{ tcp, udp }} th dport {{ {} }}",
             ports(list)
         ),
+    }
+}
+
+/// One user rule that touches the tree as an nft statement in a `bridge`
+/// chain: a deny drops the frame, an allow (an exception to a deny)
+/// returns it to the bridge, which delivers it.
+pub fn nft_bridge_rule(rule: &Rule) -> String {
+    let verdict = if rule.accept { "return" } else { "drop" };
+    let net = &rule.net;
+    let dest = match (net.is_all(), net.is_v6()) {
+        (true, false) => "ether type ip".to_string(),
+        (true, true) => "ether type ip6".to_string(),
+        (false, false) => format!("ip daddr {}", net.cidr()),
+        (false, true) => format!("ip6 daddr {}", net.cidr()),
     };
-    format!("    {dest}{l4} {verdict}\n")
+    let counter = if rule.accept { "" } else { " counter" };
+    format!("    {dest}{}{counter} {verdict}\n", nft_l4(rule))
+}
+
+/// Something a Space tried to reach and its rules refused, as `cua network
+/// log` says it: the reason id ([`Reason::as_str`]), the destination (an
+/// address for the gateway, which sees each connection; the rule's network
+/// for the host's firewall, which only counts), and how many times.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkEvent {
+    /// `platform:metadata`, `default:lan`, `user:deny`, ...
+    pub reason: String,
+    /// `169.254.169.254:80`, or a network (`10.0.0.0/8`).
+    pub dst: String,
+    /// `tcp` or `udp` when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proto: Option<String>,
+    /// How many connections (or packets, for the host's firewall).
+    pub count: u64,
+    /// When the last one was refused (Unix seconds), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_unix: Option<u64>,
+}
+
+/// The drop rules of `rules`, in the order the engine host's table holds
+/// them (each with its reason and network), for [`drop_events`].
+pub fn drop_labels(rules: &Rules) -> Vec<(String, String)> {
+    rules
+        .rules
+        .iter()
+        .filter(|r| !r.accept)
+        .map(|r| {
+            let dst = if r.host_local {
+                "this computer".to_string()
+            } else {
+                r.net.cidr()
+            };
+            (r.reason.as_str().to_string(), dst)
+        })
+        .collect()
+}
+
+/// The drop rules of the bridge-level `tree` chain [`engine_ruleset`]
+/// writes for `rules` (the user's denies that name members of the tree),
+/// in order, with their reason and network: they follow [`drop_labels`]'s
+/// in a container's kept labels, as their counters follow the `inet`
+/// chain's.
+pub fn tree_drop_labels(rules: &Rules) -> Vec<(String, String)> {
+    rules
+        .user_rules_in_tree()
+        .into_iter()
+        .filter(|r| !r.accept)
+        .map(|r| (r.reason.as_str().to_string(), r.net.cidr()))
+        .collect()
+}
+
+/// What an engine host says when its kernel can't load the bridge-family
+/// conntrack a deny inside a tree needs ([`engine_ruleset`]'s `tree`
+/// chain).
+pub const NO_BRIDGE_CONNTRACK: &str = "the container engine's host can't track connections on      its bridges: a deny of another Space of the same tree needs the kernel module      nf_conntrack_bridge (Linux 5.3 or later, CONFIG_NF_CONNTRACK_BRIDGE). Load it on the engine's      host (sudo modprobe nf_conntrack_bridge, and add it to /etc/modules-load.d to keep it), or      remove the deny of the tree's members. The Space does not start with rules it can't enforce";
+
+/// An nft input that only checks the engine host can load
+/// [`NO_BRIDGE_CONNTRACK`]'s module (it leaves nothing behind).
+pub const BRIDGE_CONNTRACK_PROBE: &str = "add table bridge cua_ct_probe
+     add chain bridge cua_ct_probe c
+     add rule bridge cua_ct_probe c ct direction reply return
+     delete table bridge cua_ct_probe
+";
+
+/// The packet counters of the counted (drop) rules in an `nft -j list
+/// chain` answer, in order.
+pub fn nft_drop_counters(json: &str) -> Vec<u64> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for item in v["nftables"].as_array().into_iter().flatten() {
+        let Some(exprs) = item["rule"]["expr"].as_array() else {
+            continue;
+        };
+        if let Some(c) = exprs.iter().find_map(|e| e.get("counter")) {
+            out.push(c["packets"].as_u64().unwrap_or(0));
+        }
+    }
+    out
+}
+
+/// The events of drop rules `labels` with `counts` (zipped in order; a
+/// rule that never dropped anything is left out).
+pub fn drop_events(labels: &[(String, String)], counts: &[u64]) -> Vec<NetworkEvent> {
+    labels
+        .iter()
+        .zip(counts)
+        .filter(|(_, c)| **c > 0)
+        .map(|((reason, dst), c)| NetworkEvent {
+            reason: reason.clone(),
+            dst: dst.clone(),
+            proto: None,
+            count: *c,
+            last_unix: None,
+        })
+        .collect()
+}
+
+/// The DROP lines [`ns_rules`] writes for `rules`, in order, each with its
+/// reason and network (one rule may write several lines: one per transport
+/// and port).
+pub fn ns_drop_labels(
+    rules: &Rules,
+    v6: bool,
+    resolver: Option<Resolver>,
+) -> Vec<(String, String)> {
+    let mut out = vec![];
+    if rules.is_empty() {
+        return out;
+    }
+    if !v6
+        && let Some(r) = resolver
+        && !rules.allows_port(IpAddr::V4(r.guest), Proto::Udp, 53)
+    {
+        for _ in 0..2 {
+            out.push(("default:none".to_string(), format!("{}:53", r.guest)));
+        }
+    }
+    for rule in rules
+        .rules
+        .iter()
+        .filter(|r| r.host_local || r.net.is_v6() == v6)
+        .filter(|r| !r.accept)
+    {
+        let lines = ipt_rule(rule).lines().count();
+        let dst = if rule.host_local {
+            "this computer".to_string()
+        } else {
+            rule.net.cidr()
+        };
+        for _ in 0..lines {
+            out.push((rule.reason.as_str().to_string(), dst.clone()));
+        }
+    }
+    out
+}
+
+/// The packet counters of the DROP lines of [`NS_CHAIN`] in an
+/// `iptables-save -c` dump, in order.
+pub fn ipt_drop_counters(save: &str) -> Vec<u64> {
+    save.lines()
+        .filter(|l| l.contains(&format!("-A {NS_CHAIN} ")) && l.trim_end().ends_with("-j DROP"))
+        .map(|l| {
+            l.trim_start()
+                .strip_prefix('[')
+                .and_then(|r| r.split(':').next())
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+/// What was last seen of one counted drop rule of a Space: its count and the
+/// time that count was last seen to grow.
+type Seen = std::collections::HashMap<(String, String, String), (u64, u64)>;
+
+static SEEN: std::sync::LazyLock<std::sync::Mutex<Seen>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Gives the events a host firewall only counts (no time of their own) the
+/// time the count was last seen to grow, for Space `scope`: a rule whose
+/// count is new or higher than at the last read was hit by then, so the
+/// reading's `now` is its time ("blocked just now" in the app); one that has
+/// not grown keeps the time it had. The time is therefore as fine as the
+/// reads (the app reads while its network sheet is open), and a first read
+/// stamps what was already counted with `now`.
+pub fn stamp_counted(scope: &str, events: Vec<NetworkEvent>, now: u64) -> Vec<NetworkEvent> {
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    stamp_counted_in(&mut seen, scope, events, now)
+}
+
+fn stamp_counted_in(
+    seen: &mut Seen,
+    scope: &str,
+    events: Vec<NetworkEvent>,
+    now: u64,
+) -> Vec<NetworkEvent> {
+    events
+        .into_iter()
+        .map(|mut e| {
+            if e.last_unix.is_none() {
+                let key = (scope.to_string(), e.reason.clone(), e.dst.clone());
+                let last = match seen.get(&key) {
+                    Some((count, last)) if e.count <= *count => *last,
+                    _ => now,
+                };
+                seen.insert(key, (e.count, last));
+                e.last_unix = Some(last);
+            }
+            e
+        })
+        .collect()
+}
+
+/// Forgets what [`stamp_counted`] saw of Space `scope` (it is gone).
+pub fn forget_counted(scope: &str) {
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    seen.retain(|(s, _, _), _| s != scope);
+}
+
+/// Merges `events` that name the same reason and destination.
+pub fn merge_events(events: Vec<NetworkEvent>) -> Vec<NetworkEvent> {
+    let mut out: Vec<NetworkEvent> = vec![];
+    for e in events {
+        match out
+            .iter_mut()
+            .find(|o| o.reason == e.reason && o.dst == e.dst && o.proto == e.proto)
+        {
+            Some(o) => {
+                o.count += e.count;
+                o.last_unix = o.last_unix.max(e.last_unix);
+            }
+            None => out.push(e),
+        }
+    }
+    out.sort_by(|a, b| b.last_unix.cmp(&a.last_unix).then(b.count.cmp(&a.count)));
+    out
 }
 
 // ------------------------------------------------------ VMM namespaces
@@ -931,7 +1327,7 @@ pub fn ns_rules(rules: &Rules, v6: bool, resolver: Option<Resolver>) -> String {
     let mut out = String::new();
     if !rules.is_empty() {
         out.push_str(&format!(
-            "-A {NS_CHAIN} -o lo -j ACCEPT\n-A {NS_CHAIN} -m conntrack --ctdir REPLY -j ACCEPT\n"
+            "-A {NS_CHAIN} -o lo -m conntrack ! --ctstate DNAT -j ACCEPT\n-A {NS_CHAIN} -m conntrack --ctdir REPLY -j ACCEPT\n"
         ));
         if v6 {
             for t in [133, 134, 135, 136] {
@@ -968,10 +1364,13 @@ pub fn ns_rules(rules: &Rules, v6: bool, resolver: Option<Resolver>) -> String {
 /// and port.
 pub fn ipt_rule(rule: &Rule) -> String {
     let verdict = if rule.accept { "ACCEPT" } else { "DROP" };
-    // `--ctorigdstport` is the last match's (conntrack) option.
+    // `--ctorigdstport` is the last match's (conntrack) option. "Local to
+    // the namespace" means the address the guest sent to: a connection the
+    // namespace redirected to its own tree relay (local now, its tree's
+    // address before) is judged by its original destination instead
+    // ([`crate::tree`]).
     let dest = match (rule.host_local, rule.ports.is_some()) {
-        (true, true) => "-m addrtype --dst-type LOCAL -m conntrack".to_string(),
-        (true, false) => "-m addrtype --dst-type LOCAL".to_string(),
+        (true, _) => "-m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT".to_string(),
         (false, _) => format!("-m conntrack --ctorigdst {}", rule.net.cidr()),
     };
     let protos: Vec<Proto> = match rule.proto {
@@ -1065,6 +1464,25 @@ pub fn ns_script(rules: &Rules, hook: NsHook, resolver: Option<Resolver>) -> Str
     s.push_str(&jumps("ip6tables"));
     s.push_str("fi\n");
     s
+}
+
+/// The packet counters of [`NS_CHAIN`]'s DROP lines (IPv4) in the network
+/// namespace of process `pid`, in order ([`ipt_drop_counters`]).
+pub async fn ns_counters(pid: u32) -> crate::Result<Vec<u64>> {
+    let out = tokio::process::Command::new("nsenter")
+        .args(["-t", &pid.to_string(), "-U", "-n", "--preserve-credentials"])
+        .args(["iptables-save", "-c", "-t", "filter"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| crate::VmmError::other(format!("nsenter: {e}")))?;
+    if !out.status.success() {
+        return Err(crate::VmmError::other(format!(
+            "the VM's network namespace did not list its rules: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(ipt_drop_counters(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Runs `script` in the user and network namespaces of process `pid` (a
@@ -1246,8 +1664,10 @@ mod tests {
         assert!(pos("ct direction reply accept") < pos("ip daddr 1.1.1.1/32 accept"));
         assert!(pos("nd-neighbor-solicit") < pos("ip daddr 1.1.1.1/32 accept"));
         assert!(pos("ip daddr 1.1.1.1/32 accept") < pos("ip6 daddr 2606:4700::1111/128 accept"));
-        assert!(pos("ip6 daddr 2606:4700::1111/128 accept") < pos("meta nfproto ipv4 drop"));
-        assert!(pos("meta nfproto ipv4 drop") < pos("meta nfproto ipv6 drop"));
+        assert!(
+            pos("ip6 daddr 2606:4700::1111/128 accept") < pos("meta nfproto ipv4 counter drop")
+        );
+        assert!(pos("meta nfproto ipv4 counter drop") < pos("meta nfproto ipv6 counter drop"));
         // Running: its bridge port must carry its MAC and its address.
         let text = engine_ruleset(&target(true), &r);
         assert!(text.contains(&format!(
@@ -1283,6 +1703,163 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("jump verdict"), "{text}");
+        // No deny touches the tree: no bridge-level tree chain.
+        assert!(!text.contains("chain tree"), "{text}");
+    }
+
+    #[test]
+    fn a_deny_inside_the_tree_is_enforced_on_its_bridge() {
+        let tree_rule = |net: &str| Rule::net(Net::parse(net).unwrap(), true, Reason::Tree);
+        let user = |net: &str, accept: bool| {
+            Rule::net(
+                Net::parse(net).unwrap(),
+                accept,
+                if accept {
+                    Reason::UserAllow
+                } else {
+                    Reason::UserDeny
+                },
+            )
+        };
+        // The compiled order: user lists, then the tree's allow.
+        let r = Rules {
+            rules: vec![
+                user("172.30.0.2/32", true),
+                user("172.30.0.0/24", false),
+                user("198.51.100.7/32", false),
+                tree_rule("172.30.0.0/24"),
+            ],
+        };
+        let in_tree = r.user_rules_in_tree();
+        assert_eq!(
+            in_tree.len(),
+            2,
+            "the deny outside the tree is not a tree rule: {in_tree:?}"
+        );
+        // `cua network log` names the bridge's drops by rule, after the
+        // `inet` chain's.
+        assert_eq!(
+            tree_drop_labels(&r),
+            vec![("user:deny".to_string(), "172.30.0.0/24".to_string())]
+        );
+        let t = EngineTarget {
+            table: "cua_test".into(),
+            bridge: "br-tree".into(),
+            gateway_mac: "02:42:00:00:00:01".into(),
+            mac: "02:42:ac:1e:00:05".into(),
+            port: None,
+            isolate_l2: false,
+        };
+        let text = engine_ruleset(&t, &r);
+        assert!(
+            text.contains("ether saddr 02:42:ac:1e:00:05 jump tree"),
+            "{text}"
+        );
+        assert!(text.contains("chain tree {"), "{text}");
+        let pos = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} in {text}"));
+        // Replies and the gateway pass; then the allow exception, then the deny.
+        assert!(pos("ct direction reply return") < pos("ether daddr 02:42:00:00:00:01 return"));
+        assert!(pos("ip daddr 172.30.0.2/32 return") < pos("ip daddr 172.30.0.0/24 counter drop"));
+        let chain = &text[pos("chain tree {")..];
+        let chain = &chain[..chain.find("  }").unwrap()];
+        assert!(!chain.contains("198.51.100.7"), "{chain}");
+        // The inet table keeps the full order too.
+        let inet = &text[pos("table inet")..];
+        assert!(
+            inet.find("ip daddr 172.30.0.0/24 counter drop").unwrap()
+                < inet.find("ip daddr 172.30.0.0/24 accept").unwrap(),
+            "{inet}"
+        );
+        // Allows alone in the tree: nothing at the bridge.
+        let allows = Rules {
+            rules: vec![
+                user("172.30.0.2/32", true),
+                user("1.1.1.1/32", false),
+                tree_rule("172.30.0.0/24"),
+            ],
+        };
+        assert!(allows.user_rules_in_tree().is_empty());
+        assert!(!engine_ruleset(&t, &allows).contains("chain tree"));
+    }
+
+    #[test]
+    fn the_bridge_conntrack_probe_leaves_nothing_and_names_the_module() {
+        assert!(BRIDGE_CONNTRACK_PROBE.contains("ct direction reply"));
+        assert!(
+            BRIDGE_CONNTRACK_PROBE
+                .trim_end()
+                .ends_with("delete table bridge cua_ct_probe")
+        );
+        assert!(NO_BRIDGE_CONNTRACK.contains("nf_conntrack_bridge"));
+        assert!(NO_BRIDGE_CONNTRACK.contains("modprobe"));
+    }
+
+    #[test]
+    fn blocked_connections_are_counted_per_rule() {
+        let r = rules(&["1.1.1.1"], &["10.0.0.0/8", "all"]);
+        let labels = drop_labels(&r);
+        assert_eq!(
+            labels,
+            vec![
+                ("user:deny".to_string(), "10.0.0.0/8".to_string()),
+                ("user:deny".to_string(), "0.0.0.0/0".to_string()),
+                ("user:deny".to_string(), "::/0".to_string()),
+            ]
+        );
+        let json = r#"{"nftables":[{"metainfo":{}},
+            {"rule":{"expr":[{"match":{}},{"accept":null}]}},
+            {"rule":{"expr":[{"match":{}},{"counter":{"packets":3,"bytes":180}},{"drop":null}]}},
+            {"rule":{"expr":[{"match":{}},{"counter":{"packets":0,"bytes":0}},{"drop":null}]}},
+            {"rule":{"expr":[{"match":{}},{"counter":{"packets":7,"bytes":420}},{"drop":null}]}}]}"#;
+        let counts = nft_drop_counters(json);
+        assert_eq!(counts, vec![3, 0, 7]);
+        let ev = drop_events(&labels, &counts);
+        assert_eq!(ev.len(), 2, "a rule that dropped nothing is left out");
+        assert_eq!(ev[0].dst, "10.0.0.0/8");
+        assert_eq!(ev[0].count, 3);
+        // iptables: one line per rule here (no ports), counters in order.
+        let save = "*filter\n:CUA_EGRESS - [0:0]\n[0:0] -A CUA_EGRESS -o lo -j ACCEPT\n\
+                    [5:300] -A CUA_EGRESS -m conntrack --ctorigdst 10.0.0.0/8 -j DROP\n\
+                    [1:60] -A CUA_EGRESS -m conntrack --ctorigdst 0.0.0.0/0 -j DROP\nCOMMIT\n";
+        assert_eq!(ipt_drop_counters(save), vec![5, 1]);
+        let v4 = ns_drop_labels(&r, false, None);
+        assert_eq!(v4.len(), 2);
+        assert_eq!(drop_events(&v4, &ipt_drop_counters(save))[0].count, 5);
+        let merged = merge_events(vec![ev[0].clone(), ev[0].clone()]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].count, 6);
+    }
+
+    #[test]
+    fn counted_drops_are_stamped_when_their_count_grows() {
+        let mut seen = Seen::new();
+        let ev = |count| NetworkEvent {
+            reason: "user:deny".into(),
+            dst: "1.1.1.1/32".into(),
+            proto: None,
+            count,
+            last_unix: None,
+        };
+        // First read of a rule that already dropped: stamped with the read.
+        let a = stamp_counted_in(&mut seen, "s", vec![ev(2)], 100);
+        assert_eq!((a[0].count, a[0].last_unix), (2, Some(100)));
+        // Not grown: keeps its time.
+        let b = stamp_counted_in(&mut seen, "s", vec![ev(2)], 160);
+        assert_eq!(b[0].last_unix, Some(100));
+        // Grown: now.
+        let c = stamp_counted_in(&mut seen, "s", vec![ev(3)], 220);
+        assert_eq!(c[0].last_unix, Some(220));
+        // Another Space is counted on its own; a rule that dropped nothing has no event.
+        let d = stamp_counted_in(&mut seen, "t", vec![ev(1)], 300);
+        assert_eq!(d[0].last_unix, Some(300));
+        assert!(drop_events(&[("user:deny".into(), "9.9.9.9/32".into())], &[0]).is_empty());
+        // A gateway event keeps its own time.
+        let mut own = ev(1);
+        own.last_unix = Some(5);
+        assert_eq!(
+            stamp_counted_in(&mut seen, "s", vec![own], 400)[0].last_unix,
+            Some(5)
+        );
     }
 
     #[test]
@@ -1294,17 +1871,20 @@ mod tests {
         };
         assert_eq!(
             nft_rule(&local),
-            "    fib daddr type local tcp dport { 3200 } drop\n"
+            "    fib daddr type local tcp dport { 3200 } counter drop\n"
         );
         assert_eq!(
             ipt_rule(&local),
-            "-A CUA_EGRESS -p tcp -m addrtype --dst-type LOCAL -m conntrack --ctorigdstport 3200 -j DROP\n"
+            "-A CUA_EGRESS -p tcp -m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT --ctorigdstport 3200 -j DROP\n"
         );
         let all_local = Rule::host_local(false, Reason::DefaultHost);
-        assert_eq!(nft_rule(&all_local), "    fib daddr type local drop\n");
+        assert_eq!(
+            nft_rule(&all_local),
+            "    fib daddr type local counter drop\n"
+        );
         assert_eq!(
             ipt_rule(&all_local),
-            "-A CUA_EGRESS -m addrtype --dst-type LOCAL -j DROP\n"
+            "-A CUA_EGRESS -m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT -j DROP\n"
         );
         // Never matched by the address model.
         assert!(!all_local.matches("10.0.0.1".parse().unwrap(), None, None));
@@ -1335,7 +1915,7 @@ mod tests {
         let v4 = ns_restore(&r, false, None);
         assert_eq!(
             v4,
-            "*filter\n:CUA_EGRESS - [0:0]\n-A CUA_EGRESS -o lo -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctdir REPLY -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctorigdst 1.1.1.1/32 -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctorigdst 0.0.0.0/0 -j DROP\nCOMMIT\n"
+            "*filter\n:CUA_EGRESS - [0:0]\n-A CUA_EGRESS -o lo -m conntrack ! --ctstate DNAT -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctdir REPLY -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctorigdst 1.1.1.1/32 -j ACCEPT\n-A CUA_EGRESS -m conntrack --ctorigdst 0.0.0.0/0 -j DROP\nCOMMIT\n"
         );
         let v6 = ns_restore(&r, true, None);
         assert!(v6.contains("--icmpv6-type 135 -j ACCEPT"));
@@ -1508,8 +2088,12 @@ mod tests {
         let host = |b, os| matches!(support_on(b, os), Support::Host { .. });
         assert!(host(BackendKind::Container, "linux") && host(BackendKind::Container, "macos"));
         assert!(host(BackendKind::Managed, "macos"));
-        assert!(host(BackendKind::Qemu, "linux") && !host(BackendKind::Qemu, "macos"));
+        assert!(host(BackendKind::Qemu, "linux") && host(BackendKind::Qemu, "macos"));
+        // QEMU on macOS and Windows: the network gateway.
+        assert!(host(BackendKind::Qemu, "windows"));
         assert!(host(BackendKind::Firecracker, "linux"));
         assert!(!host(BackendKind::Lume, "macos") && !host(BackendKind::Containerization, "macos"));
+        // macOS microVMs: the network gateway, on the Mac only.
+        assert!(host(BackendKind::Vz, "macos") && !host(BackendKind::Vz, "linux"));
     }
 }

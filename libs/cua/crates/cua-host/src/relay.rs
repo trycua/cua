@@ -1106,6 +1106,67 @@ impl RelayClient {
         }
     }
 
+    /// Allocates a public TCP port for a share of machine `id`
+    /// (`POST /v1/machines/{id}/tcp-shares`, owner or machine token).
+    pub async fn tcp_share_allocate(
+        &self,
+        credential: &str,
+        id: &str,
+        req: &TcpShareRequest,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares")))
+                .json(req),
+            credential,
+        )
+        .await
+    }
+
+    /// Renews a TCP share's lease.
+    pub async fn tcp_share_keepalive(
+        &self,
+        credential: &str,
+        id: &str,
+        port: u16,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}/keepalive"))),
+            credential,
+        )
+        .await
+    }
+
+    /// Closes a TCP share's port.
+    pub async fn tcp_share_close(&self, credential: &str, id: &str, port: u16) -> Result<()> {
+        let _: serde_json::Value = self
+            .send(
+                self.http
+                    .delete(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}"))),
+                credential,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The computer's TCP share ports.
+    pub async fn tcp_shares(&self, credential: &str, id: &str) -> Result<Vec<TcpShareView>> {
+        #[derive(serde::Deserialize)]
+        struct List {
+            #[serde(default)]
+            shares: Vec<TcpShareView>,
+        }
+        let l: List = self
+            .send(
+                self.http
+                    .get(self.url(&format!("/v1/machines/{id}/tcp-shares"))),
+                credential,
+            )
+            .await?;
+        Ok(l.shares)
+    }
+
     /// Cuts every client and refuses new ones (owner or machine token).
     pub async fn stop_sharing(&self, credential: &str, id: &str) -> Result<Machine> {
         self.send(
@@ -1151,6 +1212,66 @@ fn http_error(status: u16, body: &str) -> Error {
         409 => Error::Conflict(format!("relay: {message}")),
         _ => Error::Relay(format!("HTTP {status}: {message}")),
     }
+}
+
+/// Body of a TCP share allocation (see the relay's `tcp_shares`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareRequest {
+    /// The share's token (40 hex).
+    pub token: String,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Lifetime in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    /// SRV service (`minecraft`): also makes a name people can type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// Name for lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Who may connect (CIDRs, at most 32); empty: anyone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Drop Minecraft Java connections that did not dial this share's
+    /// address (needs `service` `minecraft`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_host: bool,
+    /// The most bytes the share may move (the owner's daily data cap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
+/// One TCP share port as the relay reports it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareView {
+    /// Public port.
+    pub port: u16,
+    /// `host:port`.
+    pub address: String,
+    /// Public host.
+    pub host: String,
+    /// The name people type, when there is an SRV record.
+    #[serde(default)]
+    pub srv_name: Option<String>,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Unix seconds.
+    pub lease_until: u64,
+    /// Unix seconds.
+    pub ends: u64,
+    /// Open connections now.
+    #[serde(default)]
+    pub connections: u32,
+    /// Who may connect (CIDRs); empty: anyone.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Bytes moved since the port opened.
+    #[serde(default)]
+    pub bytes: u64,
+    /// The share's data cap (0: none).
+    #[serde(default)]
+    pub max_bytes: u64,
 }
 
 /// `wss://x/` → `https://x`, `ws://` → `http://`, trims the trailing slash.

@@ -130,6 +130,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("share_space", "Space.share"),
     ("network_show", "Spaces.network"),
     ("network_set", "Spaces.set_network"),
+    ("network_log", "Spaces.network_log"),
     ("space_service", "Space.put_service"),
     ("unshare_space", "Space.unshare"),
     ("space_shares", "Space.shares"),
@@ -326,6 +327,13 @@ pub struct NetworkSettings {
     #[uniffi(default = None)]
     #[serde(default)]
     pub widened_by: Option<String>,
+    /// Where its internet traffic leaves ("Exit through"): `None` or
+    /// `internet` for its own network, `this-computer` (the hotspot),
+    /// `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+    /// child keeps its parent's.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub via: Option<String>,
 }
 
 impl From<NetworkSettings> for dpb::NetworkSettings {
@@ -338,6 +346,7 @@ impl From<NetworkSettings> for dpb::NetworkSettings {
             deny: n.deny,
             custom_base: n.custom_base,
             widened_by: n.widened_by.unwrap_or_default(),
+            via: n.via.unwrap_or_default(),
         }
     }
 }
@@ -364,6 +373,7 @@ impl From<dpb::NetworkSettings> for NetworkSettings {
                 n.custom_base
             },
             widened_by: (!n.widened_by.is_empty()).then_some(n.widened_by),
+            via: (!n.via.is_empty() && n.via != "internet").then_some(n.via),
         }
     }
 }
@@ -379,6 +389,36 @@ impl NetworkSettings {
     fn checked(&self) -> Result<cua_spaces::network::NetworkSettings> {
         cua_spaces::network::from_pb(&self.clone().into())
             .map_err(|e| CuaError::InvalidArgument(e.to_string()))
+    }
+}
+
+/// One kind of connection a Space tried and its network refused
+/// ([`Spaces::network_log`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct NetworkEvent {
+    /// Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+    /// `user:deny`, `default:none`, ...
+    pub reason: String,
+    /// Where to (`169.254.169.254:80`, or the rule's network where only the
+    /// host's firewall counted it).
+    pub dst: String,
+    /// `tcp` or `udp` when known.
+    pub proto: Option<String>,
+    /// How many times.
+    pub count: u64,
+    /// When the last one was refused (Unix seconds), when known.
+    pub last_unix: Option<u64>,
+}
+
+impl From<dpb::NetworkEvent> for NetworkEvent {
+    fn from(e: dpb::NetworkEvent) -> Self {
+        NetworkEvent {
+            reason: e.reason,
+            dst: e.dst,
+            proto: (!e.proto.is_empty()).then_some(e.proto),
+            count: e.count,
+            last_unix: (e.last_unix > 0).then_some(e.last_unix),
+        }
     }
 }
 
@@ -407,6 +447,17 @@ pub struct SpaceNetworkInfo {
     pub always_blocked: Vec<String>,
     /// An update changed its settings: say so once.
     pub notice_pending: bool,
+    /// A VM's address in its tree (`198.19.0.0/16`), where the other
+    /// members of its tree reach it; `None` for a container or a Space
+    /// another computer runs.
+    #[uniffi(default = None)]
+    pub tree_address: Option<String>,
+    /// Its topology as JSON text (`cua network show --json`'s `topology`):
+    /// its name and address, its tree's members, the host and the ports it
+    /// may reach there, its policy, its exit and the exit's state, and the
+    /// path to the other computers of its tree. Empty from an older daemon.
+    #[uniffi(default = "")]
+    pub topology_json: String,
 }
 
 impl From<dpb::SpaceNetworkInfo> for SpaceNetworkInfo {
@@ -422,6 +473,8 @@ impl From<dpb::SpaceNetworkInfo> for SpaceNetworkInfo {
             root: (!i.root.is_empty()).then_some(i.root),
             always_blocked: i.always_blocked,
             notice_pending: i.notice_pending,
+            tree_address: (!i.tree_address.is_empty()).then_some(i.tree_address),
+            topology_json: i.topology_json,
         }
     }
 }
@@ -632,6 +685,24 @@ pub struct SpaceInfo {
     /// How far below its tree's top-level Space it is (0: top-level).
     #[serde(default)]
     pub depth: u32,
+    /// It may make child Spaces of its own ([`Spaces::set_children`]).
+    #[serde(default)]
+    #[uniffi(default = false)]
+    pub children: bool,
+    /// A VM's address in its tree (`198.19.0.0/16`), where the other
+    /// members of its tree reach it; `None` otherwise.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub tree_address: Option<String>,
+    /// When viewers may move the clipboard between this computer and the
+    /// Space: `viewing` (only while you're viewing, the default), `ask` or
+    /// `off`. See [`Spaces::set_clipboard`].
+    #[serde(default)]
+    pub clipboard: String,
+    /// What it sees of the Cua Volume: `own` (its own folder, the default)
+    /// or `off`. See [`Spaces::set_volume`].
+    #[serde(default)]
+    pub volume: String,
     /// Named volumes mounted in the Space (see
     /// [`SpaceCreateOptions::volumes`]).
     #[serde(default)]
@@ -892,6 +963,20 @@ impl From<dpb::Space> for SpaceInfo {
             parent: (!s.parent.is_empty()).then_some(s.parent),
             root: (!s.root.is_empty()).then_some(s.root),
             depth: s.depth,
+            children: s.children,
+            tree_address: (!s.tree_address.is_empty()).then_some(s.tree_address),
+            clipboard: if s.clipboard.is_empty() {
+                cua_spaces::clipboard::ClipboardSetting::Viewing
+                    .as_str()
+                    .into()
+            } else {
+                s.clipboard
+            },
+            volume: if s.volume.is_empty() {
+                "own".into()
+            } else {
+                s.volume
+            },
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -899,6 +984,7 @@ impl From<dpb::Space> for SpaceInfo {
 
 impl From<cua_spaces::SpaceInfo> for SpaceInfo {
     fn from(s: cua_spaces::SpaceInfo) -> Self {
+        let tree_address = cua_spaces::network::tree_address(&s.name);
         SpaceInfo {
             id: s.id,
             name: s.name,
@@ -937,6 +1023,11 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             parent: s.tree.as_ref().and_then(|t| t.parent.clone()),
             root: s.tree.as_ref().and_then(|t| t.root.clone()),
             depth: s.tree.as_ref().map_or(0, |t| t.depth),
+            // Kept by the cua daemon (its records say it).
+            children: false,
+            tree_address,
+            clipboard: s.clipboard.as_str().into(),
+            volume: s.volume_setting.as_str().into(),
             sharing: s.sharing.map(Into::into),
         }
     }
@@ -4011,6 +4102,7 @@ impl Spaces {
                             widen: options.widen.unwrap_or(false),
                             instance_type: text(&options.instance_type),
                             region: text(&options.region),
+                            tree: None,
                         })
                         .await?;
                     if options.children == Some(true)
@@ -4453,6 +4545,39 @@ impl Spaces {
         .await
     }
 
+    /// What a Space on the daemon's computer tried to reach and its network
+    /// refused, most recent first (`cua network log`).
+    pub async fn network_log(&self, space: String) -> Result<Vec<NetworkEvent>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .network_events(&space)
+                    .await?
+                    .into_iter()
+                    .map(|e| NetworkEvent {
+                        reason: e.reason,
+                        dst: e.dst,
+                        proto: e.proto,
+                        count: e.count,
+                        last_unix: e.last_unix,
+                    })
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_space_network_log(dpb::GetSpaceNetworkLogRequest { space })
+                    .await
+                    .map_err(too_old_for_network)?
+                    .into_inner()
+                    .events
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
     /// Marks the one-time notice about the new network defaults as shown
     /// for `space` ([`SpaceNetworkInfo::notice_pending`]).
     pub async fn ack_network_notice(&self, space: String) -> Result<()> {
@@ -4550,6 +4675,73 @@ impl Spaces {
                             tonic::Code::Unimplemented => CuaError::CapabilityMissing(
                                 "egress rules: the cua daemon is too old to set them; update \
                                  cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Sets when a Space's viewers may move the clipboard between this
+    /// computer and the Space: `viewing` (only while you're viewing, the
+    /// default), `ask` or `off`. It applies to viewers opened afterwards.
+    /// The agent tools `computer_clipboard_*` act inside the Space and are
+    /// not affected. Another word is `InvalidArgument`.
+    /// Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+    /// `off`. Applies now: `off` unmounts the Volume (named volumes it
+    /// mounted stay).
+    pub async fn set_volume(&self, space: String, volume: String) -> Result<()> {
+        let setting = cua_spaces::registry::VolumeSetting::parse(&volume)?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_volume_setting(&space, setting).await?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_volume(dpb::SetSpaceVolumeRequest {
+                            space,
+                            volume: setting.as_str().into(),
+                        })
+                        .await
+                        .map_err(|e| match e.code() {
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "the Volume setting: the cua daemon is too old to set it; \
+                                 update cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn set_clipboard(&self, space: String, clipboard: String) -> Result<()> {
+        // Checked here too, so no call travels with a word it refuses.
+        let setting: cua_spaces::clipboard::ClipboardSetting = clipboard.parse()?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_clipboard(&space, setting)?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_clipboard(dpb::SetSpaceClipboardRequest {
+                            space,
+                            clipboard: setting.as_str().into(),
+                        })
+                        .await
+                        .map_err(|e| match e.code() {
+                            // A daemon that predates the setting: nothing
+                            // was applied.
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "the clipboard setting: the cua daemon is too old to set it; \
+                                 update cua and restart its daemon"
                                     .into(),
                             ),
                             _ => daemon_err(e),
@@ -5978,6 +6170,10 @@ impl Space {
                         "space": id,
                         "set_system_proxy": set_system_proxy.unwrap_or(false),
                         "bypass": bypass.unwrap_or_default(),
+                        // An explicit SDK call is the user's own start; the
+                        // tool's `confirm` guards agents that reach it
+                        // without asking.
+                        "confirm": true,
                     }),
                 )
                 .await?,

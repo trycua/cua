@@ -1377,7 +1377,9 @@ dependencies = [
  "cua-home",
  "cua-host",
  "cua-sandbox-core",
+ "cua-share",
  "cua-spacesd-client",
+ "cua-vmm",
  "humantime",
  "rand 0.9.5",
  "reqwest 0.12.28",
@@ -1591,6 +1593,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -1760,6 +1763,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "tracing",
  "url",

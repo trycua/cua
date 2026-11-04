@@ -1028,6 +1028,21 @@ Returned by [`Space.hotspot_status`](#spacehotspot_status), [`Space.start_hotspo
 | `bytes_in` / `bytesIn` | `u64` |  | Bytes into the guest. |
 | `served_here` / `servedHere` | `bool` |  | Served by the process that owns the Spaces runtime. |
 
+## `NetworkEvent` record
+
+One kind of connection a Space tried and its network refused
+(`Spaces.network_log`).
+
+Returned by [`Spaces.network_log`](/cua-sdk/reference/spaces#spacesnetwork_log).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `reason` | `String` |  | Why: `platform:metadata`, `default:lan`, `default:host-loopback`, `user:deny`, `default:none`, ... |
+| `dst` | `String` |  | Where to (`169.254.169.254:80`, or the rule's network where only the host's firewall counted it). |
+| `proto` | `Option<String>` |  | `tcp` or `udp` when known. |
+| `count` | `u64` |  | How many times. |
+| `last_unix` / `lastUnix` | `Option<u64>` |  | When the last one was refused (Unix seconds), when known. |
+
 ## `SharedBase` record
 
 A base image several Spaces share copy-on-write (a container image's

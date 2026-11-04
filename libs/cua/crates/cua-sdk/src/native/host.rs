@@ -913,15 +913,13 @@ impl Host {
             // retried later.
             let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
             let device_session = match host.config()?.and_then(|c| c.relay_url) {
-                Some(url) => {
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        own_device_session(&url),
-                    )
-                    .await
-                    .ok()
-                    .flatten()
-                }
+                Some(url) => tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    own_device_session(&url),
+                )
+                .await
+                .ok()
+                .flatten(),
                 None => None,
             };
             host.remove_with_account(&cua_host::RemovalAccount {

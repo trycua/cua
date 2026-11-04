@@ -103,11 +103,21 @@ async fn a_ghost_listed_as_connected_can_be_removed_but_a_live_computer_cannot()
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("connected now") && err.contains("cua host remove"), "{err}");
+    assert!(
+        err.contains("connected now") && err.contains("cua host remove"),
+        "{err}"
+    );
     assert!(relay.machine(live).is_some(), "a live computer stays");
 
-    assert!(app.relay_unregister(&format!("relay:{ghost}")).await.unwrap());
-    assert!(relay.machine(ghost).is_none(), "the ghost is gone on the relay");
+    assert!(
+        app.relay_unregister(&format!("relay:{ghost}"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        relay.machine(ghost).is_none(),
+        "the ghost is gone on the relay"
+    );
     assert!(row(&app, ghost).is_none(), "and in this list");
     assert!(row(&app, live).is_some());
 }
@@ -121,7 +131,11 @@ async fn an_offline_computer_is_removed_from_the_account() {
     let home = tempfile::tempdir().unwrap();
     let app = signed_in(home.path(), &relay);
     app.list_all().await.unwrap();
-    assert!(app.relay_unregister(&format!("relay:{MACHINE}")).await.unwrap());
+    assert!(
+        app.relay_unregister(&format!("relay:{MACHINE}"))
+            .await
+            .unwrap()
+    );
     assert!(relay.machine(MACHINE).is_none());
 }
 
@@ -206,7 +220,9 @@ async fn renaming_a_relay_computer_as_a_space_updates_the_same_copies() {
     let app = signed_in(this.path(), &relay);
     app.list_all().await.unwrap();
 
-    app.rename(&format!("relay:{MACHINE}"), "gamma").await.unwrap();
+    app.rename(&format!("relay:{MACHINE}"), "gamma")
+        .await
+        .unwrap();
     assert_eq!(row(&app, MACHINE).unwrap().0, "gamma");
     let cfg = cua_host::Host::new(this.path()).config().unwrap().unwrap();
     assert_eq!(cfg.name, "gamma", "this computer's own setup follows");
@@ -233,8 +249,12 @@ async fn a_rename_reaches_the_registry_record_and_the_host_entry_named_like_it()
             Credential::default(),
         )
         .unwrap();
-    registry.upsert_direct_host("Alpha", "direct:100.64.0.9:3211").unwrap();
-    registry.upsert_direct_host("elsewhere", "direct:100.64.0.10:3211").unwrap();
+    registry
+        .upsert_direct_host("Alpha", "direct:100.64.0.9:3211")
+        .unwrap();
+    registry
+        .upsert_direct_host("elsewhere", "direct:100.64.0.10:3211")
+        .unwrap();
 
     cua_spaces::relay::adopt_machine_name(home.path(), "http://relay.test", MACHINE, "beta");
 
@@ -246,8 +266,14 @@ async fn a_rename_reaches_the_registry_record_and_the_host_entry_named_like_it()
         .into_iter()
         .map(|h| (h.space, h.name))
         .collect();
-    assert!(hosts.contains(&("direct:100.64.0.9:3211".into(), "beta".into())), "{hosts:?}");
-    assert!(hosts.contains(&("direct:100.64.0.10:3211".into(), "elsewhere".into())), "{hosts:?}");
+    assert!(
+        hosts.contains(&("direct:100.64.0.9:3211".into(), "beta".into())),
+        "{hosts:?}"
+    );
+    assert!(
+        hosts.contains(&("direct:100.64.0.10:3211".into(), "elsewhere".into())),
+        "{hosts:?}"
+    );
 }
 
 /// "Run on" lists a computer set up both ways (on the relay and added by
@@ -263,7 +289,9 @@ async fn a_renamed_computer_is_not_listed_again_as_an_offline_host() {
     let home = tempfile::tempdir().unwrap();
     let app = signed_in(home.path(), &relay);
     // The same computer, added by an address this network cannot reach.
-    app.registry().upsert_direct_host("alpha", "direct:127.0.0.1:1").unwrap();
+    app.registry()
+        .upsert_direct_host("alpha", "direct:127.0.0.1:1")
+        .unwrap();
     app.list_all().await.unwrap();
     let names = |hosts: Vec<cua_spaces::host_spaces::HostOffer>| {
         let mut n: Vec<String> = hosts.into_iter().map(|h| h.name).collect();
@@ -272,6 +300,8 @@ async fn a_renamed_computer_is_not_listed_again_as_an_offline_host() {
     };
     assert_eq!(names(app.hosts().await.unwrap()), ["alpha"]);
 
-    app.rename(&format!("relay:{MACHINE}"), "beta").await.unwrap();
+    app.rename(&format!("relay:{MACHINE}"), "beta")
+        .await
+        .unwrap();
     assert_eq!(names(app.hosts().await.unwrap()), ["beta"]);
 }

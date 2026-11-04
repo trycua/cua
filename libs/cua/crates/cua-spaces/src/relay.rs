@@ -198,7 +198,11 @@ pub fn adopt_machine_name(home: &std::path::Path, relay_url: &str, machine_id: &
             if record.name != name {
                 old.push(record.name.clone());
                 record.name = name.to_string();
-                let credential = registry.credential(&space).ok().flatten().unwrap_or_default();
+                let credential = registry
+                    .credential(&space)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
                 if let Err(e) = registry.upsert(record, credential) {
                     tracing::debug!(error = %e, "{space} record not renamed");
                 }

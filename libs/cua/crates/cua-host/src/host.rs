@@ -81,8 +81,7 @@ type Registrations = std::collections::BTreeMap<String, StoredRegistration>;
 fn saved_registration(kept: &Registrations, token: &str) -> Option<StoredRegistration> {
     let by_sub = crate::device::token_subject(token).and_then(|sub| kept.get(&sub).cloned());
     by_sub.or_else(|| {
-        crate::device::token_email(token)
-            .and_then(|email| kept.get(&email_key(&email)).cloned())
+        crate::device::token_email(token).and_then(|email| kept.get(&email_key(&email)).cloned())
     })
 }
 
@@ -3089,7 +3088,11 @@ impl Host {
             }
         }
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            want(url, id, read_secret(&self.paths.machine_token()).unwrap_or_default());
+            want(
+                url,
+                id,
+                read_secret(&self.paths.machine_token()).unwrap_or_default(),
+            );
         }
         // Its registrations under other accounts go too: nothing of this
         // computer stays listed anywhere.
@@ -3110,11 +3113,16 @@ impl Host {
             let _ = self.retire_legacy();
         }
         remove_dir_retrying(&self.paths.dir).await?;
-        match left.into_iter().find(|l| targets.iter().any(|t| t.same(&l.relay_url, &l.machine_id))) {
+        match left
+            .into_iter()
+            .find(|l| targets.iter().any(|t| t.same(&l.relay_url, &l.machine_id)))
+        {
             Some(l) => Err(Error::Relay(format!(
                 "removed locally, but the relay could not be told: {}. Cua will take it off \
                  your account the next time it reaches the relay.",
-                l.last_error.as_deref().unwrap_or("the relay did not answer"),
+                l.last_error
+                    .as_deref()
+                    .unwrap_or("the relay did not answer"),
             ))),
             None => Ok(()),
         }
@@ -3153,7 +3161,10 @@ impl Host {
         }
         let mut pending = self.read_pending_removals();
         for t in targets {
-            match pending.iter_mut().find(|p| p.same(&t.relay_url, &t.machine_id)) {
+            match pending
+                .iter_mut()
+                .find(|p| p.same(&t.relay_url, &t.machine_id))
+            {
                 // The newest token wins.
                 Some(p) => {
                     if !t.machine_token.is_empty() {
@@ -3181,11 +3192,18 @@ impl Host {
     /// computer's own token, then, with `account`, as the owner. One that
     /// this computer has since registered again is never touched. Returns
     /// the removals still waiting.
-    pub async fn finish_removals(&self, account: Option<&RemovalAccount<'_>>) -> Vec<PendingRemoval> {
-        let live = self.config().ok().flatten().and_then(|c| match (c.relay_url, c.machine_id) {
-            (Some(u), Some(i)) => Some((u, i)),
-            _ => None,
-        });
+    pub async fn finish_removals(
+        &self,
+        account: Option<&RemovalAccount<'_>>,
+    ) -> Vec<PendingRemoval> {
+        let live = self
+            .config()
+            .ok()
+            .flatten()
+            .and_then(|c| match (c.relay_url, c.machine_id) {
+                (Some(u), Some(i)) => Some((u, i)),
+                _ => None,
+            });
         self.run_removals(account, live).await
     }
 
@@ -3202,10 +3220,7 @@ impl Host {
         for mut p in pending {
             // Registered again since (setup reuses the id): it is live, not
             // a leftover.
-            if live
-                .as_ref()
-                .is_some_and(|(url, id)| p.same(url, id))
-            {
+            if live.as_ref().is_some_and(|(url, id)| p.same(url, id)) {
                 continue;
             }
             match p.try_delete(account).await {
@@ -3230,8 +3245,9 @@ impl Host {
     /// own tokens only, at most once a minute, and only when something is
     /// waiting (a status is asked for often).
     async fn retry_pending_removals(&self) {
-        static LAST: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, std::time::Instant>>> =
-            std::sync::Mutex::new(None);
+        static LAST: std::sync::Mutex<
+            Option<std::collections::HashMap<PathBuf, std::time::Instant>>,
+        > = std::sync::Mutex::new(None);
         let path = self.pending_removals_path();
         if !path.is_file() {
             return;

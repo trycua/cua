@@ -2831,9 +2831,15 @@ async fn a_removal_the_relay_missed_is_remembered_and_finished() {
     relay.fail_deletes(&[503]);
     let err = host.remove().await.unwrap_err().to_string();
     assert!(err.contains("removed locally"), "{err}");
-    assert!(err.contains("next time"), "it says it will be retried: {err}");
+    assert!(
+        err.contains("next time"),
+        "it says it will be retried: {err}"
+    );
     assert!(relay.machine(&id).is_some(), "still listed for now");
-    assert_eq!(host.pending_removals(), vec![(relay.url.clone(), id.clone())]);
+    assert_eq!(
+        host.pending_removals(),
+        vec![(relay.url.clone(), id.clone())]
+    );
 
     // The next time the relay answers it goes: a status asks (at most once
     // a minute), and so does anything that finishes removals.

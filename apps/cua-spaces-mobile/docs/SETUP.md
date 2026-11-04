@@ -76,7 +76,7 @@ Everything below is a production change or an Apple-side action; nothing in the 
 
 ## 7. Export compliance (TestFlight and the App Store)
 
-`ITSAppUsesNonExemptEncryption` is left out of `app.json` on purpose. Setting it to `false` is only true for an app whose only encryption is standard HTTPS. This app also seals its on-disk store with AES-256-GCM (the Rust core, `core/src/store.rs`), so it does use encryption of its own. With the key absent, App Store Connect asks the export compliance question for each new build. The usual answer for this case is that the app uses encryption and qualifies for the exemption or self-classification; confirm that with your counsel. Once it is decided, add `"ITSAppUsesNonExemptEncryption": true` or `false` to `ios.infoPlist` in `app.json` to skip the prompt.
+`app.json` sets `ITSAppUsesNonExemptEncryption` to `false`, so App Store Connect does not ask the export compliance questions for each new build. The answers behind it (the owner's, given once in App Store Connect): the app uses standard encryption only (HTTPS through the platform, and AES-256-GCM, a standard algorithm, from a standard library, to seal the on-disk store in the Rust core, `core/src/store.rs`), and the France-specific question is answered no. If the app ever adds encryption of its own design, or a non-standard algorithm, change the key back (remove it) and answer the questions again for that build, and update this section.
 
 ## 8. Uploading a build
 

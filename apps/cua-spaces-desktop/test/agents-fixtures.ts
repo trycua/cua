@@ -249,6 +249,8 @@ export const AGENT_METHODS = [
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
+  // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
+  "agents.recentThreads", "agents.threadHistory",
   "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
   // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
   "github.status", "github.rescan", "github.use", "github.enable",

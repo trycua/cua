@@ -226,7 +226,11 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    // macOS rejects setsockopt with EINVAL once the peer has closed its end,
+    // even when the peer's reply is still buffered for us to read. Treat that
+    // as "peer already gone": the read below still drains buffered data and
+    // reports a real close, instead of failing with a bare "Invalid argument".
+    set_timeout_unless_peer_closed(stream.set_write_timeout(Some(Duration::from_secs(5))))?;
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
@@ -248,7 +252,7 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
                 buffer.len()
             );
         }
-        stream.set_read_timeout(Some(remaining.min(READ_POLL)))?;
+        set_timeout_unless_peer_closed(stream.set_read_timeout(Some(remaining.min(READ_POLL))))?;
         match stream.read(&mut chunk) {
             Ok(0) if buffer.is_empty() => {
                 anyhow::bail!("daemon closed connection without response");
@@ -267,6 +271,14 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
     };
 
     Ok(serde_json::from_str(&response_line)?)
+}
+
+#[cfg(unix)]
+fn set_timeout_unless_peer_closed(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(not(unix))]

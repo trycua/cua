@@ -46,6 +46,13 @@ pub trait DaemonExtension: Send + Sync + 'static {
         builder
     }
 
+    /// Capability words this extension adds to `GetInfoResponse.features`
+    /// (for example `thread.v1`), so clients can tell what the daemon
+    /// serves before calling it.
+    fn features(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Once the Spaces runtime is built: start what needs it. The returned
     /// part is kept for the runtime's lifetime.
     fn attach(
@@ -88,6 +95,19 @@ pub trait AttachedExtension: Send + Sync + 'static {
     ) -> cua_spaces::extension::BoxFuture<'a, ()> {
         let _ = runtime;
         Box::pin(async {})
+    }
+
+    /// Batch runs on the account's machines (`SpaceService.PoolRequest`):
+    /// the answer to one request when this extension coordinates them
+    /// (`target` `local` or `pool`; status and JSON body).
+    fn pool_request<'a>(
+        &'a self,
+        target: &'a str,
+        method: &'a str,
+        params: serde_json::Value,
+    ) -> Option<cua_spaces::extension::BoxFuture<'a, (u16, serde_json::Value)>> {
+        let _ = (target, method, params);
+        None
     }
 
     /// For [`crate::Runtime::attached`] (downcasting to the concrete type).

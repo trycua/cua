@@ -42,11 +42,14 @@ export interface ChecklistState {
   dismissed: boolean;
   /** It was on screen once (`checklist_shown` was recorded). */
   shown: boolean;
+  /** Steps skipped ("Skip"): they count as done. */
+  skipped: Partial<Record<ChecklistStep, true>>;
 }
 
 /** `checklist::ChecklistAction`. */
 export type ChecklistAction =
   | { type: "done"; step: ChecklistStep }
+  | { type: "skip"; step: ChecklistStep }
   | { type: "shown" }
   | { type: "dismiss" }
   | { type: "reopen" }
@@ -60,6 +63,8 @@ export interface ChecklistRow {
   /** The button that does it; hidden once done. */
   action: string;
   done: boolean;
+  /** Skipped (never with `done`). */
+  skipped: boolean;
 }
 
 /** `checklist::ChecklistView`. */
@@ -71,6 +76,10 @@ export interface ChecklistView {
   /** "2 of 5". */
   progress: string;
   closeLabel: string;
+  /** "Skip", on each step not done or skipped. */
+  skipLabel: string;
+  /** "Hide", or "Done" once complete. */
+  hideLabel: string;
   rows: ChecklistRow[];
 }
 
@@ -79,22 +88,29 @@ interface CoreChecklistState {
   done: ChecklistStep[];
   dismissed: boolean;
   shown: boolean;
+  skipped: ChecklistStep[];
 }
 
 const toCore = (s: ChecklistState): CoreChecklistState => ({
   done: CHECKLIST_STEPS.filter((step) => s.done[step]),
   dismissed: s.dismissed,
   shown: s.shown,
+  skipped: CHECKLIST_STEPS.filter((step) => s.skipped[step]),
 });
 
+function steps(list: readonly string[] | undefined): Partial<Record<ChecklistStep, true>> {
+  const out: Partial<Record<ChecklistStep, true>> = {};
+  for (const step of list ?? []) if ((CHECKLIST_STEPS as readonly string[]).includes(step)) out[step as ChecklistStep] = true;
+  return out;
+}
+
 function fromCore(c: CoreChecklistState | HostChecklistState): ChecklistState {
-  const done: ChecklistState["done"] = {};
-  for (const step of c.done) if ((CHECKLIST_STEPS as readonly string[]).includes(step)) done[step as ChecklistStep] = true;
-  return { done, dismissed: c.dismissed === true, shown: c.shown === true };
+  // An older host answers without `skipped`.
+  return { done: steps(c.done), dismissed: c.dismissed === true, shown: c.shown === true, skipped: steps(c.skipped) };
 }
 
 const STORAGE_KEY = "cua-spaces:checklist";
-const EMPTY: ChecklistState = { done: {}, dismissed: false, shown: false };
+const EMPTY: ChecklistState = { done: {}, dismissed: false, shown: false, skipped: {} };
 let saved: ChecklistState | undefined;
 const listeners = new Set<() => void>();
 
@@ -110,8 +126,12 @@ function parse(raw: string | null | undefined): ChecklistState {
   const v = raw ? (JSON.parse(raw) as Partial<ChecklistState> | null) : null;
   if (!v || typeof v !== "object") return EMPTY;
   const done: ChecklistState["done"] = {};
-  for (const s of CHECKLIST_STEPS) if (v.done?.[s] === true) done[s] = true;
-  return { done, dismissed: v.dismissed === true, shown: v.shown === true };
+  const skipped: ChecklistState["skipped"] = {};
+  for (const s of CHECKLIST_STEPS) {
+    if (v.done?.[s] === true) done[s] = true;
+    if (v.skipped?.[s] === true) skipped[s] = true;
+  }
+  return { done, dismissed: v.dismissed === true, shown: v.shown === true, skipped };
 }
 
 export function readChecklist(): ChecklistState {
@@ -128,7 +148,7 @@ function write(next: ChecklistState): void {
   // Another window may have ticked steps since this one read them: keep those.
   try {
     const stored = parse(storage()?.getItem(STORAGE_KEY));
-    next = { ...next, done: { ...stored.done, ...next.done } };
+    next = { ...next, done: { ...stored.done, ...next.done }, skipped: { ...stored.skipped, ...next.skipped } };
   } catch {
     // Unreadable: this window's copy wins.
   }
@@ -209,7 +229,7 @@ class HostChecklist {
     } catch {
       return;
     }
-    if (!kept.dismissed && !kept.shown && Object.keys(kept.done).length === 0) return;
+    if (!kept.dismissed && !kept.shown && Object.keys(kept.done).length === 0 && Object.keys(kept.skipped).length === 0) return;
     try {
       await this.send({ type: "merge", state: toCore(kept) });
       storage()?.removeItem(STORAGE_KEY);
@@ -241,7 +261,7 @@ function forHost(action: ChecklistAction): HostChecklistAction | null {
   return action.type === "observe" ? null : action;
 }
 
-const LOADING: ChecklistState = { done: {}, dismissed: true, shown: true };
+const LOADING: ChecklistState = { done: {}, dismissed: true, shown: true, skipped: {} };
 
 /** The checklist as drawn, or null without the core. */
 export function checklistView(core: CoreClient, state: ChecklistState): ChecklistView | null {
@@ -255,8 +275,10 @@ function apply(core: CoreClient, action: ChecklistAction): TelemetrySignal[] {
     state: toCore(readChecklist()),
     action,
   });
-  if (!t || t.signals.length === 0) return [];
-  write(fromCore(t.state));
+  if (!t) return [];
+  // A skip changes the state without an event of its own.
+  const next = fromCore(t.state);
+  if (t.signals.length || JSON.stringify(toCore(next)) !== JSON.stringify(toCore(readChecklist()))) write(next);
   return t.signals;
 }
 
@@ -282,6 +304,8 @@ export interface ChecklistHook {
   view: ChecklistView | null;
   send(action: ChecklistAction): void;
   done(step: ChecklistStep): void;
+  /** "Skip" on a step: it counts as done. */
+  skip(step: ChecklistStep): void;
   shown(): void;
   dismiss(): void;
   reopen(): void;
@@ -319,6 +343,7 @@ export function useChecklist(): ChecklistHook {
     view: loading ? null : checklistView(core, state),
     send,
     done: (step) => send({ type: "done", step }),
+    skip: (step) => send({ type: "skip", step }),
     shown: () => send({ type: "shown" }),
     dismiss: () => send({ type: "dismiss" }),
     reopen: () => send({ type: "reopen" }),

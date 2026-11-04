@@ -14,7 +14,7 @@ const OS_WORDS: Record<string, string> = { macos: "macOS ", linux: "Linux ", win
 
 /** What the notification says: no OS word for a Space whose OS is not known, "this Mac" only on a Mac. */
 export function spaceReadyNote(space: { id: string; name: string; os: string }, platform: NodeJS.Platform): SystemNote {
-  const where = platform === "darwin" ? "this Mac" : "this computer";
+  const where = platform === "darwin" ? "this Mac" : "this machine";
   return {
     id: `space-ready-${space.id}`,
     title: `${space.name} is ready`,

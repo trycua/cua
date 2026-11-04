@@ -165,6 +165,26 @@ function routeFor(file: string): string | undefined {
 }
 
 /**
+ * Drop class members that are only inherited (typedoc repeats the base
+ * class's methods under every subclass), which keeps pages in the page budget.
+ * Members that override or extend are kept.
+ */
+export function dropInheritedMembers(markdown: string): string {
+  const parts = markdown.split(/^(?=#{1,6} )/m);
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (/^##### /.test(part)) {
+      let body = part;
+      while (i + 1 < parts.length && /^#{6} /.test(parts[i + 1])) body += parts[++i];
+      if (/^###### Inherited from/m.test(body) && !/^###### Overrides/m.test(body)) continue;
+      out.push(body);
+    } else out.push(part);
+  }
+  return out.join('');
+}
+
+/**
  * Post-pass over one typedoc Markdown file: drop the H1 (the page title comes
  * from frontmatter), rewrite `.md` links to site routes, and normalise
  * whitespace.
@@ -180,6 +200,7 @@ export function postProcess(markdown: string, file: string): string {
   // typedoc escapes `_` inside words; harmless, but keep identifiers readable.
   out = out.replace(/([A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, '$1_');
   out = dropTableColumn(out, 'Defined in');
+  out = dropInheritedMembers(out);
   return (
     out
       .replace(/[ \t]+$/gm, '')

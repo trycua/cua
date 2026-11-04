@@ -4,7 +4,7 @@
 
 use super::{
     ComputerResources, DiskLevel, DiskOnHost, DiskWarning, GuestUsage, Resources, ResourcesEvent,
-    ResourcesUpdate, SpaceResources,
+    ResourcesUpdate, SharedBase, SpaceResources,
 };
 use cua_proto::daemon::v1 as pb;
 use pb::watch_resources_response::Event;
@@ -99,13 +99,20 @@ impl From<&SpaceResources> for pb::SpaceResources {
                 memory_total: u.memory_total,
                 memory_limited: u.memory_limited,
                 disk_used: u.disk_used,
-                disk_total: u.disk_total,
+                // 0 on the wire: no size of its own.
+                disk_total: u.disk_total.unwrap_or(0),
                 disk_limited: u.disk_limited,
             }),
             disk_on_host: s.disk_on_host.map(|d| pb::DiskOnHost {
                 bytes: d.bytes,
                 allocated: d.allocated,
                 shares_space: d.shares_space,
+            }),
+            base: s.base.as_ref().map(|b| pb::SharedBase {
+                key: b.key.clone(),
+                image: b.image.clone(),
+                bytes: b.bytes,
+                shared_with: b.shared_with,
             }),
         }
     }
@@ -119,21 +126,36 @@ impl From<pb::SpaceResources> for SpaceResources {
             cpu_allocated: s.cpu_allocated,
             memory_allocated: s.memory_allocated,
             disk_allocated: s.disk_allocated,
-            usage: s.usage.map(|u| GuestUsage {
-                cpu_count: u.cpu_count,
-                cpu_percent: u.cpu_percent,
-                load_average_1m: u.load_average_1m,
-                memory_used: u.memory_used,
-                memory_total: u.memory_total,
-                memory_limited: u.memory_limited,
-                disk_used: u.disk_used,
-                disk_total: u.disk_total,
-                disk_limited: u.disk_limited,
+            // An older daemon sends a guest's "unlimited" as a number:
+            // `known_size` turns it into no size.
+            usage: s.usage.map(|u| {
+                let disk_total = super::known_size(u.disk_total);
+                GuestUsage {
+                    cpu_count: u.cpu_count,
+                    cpu_percent: u.cpu_percent,
+                    load_average_1m: u.load_average_1m,
+                    memory_used: u.memory_used,
+                    memory_total: u.memory_total,
+                    memory_limited: u.memory_limited,
+                    disk_used: if u.disk_used >= super::SIZE_SENTINEL_FLOOR {
+                        0
+                    } else {
+                        u.disk_used
+                    },
+                    disk_total,
+                    disk_limited: u.disk_limited && disk_total.is_some(),
+                }
             }),
             disk_on_host: s.disk_on_host.map(|d| DiskOnHost {
                 bytes: d.bytes,
                 allocated: d.allocated,
                 shares_space: d.shares_space,
+            }),
+            base: s.base.map(|b| SharedBase {
+                key: b.key,
+                image: b.image,
+                bytes: b.bytes,
+                shared_with: b.shared_with,
             }),
         }
     }
@@ -261,13 +283,19 @@ mod tests {
                         memory_total: 8 * GIB,
                         memory_limited: true,
                         disk_used: 20 * GIB,
-                        disk_total: 80 * GIB,
+                        disk_total: Some(80 * GIB),
                         disk_limited: true,
                     }),
                     disk_on_host: Some(DiskOnHost {
                         bytes: Some(6 * GIB),
                         allocated: 31 * GIB,
                         shares_space: true,
+                    }),
+                    base: Some(SharedBase {
+                        key: "sha256:abc".into(),
+                        image: "ghcr.io/trycua/macos:26".into(),
+                        bytes: Some(25 * GIB),
+                        shared_with: 2,
                     }),
                 },
                 SpaceResources {

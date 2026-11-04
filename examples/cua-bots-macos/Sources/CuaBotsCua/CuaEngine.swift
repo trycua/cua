@@ -129,6 +129,13 @@ public final class CuaEngine: BotEngine {
         let json = try await space(bot).agentEvents(runId: run, cursor: cursor, max: 500)
         let page = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
         let events = page["events"] as? [[String: Any]] ?? []
+        let updates = Self.decode(events, botID: bot.id, turnText: &turnText)
+        let next = (page["cursor"] as? NSNumber)?.uint64Value ?? cursor
+        return (updates, next)
+    }
+
+    static func decode(_ events: [[String: Any]], botID: String,
+                       turnText: inout [String: (turn: UInt32, text: String)]) -> [EngineUpdate] {
         var updates: [EngineUpdate] = []
         for e in events {
             let kind = e["kind"] as? String ?? ""
@@ -136,26 +143,28 @@ public final class CuaEngine: BotEngine {
             switch kind {
             case "message":
                 let chunk = e["text"] as? String ?? ""
-                var current = turnText[bot.id] ?? (turn, "")
+                var current = turnText[botID] ?? (turn, "")
                 if current.turn != turn { current = (turn, "") }
                 current.text += chunk
-                turnText[bot.id] = current
+                turnText[botID] = current
                 updates.append(.assistant(turn: turn, text: current.text))
             case "tool_call":
                 updates.append(.tool(turn: turn, title: e["tool_title"] as? String ?? "Working"))
+            case "turn_started":
+                updates.append(.turnStarted)
             case "turn_ended":
                 updates.append(.turnEnded(turn: turn))
-                turnText[bot.id] = nil
+                turnText[botID] = nil
             case "error":
                 updates.append(.failed(e["text"] as? String ?? "The agent reported an error"))
             case "exited":
-                updates.append(.failed("The agent stopped: \(e["text"] as? String ?? "exited")"))
+                updates.append(.exited)
+                turnText[botID] = nil
             default:
                 break
             }
         }
-        let next = (page["cursor"] as? NSNumber)?.uint64Value ?? cursor
-        return (updates, next)
+        return updates
     }
 
     public func interrupt(_ bot: Bot) async throws {

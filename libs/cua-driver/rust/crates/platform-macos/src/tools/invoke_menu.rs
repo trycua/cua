@@ -545,10 +545,15 @@ fn background_unavailable(reason: String) -> ToolResult {
          help: the disabled item ignores its shortcut too. Otherwise use the control in the \
          window."
     );
+    structured_refusal("background_unavailable", message)
+}
+
+fn structured_refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
-        "code": "background_unavailable",
-        "refusal": { "code": "background_unavailable", "message": message }
+        "code": code,
+        "effect": "refused",
+        "refusal": { "code": code, "message": message }
     }))
 }
 
@@ -873,6 +878,9 @@ pub(super) async fn run_in_background(
                     ActionTransport::MacosAppleEvent,
                     "The app's scripting interface reported the document saved",
                 ),
+                Ok(Err(refusal)) if refusal.code == "automation_consent_required" => {
+                    structured_refusal(refusal.code, format!("{preface}{}", refusal.reason))
+                }
                 Ok(Err(refusal)) => background_unavailable(format!(
                     "{preface}{message}, and saving through {app_name}'s scripting interface did not \
                      complete ({}: {}). Nothing was saved",
@@ -1074,6 +1082,14 @@ mod tests {
         assert!(message.contains("bring_to_front"));
         assert!(message.contains("delivery_mode:\"foreground\""));
         assert!(message.contains("A background hotkey does not help"));
+        let reason = "hotkey cmd+s: Grant TextEdit access in System Settings > Privacy & Security > Automation";
+        let result = structured_refusal("automation_consent_required", reason.into());
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "automation_consent_required");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["refusal"]["code"], "automation_consent_required");
+        assert_eq!(data["refusal"]["message"], reason);
     }
 
     #[test]

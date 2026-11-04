@@ -12,7 +12,221 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/tunnel.proto.
  */
 export const file_cua_env_v1_tunnel: GenFile = /*@__PURE__*/
-  fileDesc("ChdjdWEvZW52L3YxL3R1bm5lbC5wcm90bxIKY3VhLmVudi52MSJUCg5Gb3J3YXJkUmVxdWVzdBIMCgRwb3J0GAEgASgNEgwKBGhvc3QYAiABKAkSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInYKD0ZvcndhcmRSZXNwb25zZRISCgpmb3J3YXJkX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIq4BCgtGb3J3YXJkSW5mbxISCgpmb3J3YXJkX2lkGAEgASgJEgwKBGhvc3QYAiABKAkSDAoEcG9ydBgDIAEoDRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBCABKA0SEAoIYnl0ZXNfaW4YBSABKAQSEQoJYnl0ZXNfb3V0GAYgASgEEi4KCmV4cGlyZXNfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIhUKE0xpc3RGb3J3YXJkc1JlcXVlc3QiQQoUTGlzdEZvcndhcmRzUmVzcG9uc2USKQoIZm9yd2FyZHMYASADKAsyFy5jdWEuZW52LnYxLkZvcndhcmRJbmZvIikKE0Nsb3NlRm9yd2FyZFJlcXVlc3QSEgoKZm9yd2FyZF9pZBgBIAEoCSIWChRDbG9zZUZvcndhcmRSZXNwb25zZSKCAQoTU3RhcnRIb3RzcG90UmVxdWVzdBISCgpzb2Nrc19wb3J0GAEgASgNEhgKEHNldF9zeXN0ZW1fcHJveHkYAiABKAgSDgoGYnlwYXNzGAMgAygJEi0KCnRpY2tldF90dGwYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iYgoUU3RhcnRIb3RzcG90UmVzcG9uc2USEgoKaG90c3BvdF9pZBgBIAEoCRIOCgZ0aWNrZXQYAiABKAkSDwoHd3NfcGF0aBgDIAEoCRIVCg1zb2Nrc19hZGRyZXNzGAQgASgJIigKElN0b3BIb3RzcG90UmVxdWVzdBISCgpob3RzcG90X2lkGAEgASgJIhUKE1N0b3BIb3RzcG90UmVzcG9uc2UiGQoXR2V0SG90c3BvdFN0YXR1c1JlcXVlc3QiygEKGEdldEhvdHNwb3RTdGF0dXNSZXNwb25zZRInCgVzdGF0ZRgBIAEoDjIYLmN1YS5lbnYudjEuSG90c3BvdFN0YXRlEhIKCmhvdHNwb3RfaWQYAiABKAkSGQoRcGVlcl9wcmluY2lwYWxfaWQYAyABKAkSFQoNc29ja3NfYWRkcmVzcxgEIAEoCRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBSABKA0SEQoJYnl0ZXNfb3V0GAYgASgEEhAKCGJ5dGVzX2luGAcgASgEKoYBCgxIb3RzcG90U3RhdGUSHQoZSE9UU1BPVF9TVEFURV9VTlNQRUNJRklFRBAAEhkKFUhPVFNQT1RfU1RBVEVfU1RPUFBFRBABEiIKHkhPVFNQT1RfU1RBVEVfV0FJVElOR19GT1JfUEVFUhACEhgKFEhPVFNQT1RfU1RBVEVfQUNUSVZFEAMy+wMKDVR1bm5lbFNlcnZpY2USQgoHRm9yd2FyZBIaLmN1YS5lbnYudjEuRm9yd2FyZFJlcXVlc3QaGy5jdWEuZW52LnYxLkZvcndhcmRSZXNwb25zZRJRCgxMaXN0Rm9yd2FyZHMSHy5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1Jlc3BvbnNlElEKDENsb3NlRm9yd2FyZBIfLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVxdWVzdBogLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVzcG9uc2USUQoMU3RhcnRIb3RzcG90Eh8uY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXNwb25zZRJOCgtTdG9wSG90c3BvdBIeLmN1YS5lbnYudjEuU3RvcEhvdHNwb3RSZXF1ZXN0Gh8uY3VhLmVudi52MS5TdG9wSG90c3BvdFJlc3BvbnNlEl0KEEdldEhvdHNwb3RTdGF0dXMSIy5jdWEuZW52LnYxLkdldEhvdHNwb3RTdGF0dXNSZXF1ZXN0GiQuY3VhLmVudi52MS5HZXRIb3RzcG90U3RhdHVzUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChdjdWEvZW52L3YxL3R1bm5lbC5wcm90bxIKY3VhLmVudi52MSKVAQoXUHVibGlzaFNoYXJlU2xvdFJlcXVlc3QSDAoEc2xvdBgBIAEoDRIMCgRwb3J0GAIgASgNEg0KBWFsbG93GAMgAygJEhQKDGV4cGVjdF9ob3N0cxgEIAMoCRImCgN0dGwYBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEQoJbWF4X2J5dGVzGAYgASgEIlgKGFB1Ymxpc2hTaGFyZVNsb3RSZXNwb25zZRIMCgRzbG90GAEgASgNEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIikKGVVucHVibGlzaFNoYXJlU2xvdFJlcXVlc3QSDAoEc2xvdBgBIAEoDSIcChpVbnB1Ymxpc2hTaGFyZVNsb3RSZXNwb25zZSIXChVMaXN0U2hhcmVTbG90c1JlcXVlc3QijgEKCVNoYXJlU2xvdBIMCgRzbG90GAEgASgNEgwKBHBvcnQYAiABKA0SDQoFYnl0ZXMYAyABKAQSEQoJbWF4X2J5dGVzGAQgASgEEhMKC2Nvbm5lY3Rpb25zGAUgASgNEi4KCmV4cGlyZXNfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIj4KFkxpc3RTaGFyZVNsb3RzUmVzcG9uc2USJAoFc2xvdHMYASADKAsyFS5jdWEuZW52LnYxLlNoYXJlU2xvdCJUCg5Gb3J3YXJkUmVxdWVzdBIMCgRwb3J0GAEgASgNEgwKBGhvc3QYAiABKAkSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInYKD0ZvcndhcmRSZXNwb25zZRISCgpmb3J3YXJkX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIq4BCgtGb3J3YXJkSW5mbxISCgpmb3J3YXJkX2lkGAEgASgJEgwKBGhvc3QYAiABKAkSDAoEcG9ydBgDIAEoDRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBCABKA0SEAoIYnl0ZXNfaW4YBSABKAQSEQoJYnl0ZXNfb3V0GAYgASgEEi4KCmV4cGlyZXNfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIhUKE0xpc3RGb3J3YXJkc1JlcXVlc3QiQQoUTGlzdEZvcndhcmRzUmVzcG9uc2USKQoIZm9yd2FyZHMYASADKAsyFy5jdWEuZW52LnYxLkZvcndhcmRJbmZvIikKE0Nsb3NlRm9yd2FyZFJlcXVlc3QSEgoKZm9yd2FyZF9pZBgBIAEoCSIWChRDbG9zZUZvcndhcmRSZXNwb25zZSKCAQoTU3RhcnRIb3RzcG90UmVxdWVzdBISCgpzb2Nrc19wb3J0GAEgASgNEhgKEHNldF9zeXN0ZW1fcHJveHkYAiABKAgSDgoGYnlwYXNzGAMgAygJEi0KCnRpY2tldF90dGwYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iYgoUU3RhcnRIb3RzcG90UmVzcG9uc2USEgoKaG90c3BvdF9pZBgBIAEoCRIOCgZ0aWNrZXQYAiABKAkSDwoHd3NfcGF0aBgDIAEoCRIVCg1zb2Nrc19hZGRyZXNzGAQgASgJIiYKEFN0YXJ0RXhpdFJlcXVlc3QSEgoKc29ja3NfcG9ydBgBIAEoDSIqChFTdGFydEV4aXRSZXNwb25zZRIVCg1zb2Nrc19hZGRyZXNzGAEgASgJIlUKFVN0YXJ0SG9zdFBvcnRzUmVxdWVzdBINCgVwb3J0cxgBIAMoDRItCgp0aWNrZXRfdHRsGAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIi8KD0hvc3RQb3J0U2tpcHBlZBIMCgRwb3J0GAEgASgNEg4KBnJlYXNvbhgCIAEoCSKOAQoWU3RhcnRIb3N0UG9ydHNSZXNwb25zZRISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEhEKCWxpc3RlbmluZxgEIAMoDRIsCgdza2lwcGVkGAUgAygLMhsuY3VhLmVudi52MS5Ib3N0UG9ydFNraXBwZWQiFgoUU3RvcEhvc3RQb3J0c1JlcXVlc3QiFwoVU3RvcEhvc3RQb3J0c1Jlc3BvbnNlIhEKD1N0b3BFeGl0UmVxdWVzdCISChBTdG9wRXhpdFJlc3BvbnNlIigKElN0b3BIb3RzcG90UmVxdWVzdBISCgpob3RzcG90X2lkGAEgASgJIhUKE1N0b3BIb3RzcG90UmVzcG9uc2UiGQoXR2V0SG90c3BvdFN0YXR1c1JlcXVlc3QiygEKGEdldEhvdHNwb3RTdGF0dXNSZXNwb25zZRInCgVzdGF0ZRgBIAEoDjIYLmN1YS5lbnYudjEuSG90c3BvdFN0YXRlEhIKCmhvdHNwb3RfaWQYAiABKAkSGQoRcGVlcl9wcmluY2lwYWxfaWQYAyABKAkSFQoNc29ja3NfYWRkcmVzcxgEIAEoCRIaChJhY3RpdmVfY29ubmVjdGlvbnMYBSABKA0SEQoJYnl0ZXNfb3V0GAYgASgEEhAKCGJ5dGVzX2luGAcgASgEImgKEVN0YXJ0U3Bhd25SZXF1ZXN0EhIKCmNhcGFiaWxpdHkYASABKAkSLQoKdGlja2V0X3R0bBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIQCghzcGFjZV9pZBgDIAEoCSKCAQoSU3RhcnRTcGF3blJlc3BvbnNlEhAKCHNwYXduX2lkGAEgASgJEg4KBnRpY2tldBgCIAEoCRIPCgd3c19wYXRoGAMgASgJEg8KB2FkZHJlc3MYBCABKAkSEgoKdG9rZW5fcGF0aBgFIAEoCRIUCgxhZGRyZXNzX3BhdGgYBiABKAkiJAoQU3RvcFNwYXduUmVxdWVzdBIQCghzcGF3bl9pZBgBIAEoCSITChFTdG9wU3Bhd25SZXNwb25zZSIXChVHZXRTcGF3blN0YXR1c1JlcXVlc3QiegoWR2V0U3Bhd25TdGF0dXNSZXNwb25zZRIPCgdzdGFydGVkGAEgASgIEhAKCGF0dGFjaGVkGAIgASgIEhAKCHNwYXduX2lkGAMgASgJEg8KB2FkZHJlc3MYBCABKAkSGgoSYWN0aXZlX2Nvbm5lY3Rpb25zGAUgASgNKoYBCgxIb3RzcG90U3RhdGUSHQoZSE9UU1BPVF9TVEFURV9VTlNQRUNJRklFRBAAEhkKFUhPVFNQT1RfU1RBVEVfU1RPUFBFRBABEiIKHkhPVFNQT1RfU1RBVEVfV0FJVElOR19GT1JfUEVFUhACEhgKFEhPVFNQT1RfU1RBVEVfQUNUSVZFEAMyyAoKDVR1bm5lbFNlcnZpY2USQgoHRm9yd2FyZBIaLmN1YS5lbnYudjEuRm9yd2FyZFJlcXVlc3QaGy5jdWEuZW52LnYxLkZvcndhcmRSZXNwb25zZRJRCgxMaXN0Rm9yd2FyZHMSHy5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RGb3J3YXJkc1Jlc3BvbnNlElEKDENsb3NlRm9yd2FyZBIfLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVxdWVzdBogLmN1YS5lbnYudjEuQ2xvc2VGb3J3YXJkUmVzcG9uc2USUQoMU3RhcnRIb3RzcG90Eh8uY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydEhvdHNwb3RSZXNwb25zZRJOCgtTdG9wSG90c3BvdBIeLmN1YS5lbnYudjEuU3RvcEhvdHNwb3RSZXF1ZXN0Gh8uY3VhLmVudi52MS5TdG9wSG90c3BvdFJlc3BvbnNlEl0KEEdldEhvdHNwb3RTdGF0dXMSIy5jdWEuZW52LnYxLkdldEhvdHNwb3RTdGF0dXNSZXF1ZXN0GiQuY3VhLmVudi52MS5HZXRIb3RzcG90U3RhdHVzUmVzcG9uc2USSAoJU3RhcnRFeGl0EhwuY3VhLmVudi52MS5TdGFydEV4aXRSZXF1ZXN0Gh0uY3VhLmVudi52MS5TdGFydEV4aXRSZXNwb25zZRJFCghTdG9wRXhpdBIbLmN1YS5lbnYudjEuU3RvcEV4aXRSZXF1ZXN0GhwuY3VhLmVudi52MS5TdG9wRXhpdFJlc3BvbnNlElcKDlN0YXJ0SG9zdFBvcnRzEiEuY3VhLmVudi52MS5TdGFydEhvc3RQb3J0c1JlcXVlc3QaIi5jdWEuZW52LnYxLlN0YXJ0SG9zdFBvcnRzUmVzcG9uc2USVAoNU3RvcEhvc3RQb3J0cxIgLmN1YS5lbnYudjEuU3RvcEhvc3RQb3J0c1JlcXVlc3QaIS5jdWEuZW52LnYxLlN0b3BIb3N0UG9ydHNSZXNwb25zZRJLCgpTdGFydFNwYXduEh0uY3VhLmVudi52MS5TdGFydFNwYXduUmVxdWVzdBoeLmN1YS5lbnYudjEuU3RhcnRTcGF3blJlc3BvbnNlEkgKCVN0b3BTcGF3bhIcLmN1YS5lbnYudjEuU3RvcFNwYXduUmVxdWVzdBodLmN1YS5lbnYudjEuU3RvcFNwYXduUmVzcG9uc2USVwoOR2V0U3Bhd25TdGF0dXMSIS5jdWEuZW52LnYxLkdldFNwYXduU3RhdHVzUmVxdWVzdBoiLmN1YS5lbnYudjEuR2V0U3Bhd25TdGF0dXNSZXNwb25zZRJdChBQdWJsaXNoU2hhcmVTbG90EiMuY3VhLmVudi52MS5QdWJsaXNoU2hhcmVTbG90UmVxdWVzdBokLmN1YS5lbnYudjEuUHVibGlzaFNoYXJlU2xvdFJlc3BvbnNlEmMKElVucHVibGlzaFNoYXJlU2xvdBIlLmN1YS5lbnYudjEuVW5wdWJsaXNoU2hhcmVTbG90UmVxdWVzdBomLmN1YS5lbnYudjEuVW5wdWJsaXNoU2hhcmVTbG90UmVzcG9uc2USVwoOTGlzdFNoYXJlU2xvdHMSIS5jdWEuZW52LnYxLkxpc3RTaGFyZVNsb3RzUmVxdWVzdBoiLmN1YS5lbnYudjEuTGlzdFNoYXJlU2xvdHNSZXNwb25zZWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+
+/**
+ * Request for `TunnelService.PublishShareSlot`.
+ *
+ * @generated from message cua.env.v1.PublishShareSlotRequest
+ */
+export type PublishShareSlotRequest = Message<"cua.env.v1.PublishShareSlotRequest"> & {
+  /**
+   * The slot (one of `CUA_SHARE_SLOTS`).
+   *
+   * @generated from field: uint32 slot = 1;
+   */
+  slot: number;
+
+  /**
+   * The Space port it reaches (on 127.0.0.1).
+   *
+   * @generated from field: uint32 port = 2;
+   */
+  port: number;
+
+  /**
+   * Who may connect (CIDRs); empty: anyone.
+   *
+   * @generated from field: repeated string allow = 3;
+   */
+  allow: string[];
+
+  /**
+   * Minecraft Java: drop connections whose handshake names none of these
+   * hosts. Empty: no check.
+   *
+   * @generated from field: repeated string expect_hosts = 4;
+   */
+  expectHosts: string[];
+
+  /**
+   * How long it serves. Unset: 24 hours, the most.
+   *
+   * @generated from field: google.protobuf.Duration ttl = 5;
+   */
+  ttl?: Duration | undefined;
+
+  /**
+   * The most bytes it may move (both ways); 0: no cap. Reaching it ends
+   * every connection and refuses new ones.
+   *
+   * @generated from field: uint64 max_bytes = 6;
+   */
+  maxBytes: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.PublishShareSlotRequest.
+ * Use `create(PublishShareSlotRequestSchema)` to create a new message.
+ */
+export const PublishShareSlotRequestSchema: GenMessage<PublishShareSlotRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 0);
+
+/**
+ * Response for `TunnelService.PublishShareSlot`.
+ *
+ * @generated from message cua.env.v1.PublishShareSlotResponse
+ */
+export type PublishShareSlotResponse = Message<"cua.env.v1.PublishShareSlotResponse"> & {
+  /**
+   * The slot.
+   *
+   * @generated from field: uint32 slot = 1;
+   */
+  slot: number;
+
+  /**
+   * When it stops.
+   *
+   * @generated from field: google.protobuf.Timestamp expires_at = 2;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.PublishShareSlotResponse.
+ * Use `create(PublishShareSlotResponseSchema)` to create a new message.
+ */
+export const PublishShareSlotResponseSchema: GenMessage<PublishShareSlotResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 1);
+
+/**
+ * Request for `TunnelService.UnpublishShareSlot`.
+ *
+ * @generated from message cua.env.v1.UnpublishShareSlotRequest
+ */
+export type UnpublishShareSlotRequest = Message<"cua.env.v1.UnpublishShareSlotRequest"> & {
+  /**
+   * The slot.
+   *
+   * @generated from field: uint32 slot = 1;
+   */
+  slot: number;
+};
+
+/**
+ * Describes the message cua.env.v1.UnpublishShareSlotRequest.
+ * Use `create(UnpublishShareSlotRequestSchema)` to create a new message.
+ */
+export const UnpublishShareSlotRequestSchema: GenMessage<UnpublishShareSlotRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 2);
+
+/**
+ * Response for `TunnelService.UnpublishShareSlot`.
+ *
+ * @generated from message cua.env.v1.UnpublishShareSlotResponse
+ */
+export type UnpublishShareSlotResponse = Message<"cua.env.v1.UnpublishShareSlotResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.UnpublishShareSlotResponse.
+ * Use `create(UnpublishShareSlotResponseSchema)` to create a new message.
+ */
+export const UnpublishShareSlotResponseSchema: GenMessage<UnpublishShareSlotResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 3);
+
+/**
+ * Request for `TunnelService.ListShareSlots`.
+ *
+ * @generated from message cua.env.v1.ListShareSlotsRequest
+ */
+export type ListShareSlotsRequest = Message<"cua.env.v1.ListShareSlotsRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.ListShareSlotsRequest.
+ * Use `create(ListShareSlotsRequestSchema)` to create a new message.
+ */
+export const ListShareSlotsRequestSchema: GenMessage<ListShareSlotsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 4);
+
+/**
+ * One served share slot.
+ *
+ * @generated from message cua.env.v1.ShareSlot
+ */
+export type ShareSlot = Message<"cua.env.v1.ShareSlot"> & {
+  /**
+   * The slot.
+   *
+   * @generated from field: uint32 slot = 1;
+   */
+  slot: number;
+
+  /**
+   * The Space port it reaches.
+   *
+   * @generated from field: uint32 port = 2;
+   */
+  port: number;
+
+  /**
+   * Bytes moved since it was published.
+   *
+   * @generated from field: uint64 bytes = 3;
+   */
+  bytes: bigint;
+
+  /**
+   * Its data cap (0: none).
+   *
+   * @generated from field: uint64 max_bytes = 4;
+   */
+  maxBytes: bigint;
+
+  /**
+   * Open connections.
+   *
+   * @generated from field: uint32 connections = 5;
+   */
+  connections: number;
+
+  /**
+   * When it stops.
+   *
+   * @generated from field: google.protobuf.Timestamp expires_at = 6;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.ShareSlot.
+ * Use `create(ShareSlotSchema)` to create a new message.
+ */
+export const ShareSlotSchema: GenMessage<ShareSlot> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 5);
+
+/**
+ * Response for `TunnelService.ListShareSlots`.
+ *
+ * @generated from message cua.env.v1.ListShareSlotsResponse
+ */
+export type ListShareSlotsResponse = Message<"cua.env.v1.ListShareSlotsResponse"> & {
+  /**
+   * The slots, with what each moved.
+   *
+   * @generated from field: repeated cua.env.v1.ShareSlot slots = 1;
+   */
+  slots: ShareSlot[];
+};
+
+/**
+ * Describes the message cua.env.v1.ListShareSlotsResponse.
+ * Use `create(ListShareSlotsResponseSchema)` to create a new message.
+ */
+export const ListShareSlotsResponseSchema: GenMessage<ListShareSlotsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 6);
 
 /**
  * Request for `TunnelService.Forward`.
@@ -49,7 +263,7 @@ export type ForwardRequest = Message<"cua.env.v1.ForwardRequest"> & {
  * Use `create(ForwardRequestSchema)` to create a new message.
  */
 export const ForwardRequestSchema: GenMessage<ForwardRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 0);
+  messageDesc(file_cua_env_v1_tunnel, 7);
 
 /**
  * Response for `TunnelService.Forward`.
@@ -93,7 +307,7 @@ export type ForwardResponse = Message<"cua.env.v1.ForwardResponse"> & {
  * Use `create(ForwardResponseSchema)` to create a new message.
  */
 export const ForwardResponseSchema: GenMessage<ForwardResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 1);
+  messageDesc(file_cua_env_v1_tunnel, 8);
 
 /**
  * An active forward.
@@ -156,7 +370,7 @@ export type ForwardInfo = Message<"cua.env.v1.ForwardInfo"> & {
  * Use `create(ForwardInfoSchema)` to create a new message.
  */
 export const ForwardInfoSchema: GenMessage<ForwardInfo> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 2);
+  messageDesc(file_cua_env_v1_tunnel, 9);
 
 /**
  * Request for `TunnelService.ListForwards`.
@@ -171,7 +385,7 @@ export type ListForwardsRequest = Message<"cua.env.v1.ListForwardsRequest"> & {
  * Use `create(ListForwardsRequestSchema)` to create a new message.
  */
 export const ListForwardsRequestSchema: GenMessage<ListForwardsRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 3);
+  messageDesc(file_cua_env_v1_tunnel, 10);
 
 /**
  * Response for `TunnelService.ListForwards`.
@@ -192,7 +406,7 @@ export type ListForwardsResponse = Message<"cua.env.v1.ListForwardsResponse"> & 
  * Use `create(ListForwardsResponseSchema)` to create a new message.
  */
 export const ListForwardsResponseSchema: GenMessage<ListForwardsResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 4);
+  messageDesc(file_cua_env_v1_tunnel, 11);
 
 /**
  * Request for `TunnelService.CloseForward`.
@@ -213,7 +427,7 @@ export type CloseForwardRequest = Message<"cua.env.v1.CloseForwardRequest"> & {
  * Use `create(CloseForwardRequestSchema)` to create a new message.
  */
 export const CloseForwardRequestSchema: GenMessage<CloseForwardRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 5);
+  messageDesc(file_cua_env_v1_tunnel, 12);
 
 /**
  * Response for `TunnelService.CloseForward`.
@@ -228,7 +442,7 @@ export type CloseForwardResponse = Message<"cua.env.v1.CloseForwardResponse"> & 
  * Use `create(CloseForwardResponseSchema)` to create a new message.
  */
 export const CloseForwardResponseSchema: GenMessage<CloseForwardResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 6);
+  messageDesc(file_cua_env_v1_tunnel, 13);
 
 /**
  * Request for `TunnelService.StartHotspot`.
@@ -273,7 +487,7 @@ export type StartHotspotRequest = Message<"cua.env.v1.StartHotspotRequest"> & {
  * Use `create(StartHotspotRequestSchema)` to create a new message.
  */
 export const StartHotspotRequestSchema: GenMessage<StartHotspotRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 7);
+  messageDesc(file_cua_env_v1_tunnel, 14);
 
 /**
  * Response for `TunnelService.StartHotspot`.
@@ -317,7 +531,214 @@ export type StartHotspotResponse = Message<"cua.env.v1.StartHotspotResponse"> & 
  * Use `create(StartHotspotResponseSchema)` to create a new message.
  */
 export const StartHotspotResponseSchema: GenMessage<StartHotspotResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 8);
+  messageDesc(file_cua_env_v1_tunnel, 15);
+
+/**
+ * Request for `TunnelService.StartExit`.
+ *
+ * @generated from message cua.env.v1.StartExitRequest
+ */
+export type StartExitRequest = Message<"cua.env.v1.StartExitRequest"> & {
+  /**
+   * Guest loopback port; 0 picks a free one.
+   *
+   * @generated from field: uint32 socks_port = 1;
+   */
+  socksPort: number;
+};
+
+/**
+ * Describes the message cua.env.v1.StartExitRequest.
+ * Use `create(StartExitRequestSchema)` to create a new message.
+ */
+export const StartExitRequestSchema: GenMessage<StartExitRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 16);
+
+/**
+ * Response for `TunnelService.StartExit`.
+ *
+ * @generated from message cua.env.v1.StartExitResponse
+ */
+export type StartExitResponse = Message<"cua.env.v1.StartExitResponse"> & {
+  /**
+   * Where the exit listens on guest loopback ("127.0.0.1:41081").
+   *
+   * @generated from field: string socks_address = 1;
+   */
+  socksAddress: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StartExitResponse.
+ * Use `create(StartExitResponseSchema)` to create a new message.
+ */
+export const StartExitResponseSchema: GenMessage<StartExitResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 17);
+
+/**
+ * Request for `TunnelService.StartHostPorts`.
+ *
+ * @generated from message cua.env.v1.StartHostPortsRequest
+ */
+export type StartHostPortsRequest = Message<"cua.env.v1.StartHostPortsRequest"> & {
+  /**
+   * Host ports to publish on the guest's loopback, at the same numbers.
+   *
+   * @generated from field: repeated uint32 ports = 1;
+   */
+  ports: number[];
+
+  /**
+   * How long the ticket accepts the host's WebSocket. Unset: 60 s.
+   *
+   * @generated from field: google.protobuf.Duration ticket_ttl = 2;
+   */
+  ticketTtl?: Duration | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.StartHostPortsRequest.
+ * Use `create(StartHostPortsRequestSchema)` to create a new message.
+ */
+export const StartHostPortsRequestSchema: GenMessage<StartHostPortsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 18);
+
+/**
+ * A host port the guest could not publish.
+ *
+ * @generated from message cua.env.v1.HostPortSkipped
+ */
+export type HostPortSkipped = Message<"cua.env.v1.HostPortSkipped"> & {
+  /**
+   * The host port.
+   *
+   * @generated from field: uint32 port = 1;
+   */
+  port: number;
+
+  /**
+   * Why, in plain words ("something in the Space listens there").
+   *
+   * @generated from field: string reason = 2;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message cua.env.v1.HostPortSkipped.
+ * Use `create(HostPortSkippedSchema)` to create a new message.
+ */
+export const HostPortSkippedSchema: GenMessage<HostPortSkipped> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 19);
+
+/**
+ * Response for `TunnelService.StartHostPorts`.
+ *
+ * @generated from message cua.env.v1.StartHostPortsResponse
+ */
+export type StartHostPortsResponse = Message<"cua.env.v1.StartHostPortsResponse"> & {
+  /**
+   * The session to stop later.
+   *
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+
+  /**
+   * One-time ticket for the host's WebSocket.
+   *
+   * @generated from field: string ticket = 2;
+   */
+  ticket: string;
+
+  /**
+   * WebSocket path relative to the spacesd base URL, with the ticket.
+   *
+   * @generated from field: string ws_path = 3;
+   */
+  wsPath: string;
+
+  /**
+   * The ports listening on the guest's loopback now.
+   *
+   * @generated from field: repeated uint32 listening = 4;
+   */
+  listening: number[];
+
+  /**
+   * The ports it could not take.
+   *
+   * @generated from field: repeated cua.env.v1.HostPortSkipped skipped = 5;
+   */
+  skipped: HostPortSkipped[];
+};
+
+/**
+ * Describes the message cua.env.v1.StartHostPortsResponse.
+ * Use `create(StartHostPortsResponseSchema)` to create a new message.
+ */
+export const StartHostPortsResponseSchema: GenMessage<StartHostPortsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 20);
+
+/**
+ * Request for `TunnelService.StopHostPorts`.
+ *
+ * @generated from message cua.env.v1.StopHostPortsRequest
+ */
+export type StopHostPortsRequest = Message<"cua.env.v1.StopHostPortsRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopHostPortsRequest.
+ * Use `create(StopHostPortsRequestSchema)` to create a new message.
+ */
+export const StopHostPortsRequestSchema: GenMessage<StopHostPortsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 21);
+
+/**
+ * Response for `TunnelService.StopHostPorts`.
+ *
+ * @generated from message cua.env.v1.StopHostPortsResponse
+ */
+export type StopHostPortsResponse = Message<"cua.env.v1.StopHostPortsResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopHostPortsResponse.
+ * Use `create(StopHostPortsResponseSchema)` to create a new message.
+ */
+export const StopHostPortsResponseSchema: GenMessage<StopHostPortsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 22);
+
+/**
+ * Request for `TunnelService.StopExit`.
+ *
+ * @generated from message cua.env.v1.StopExitRequest
+ */
+export type StopExitRequest = Message<"cua.env.v1.StopExitRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopExitRequest.
+ * Use `create(StopExitRequestSchema)` to create a new message.
+ */
+export const StopExitRequestSchema: GenMessage<StopExitRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 23);
+
+/**
+ * Response for `TunnelService.StopExit`.
+ *
+ * @generated from message cua.env.v1.StopExitResponse
+ */
+export type StopExitResponse = Message<"cua.env.v1.StopExitResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopExitResponse.
+ * Use `create(StopExitResponseSchema)` to create a new message.
+ */
+export const StopExitResponseSchema: GenMessage<StopExitResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 24);
 
 /**
  * Request for `TunnelService.StopHotspot`.
@@ -338,7 +759,7 @@ export type StopHotspotRequest = Message<"cua.env.v1.StopHotspotRequest"> & {
  * Use `create(StopHotspotRequestSchema)` to create a new message.
  */
 export const StopHotspotRequestSchema: GenMessage<StopHotspotRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 9);
+  messageDesc(file_cua_env_v1_tunnel, 25);
 
 /**
  * Response for `TunnelService.StopHotspot`.
@@ -353,7 +774,7 @@ export type StopHotspotResponse = Message<"cua.env.v1.StopHotspotResponse"> & {
  * Use `create(StopHotspotResponseSchema)` to create a new message.
  */
 export const StopHotspotResponseSchema: GenMessage<StopHotspotResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 10);
+  messageDesc(file_cua_env_v1_tunnel, 26);
 
 /**
  * Request for `TunnelService.GetHotspotStatus`.
@@ -368,7 +789,7 @@ export type GetHotspotStatusRequest = Message<"cua.env.v1.GetHotspotStatusReques
  * Use `create(GetHotspotStatusRequestSchema)` to create a new message.
  */
 export const GetHotspotStatusRequestSchema: GenMessage<GetHotspotStatusRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 11);
+  messageDesc(file_cua_env_v1_tunnel, 27);
 
 /**
  * Response for `TunnelService.GetHotspotStatus`.
@@ -431,7 +852,204 @@ export type GetHotspotStatusResponse = Message<"cua.env.v1.GetHotspotStatusRespo
  * Use `create(GetHotspotStatusResponseSchema)` to create a new message.
  */
 export const GetHotspotStatusResponseSchema: GenMessage<GetHotspotStatusResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_tunnel, 12);
+  messageDesc(file_cua_env_v1_tunnel, 28);
+
+/**
+ * Request for `TunnelService.StartSpawn`.
+ *
+ * @generated from message cua.env.v1.StartSpawnRequest
+ */
+export type StartSpawnRequest = Message<"cua.env.v1.StartSpawnRequest"> & {
+  /**
+   * The Space's spawn capability, minted by its host. The guest writes it
+   * to the token file (0600, owner: the user cua-spacesd runs as) for
+   * clients in the Space to present on the spawn listener.
+   *
+   * @generated from field: string capability = 1;
+   */
+  capability: string;
+
+  /**
+   * How long the ticket accepts the host's WebSocket. Unset means 60
+   * seconds.
+   *
+   * @generated from field: google.protobuf.Duration ticket_ttl = 2;
+   */
+  ticketTtl?: Duration | undefined;
+
+  /**
+   * The Space's id, for the environment of new processes (`CUA_SPACE`).
+   *
+   * @generated from field: string space_id = 3;
+   */
+  spaceId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StartSpawnRequest.
+ * Use `create(StartSpawnRequestSchema)` to create a new message.
+ */
+export const StartSpawnRequestSchema: GenMessage<StartSpawnRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 29);
+
+/**
+ * Response for `TunnelService.StartSpawn`.
+ *
+ * @generated from message cua.env.v1.StartSpawnResponse
+ */
+export type StartSpawnResponse = Message<"cua.env.v1.StartSpawnResponse"> & {
+  /**
+   * Spawn channel id.
+   *
+   * @generated from field: string spawn_id = 1;
+   */
+  spawnId: string;
+
+  /**
+   * Ticket for the spawn WebSocket.
+   *
+   * @generated from field: string ticket = 2;
+   */
+  ticket: string;
+
+  /**
+   * WebSocket path relative to the spacesd base URL, including the ticket,
+   * for example "/spawn?ticket=…". The host keeps this socket open; the
+   * listener refuses connections while it is closed.
+   *
+   * @generated from field: string ws_path = 3;
+   */
+  wsPath: string;
+
+  /**
+   * Guest-side listener, as a URL clients in the Space use as their cua
+   * daemon, for example "http://127.0.0.1:41234".
+   *
+   * @generated from field: string address = 4;
+   */
+  address: string;
+
+  /**
+   * Where the guest wrote the capability.
+   *
+   * @generated from field: string token_path = 5;
+   */
+  tokenPath: string;
+
+  /**
+   * Where the guest wrote the listener's address (one line).
+   *
+   * @generated from field: string address_path = 6;
+   */
+  addressPath: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StartSpawnResponse.
+ * Use `create(StartSpawnResponseSchema)` to create a new message.
+ */
+export const StartSpawnResponseSchema: GenMessage<StartSpawnResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 30);
+
+/**
+ * Request for `TunnelService.StopSpawn`.
+ *
+ * @generated from message cua.env.v1.StopSpawnRequest
+ */
+export type StopSpawnRequest = Message<"cua.env.v1.StopSpawnRequest"> & {
+  /**
+   * Which channel. Empty stops the current one.
+   *
+   * @generated from field: string spawn_id = 1;
+   */
+  spawnId: string;
+};
+
+/**
+ * Describes the message cua.env.v1.StopSpawnRequest.
+ * Use `create(StopSpawnRequestSchema)` to create a new message.
+ */
+export const StopSpawnRequestSchema: GenMessage<StopSpawnRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 31);
+
+/**
+ * Response for `TunnelService.StopSpawn`.
+ *
+ * @generated from message cua.env.v1.StopSpawnResponse
+ */
+export type StopSpawnResponse = Message<"cua.env.v1.StopSpawnResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.StopSpawnResponse.
+ * Use `create(StopSpawnResponseSchema)` to create a new message.
+ */
+export const StopSpawnResponseSchema: GenMessage<StopSpawnResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 32);
+
+/**
+ * Request for `TunnelService.GetSpawnStatus`.
+ *
+ * @generated from message cua.env.v1.GetSpawnStatusRequest
+ */
+export type GetSpawnStatusRequest = Message<"cua.env.v1.GetSpawnStatusRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.GetSpawnStatusRequest.
+ * Use `create(GetSpawnStatusRequestSchema)` to create a new message.
+ */
+export const GetSpawnStatusRequestSchema: GenMessage<GetSpawnStatusRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 33);
+
+/**
+ * Response for `TunnelService.GetSpawnStatus`.
+ *
+ * @generated from message cua.env.v1.GetSpawnStatusResponse
+ */
+export type GetSpawnStatusResponse = Message<"cua.env.v1.GetSpawnStatusResponse"> & {
+  /**
+   * A channel is started.
+   *
+   * @generated from field: bool started = 1;
+   */
+  started: boolean;
+
+  /**
+   * The host's WebSocket is attached.
+   *
+   * @generated from field: bool attached = 2;
+   */
+  attached: boolean;
+
+  /**
+   * Channel id, when started.
+   *
+   * @generated from field: string spawn_id = 3;
+   */
+  spawnId: string;
+
+  /**
+   * Guest-side listener URL, when started.
+   *
+   * @generated from field: string address = 4;
+   */
+  address: string;
+
+  /**
+   * Open relayed connections.
+   *
+   * @generated from field: uint32 active_connections = 5;
+   */
+  activeConnections: number;
+};
+
+/**
+ * Describes the message cua.env.v1.GetSpawnStatusResponse.
+ * Use `create(GetSpawnStatusResponseSchema)` to create a new message.
+ */
+export const GetSpawnStatusResponseSchema: GenMessage<GetSpawnStatusResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_tunnel, 34);
 
 /**
  * Hotspot state.
@@ -486,6 +1104,11 @@ export const HotspotStateSchema: GenEnum<HotspotState> = /*@__PURE__*/
  *   guest loopback relays each outbound connection over the client's
  *   WebSocket, and the client dials it from its own network. Replaces the
  *   unauthenticated rcdp-socks.
+ * - Spawn: the guest-to-host channel of child Spaces. A listener on guest
+ *   loopback relays each connection over the WebSocket of the host that runs
+ *   the Space, which serves this Space's own children (create, list, delete)
+ *   and nothing else. The host knows which Space a connection comes from by
+ *   the WebSocket it opened, never by anything the guest says.
  *
  * @generated from service cua.env.v1.TunnelService
  */
@@ -550,6 +1173,121 @@ export const TunnelService: GenService<{
     methodKind: "unary";
     input: typeof GetHotspotStatusRequestSchema;
     output: typeof GetHotspotStatusResponseSchema;
+  },
+  /**
+   * Makes this Space an exit for the Spaces of its tree ("Exit through" a
+   * Space): a SOCKS5 listener on guest loopback that connects from this
+   * Space's own network (under this Space's network rules, which its host
+   * enforces). It is reached only through a `Forward` to that loopback
+   * port. Starting it again keeps the running exit.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StartExit
+   */
+  startExit: {
+    methodKind: "unary";
+    input: typeof StartExitRequestSchema;
+    output: typeof StartExitResponseSchema;
+  },
+  /**
+   * Stops the exit (its connections close).
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StopExit
+   */
+  stopExit: {
+    methodKind: "unary";
+    input: typeof StopExitRequestSchema;
+    output: typeof StopExitResponseSchema;
+  },
+  /**
+   * Publishes host ports on the guest's loopback: for each port, a listener
+   * on 127.0.0.1:<port> whose connections the host that runs the Space
+   * carries to the same port on its own loopback (the ports the Space's
+   * `localhost` network setting opens, so `localhost:3000` works as
+   * written). Only that host may call it; starting it again replaces the
+   * listeners.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StartHostPorts
+   */
+  startHostPorts: {
+    methodKind: "unary";
+    input: typeof StartHostPortsRequestSchema;
+    output: typeof StartHostPortsResponseSchema;
+  },
+  /**
+   * Stops publishing host ports.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StopHostPorts
+   */
+  stopHostPorts: {
+    methodKind: "unary";
+    input: typeof StopHostPortsRequestSchema;
+    output: typeof StopHostPortsResponseSchema;
+  },
+  /**
+   * Starts the spawn channel and installs the Space's spawn capability.
+   * Only a caller holding the Space's own token (the host that runs it) may
+   * call it; starting it again replaces the channel and the capability.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StartSpawn
+   */
+  startSpawn: {
+    methodKind: "unary";
+    input: typeof StartSpawnRequestSchema;
+    output: typeof StartSpawnResponseSchema;
+  },
+  /**
+   * Stops the spawn channel and removes the capability from the guest.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.StopSpawn
+   */
+  stopSpawn: {
+    methodKind: "unary";
+    input: typeof StopSpawnRequestSchema;
+    output: typeof StopSpawnResponseSchema;
+  },
+  /**
+   * Reports the spawn channel's state.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.GetSpawnStatus
+   */
+  getSpawnStatus: {
+    methodKind: "unary";
+    input: typeof GetSpawnStatusRequestSchema;
+    output: typeof GetSpawnStatusResponseSchema;
+  },
+  /**
+   * Serves one public TCP share on a share slot: a port the cloud computer
+   * publishes from this Space (`CUA_SHARE_SLOTS`), forwarded to a port of
+   * this Space's own loopback only. The computer's firewall opens the slot
+   * separately. Only the Space's owner (or its host) may call it.
+   *
+   * @generated from rpc cua.env.v1.TunnelService.PublishShareSlot
+   */
+  publishShareSlot: {
+    methodKind: "unary";
+    input: typeof PublishShareSlotRequestSchema;
+    output: typeof PublishShareSlotResponseSchema;
+  },
+  /**
+   * Stops serving a share slot (its connections close).
+   *
+   * @generated from rpc cua.env.v1.TunnelService.UnpublishShareSlot
+   */
+  unpublishShareSlot: {
+    methodKind: "unary";
+    input: typeof UnpublishShareSlotRequestSchema;
+    output: typeof UnpublishShareSlotResponseSchema;
+  },
+  /**
+   * The share slots served now, with the data each moved (the daemon's
+   * data cap and its sweep of slots no share explains).
+   *
+   * @generated from rpc cua.env.v1.TunnelService.ListShareSlots
+   */
+  listShareSlots: {
+    methodKind: "unary";
+    input: typeof ListShareSlotsRequestSchema;
+    output: typeof ListShareSlotsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_tunnel, 0);

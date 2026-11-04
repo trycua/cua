@@ -15,6 +15,9 @@
 //!   cursor as a Clutter actor on the compositor stage.
 //! - `SetCursorState(...)` / `SetCursorColor(...)` — keep the compositor cursor
 //!   aligned with the shared semantic theme and active session identity.
+//! - `PlayCursorPath(json)` / `SetCursorLook(json)` (API 11) — play the shared
+//!   planner's poses (path, float, rotation) and paint the shared halo
+//!   (`cursor_overlay::pose_stream`).
 //! - `CaptureWindow(id,pid)` (API 9) / `CaptureWindowPreview(id,pid,max)`
 //!   (API 10) — snapshot one window's own actor, so a covering window never
 //!   shows; the preview variant downscales on the GPU first.
@@ -26,9 +29,14 @@
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 mod transport;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use crate::interaction::operation_deadline;
 use crate::x11::WindowInfo;
+
+const FOCUS_CONFIRM: Duration = Duration::from_millis(500);
+const CALL_CAP: Duration = Duration::from_millis(800);
+const CAPTURE_CAP: Duration = Duration::from_secs(5);
 
 const DEST: &str = "org.cua.WinRects";
 const COMPOSITOR_DEST: &str = "org.gnome.Shell";
@@ -43,6 +51,9 @@ const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
 pub const WINDOW_CAPTURE_API_VERSION: u32 = 9;
 /// `CaptureWindowPreview(id, pid, max_dimension)`: GPU-downscaled capture.
 pub const WINDOW_PREVIEW_API_VERSION: u32 = 10;
+/// `SetCursorLook(json)` / `PlayCursorPath(json)`: the helper plays the
+/// shared planner's poses (float, rotation) and paints the shared halo.
+pub const POSE_CURSOR_API_VERSION: u32 = 11;
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -51,48 +62,49 @@ struct ShellWindow {
 }
 
 pub fn available() -> bool {
-    shell_owner(false).is_some()
+    shell_owner(false, operation_deadline(CALL_CAP)).is_some()
+}
+
+/// Whether GNOME Shell is this session's compositor: the desktop name says
+/// so, or `org.gnome.Shell` has an owner on the session bus. The bus check
+/// keeps a daemon started without `XDG_CURRENT_DESKTOP` from treating GNOME
+/// as a compositor with no Shell at all.
+pub fn gnome_shell_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| {
+        desktops
+            .split(':')
+            .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
+    }) || SessionShellProbe {
+        deadline: operation_deadline(CALL_CAP),
+    }
+    .name_owner(COMPOSITOR_DEST)
+    .is_some()
+}
+
+/// Whether the helper plays pose tracks ([`POSE_CURSOR_API_VERSION`]).
+pub fn pose_cursor_available() -> bool {
+    shell_owner_with_min_version(Some(POSE_CURSOR_API_VERSION), operation_deadline(CALL_CAP))
+        .is_some()
 }
 
 pub fn semantic_cursor_available() -> bool {
-    shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
-}
-
-fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
-    let owner = shell_owner(false)?;
-    gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.{method}"),
-        args,
-        Duration::from_millis(800),
+    shell_owner_with_min_version(
+        Some(SEMANTIC_CURSOR_API_VERSION),
+        operation_deadline(CALL_CAP),
     )
+    .is_some()
 }
 
-fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> Option<String> {
-    let owner = shell_owner(false)?;
-    gdbus_call_to(&owner, PATH, &format!("{IFACE}.{method}"), args, timeout)
+/// Call `method` on the verified helper; the owner checks and the call
+/// share one `deadline`.
+fn gdbus_call(method: &str, args: &[String], deadline: Instant) -> Option<String> {
+    let owner = shell_owner(false, deadline)?;
+    transport::call(&owner, PATH, &format!("{IFACE}.{method}"), args, deadline)
 }
 
-fn trusted_gdbus_call(method: &str, args: &[String]) -> Option<String> {
-    let owner = shell_owner(true)?;
-    gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.{method}"),
-        args,
-        Duration::from_millis(800),
-    )
-}
-
-fn gdbus_call_to(
-    destination: &str,
-    object_path: &str,
-    method: &str,
-    args: &[String],
-    timeout: Duration,
-) -> Option<String> {
-    transport::call(destination, object_path, method, args, timeout)
+fn trusted_gdbus_call(method: &str, args: &[String], deadline: Instant) -> Option<String> {
+    let owner = shell_owner(true, deadline)?;
+    transport::call(&owner, PATH, &format!("{IFACE}.{method}"), args, deadline)
 }
 
 /// Resolve the helper's immutable unique bus name and prove that it is hosted
@@ -100,12 +112,15 @@ fn gdbus_call_to(
 /// callers additionally require the current helper API. Calling the unique
 /// name closes the race where another process replaces the well-known name
 /// after ownership is checked.
-fn shell_owner(require_browser_api: bool) -> Option<String> {
-    shell_owner_with_min_version(require_browser_api.then_some(BROWSER_HELPER_API_VERSION))
+fn shell_owner(require_browser_api: bool, deadline: Instant) -> Option<String> {
+    shell_owner_with_min_version(
+        require_browser_api.then_some(BROWSER_HELPER_API_VERSION),
+        deadline,
+    )
 }
 
-fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
-    select_shell_owner(&SessionShellProbe, min_version)
+fn shell_owner_with_min_version(min_version: Option<u32>, deadline: Instant) -> Option<String> {
+    select_shell_owner(&SessionShellProbe { deadline }, min_version)
 }
 
 /// Session-bus and procfs observations behind [`select_shell_owner`]. The
@@ -176,30 +191,33 @@ fn attest_shell_owner<P: ShellOwnerProbe>(
     Some((owner, version))
 }
 
-struct SessionShellProbe;
+/// The live session bus, with every call sharing the caller's `deadline`.
+struct SessionShellProbe {
+    deadline: Instant,
+}
 
 impl ShellOwnerProbe for SessionShellProbe {
     type ProcessPin = std::fs::File;
 
     fn name_owner(&self, name: &str) -> Option<String> {
-        let raw = gdbus_call_to(
+        let raw = transport::call(
             DBUS_DEST,
             DBUS_PATH,
             &format!("{DBUS_IFACE}.GetNameOwner"),
             &[name.to_owned()],
-            Duration::from_millis(800),
+            self.deadline,
         )?;
         parse_quoted_string(&raw)
     }
 
     fn connection_identity(&self, owner: &str) -> Option<(u32, u32)> {
         let scalar = |method: &str| {
-            let raw = gdbus_call_to(
+            let raw = transport::call(
                 DBUS_DEST,
                 DBUS_PATH,
                 &format!("{DBUS_IFACE}.{method}"),
                 &[owner.to_owned()],
-                Duration::from_millis(800),
+                self.deadline,
             )?;
             parse_first_u32(&raw)
         };
@@ -237,12 +255,12 @@ impl ShellOwnerProbe for SessionShellProbe {
     }
 
     fn helper_version(&self, owner: &str) -> Option<u32> {
-        let raw = gdbus_call_to(
+        let raw = transport::call(
             owner,
             PATH,
             &format!("{IFACE}.GetVersion"),
             &[],
-            Duration::from_millis(800),
+            self.deadline,
         )?;
         parse_first_u32(&raw)
     }
@@ -301,15 +319,16 @@ pub enum WindowCapture {
 }
 
 /// The verified helper owner and the API version that same owner reported.
-fn attested_owner_with_version() -> Option<(String, u32)> {
-    let (owner, version) = attest_shell_owner(&SessionShellProbe, true)?;
+fn attested_owner_with_version(deadline: Instant) -> Option<(String, u32)> {
+    let (owner, version) = attest_shell_owner(&SessionShellProbe { deadline }, true)?;
     Some((owner, version?))
 }
 
 /// Capture one window's compositor actor without activating it. Covered
 /// windows keep their own content, so no stage crop is involved.
 pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
-    let Some((owner, version)) = attested_owner_with_version() else {
+    let deadline = operation_deadline(CAPTURE_CAP);
+    let Some((owner, version)) = attested_owner_with_version(deadline) else {
         return WindowCapture::Unsupported;
     };
     if version < WINDOW_CAPTURE_API_VERSION {
@@ -318,12 +337,12 @@ pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let Ok(id) = u32::try_from(id) else {
         return WindowCapture::Unavailable;
     };
-    gdbus_call_to(
+    transport::call(
         &owner,
         PATH,
         &format!("{IFACE}.CaptureWindow"),
         &[id.to_string(), pid.unwrap_or(0).to_string()],
-        Duration::from_secs(5),
+        deadline,
     )
     .and_then(|raw| decode_capture(&raw))
     .map_or(WindowCapture::Unavailable, WindowCapture::Png)
@@ -338,13 +357,14 @@ pub fn screenshot_window_preview(
     max_dimension: u32,
 ) -> Option<(Vec<u8>, u32, u32)> {
     let id = u32::try_from(id).ok()?;
-    let owner = shell_owner_with_min_version(Some(WINDOW_PREVIEW_API_VERSION))?;
-    let raw = gdbus_call_to(
+    let deadline = operation_deadline(CAPTURE_CAP);
+    let owner = shell_owner_with_min_version(Some(WINDOW_PREVIEW_API_VERSION), deadline)?;
+    let raw = transport::call(
         &owner,
         PATH,
         &format!("{IFACE}.CaptureWindowPreview"),
         &[id.to_string(), pid.to_string(), max_dimension.to_string()],
-        Duration::from_secs(5),
+        deadline,
     )?;
     let png = strip_preview_timestamp(decode_capture(&raw)?)?;
     let (width, height) = parse_preview_dimensions(&raw)?;
@@ -394,21 +414,14 @@ fn strip_preview_timestamp(mut png: Vec<u8>) -> Option<Vec<u8>> {
 /// can use Shell's screenshot API without confusing a stable Wayland window id
 /// for an X11 drawable.
 pub fn screenshot_display() -> Option<Vec<u8>> {
-    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
+    let raw = gdbus_call("Capture", &[], operation_deadline(CAPTURE_CAP))?;
     decode_capture(&raw)
 }
 
 /// Capture the GNOME stage only when the helper owner and current browser API
 /// have passed the same compositor-attestation checks used for mutation.
 pub fn trusted_screenshot_display() -> Option<Vec<u8>> {
-    let owner = shell_owner(true)?;
-    let raw = gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.Capture"),
-        &[],
-        Duration::from_secs(5),
-    )?;
+    let raw = trusted_gdbus_call("Capture", &[], operation_deadline(CAPTURE_CAP))?;
     decode_capture(&raw)
 }
 
@@ -423,7 +436,9 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
     B64.decode(&raw[start..end]).ok()
 }
 
-/// Screen origin of the compositor frame backing `pid`.
+/// Screen origin of the exact compositor frame `window_id` owned by `pid`.
+/// A zero `window_id` is a PID-only query and needs the PID to own exactly
+/// one window: another window's origin would place every element wrongly.
 ///
 /// `screenshot_window_dispatch` crops the Shell stage to this same frame
 /// rectangle, and GTK's AT-SPI `CoordType::Window` coordinates are relative to
@@ -431,21 +446,27 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
 /// elements up and left by the client-side shadow extents whenever the window
 /// is floating, so pixel actions derived from the returned screenshot miss
 /// their target.
-pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
-    let raw = gdbus_call("GetRects", &[])?;
-    parse_window_origin(&raw, pid)
+pub fn window_origin(pid: u32, window_id: u64) -> Option<(i32, i32)> {
+    let raw = gdbus_call("GetRects", &[], operation_deadline(CALL_CAP))?;
+    parse_window_origin(&raw, pid, window_id)
 }
 
-fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
-    let arr: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
-    for w in &arr {
-        if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
-            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
-            return Some((x, y));
-        }
-    }
-    None
+fn parse_window_origin(raw: &str, pid: u32, window_id: u64) -> Option<(i32, i32)> {
+    let window = select_window(
+        parse_windows(raw, Some(pid))?,
+        (window_id != 0).then_some(window_id),
+    )?;
+    Some((window.x, window.y))
+}
+
+/// The one window matching `window_id`, or the only window when no ID is
+/// given. A duplicated ID is not authoritative.
+fn select_window(windows: Vec<WindowInfo>, window_id: Option<u64>) -> Option<WindowInfo> {
+    let mut matches = windows
+        .into_iter()
+        .filter(|window| window_id.is_none_or(|wanted| window.xid == wanted));
+    let window = matches.next()?;
+    matches.next().is_none().then_some(window)
 }
 
 /// Enumerate GNOME Shell toplevels when the compositor helper is available.
@@ -456,17 +477,44 @@ fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
 /// shell already owns the authoritative stacking list, geometry, visibility,
 /// title, and PID, so use that metadata directly for `list_windows`.
 pub fn list_windows(filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
-    let raw = gdbus_call("GetRects", &[])?;
+    let raw = gdbus_call("GetRects", &[], operation_deadline(CALL_CAP))?;
     parse_windows(&raw, filter_pid)
 }
 
 /// Return one compositor-attested GNOME window only when the current helper
 /// API is hosted by the verified Shell owner.
 pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
-    trusted_shell_windows(Some(pid))?
-        .into_iter()
-        .find(|window| window.info.xid == window_id)
-        .map(|window| window.info)
+    shell_sequence_id(window_id)?;
+    exact_shell_window(
+        &trusted_shell_windows(Some(pid), operation_deadline(CALL_CAP))?,
+        pid,
+        window_id,
+    )
+    .map(|window| window.info.clone())
+}
+
+/// The one Shell window with this PID and stable sequence ID. A same-PID
+/// sibling never substitutes, and a duplicated ID is not authoritative.
+fn exact_shell_window(windows: &[ShellWindow], pid: u32, window_id: u64) -> Option<&ShellWindow> {
+    let mut matches = windows
+        .iter()
+        .filter(|window| window.info.pid == Some(pid) && window.info.xid == window_id);
+    let window = matches.next()?;
+    matches.next().is_none().then_some(window)
+}
+
+/// Shell stable sequences are u32. Wider values, such as the AT-SPI fallback
+/// handles (`pid << 16`), are never passed to `Activate`.
+fn shell_sequence_id(window_id: u64) -> Option<u32> {
+    u32::try_from(window_id).ok()
+}
+
+/// Fresh focus readback for one exact window ID.
+fn exact_window_focused(windows: &[ShellWindow], window_id: u32) -> bool {
+    let mut matches = windows
+        .iter()
+        .filter(|window| window.info.xid == u64::from(window_id));
+    matches.next().is_some_and(|window| window.focused) && matches.next().is_none()
 }
 
 /// Enumerate exact browser-window ids for one process through the verified
@@ -474,54 +522,40 @@ pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
 /// vector means the trusted helper found no owned windows.
 pub fn trusted_window_ids_for_pid(pid: u32) -> Option<Vec<u64>> {
     Some(
-        trusted_shell_windows(Some(pid))?
+        trusted_shell_windows(Some(pid), operation_deadline(CALL_CAP))?
             .into_iter()
             .map(|window| window.info.xid)
             .collect(),
     )
 }
 
-/// Briefly activate an exact compositor-owned window, execute one bounded
-/// focus-sensitive operation, and restore the prior exact Shell focus.
-pub fn with_focused_window<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let before = trusted_shell_windows(None)
-        .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?;
-    let target = before
-        .iter()
-        .find(|window| window.info.pid == Some(pid) && window.info.xid == window_id)
-        .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
-    let previous = before
-        .iter()
-        .find(|window| window.focused)
-        .map(|window| window.info.xid)
-        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))?;
-
-    if target.focused {
-        return body();
-    }
-    trusted_activate_window(window_id)
-        .then_some(())
-        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
-    let body_result = body();
-    let restored = trusted_activate_window(previous);
-    match (body_result, restored) {
-        (Ok(value), true) => Ok(value),
-        (Err(error), true) => Err(error),
-        (Ok(_), false) => {
-            anyhow::bail!("GNOME Shell did not restore the previously focused window")
-        }
-        (Err(error), false) => Err(anyhow::anyhow!(
-            "{error}; GNOME Shell also failed to restore the previously focused window"
-        )),
-    }
+/// The window the verified Shell owner reports focused, `None` when none is.
+/// A focused ID the snapshot lists twice is not authoritative.
+pub fn trusted_focus(deadline: Instant) -> anyhow::Result<Option<(Option<u32>, u64)>> {
+    focused_window(
+        &trusted_shell_windows(None, deadline)
+            .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?,
+    )
 }
 
-fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let raw = trusted_gdbus_call("GetRects", &[])?;
+fn focused_window(windows: &[ShellWindow]) -> anyhow::Result<Option<(Option<u32>, u64)>> {
+    let Some(focused) = windows.iter().find(|window| window.focused) else {
+        return Ok(None);
+    };
+    let id = focused.info.xid;
+    if windows
+        .iter()
+        .filter(|window| window.info.xid == id)
+        .count()
+        > 1
+    {
+        anyhow::bail!("GNOME Shell listed focused window {id} more than once");
+    }
+    Ok(Some((focused.info.pid, id)))
+}
+
+fn trusted_shell_windows(filter_pid: Option<u32>, deadline: Instant) -> Option<Vec<ShellWindow>> {
+    let raw = trusted_gdbus_call("GetRects", &[], deadline)?;
     parse_shell_windows(&raw, filter_pid)
 }
 
@@ -532,60 +566,46 @@ fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
 /// returns true: portal input is focus-bound and otherwise targets whichever
 /// application the user happened to be using.
 pub fn activate_window(window_id: u64) -> bool {
-    let Ok(window_id) = u32::try_from(window_id) else {
+    let Some(window_id) = shell_sequence_id(window_id) else {
         return false;
     };
-    let accepted = gdbus_call("Activate", &[window_id.to_string()])
+    let deadline = operation_deadline(FOCUS_CONFIRM);
+    let accepted = gdbus_call("Activate", &[window_id.to_string()], deadline)
         .is_some_and(|output| output.trim_start().starts_with("(true,"));
-    if !accepted {
-        return false;
-    }
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        if window_is_focused(window_id) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    accepted && focus_confirmed(deadline, |deadline| window_is_focused(window_id, deadline))
 }
 
-fn trusted_activate_window(window_id: u64) -> bool {
-    let Ok(window_id) = u32::try_from(window_id) else {
-        return false;
-    };
-    let accepted = trusted_gdbus_call("Activate", &[window_id.to_string()])
-        .is_some_and(|output| output.trim_start().starts_with("(true,"));
-    if !accepted {
-        return false;
-    }
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        if trusted_shell_windows(None).is_some_and(|windows| {
-            windows
-                .into_iter()
-                .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-        }) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+fn focus_confirmed(deadline: Instant, mut focused: impl FnMut(Instant) -> bool) -> bool {
+    crate::interaction::confirm(deadline, |deadline| Ok::<_, ()>(focused(deadline)))
+        .unwrap_or(false)
 }
 
-fn window_is_focused(window_id: u32) -> bool {
-    let Some(raw) = gdbus_call("GetRects", &[]) else {
+/// Activate exact window `window_id` of `pid` through the verified Shell
+/// owner and read the focus back by `deadline`.
+pub fn trusted_focus_window(pid: u32, window_id: u64, deadline: Instant) -> anyhow::Result<()> {
+    let accepted = shell_sequence_id(window_id).is_some_and(|id| {
+        trusted_gdbus_call("Activate", &[id.to_string()], deadline)
+            .is_some_and(|output| output.trim_start().starts_with("(true,"))
+    });
+    let confirmed = accepted
+        && focus_confirmed(deadline, |deadline| {
+            let observed = match trusted_focus(deadline) {
+                Ok(focused) => crate::interaction::facts::Fact::Known(focused),
+                Err(error) => crate::interaction::facts::Fact::Unknown(error.to_string()),
+            };
+            crate::interaction::policy::focused(&(Some(pid), window_id), &observed)
+        });
+    if !confirmed {
+        anyhow::bail!("GNOME Shell did not confirm activation of exact window {window_id}");
+    }
+    Ok(())
+}
+
+fn window_is_focused(window_id: u32, deadline: Instant) -> bool {
+    let Some(raw) = gdbus_call("GetRects", &[], deadline) else {
         return false;
     };
-    parse_shell_windows(&raw, None).is_some_and(|windows| {
-        windows
-            .into_iter()
-            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-    })
+    parse_shell_windows(&raw, None).is_some_and(|windows| exact_window_focused(&windows, window_id))
 }
 
 fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
@@ -656,17 +676,29 @@ fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWi
 
 /// Glide the agent cursor to screen `(x, y)`.
 pub fn move_cursor(x: i32, y: i32) {
-    let _ = gdbus_call("MoveCursor", &[x.to_string(), y.to_string()]);
+    let _ = gdbus_call(
+        "MoveCursor",
+        &[x.to_string(), y.to_string()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Snap + pulse the agent cursor at screen `(x, y)` (a click indicator).
 pub fn click_pulse(x: i32, y: i32) {
-    let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
+    let _ = gdbus_call(
+        "ClickPulse",
+        &[x.to_string(), y.to_string()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Set the stable session-specific fill color for the compositor cursor.
 pub fn set_cursor_color(fill_color: &str) {
-    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+    let _ = gdbus_call(
+        "SetCursorColor",
+        &[fill_color.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Update the compositor-owned cursor's semantic action state.
@@ -682,17 +714,42 @@ pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool
             target.to_owned(),
             active.to_string(),
         ],
+        operation_deadline(CALL_CAP),
+    );
+}
+
+/// Set the resting float and halo the compositor cursor paints
+/// ([`cursor_overlay::pose_stream::PoseLook::to_json`]). Helper API 11.
+pub fn set_cursor_look(look_json: &str) {
+    let _ = gdbus_call(
+        "SetCursorLook",
+        &[look_json.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
+}
+
+/// Play a planned move on the compositor cursor
+/// ([`cursor_overlay::pose_stream::PoseTrack::to_json`]). Helper API 11.
+pub fn play_cursor_path(track_json: &str) {
+    let _ = gdbus_call(
+        "PlayCursorPath",
+        &[track_json.to_owned()],
+        operation_deadline(CALL_CAP),
     );
 }
 
 /// Set the renderer-visible public session label for the compositor cursor.
 pub fn set_session_label(label: &str) {
-    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+    let _ = gdbus_call(
+        "SetSessionLabel",
+        &[label.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Hide the agent cursor.
 pub fn hide_cursor() {
-    let _ = gdbus_call("HideCursor", &[]);
+    let _ = gdbus_call("HideCursor", &[], operation_deadline(CALL_CAP));
 }
 
 #[cfg(test)]
@@ -743,7 +800,7 @@ mod tests {
     fn rejects_malformed_or_display_formatted_snapshots() {
         for raw in ["not JSON", "{}", "('[{\"pid\":6079,\"x\":14,\"y\":12}]',)"] {
             assert!(parse_shell_windows(raw, None).is_none());
-            assert!(parse_window_origin(raw, 6079).is_none());
+            assert!(parse_window_origin(raw, 6079, 0).is_none());
         }
     }
 
@@ -765,7 +822,8 @@ mod tests {
     fn accessibility_origin_matches_the_frame_cropped_screenshot() {
         let raw = r#"[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]"#;
 
-        assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
+        assert_eq!(parse_window_origin(raw, 6079, 46), Some((14, 12)));
+        assert_eq!(parse_window_origin(raw, 6079, 0), Some((14, 12)));
     }
 
     #[test]
@@ -961,6 +1019,120 @@ mod tests {
         assert_eq!(attest_shell_owner(&silent_api, true), None);
     }
 
+    // Two windows of one PID: 363 at x=0 and 438 at x=600, plus another
+    // application's focused window 47.
+    const SIBLINGS: &str = r#"[{"id":363,"pid":6079,"title":"Main","x":0,"y":0,"w":560,"h":400},{"id":438,"pid":6079,"title":"Dialog","x":600,"y":0,"w":400,"h":300},{"id":47,"pid":6080,"title":"Other","x":1200,"y":0,"w":100,"h":100,"focused":true}]"#;
+    const SIBLINGS_REORDERED: &str = r#"[{"id":438,"pid":6079,"title":"Dialog","x":600,"y":0,"w":400,"h":300},{"id":363,"pid":6079,"title":"Main","x":0,"y":0,"w":560,"h":400},{"id":47,"pid":6080,"title":"Other","x":1200,"y":0,"w":100,"h":100,"focused":true}]"#;
+
+    #[test]
+    fn exact_window_origin_survives_sibling_stacking_reorder() {
+        for raw in [SIBLINGS, SIBLINGS_REORDERED] {
+            assert_eq!(parse_window_origin(raw, 6079, 438), Some((600, 0)));
+            assert_eq!(parse_window_origin(raw, 6079, 363), Some((0, 0)));
+            // A window of another PID, or an unknown ID, has no origin here.
+            assert_eq!(parse_window_origin(raw, 6079, 47), None);
+            assert_eq!(parse_window_origin(raw, 6079, 999), None);
+        }
+    }
+
+    #[test]
+    fn pid_only_origin_requires_one_owned_window() {
+        assert_eq!(parse_window_origin(SIBLINGS, 6079, 0), None);
+        assert_eq!(parse_window_origin(SIBLINGS, 6080, 0), Some((1200, 0)));
+    }
+
+    #[test]
+    fn duplicate_window_identity_is_not_authoritative() {
+        let raw = r#"[{"id":438,"pid":6079,"x":0,"y":0,"w":10,"h":10},{"id":438,"pid":6079,"x":600,"y":0,"w":10,"h":10}]"#;
+        assert_eq!(parse_window_origin(raw, 6079, 438), None);
+        let windows = parse_shell_windows(raw, None).unwrap();
+        assert!(exact_shell_window(&windows, 6079, 438).is_none());
+    }
+
+    fn shell_window(id: u64, pid: u32, x: i32, focused: bool) -> ShellWindow {
+        ShellWindow {
+            info: WindowInfo {
+                xid: id,
+                pid: Some(pid),
+                title: format!("window {id}"),
+                app_name: String::new(),
+                is_on_screen: true,
+                z_index: None,
+                x,
+                y: 0,
+                width: 640,
+                height: 480,
+            },
+            focused,
+        }
+    }
+
+    #[test]
+    fn activation_targets_the_exact_window_never_a_same_pid_sibling() {
+        let siblings = [
+            shell_window(363, 6079, 0, false),
+            shell_window(438, 6079, 600, false),
+            shell_window(47, 6080, 1200, true),
+        ];
+        let mut reversed = siblings.clone();
+        reversed.reverse();
+        for windows in [&siblings[..], &reversed[..]] {
+            assert_eq!(exact_shell_window(windows, 6079, 438).unwrap().info.x, 600);
+            assert_eq!(exact_shell_window(windows, 6079, 363).unwrap().info.x, 0);
+            assert_eq!(focused_window(windows).unwrap(), Some((Some(6080), 47)));
+            for (pid, id) in [(6079, 999), (6080, 438), (6079, 6079 << 16), (6079, 0)] {
+                assert!(exact_shell_window(windows, pid, id).is_none());
+            }
+        }
+        let duplicate = [
+            shell_window(438, 6079, 0, false),
+            shell_window(438, 6079, 600, false),
+            shell_window(47, 6080, 1200, true),
+        ];
+        assert!(exact_shell_window(&duplicate, 6079, 438).is_none());
+        let nothing_focused = [shell_window(438, 6079, 600, false)];
+        assert_eq!(focused_window(&nothing_focused).unwrap(), None);
+        // A focused ID listed twice cannot name the prior focus to restore.
+        let duplicate_focus = [
+            shell_window(47, 6080, 0, true),
+            shell_window(47, 6080, 1200, false),
+        ];
+        assert!(focused_window(&duplicate_focus).is_err());
+    }
+
+    #[test]
+    fn focus_readback_requires_the_exact_window() {
+        let sibling_focused = [
+            shell_window(363, 6079, 0, true),
+            shell_window(438, 6079, 600, false),
+        ];
+        assert!(!exact_window_focused(&sibling_focused, 438));
+        assert!(exact_window_focused(&sibling_focused, 363));
+        let target_focused = [
+            shell_window(363, 6079, 0, false),
+            shell_window(438, 6079, 600, true),
+        ];
+        assert!(exact_window_focused(&target_focused, 438));
+        assert!(!exact_window_focused(&target_focused, 999));
+        let duplicate = [
+            shell_window(438, 6079, 0, true),
+            shell_window(438, 6079, 600, true),
+        ];
+        assert!(!exact_window_focused(&duplicate, 438));
+    }
+
+    #[test]
+    fn accessibility_fallback_handles_are_not_shell_sequences() {
+        // The AT-SPI window list hands out `pid << 16 | ordinal`.
+        let handle = 3_592_163u64 << 16;
+        assert_eq!(shell_sequence_id(handle), None);
+        assert!(!activate_window(handle));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        assert!(trusted_focus_window(3_592_163, handle, deadline).is_err());
+        assert_eq!(shell_sequence_id(u64::from(u32::MAX)), Some(u32::MAX));
+        assert_eq!(shell_sequence_id(33), Some(33));
+    }
+
     #[test]
     fn preserves_exact_focus_from_shell_snapshot() {
         let raw = r#"[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]"#;
@@ -974,7 +1146,12 @@ mod tests {
     #[test]
     fn bundled_helper_uses_host_owned_modifier_badge_chips() {
         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
-        assert!(EXTENSION_SOURCE.contains("return 10;"));
+        // v12 draws the tip, not the canvas centre, on the cursor point.
+        assert!(EXTENSION_SOURCE.contains("return 12;"));
+        assert!(EXTENSION_SOURCE.contains("PlayCursorPath(trackJson)"));
+        assert!(EXTENSION_SOURCE.contains("SetCursorLook(lookJson)"));
+        assert!(EXTENSION_SOURCE.contains("function drawCursorHalo"));
+        assert_eq!(POSE_CURSOR_API_VERSION, 11);
         assert!(EXTENSION_SOURCE.contains("SetCursorState"));
         assert!(EXTENSION_SOURCE.contains("SetCursorColor"));
         assert!(EXTENSION_SOURCE.contains("SetSessionLabel"));
@@ -999,7 +1176,7 @@ mod tests {
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
-        assert_eq!(metadata["version"], 10);
+        assert_eq!(metadata["version"], 12);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

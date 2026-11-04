@@ -414,10 +414,19 @@ EOF
     run_test installed-app-textedit cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_selects_all_behind_another_app \
+      --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
+      --nocapture --test-threads=1
     # These rows assert through System Events and CoreGraphics oracles rather
     # than typed matrix results, so they must not leave unowned trajectories.
     run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test frontmost-app env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test frontmost_app_macos_test -- \
       --ignored --nocapture --test-threads=1
     # Tk derives click locations from the hardware pointer. The rows skip with
     # an explicit reason when python3 lacks tkinter (hosted images may not ship

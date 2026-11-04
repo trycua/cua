@@ -23,6 +23,57 @@ use crate::error::status;
 /// Limitation reported when no registry is linked.
 pub const NO_REGISTRY: &str = "this cua-spacesd build has no cua-driver tool registry";
 
+/// How long a driver session may sit unused before it ends (the documented
+/// five minutes; `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS` overrides it, as it
+/// does for `cua-driver mcp`).
+const SESSION_IDLE_TTL: Duration = Duration::from_secs(300);
+/// How often idle sessions are looked for.
+const SESSION_SWEEP_EVERY: Duration = Duration::from_secs(30);
+
+/// Ends driver sessions idle past `ttl`, every `every`, until the task is
+/// dropped. The standalone driver and `DriverRuntime` run this sweep; the
+/// registry cua-spacesd builds does not go through either, so without it a
+/// session (its element tokens, its recording) outlived the documented TTL.
+pub fn spawn_idle_sweep(every: Duration, ttl: Duration) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            // Session end hooks can block (they stop recordings): not on the
+            // async workers.
+            let ended =
+                tokio::task::spawn_blocking(move || cua_driver_core::session::evict_idle(ttl))
+                    .await
+                    .unwrap_or_default();
+            if !ended.is_empty() {
+                tracing::info!(
+                    count = ended.len(),
+                    "ended driver sessions idle past their TTL"
+                );
+            }
+        }
+    })
+}
+
+/// Starts the process-wide sweep once, when a service with a registry is
+/// built inside a runtime.
+fn start_idle_sweep() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    if tokio::runtime::Handle::try_current().is_err() {
+        return;
+    }
+    STARTED.call_once(|| {
+        let ttl = std::env::var("CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .map_or(SESSION_IDLE_TTL, Duration::from_secs);
+        drop(spawn_idle_sweep(SESSION_SWEEP_EVERY, ttl));
+    });
+}
+
 /// The gRPC service.
 #[derive(Clone)]
 pub struct DriverServiceImpl {
@@ -32,6 +83,9 @@ pub struct DriverServiceImpl {
 impl DriverServiceImpl {
     /// Creates the service over an optional registry.
     pub fn new(tools: Option<Arc<dyn ToolProvider>>) -> Self {
+        if tools.is_some() {
+            start_idle_sweep();
+        }
         Self { tools }
     }
 
@@ -217,5 +271,33 @@ impl DriverService for DriverServiceImpl {
             return Err(status(code, ErrorReason::Unspecified, message));
         }
         Ok(Response::new(call_response(&value["result"])))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cua_driver_core::session::{is_session_ended, touch_session};
+
+    #[tokio::test]
+    async fn the_sweep_ends_a_session_left_idle_past_the_ttl() {
+        let idle = format!("spacesd-sweep-idle-{}", std::process::id());
+        let busy = format!("spacesd-sweep-busy-{}", std::process::id());
+        touch_session(&idle);
+        touch_session(&busy);
+        let sweep = spawn_idle_sweep(Duration::from_millis(20), Duration::from_millis(300));
+        // `busy` is used again and again; `idle` is left alone.
+        for _ in 0..25 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            touch_session(&busy);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !is_session_ended(&idle) && std::time::Instant::now() < deadline {
+            touch_session(&busy);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        sweep.abort();
+        assert!(is_session_ended(&idle), "an idle session ends at its TTL");
+        assert!(!is_session_ended(&busy), "a session in use is kept");
     }
 }

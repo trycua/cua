@@ -27,6 +27,7 @@ export type GroupChatErrorCode = "tooFewBots" | "tooManyBots" | "full" | "atFloo
 
 /** A membership rule was broken. The message says which number. */
 export class GroupChatError extends Error {
+  /** @internal */
   constructor(
     readonly code: GroupChatErrorCode,
     message: string,

@@ -49,6 +49,8 @@ const ACTIVE_DAY_FILE: &str = "active_day";
 const AGENT_USED_SPACE_FILE: &str = "agent_used_space_day";
 /// The Spaces app's experiments that are on (`cua_volume+sharing`, `none`).
 const EXPERIMENTS_FILE: &str = "experiments_on";
+/// The Spaces app's interface language (`en`, `zh-Hans`, ..., `other`).
+const UI_LOCALE_FILE: &str = "ui_locale";
 
 /// What happened to one captured event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +336,7 @@ impl Telemetry {
                 // Off also stops linking; the next sign-in offers it again.
                 fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
                 fsutil::remove(&dir.join(link::LINKED_FILE))?;
+                fsutil::remove(&dir.join(link::CHECKED_FILE))?;
             }
         }
         Ok(path)
@@ -346,7 +349,7 @@ impl Telemetry {
         match self.state_dir() {
             Some(dir) => {
                 let mut removed = identity::reset(&dir)?;
-                for f in [link::ACCOUNT_FILE, link::LINKED_FILE] {
+                for f in [link::ACCOUNT_FILE, link::LINKED_FILE, link::CHECKED_FILE] {
                     let p = dir.join(f);
                     if p.exists() {
                         fsutil::remove(&p)?;
@@ -446,11 +449,43 @@ impl Telemetry {
         let was_linked = dir.join(link::LINKED_FILE).exists();
         fsutil::remove(&dir.join(link::ACCOUNT_FILE))?;
         fsutil::remove(&dir.join(link::LINKED_FILE))?;
+        fsutil::remove(&dir.join(link::CHECKED_FILE))?;
         if was_linked {
             *lock(&self.inner.identity) = None;
             identity::reset(&dir)?;
         }
         Ok(())
+    }
+
+    /// Whether a client that is already signed in should ask the Spaces API
+    /// for the account id again: usage data is on and nobody on this
+    /// machine asked within `max_age` ([`Telemetry::mark_account_checked`]).
+    /// A sign-in always asks; this covers the clients that were signed in
+    /// before the server offered linking.
+    pub fn account_check_due(&self, max_age: Duration) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        let Some(dir) = self.state_dir() else {
+            return false;
+        };
+        match std::fs::metadata(dir.join(link::CHECKED_FILE)).and_then(|m| m.modified()) {
+            Ok(at) => SystemTime::now()
+                .duration_since(at)
+                .is_ok_and(|age| age >= max_age),
+            Err(_) => true,
+        }
+    }
+
+    /// Records that this machine just asked for the account id (whatever
+    /// the answer). Nothing is written while usage data is off.
+    pub fn mark_account_checked(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        if let Some(dir) = self.state_dir() {
+            let _ = fsutil::write_replace(&dir.join(link::CHECKED_FILE), b"1\n");
+        }
     }
 
     /// Where linking stands on this machine.
@@ -546,7 +581,7 @@ impl Telemetry {
         false
     }
 
-    fn identity(&self) -> Identity {
+    pub(crate) fn identity(&self) -> Identity {
         let mut g = lock(&self.inner.identity);
         if let Some(i) = g.as_ref() {
             return i.clone();
@@ -850,7 +885,14 @@ impl Telemetry {
         // this install sends the day's event; the set is the install's).
         let experiments = std::fs::read_to_string(dir.join(EXPERIMENTS_FILE)).unwrap_or_default();
         let ids: Vec<&str> = experiments.trim().split('+').collect();
-        let r = self.capture(crate::events::app_active_with(&ids));
+        // And the interface language it last said (`en` before it says).
+        let locale = std::fs::read_to_string(dir.join(UI_LOCALE_FILE)).unwrap_or_default();
+        let locale = if locale.trim().is_empty() {
+            "en"
+        } else {
+            locale.trim()
+        };
+        let r = self.capture(crate::events::app_active_with(&ids, locale));
         if r == Captured::Queued {
             let _ = fsutil::write_replace(&marker, today.as_bytes());
         }
@@ -908,6 +950,23 @@ impl Telemetry {
         let Some(dir) = self.state_dir() else { return };
         let path = dir.join(EXPERIMENTS_FILE);
         let word = crate::events::experiments_set(ids);
+        if std::fs::read_to_string(&path).is_ok_and(|s| s.trim() == word) {
+            return;
+        }
+        let _ = fsutil::write_replace(&path, format!("{word}\n").as_bytes());
+    }
+
+    /// The Spaces app's interface language now (a fixed set; any other
+    /// language is `other`): kept in the state directory, so the day's
+    /// `cua_app_active` carries it whichever product sends it. Nothing is
+    /// written while telemetry is off.
+    pub fn set_ui_locale(&self, locale: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let Some(dir) = self.state_dir() else { return };
+        let path = dir.join(UI_LOCALE_FILE);
+        let word = crate::events::ui_locale(locale);
         if std::fs::read_to_string(&path).is_ok_and(|s| s.trim() == word) {
             return;
         }

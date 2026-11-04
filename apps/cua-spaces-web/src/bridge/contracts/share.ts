@@ -25,6 +25,27 @@ export interface ShareInput {
   shareable: boolean;
 }
 
+/** Why the sheet cannot share and what to do about it (`share::ShareGate`):
+ * sharing is for teams, so an account without one is sent to Teams. */
+export interface ShareGate {
+  reason: string;
+  action: { label: string; url: string };
+}
+
+/** Someone who lost access to a computer because sharing became team-only
+ * (`sharing.removals`). */
+export interface ShareRemoval {
+  who: string;
+  machineName: string;
+}
+
+/** The owner's one-line note about them (`share::ShareRemovalNote`). */
+export interface ShareRemovalNote {
+  text: string;
+  action: { label: string; url: string };
+  dismiss: string;
+}
+
 /** The command the host runs next (`share::ShareRequest`). */
 export type ShareRequest =
   | { kind: "share"; space: string; who: string; role: string }

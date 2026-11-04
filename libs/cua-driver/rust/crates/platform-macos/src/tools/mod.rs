@@ -1243,7 +1243,10 @@ mod registry_surface_tests {
         let compat = names(true);
         assert!(!default.iter().any(|name| name == "screenshot"));
         assert!(!compat.iter().any(|name| name == "screenshot"));
-        assert_eq!(default, compat, "legacy compat flag must remain surface-neutral");
+        assert_eq!(
+            default, compat,
+            "legacy compat flag must remain surface-neutral"
+        );
     }
 }
 

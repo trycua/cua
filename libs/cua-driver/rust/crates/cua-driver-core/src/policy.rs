@@ -899,7 +899,9 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn explicit_deny_overrides_allow() {
-        let policy = yaml_policy("allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n");
+        let policy = yaml_policy(
+            "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
+        );
         assert!(matches!(
             policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Deny(_)

@@ -666,7 +666,9 @@ pub fn parse_command() -> Command {
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
         println!("  --claude-code-computer-use-compat");
         println!("                          Legacy compatibility flag retained for existing launch configs.");
-        println!("                          It currently has no tool-surface effect and does not add a");
+        println!(
+            "                          It currently has no tool-surface effect and does not add a"
+        );
         println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");

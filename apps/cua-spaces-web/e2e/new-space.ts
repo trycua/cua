@@ -217,9 +217,10 @@ export async function checkNewSpace(page: Page, checkpoints: ParityCheckpoint[])
       if (seen.has(key)) continue;
       seen.add(key);
       await page.evaluate(([state, env]) => window.__cuaParity!.showWizard(state, env), [cp.state, cp.env] as [WizardState, WizardEnv]);
-      // When a typed value's field closes, the dialog takes focus back again
-      // on the next frame. Let that frame pass, or on a slow one it takes
-      // focus from the next state's field, whose blur commits the value.
+      // When a typed value's field closes, the dialog (Base UI's
+      // restoreFocus: "popup") takes focus back again on the next frame. Let
+      // that frame pass, or on a slow one it takes focus from the next
+      // state's field, whose blur commits the value.
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const menu = JSON.stringify(cp.view.placements);
       // The open image suggestions cover the menu; it is checked on a later state.

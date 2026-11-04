@@ -148,7 +148,14 @@ if [[ " $archs " == *" arm64 "* ]]; then
   microvm_env=(CUA_VZ_BIN="$out/.vz/cua-vz" CUA_MICROVM_INIT_BIN="$init_bin")
 fi
 
-# The network gateway of microVMs (Go, universal; libs/cua/netgw).
+# The network gateway of microVMs (Go, universal; libs/cua/netgw). GitHub's
+# macOS runners do not ship Go: install it with Homebrew when it is missing.
+# Any recent Go will do; netgw/go.mod names the exact toolchain and Go fetches
+# it (checksum-verified by the Go module sum database) on first use.
+if ! command -v go >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || { echo "Go is missing and so is Homebrew: install Go to build cua-netgw" >&2; exit 1; }
+  brew install go >&2
+fi
 "$cua/netgw/build.sh" "$out/.netgw" >/dev/null
 microvm_env+=(CUA_NETGW_BIN="$out/.netgw/cua-netgw")
 

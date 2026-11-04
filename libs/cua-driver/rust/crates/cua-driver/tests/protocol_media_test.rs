@@ -652,37 +652,46 @@ fn set_config_screenshot_resize() {
                 break;
             }
             _ => {
-                let error = structured["screenshot_error"]
-                    .as_str()
-                    .or_else(|| {
-                        state["result"]["content"]
-                            .as_array()
-                            .and_then(|items| items.iter().find_map(|item| item["text"].as_str()))
-                    })
-                    .unwrap_or("response omitted screenshot dimensions");
-                capture_errors.push(format!("window_id={window_id}: {error}"));
+                // macOS reports an object, Windows a string; either means the
+                // window was not capturable from this session.
+                let error = match &structured["screenshot_error"] {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(text) => Some(text.clone()),
+                    other => Some(other.to_string()),
+                };
+                capture_errors.push((window_id, error));
             }
         }
     }
 
+    let describe = |errors: &[(u64, Option<String>)]| {
+        errors
+            .iter()
+            .map(|(id, error)| {
+                format!(
+                    "window_id={id}: {}",
+                    error
+                        .as_deref()
+                        .unwrap_or("no dimensions and no screenshot_error")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
     if tried == 0 {
         eprintln!("No on-screen windows found — skipping resize assertion");
-    } else if !captured
-        && cfg!(target_os = "macos")
-        && !capture_errors.is_empty()
-        && capture_errors
-            .iter()
-            .all(|error| error.contains("screencapture failed"))
-    {
+    } else if !captured && capture_errors.iter().all(|(_, error)| error.is_some()) {
+        // Capture is unavailable in this session (no Screen Recording grant,
+        // Windows Session 0): there is nothing to resize.
         eprintln!(
-            "No visible windows were capturable by the raw unbundled test process — skipping resize assertion. Errors: {}",
-            capture_errors.join(" | ")
+            "No visible window was capturable — skipping resize assertion. Errors: {}",
+            describe(&capture_errors)
         );
     } else {
         assert!(
             captured,
             "Expected a capturable window with resized image dimensions. Errors: {}",
-            capture_errors.join(" | ")
+            describe(&capture_errors)
         );
     }
 

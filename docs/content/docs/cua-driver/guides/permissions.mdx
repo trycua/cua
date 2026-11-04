@@ -253,7 +253,7 @@ package cua.policy
 
 import rego.v1
 
-safe_tools := {"screenshot", "get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
+safe_tools := {"get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
 
 allow if {
     input.tool in safe_tools

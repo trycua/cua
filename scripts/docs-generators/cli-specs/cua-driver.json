@@ -200,7 +200,7 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).",
+     "help": "Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.",
      "name": "claude-code-computer-use-compat",
      "short_name": null
     },

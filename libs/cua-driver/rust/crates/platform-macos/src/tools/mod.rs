@@ -1153,14 +1153,10 @@ pub fn register_all(
         registry,
         Arc::new(clipboard::MacosClipboard::new()),
     );
-    // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
-    // screenshot the Claude Code computer-use compat loop relies on now comes
-    // from `get_window_state` (which always returns BOTH the tree AND a
-    // screenshot — perception is mode-agnostic; `capture_mode` is deprecated/
-    // ignored) for a window, or `get_desktop_state` for the whole screen.
-    // `compat` no longer gates a tool swap here — the flag's live purpose is to
-    // register the MCP server under the `cua-computer-use` name, which is what
-    // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
+    // The standalone `screenshot` tool was removed in #1692. Window capture
+    // now comes from `get_window_state` (tree plus screenshot by default), while
+    // `get_desktop_state` handles explicit full-display capture. `capture_mode`
+    // is deprecated and ignored. `compat` no longer gates a tool swap here.
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(

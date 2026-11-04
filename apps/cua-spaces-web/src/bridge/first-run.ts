@@ -156,6 +156,18 @@ const rank = (id: string) => {
   return i < 0 ? PREFERENCE.length : i;
 };
 
+/** Without the core: screen 3's sign-in line (`first_run::sign_in_row`). */
+function fallbackSignInRow(input: FirstRunInput): FirstRunRow | null {
+  if (input.signingIn) {
+    return input.signInCode
+      ? { id: "account", state: "checking", title: "Signing in", note: `Enter the code ${input.signInCode} on the sign-in page.`, action: { id: "reopen-sign-in", label: "Open the page" }, settingsUrl: null }
+      : { id: "account", state: "checking", title: "Signing in", note: "Finish signing in to Cua in your browser.", action: { id: "sign-in-code", label: "Use a code instead" }, settingsUrl: null };
+  }
+  if (!input.signInFailure) return null;
+  const code = input.signInFailure === "notConfirmed" || input.signInFailure === "codeRejected" || input.signInFailure === "unknown";
+  return { id: "account", state: "fix", title: "Sign-in didn't finish", note: "Try again, or use a code instead.", action: code ? { id: "sign-in-code", label: "Use a code instead" } : null, settingsUrl: null };
+}
+
 /** Without the core: the screens in their plainest state. Not the
  * product's behaviour; the demo and tests without wasm use it. */
 function fallbackView(input: FirstRunInput): FirstRunView {
@@ -236,8 +248,10 @@ function fallbackView(input: FirstRunInput): FirstRunView {
             { title: "Your other computers", note: "Sign in on each one" },
             { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
           ],
-          status: null,
-          primary: input.signedIn ? { id: "continue", label: continueLabel("devices") } : { id: "sign-in", label: "Sign in" },
+          status: input.signedIn ? null : fallbackSignInRow(input),
+          primary: input.signedIn
+            ? { id: "continue", label: continueLabel("devices") }
+            : { id: "sign-in", label: input.signInFailure && !input.signingIn ? "Try again" : "Sign in" },
           secondary: input.signedIn ? null : { id: "not-now", label: "Not now" },
           note: input.signedIn ? null : `Not now keeps Cua on ${place} only. You can sign in later.`,
         },
@@ -483,7 +497,7 @@ export interface FirstRunHook {
   disconnect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `sign-in-code` (a code instead of the browser), `reopen-sign-in` (the sign-in page again), `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -612,6 +626,11 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
 
   const signedIn = Boolean(session.data?.signedIn);
   const signingIn = session.data?.signIn.kind === "starting" || session.data?.signIn.kind === "waiting";
+  // Every way the sign-in ends shows on the screen (the first run has no sidebar or toast).
+  const signInNow = session.data?.signIn;
+  const signInCode = signInNow?.kind === "waiting" ? (signInNow.userCode ?? null) : null;
+  const signInFailure = signInNow?.kind === "failed" ? (signInNow.reason ?? "unknown") : null;
+  const signInUrl = session.data?.signInUrl ?? null;
   // An older saved run may say any step; an unknown one starts over.
   const step: FirstRunStep = STEPS.includes(s.step) ? s.step : "welcome";
 
@@ -651,6 +670,23 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
       window.removeEventListener("focus", focus);
     };
   }, [active, adapter, step, s.finishedLater, tick, pollMs]);
+
+  // Back from the browser: read the sign-in again at once, so one that
+  // finished (or failed) there shows now, not on the next host push.
+  const refreshSession = useRef(session.refresh);
+  refreshSession.current = session.refresh;
+  useEffect(() => {
+    if (!active || !signingIn) return;
+    const again = () => {
+      if (document.visibilityState !== "hidden") void refreshSession.current().catch(() => {});
+    };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [active, signingIn]);
 
   const rows: FirstRunAgent[] | null = agents
     ? agents.map((a) => ({
@@ -722,6 +758,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
     agentUsedAt: null,
     signedIn,
     signingIn,
+    signInCode,
+    signInFailure,
     host: host
       ? {
           configured: host.configured,
@@ -1003,6 +1041,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
           break;
         case "sign-in":
           await session.signIn().catch(() => {});
+          break;
+        case "sign-in-code":
+          // A code to enter on any browser or phone: for a tab that was closed, or opened in another browser.
+          await session.signIn({ code: true }).catch(() => {});
+          break;
+        case "reopen-sign-in":
+          if (signInUrl) await session.openExternal(signInUrl).catch(() => {});
           break;
         case "set-up":
           autoSetUp.current = true;

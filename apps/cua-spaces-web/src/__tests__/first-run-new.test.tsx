@@ -177,6 +177,16 @@ describe("1b, sign-in", () => {
     expect(signInView({ kind: "failed", reason: "offline", message: "You're offline." }, null).line).toBe("You're offline.");
   });
 
+  it("a session that could not be saved says so on 1b, with Try again and Use a code instead", () => {
+    const msg = "Sign-in didn't finish. Cua couldn't save your session on this computer.";
+    const v = signInView({ kind: "failed", reason: "couldNotSave", message: msg }, null);
+    render(<SignInScreen view={v} onTryAgain={noop} onUseCode={noop} onOpen={noop} />);
+    expect(screen.getByRole("heading").textContent).toBe("Sign-in didn't finish");
+    expect(text()).toContain(msg);
+    expect(screen.getByRole("button", { name: "Try again" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Use a code instead" })).not.toBeNull();
+  });
+
   it("with a code shows the code and the page to enter it on", () => {
     const onOpen = vi.fn();
     render(<SignInScreen view={signInView({ kind: "waiting", userCode: "WXYZ-1234" }, "https://cua.ai/device")} onTryAgain={noop} onUseCode={noop} onOpen={onOpen} />);

@@ -40,7 +40,7 @@ afterEach(() => {
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object; intercept?: (op: string, args: unknown) => unknown } = {}) {
   await testCore();
   const calls: Calls = [];
   let lastRows: AgentSetupRow[] | null = null;
@@ -51,7 +51,7 @@ async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostS
     demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli, ...opts.demo },
     intercept: (op, args) => {
       calls.push({ op, args });
-      return undefined;
+      return opts.intercept?.(op, args);
     },
     answer: (op, out) => {
       if (op === "host.status" && opts.host) return opts.host(out as HostStatus);
@@ -355,6 +355,51 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.body.textContent).toMatch(/You can sign in later\./);
     click('[data-first-run-devices-primary="sign-in"]');
     await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
+  });
+
+  it("a sign-in that didn't finish says why on the screen, with Try again and a code instead (CUA-3144)", async () => {
+    writeFirstRun({ step: "devices" });
+    // The first try: the browser never confirmed. Then a code that waits.
+    let tries = 0;
+    const calls = await mount({
+      intercept: (op) => {
+        if (op !== "session.signIn") return undefined;
+        tries += 1;
+        if (tries === 1) return Promise.reject(new Error("browser sign-in was not completed in time"));
+        return { method: "device", verificationUri: "https://cua.ai/device", userCode: "4F2-91K" };
+      },
+    });
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(document.querySelector('[data-first-run-status="account"]')).toBeNull();
+    click('[data-first-run-devices-primary="sign-in"]');
+    // Never silent: the reason on the screen itself (the first run has no sidebar), and Try again.
+    await waitFor(() => expect(document.querySelector('[data-first-run-status="account"]')?.getAttribute("data-state")).toBe("fix"));
+    const row = document.querySelector('[data-first-run-status="account"]')!;
+    expect(row.textContent).toMatch(/Sign-in didn't finish/);
+    expect(row.textContent).toMatch(/The browser didn't confirm in time\./);
+    expect(row.textContent).not.toMatch(/not completed in time|error/i);
+    expect(document.querySelector('[data-first-run-devices-primary="sign-in"]')!.textContent).toBe("Try again");
+    // A code works from any browser or phone: for a closed tab, or another browser.
+    click('[data-first-run-action="sign-in-code"]');
+    await waitFor(() => expect(calls.some((c) => c.op === "session.signIn" && (c.args as { code?: boolean }).code === true)).toBe(true));
+    await waitFor(() => expect(document.querySelector('[data-first-run-status="account"]')?.textContent).toMatch(/Enter the code 4F2-91K on the sign-in page\./));
+    expect(document.querySelector('[data-first-run-status="account"]')!.getAttribute("data-state")).toBe("checking");
+    expect(document.querySelector('[data-first-run-action="reopen-sign-in"]')).not.toBeNull();
+  });
+
+  it("while it waits for the browser, it reads the sign-in again when the window is back in front", async () => {
+    writeFirstRun({ step: "devices" });
+    const calls = await mount({
+      intercept: (op) => (op === "session.signIn" ? { method: "browser", verificationUri: "https://cua.ai/signin" } : undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    click('[data-first-run-devices-primary="sign-in"]');
+    await waitFor(() => expect(document.querySelector('[data-first-run-action="sign-in-code"]')).not.toBeNull());
+    const before = calls.filter((c) => c.op === "session.get").length;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(calls.filter((c) => c.op === "session.get").length).toBeGreaterThan(before));
   });
 
   it("a disk-image install offers the Cua CLI after Pick your agent: the exact file, then Install only when pressed", async () => {

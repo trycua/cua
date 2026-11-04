@@ -513,6 +513,24 @@ export function NewFirstRun() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, signedIn, phase.kind]);
 
+  // Back from the browser: read the sign-in again at once, so one that finished
+  // (or failed) there shows now, not on the next host push.
+  const waitingOnSignIn = s.screen === "signin" && (phase.kind === "starting" || phase.kind === "waiting");
+  const refreshSession = useRef(session.refresh);
+  refreshSession.current = session.refresh;
+  useEffect(() => {
+    if (!waitingOnSignIn) return;
+    const again = () => {
+      if (document.visibilityState !== "hidden") void refreshSession.current().catch(() => {});
+    };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [waitingOnSignIn]);
+
   // Screen 2, signed in: this computer joins the account (once; the store also does it on sign-in).
   const addRun = useRef(0);
   const addThis = async () => {

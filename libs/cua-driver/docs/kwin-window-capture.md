@@ -5,6 +5,11 @@ The native KWin capture adapter uses Plasma window-management UUIDs and
 `org.kde.KWin.ScreenShot2.CaptureWindow` with that UUID and checks the returned
 `windowId`. It does not crop the active desktop or activate the target.
 
+`bring_to_front` is the one call that changes focus. It activates the exact
+UUID through Plasma window management and confirms the window's state from
+KWin. That confirmation doesn't bind later input to the window: desktop input
+sent afterwards still goes to whatever holds focus at that moment.
+
 The optional Cua KWin effect is not required for this capture path. The adapter
 does not enable KWin raw keyboard or pointer input.
 
@@ -39,7 +44,7 @@ binary alone does not acquire these capabilities. Install through the host's
 normal packaging and permission mechanism; do not disable KWin permission
 checks. Restrictions vary by KWin version and sandbox. The capture interface
 must return `windowId` metadata; older implementations without that identity
-proof are refused. Native validation used KWin 6.7.4.
+proof are refused. Native validation used KWin 6.7.4 and 6.6.6.
 
 Window enumeration accepts Plasma window-management v13 and newer, binding no
 higher than v17. Stacking comes from the UUID-order event on v13–v16 and the

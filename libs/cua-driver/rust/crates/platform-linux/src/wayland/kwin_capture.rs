@@ -10,6 +10,9 @@ use wayland_client::{protocol::{wl_callback, wl_registry}, Connection, Dispatch,
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{
     self as management, OrgKdePlasmaWindowManagement,
 };
+use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::{
+    self as plasma_window, OrgKdePlasmaWindow,
+};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_stacking_order::{
     self as stacking, OrgKdePlasmaStackingOrder,
 };
@@ -29,6 +32,8 @@ struct Windows {
     stacking: Vec<String>,
     stacking_complete: bool,
     roundtrips: u32,
+    target_state: Option<u32>,
+    pids: HashMap<String, u32>,
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for Windows {
@@ -90,6 +95,25 @@ impl Dispatch<OrgKdePlasmaWindowManagement, ()> for Windows {
     }
 }
 
+impl Dispatch<OrgKdePlasmaWindow, String> for Windows {
+    fn event(
+        state: &mut Self,
+        _: &OrgKdePlasmaWindow,
+        event: plasma_window::Event,
+        uuid: &String,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            plasma_window::Event::StateChanged { flags } => state.target_state = Some(flags),
+            plasma_window::Event::PidChanged { pid } if pid != 0 => {
+                state.pids.insert(uuid.clone(), pid);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Dispatch<OrgKdePlasmaStackingOrder, ()> for Windows {
     fn event(
         state: &mut Self,
@@ -142,6 +166,52 @@ fn window_snapshot(connection: Connection) -> anyhow::Result<(Vec<String>, Vec<S
     state.uuids.sort();
     state.uuids.dedup();
     Ok((state.uuids, state.stacking))
+}
+
+/// The owning process of each window, as Plasma window management announces it.
+/// `getWindowInfo` only started reporting a pid in later KWin releases.
+fn window_pids(connection: Connection, uuids: &[String]) -> anyhow::Result<HashMap<String, u32>> {
+    let mut queue = connection.new_event_queue::<Windows>();
+    connection.display().get_registry(&queue.handle(), ());
+    let mut state = Windows::default();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    connection.display().sync(&queue.handle(), ());
+    super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        deadline,
+        "KWin registry",
+        |state| state.roundtrips == 1,
+    )?;
+    let manager = state
+        .manager
+        .clone()
+        .context("KWin window management protocol unavailable")?;
+    let windows: Vec<OrgKdePlasmaWindow> = uuids
+        .iter()
+        .map(|uuid| manager.get_window_by_uuid(uuid.clone(), &queue.handle(), uuid.clone()))
+        .collect();
+    connection.display().sync(&queue.handle(), ());
+    super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        deadline,
+        "KWin window owners",
+        |state| state.roundtrips == 2,
+    )?;
+    for window in windows {
+        window.destroy();
+    }
+    let _ = connection.flush();
+    Ok(state.pids)
+}
+
+/// The window's owner: KWin's own answer when it gives one, else the announced pid.
+fn owning_pid(properties: &Properties, announced: Option<u32>) -> anyhow::Result<u32> {
+    if properties.contains_key("pid") {
+        return number(properties, "pid");
+    }
+    announced.context("KWin omitted pid")
 }
 
 #[derive(Default)]
@@ -286,6 +356,7 @@ fn on_current_activity(properties: &Properties, current: Option<&str>) -> anyhow
 
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
     let (uuids, stacking) = window_snapshot(Connection::connect_to_env()?)?;
+    let pids = window_pids(Connection::connect_to_env()?, &uuids)?;
     let stacking: HashMap<_, _> = stacking
         .into_iter()
         .enumerate()
@@ -338,7 +409,7 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
                     .lock()
                     .map_err(|_| anyhow::anyhow!("KWin id registry poisoned"))?
                     .id_for(&uuid)?,
-                pid: Some(number(&properties, "pid")?),
+                pid: owning_pid(&properties, pids.get(&uuid).copied()).ok(),
                 app_name: text(&properties, "resourceClass")?.to_owned(),
                 title: text(&properties, "caption")?.to_owned(),
                 is_on_screen: !minimized
@@ -357,12 +428,76 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
     })
 }
 
+fn is_active(state: Option<u32>) -> bool {
+    state.is_some_and(|flags| flags & management::State::Active as u32 != 0)
+}
+
+/// Make one exact window the active window, past focus stealing prevention,
+/// and confirm it from KWin's own state. Input sent afterwards still goes to
+/// whatever holds focus at that moment; the caller must not treat this as a
+/// binding between the window and later global input.
+pub fn activate(window_id: u64, pid: Option<u32>) -> anyhow::Result<()> {
+    let uuid = ids()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("KWin id registry poisoned"))?
+        .uuid_for(window_id)
+        .context("KWin window was not enumerated in this connection")?;
+    ensure!(
+        list_windows()?
+            .iter()
+            .any(|window| window.xid == window_id && pid.is_none_or(|pid| window.pid == Some(pid))),
+        "foreground_unavailable: KWin window {window_id} no longer exists or belongs to another process"
+    );
+    let connection = Connection::connect_to_env()?;
+    let mut queue = connection.new_event_queue::<Windows>();
+    connection.display().get_registry(&queue.handle(), ());
+    let mut state = Windows::default();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    connection.display().sync(&queue.handle(), ());
+    super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        deadline,
+        "KWin registry",
+        |state| state.roundtrips == 1,
+    )?;
+    let manager = state
+        .manager
+        .clone()
+        .context("foreground_unavailable: KWin window management protocol unavailable")?;
+    let window = manager.get_window_by_uuid(uuid.clone(), &queue.handle(), uuid);
+    connection.display().sync(&queue.handle(), ());
+    super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        deadline,
+        "KWin window state",
+        |state| state.roundtrips == 2,
+    )?;
+    let active = management::State::Active as u32;
+    window.set_state(active, active);
+    connection.flush()?;
+    let confirmed = super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        std::time::Instant::now() + Duration::from_secs(1),
+        "KWin activation",
+        |state| is_active(state.target_state),
+    );
+    window.destroy();
+    let _ = connection.flush();
+    confirmed.context("foreground_unavailable: KWin did not confirm the window became active")
+}
+
 pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
     let uuid = ids()
         .lock()
         .map_err(|_| anyhow::anyhow!("KWin id registry poisoned"))?
         .uuid_for(window_id)
         .context("KWin window was not enumerated in this connection")?;
+    let announced = window_pids(Connection::connect_to_env()?, std::slice::from_ref(&uuid))?
+        .get(&uuid)
+        .copied();
     run(async move {
         let connection = zbus::Connection::session().await?;
         let owner = owner(&connection).await?;
@@ -377,7 +512,7 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             text(&before, "uuid")?.trim_matches(['{', '}']) == uuid.trim_matches(['{', '}']),
             "KWin window identity mismatch"
         );
-        let actual_pid = number(&before, "pid")?;
+        let actual_pid = owning_pid(&before, announced)?;
         ensure!(
             pid.is_none_or(|pid| pid == actual_pid),
             "KWin window PID mismatch"
@@ -411,22 +546,50 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             text(&result, "windowId")?.trim_matches(['{', '}']) == uuid.trim_matches(['{', '}']),
             "KWin screenshot window identity mismatch"
         );
-        let (width, height, stride, format) = (
-            number(&result, "width")?,
-            number(&result, "height")?,
-            number(&result, "stride")?,
-            number(&result, "format")?,
-        );
-        let size = image_size(width, height, stride, format)?;
-        let mut pixels = vec![0; size];
-        reader.read_exact(&mut pixels).await?;
+        let png = read_image(&result, &mut reader).await?;
         let after = info(&connection, &owner, &uuid).await?;
         ensure!(
-            number(&after, "pid")? == actual_pid,
+            owning_pid(&after, announced)? == actual_pid,
             "KWin window changed during capture"
         );
-        decode(width, height, stride, format, &pixels)
+        to_window_frame(
+            png,
+            coordinate(&before, "width")?.round() as u32,
+            coordinate(&before, "height")?.round() as u32,
+        )
     })
+}
+
+/// KWin renders a window at its output's scale even when asked for logical
+/// resolution on some releases. Window-local coordinates are logical, so the
+/// image must be too or a pixel read off it names a different spot.
+fn to_window_frame(png: Vec<u8>, width: u32, height: u32) -> anyhow::Result<Vec<u8>> {
+    if crate::capture::png_dimensions_pub(&png)? == (width, height) {
+        return Ok(png);
+    }
+    ensure!(width > 0 && height > 0, "KWin window has no size");
+    let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image
+        .resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+        .write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+async fn read_image(
+    result: &Properties,
+    reader: &mut tokio::net::UnixStream,
+) -> anyhow::Result<Vec<u8>> {
+    let (width, height, stride, format) = (
+        number(result, "width")?,
+        number(result, "height")?,
+        number(result, "stride")?,
+        number(result, "format")?,
+    );
+    let size = image_size(width, height, stride, format)?;
+    let mut pixels = vec![0; size];
+    reader.read_exact(&mut pixels).await?;
+    decode(width, height, stride, format, &pixels)
 }
 
 fn image_size(width: u32, height: u32, stride: u32, format: u32) -> anyhow::Result<usize> {
@@ -475,17 +638,61 @@ fn decode(
             if matches!(format, 6 | 18) {
                 let alpha = u32::from(color[3]);
                 for channel in &mut color[..3] {
-                    *channel = if alpha == 0 {
-                        0
-                    } else {
-                        ((u32::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8
-                    };
+                    *channel = (u32::from(*channel) * 255 + alpha / 2)
+                        .checked_div(alpha)
+                        .map_or(0, |value| value.min(255) as u8);
                 }
             }
             rgba.extend_from_slice(&color);
         }
     }
     cua_driver_core::image_utils::encode_rgba_to_png(&rgba, width, height)
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    #[test]
+    fn a_window_capture_is_delivered_in_the_window_frame() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(1000, 900)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let png = encoded.into_inner();
+        let scaled = to_window_frame(png.clone(), 800, 720).unwrap();
+        assert_eq!(
+            crate::capture::png_dimensions_pub(&scaled).unwrap(),
+            (800, 720)
+        );
+        // Already in the frame: the same bytes, no needless recompression.
+        assert_eq!(to_window_frame(png.clone(), 1000, 900).unwrap(), png);
+        assert!(to_window_frame(png, 0, 0).is_err());
+    }
+
+    #[test]
+    fn the_owner_comes_from_the_protocol_when_getwindowinfo_has_no_pid() {
+        // KWin 6.6 answers getWindowInfo without a pid field.
+        let without: Properties = [("caption".to_string(), OwnedValue::from(1i32))].into();
+        assert_eq!(owning_pid(&without, Some(42)).unwrap(), 42);
+        assert!(owning_pid(&without, None).is_err());
+
+        // A newer KWin's own answer wins over the announcement.
+        let with: Properties = [("pid".to_string(), OwnedValue::from(7i32))].into();
+        assert_eq!(owning_pid(&with, Some(42)).unwrap(), 7);
+    }
+
+    #[test]
+    fn active_is_read_from_the_state_flags_only_when_kwin_reported_them() {
+        let active = management::State::Active as u32;
+        assert!(!is_active(None));
+        assert!(!is_active(Some(0)));
+        assert!(!is_active(Some(!active)));
+        assert!(is_active(Some(active)));
+        assert!(is_active(Some(
+            active | management::State::Maximized as u32
+        )));
+    }
 }
 
 #[cfg(test)]
@@ -505,11 +712,19 @@ mod tests {
             bytes
         }
         fn send(socket: &mut UnixStream, id: u32, opcode: u32, payload: &[u8]) {
-            socket.write_all(&id.to_ne_bytes()).unwrap();
-            socket
-                .write_all(&(((payload.len() as u32 + 8) << 16) | opcode).to_ne_bytes())
-                .unwrap();
-            socket.write_all(payload).unwrap();
+            let mut message = id.to_ne_bytes().to_vec();
+            message.extend(((payload.len() as u32 + 8) << 16 | opcode).to_ne_bytes());
+            message.extend(payload);
+            // The client may finish and hang up before the trailing delete_id. A
+            // real missing event still fails the client's own assertions.
+            match socket.write_all(&message) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                    ) => {}
+                result => result.unwrap(),
+            }
         }
         for advertised in [12u32, 13, 14, 15, 16, 17, 20] {
             let (client, mut server) = UnixStream::pair().unwrap();
@@ -525,7 +740,16 @@ mod tests {
                     let mut header = [0; 8];
                     match server.read_exact(&mut header) {
                         Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        // A client that hangs up with unread replies resets the socket.
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::UnexpectedEof
+                                    | std::io::ErrorKind::ConnectionReset
+                            ) =>
+                        {
+                            break
+                        }
                         Err(error) => panic!("Wayland fixture: {error}"),
                     }
                     let id = u32::from_ne_bytes(header[..4].try_into().unwrap());

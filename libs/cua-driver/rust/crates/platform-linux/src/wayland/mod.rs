@@ -2001,6 +2001,11 @@ pub fn activate_window_for_input_target(
         // exact window and read the focus back.
         return niri::activate(window_id, target_pid);
     }
+    if kwin_capture::knows_window(window_id) {
+        // A KWin UUID handle is not a foreign-toplevel or X11 id: activate that
+        // exact window through Plasma window management and read the state back.
+        return kwin_capture::activate(window_id, target_pid);
+    }
     if is_inject_mode() {
         let pid = target_pid.ok_or_else(|| {
             anyhow::anyhow!(

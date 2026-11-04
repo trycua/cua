@@ -66,7 +66,7 @@ pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
     HostStatus, META_ARCH, META_CLOUD, META_OS, META_PHONE_FEED, META_PROVIDES_SPACES,
-    PermissionHint, RELAY_HICCUP_GRACE, SetupOptions, ShareEdgeJoin, SpacesDaemon, StaticRelay,
+    PendingRemoval, PermissionHint, RELAY_HICCUP_GRACE, RemovalAccount, SetupOptions, ShareEdgeJoin, SpacesDaemon, StaticRelay,
     default_provide_spaces, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;

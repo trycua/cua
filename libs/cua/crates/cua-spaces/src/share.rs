@@ -484,26 +484,8 @@ impl Spaces {
                 cua_host::Error::PermissionDenied(_) => refused(),
                 e => e.into(),
             })?;
-        for m in self
-            .inner
-            .relay_cache
-            .lock()
-            .expect("relay cache")
-            .iter_mut()
-            .filter(|m| m.id == machine)
-        {
-            m.name = name.to_string();
-        }
-        // A `relay:` Space added to this device's registry lists its record.
-        if relay_space && let Some(mut record) = self.inner.registry.get(&info.id)? {
-            record.name = name.to_string();
-            let credential = self
-                .inner
-                .registry
-                .credential(&info.id)?
-                .unwrap_or_default();
-            self.inner.registry.upsert(record, credential)?;
-        }
+        // Every copy of the name on this device, found by the machine id.
+        self.adopt_relay_machine_name(&machine, name);
         Ok(())
     }
 

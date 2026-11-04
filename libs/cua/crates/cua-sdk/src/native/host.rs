@@ -905,7 +905,30 @@ impl Host {
     pub async fn remove(&self) -> Result<()> {
         let home = self.home.clone();
         run(async move {
-            cua_host::Host::new(home).remove().await?;
+            let host = cua_host::Host::new(home);
+            // The relay is told with this computer's own token; when that is
+            // refused (or it has none) as the signed-in owner, so a
+            // computer that cannot prove itself is still taken off the
+            // account, and one the relay could not be reached for is
+            // retried later.
+            let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
+            let device_session = match host.config()?.and_then(|c| c.relay_url) {
+                Some(url) => {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        own_device_session(&url),
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                }
+                None => None,
+            };
+            host.remove_with_account(&cua_host::RemovalAccount {
+                tokens: &tokens,
+                device_session,
+            })
+            .await?;
             // Then the runtimes cua set up itself (the built-in Lume and the
             // built-in Linux runtime, set up again on the next create that
             // needs them); the user's own stay.
@@ -1290,7 +1313,14 @@ impl Devices {
                 )
                 .await?
                 .into();
-            cua_host::Host::new(cua_daemon::cua_home()).adopt_name(&machine_id, &name)?;
+            // Every copy of the name on this device (this computer's host
+            // setup, the saved directory, the registry), by the machine id.
+            cua_spaces::relay::adopt_machine_name(
+                &cua_daemon::cua_home(),
+                auth.relay_url(),
+                &machine_id,
+                &name,
+            );
             Ok(m)
         })
         .await

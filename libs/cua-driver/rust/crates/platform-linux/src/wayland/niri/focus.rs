@@ -675,6 +675,65 @@ mod tests {
     }
 
     #[test]
+    fn a_read_back_the_deadline_cuts_off_still_refuses_as_unconfirmed() {
+        // niri answers two read-backs without the window, then is too slow
+        // for the rest of the budget.
+        let mut ipc = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    for _ in 0..2 {
+                        let deadline = Instant::now() + Duration::from_secs(2);
+                        if !matches!(lines.next(deadline), Ok(Some(_))) {
+                            return;
+                        }
+                        let reply = b"{\"Ok\":{\"FocusedWindow\":null}}\n";
+                        if lines.stream.write_all(reply).is_err() {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut ipc,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: none)"
+        );
+        // Without any answer, nothing is known about niri's focus.
+        let mut held = Vec::new();
+        let mut silent = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                held.push(server);
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut silent,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: unknown)"
+        );
+    }
+
+    #[test]
     fn a_window_focused_by_someone_else_during_input_keeps_focus() {
         let fake = focus_fixture();
         fake.lock()

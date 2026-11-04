@@ -241,6 +241,13 @@ fn relay_with(value: &str, extra: &[(&str, &str)]) -> std::process::Output {
         .env_clear()
         .env("CUA_RELAY_TOKENS", "test-only-token")
         .env("CUA_RELAY_DEVICE_REQUIRE_APPROVAL", value);
+    // Windows cannot start its network stack without SYSTEMROOT (os error
+    // 10106); keep it through the cleared environment.
+    for key in ["SYSTEMROOT", "SystemRoot"] {
+        if let Some(v) = std::env::var_os(key) {
+            cmd.env(key, v);
+        }
+    }
     for (k, v) in extra {
         cmd.env(k, v);
     }

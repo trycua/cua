@@ -37,6 +37,7 @@ use std::thread;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use xkbcommon::xkb;
 
+use super::niri::keyboard::chromium_receives;
 use super::portal::RestoreToken;
 
 /// Buttons the public API exposes. Mapped to evdev codes in the worker
@@ -1269,35 +1270,62 @@ struct TypedKey {
     level3: bool,
 }
 
-/// Index the compositor keymap's first layout by character. Lower levels win,
-/// across all keys, so a character reachable without AltGr never uses it.
+/// Whether evdev `code` is on the main typing block: the row keys, the space
+/// bar, the 102nd key and the two extra keys of JIS and ABNT layouts.
+fn is_typing_key(code: u32) -> bool {
+    matches!(code, 1..=53 | 57 | 86 | 89 | 124)
+}
+
+/// Index the compositor keymap's first layout by character.
+///
+/// Real keymaps also put characters on keypad and media keys: `us` has `$` on
+/// `KEY_DOLLAR` and `(` on `KEY_KPLEFTPAREN`. X11 apps and Chromium drop some of
+/// those, and terminals can read keypad keys as commands. So only keys Chromium
+/// receives count, the main block beats the rest whatever modifiers it needs, and
+/// then the fewest modifiers win. A character left with no such key is absent
+/// from the table, so typing refuses it rather than losing it in some apps.
 fn keymap_char_table(keymap: &xkb::Keymap) -> (HashMap<char, TypedKey>, Option<u32>, Option<u32>) {
     const XKB_EVDEV_OFFSET: u32 = 8;
     const SHIFT_L: u32 = 0xffe1;
     const ISO_LEVEL3_SHIFT: u32 = 0xfe03;
-    let mut chars = HashMap::new();
+    let mut chars = HashMap::<char, ((bool, u32), TypedKey)>::new();
     let mut shift = None;
-    let mut level3 = None;
-    for level in 0..=3u32 {
-        for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
-            let keycode = xkb::Keycode::new(kc);
-            let evdev = kc.wrapping_sub(XKB_EVDEV_OFFSET);
+    let mut level3: Option<u32> = None;
+    for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+        let keycode = xkb::Keycode::new(kc);
+        let evdev = kc.wrapping_sub(XKB_EVDEV_OFFSET);
+        for sym in keymap.key_get_syms_by_level(keycode, 0, 0) {
+            if shift.is_none() && sym.raw() == SHIFT_L {
+                shift = Some(evdev);
+            }
+            if sym.raw() == ISO_LEVEL3_SHIFT && !level3.is_some_and(chromium_receives) {
+                level3 = Some(evdev);
+            }
+        }
+        if !chromium_receives(evdev) {
+            continue;
+        }
+        for level in 0..=3u32 {
             for sym in keymap.key_get_syms_by_level(keycode, 0, level) {
-                if shift.is_none() && sym.raw() == SHIFT_L {
-                    shift = Some(evdev);
-                }
-                if level3.is_none() && sym.raw() == ISO_LEVEL3_SHIFT {
-                    level3 = Some(evdev);
-                }
-                if let Some(ch) = sym.key_char() {
-                    chars.entry(ch).or_insert(TypedKey {
-                        code: evdev,
-                        shift: level & 1 == 1,
-                        level3: level >= 2,
-                    });
+                let Some(ch) = sym.key_char() else { continue };
+                let rank = (!is_typing_key(evdev), level);
+                let key = TypedKey {
+                    code: evdev,
+                    shift: level & 1 == 1,
+                    level3: level >= 2,
+                };
+                let slot = chars.entry(ch).or_insert((rank, key));
+                if rank < slot.0 {
+                    *slot = (rank, key);
                 }
             }
         }
+    }
+    let mut chars: HashMap<char, TypedKey> =
+        chars.into_iter().map(|(ch, (_, key))| (ch, key)).collect();
+    // `Linefeed` has its own key, which most apps ignore. A newline means Return.
+    if let Some(enter) = chars.get(&'\r').copied() {
+        chars.insert('\n', enter);
     }
     (chars, shift, level3)
 }
@@ -1640,10 +1668,13 @@ mod tests {
 mod keycode_typing_tests {
     use super::*;
 
-    // Same shape as `us(altgr-intl)`: n/N, ntilde/Ntilde on one key.
+    // Same shape as `us(altgr-intl)`: n/N, ntilde/Ntilde on one key, and the
+    // keypad and media keys the real keymap also gives `$ ( * + \\n`.
     const KEYMAP: &str = r#"xkb_keymap {
-      xkb_keycodes { minimum = 8; maximum = 255;
-        <AB06> = 57; <AC01> = 38; <AE05> = 14; <LFSH> = 50; <RALT> = 108; };
+      xkb_keycodes { minimum = 8; maximum = 500;
+        <AB06> = 57; <AC01> = 38; <AE04> = 13; <AE05> = 14; <AE08> = 17; <AE09> = 18; <AE12> = 21;
+        <RTRN> = 36; <LFSH> = 50; <KPMU> = 63; <KPAD> = 86; <LVL3> = 92; <RALT> = 108; <LNFD> = 109;
+        <I126> = 126; <I187> = 187; <I442> = 442; <I443> = 443; <I444> = 444; };
       xkb_types { virtual_modifiers LevelThree;
         type "ONE_LEVEL" { modifiers = none; level_name[Level1] = "1"; };
         type "FOUR_LEVEL" { modifiers = Shift+LevelThree;
@@ -1654,9 +1685,23 @@ mod keycode_typing_tests {
       xkb_symbols {
         key <AB06> { type = "FOUR_LEVEL", [ n, N, ntilde, Ntilde ] };
         key <AC01> { type = "FOUR_LEVEL", [ a, A, aacute, Aacute ] };
+        key <AE04> { type = "FOUR_LEVEL", [ 4, dollar, currency, onequarter ] };
         key <AE05> { type = "FOUR_LEVEL", [ 5, percent, EuroSign, cent ] };
+        key <AE08> { type = "FOUR_LEVEL", [ 8, asterisk, onehalf, threequarters ] };
+        key <AE09> { type = "FOUR_LEVEL", [ 9, parenleft, leftsinglequotemark, rightsinglequotemark ] };
+        key <AE12> { type = "FOUR_LEVEL", [ equal, plus, multiply, division ] };
+        key <RTRN> { type = "ONE_LEVEL", [ Return ] };
         key <LFSH> { type = "ONE_LEVEL", [ Shift_L ] };
+        key <KPMU> { type = "ONE_LEVEL", [ KP_Multiply ] };
+        key <KPAD> { type = "ONE_LEVEL", [ KP_Add ] };
+        key <LVL3> { type = "ONE_LEVEL", [ ISO_Level3_Shift ] };
         key <RALT> { type = "ONE_LEVEL", [ ISO_Level3_Shift ] };
+        key <LNFD> { type = "ONE_LEVEL", [ Linefeed ] };
+        key <I126> { type = "ONE_LEVEL", [ plusminus ] };
+        key <I187> { type = "ONE_LEVEL", [ parenleft ] };
+        key <I442> { type = "ONE_LEVEL", [ dollar ] };
+        key <I443> { type = "ONE_LEVEL", [ EuroSign ] };
+        key <I444> { type = "ONE_LEVEL", [ sterling ] };
       };
     };"#;
 
@@ -1730,6 +1775,51 @@ mod keycode_typing_tests {
         let msg = err.to_string();
         assert!(msg.contains('🙂'), "{msg}");
         assert!(msg.contains("Nothing was typed"), "{msg}");
+    }
+
+    #[test]
+    fn a_main_key_with_modifiers_beats_any_other_key_without_them() {
+        let (t, _, _) = table();
+        let key = |code, shift, level3| {
+            Some(TypedKey {
+                code,
+                shift,
+                level3,
+            })
+        };
+        assert_eq!(t.get(&'$').copied(), key(5, true, false));
+        assert_eq!(t.get(&'(').copied(), key(10, true, false));
+        assert_eq!(t.get(&'*').copied(), key(9, true, false));
+        assert_eq!(t.get(&'+').copied(), key(13, true, false));
+        assert_eq!(t.get(&'€').copied(), key(6, false, true));
+    }
+
+    #[test]
+    fn a_newline_presses_return() {
+        let (t, _, _) = table();
+        let ret = t
+            .get(&'\r')
+            .copied()
+            .expect("Return types a carriage return");
+        assert_eq!(ret.code, 28);
+        assert_eq!(t.get(&'\n').copied(), Some(ret));
+    }
+
+    #[test]
+    fn altgr_is_the_key_every_app_receives() {
+        let (_, _, level3) = table();
+        assert_eq!(level3, Some(100));
+    }
+
+    #[test]
+    fn a_character_only_on_a_key_apps_drop_is_refused() {
+        let (t, _, level3) = table();
+        for ch in ['£', '±'] {
+            assert!(
+                plan_keycode_typing(&ch.to_string(), &t, level3).is_err(),
+                "{ch} can only be typed on a key X11 apps or Chromium drop"
+            );
+        }
     }
 
     #[test]

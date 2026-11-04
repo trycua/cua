@@ -117,7 +117,7 @@ fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
 /// `MAX_X11_KEYCODE`). A symbol the layout has only on other keys, such as
 /// US's `EuroSign` on `<I443>` (evdev 435), counts as missing and goes on a
 /// spare key.
-fn chromium_receives(code: u32) -> bool {
+pub(in crate::wayland) fn chromium_receives(code: u32) -> bool {
     CHROMIUM_CODES.iter().any(|range| range.contains(&code))
 }
 

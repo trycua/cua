@@ -16,6 +16,7 @@ use cua_spacesd_client::{ConnectOptions, SpacesdClient, pb};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 /// Default time allowed for the `GetCapabilities` handshake.
@@ -401,6 +402,7 @@ impl SpacesBuilder {
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 team_facts: std::sync::Mutex::new(Default::default()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
+                reported_saves: Default::default(),
                 relay_read: tokio::sync::Mutex::new(None),
                 relay_confirmed: std::sync::atomic::AtomicBool::new(false),
                 rounds: Default::default(),
@@ -517,7 +519,7 @@ pub(crate) fn os_names(space: &Space) -> (String, String) {
 /// What a relay machine's cua-spacesd reported about itself at connect.
 /// Kept in `relay-reported.json` in the cua home, so a later process (the
 /// CLI, another app) lists the machine's OS without connecting first.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct ReportedFacts {
     os: String,
@@ -527,6 +529,12 @@ struct ReportedFacts {
 }
 
 const RELAY_REPORTED_FILE: &str = "relay-reported.json";
+
+#[derive(Default)]
+struct ReportedSaves {
+    dirty: AtomicBool,
+    running: AtomicBool,
+}
 
 /// What earlier processes learned from relay machines (empty when none, or
 /// unreadable).
@@ -642,6 +650,9 @@ pub(crate) struct Inner {
     /// process last connected to it (by `relay:<id>`): the directory
     /// listing carries no OS, so without it a Mac lists as Linux.
     relay_reported: std::sync::Mutex<HashMap<String, ReportedFacts>>,
+    /// Whether `relay_reported` has changes not yet on disk, and whether a
+    /// save is running ([`Spaces::remember_reported`]).
+    reported_saves: ReportedSaves,
     /// Held across a read so only one directory read runs at a time.
     relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
     /// The relay answered a directory read in this process (until then the
@@ -1518,12 +1529,39 @@ impl Spaces {
             os_pretty_name,
             arch,
         };
-        let mut reported = self.inner.relay_reported.lock().expect("relay reported");
-        reported.insert(key.to_string(), facts);
-        // Best effort: the listing in this process has it either way.
-        if let Err(e) = save_reported(self.home_dir(), &reported) {
-            tracing::debug!(error = %e, "relay-reported.json not written");
+        {
+            let mut reported = self.inner.relay_reported.lock().expect("relay reported");
+            if reported.get(key) == Some(&facts) {
+                return;
+            }
+            reported.insert(key.to_string(), facts);
         }
+        // Saved off the connect path, one save at a time: a launch connects
+        // to every Space at once, and a synced write per connect held up
+        // the runtime. A change made while a save runs gets one more save.
+        let saves = &self.inner.reported_saves;
+        saves.dirty.store(true, Ordering::SeqCst);
+        if saves.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let inner = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let saves = &inner.reported_saves;
+            loop {
+                while saves.dirty.swap(false, Ordering::SeqCst) {
+                    let snapshot = inner.relay_reported.lock().expect("relay reported").clone();
+                    // Best effort: the listing in this process has it either way.
+                    if let Err(e) = save_reported(inner.registry.dir(), &snapshot) {
+                        tracing::debug!(error = %e, "relay-reported.json not written");
+                    }
+                }
+                saves.running.store(false, Ordering::SeqCst);
+                if !saves.dirty.load(Ordering::SeqCst) || saves.running.swap(true, Ordering::SeqCst)
+                {
+                    return;
+                }
+            }
+        });
     }
 
     /// A relay machine's listing, with what its cua-spacesd reported (it

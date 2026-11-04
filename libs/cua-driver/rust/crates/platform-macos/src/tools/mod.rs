@@ -33,7 +33,7 @@ mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
 pub(crate) mod get_screen_size;
-mod health_report;
+pub(crate) mod health_report;
 mod move_cursor;
 mod page;
 mod pixel_route;

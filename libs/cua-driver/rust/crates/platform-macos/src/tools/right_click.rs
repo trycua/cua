@@ -198,6 +198,14 @@ impl Tool for RightClickTool {
         } else {
             (cx, cy, cx, cy)
         };
+        if let Some(refusal) = super::security_prompt::foreground_refusal(
+            delivery_mode.is_foreground(),
+            vec![(screen_x, screen_y)],
+        )
+        .await
+        {
+            return refusal;
+        }
 
         let _mutation_lease = if !delivery_mode.is_foreground() {
             if let Some(wid) = window_id {

@@ -218,6 +218,9 @@ impl Tool for DragTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        if let Some(refusal) = super::security_prompt::refusal_for_pid(pid) {
+            return refusal;
+        }
         // Background (default): post the gesture to the exact window without
         // moving the pointer or raising it, after the focus-without-raise
         // prologue background clicks use. Foreground: briefly front the
@@ -306,6 +309,12 @@ impl Tool for DragTool {
                 }
                 Err(refusal) => return refusal,
             };
+        if let Some(refusal) =
+            super::security_prompt::foreground_refusal(fg, vec![(from_sx, from_sy), (to_sx, to_sy)])
+                .await
+        {
+            return refusal;
+        }
 
         // A toolkit that reads the hardware pointer (Tk) or drops routed
         // mouse events (LibreOffice VCL) cannot take a background gesture;

@@ -61,6 +61,9 @@ impl Tool for TypeTextCharsTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        if let Some(refusal) = super::security_prompt::refusal_for_pid(pid) {
+            return refusal;
+        }
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
             Err(e) => return e,

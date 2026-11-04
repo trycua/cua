@@ -18,6 +18,9 @@
 //! Chromium browser the refusal names the browser tools, which act on the
 //! page without the user's pointer, instead of recommending foreground.
 //! Points over no window, or over the frontmost app, are unchanged.
+//!
+//! A click, drag or scroll whose point lands on a system security or consent
+//! prompt refuses with `security_prompt_protected` in every delivery mode.
 
 use cua_driver_core::{
     delivery::{background_unavailable_result, DeliveryMode},
@@ -147,18 +150,27 @@ pub(crate) fn refusal_for(
 }
 
 /// Guard a desktop-target pointer action whose events land at `points`
-/// (screen points). Returns the refusal for the first point over a background
-/// app, or `None` when every point may proceed.
+/// (screen points). Returns the refusal for the first point over a system
+/// security or consent prompt (any delivery mode; a pointer move over one is
+/// allowed) or over a background app, or `None` when every point may proceed.
 pub(crate) async fn check(
     tool: &'static str,
     args: &Value,
     points: Vec<(f64, f64)>,
 ) -> Option<ToolResult> {
     let delivery = DeliveryMode::from_args(args);
-    if delivery.is_foreground() {
-        return None;
-    }
     tokio::task::spawn_blocking(move || {
+        if tool != "move_cursor" {
+            if let Some(refusal) = points
+                .iter()
+                .find_map(|&(x, y)| super::security_prompt::refusal_at_point(x, y))
+            {
+                return Some(refusal);
+            }
+        }
+        if delivery.is_foreground() {
+            return None;
+        }
         let frontmost = crate::apps::frontmost_pid();
         points.into_iter().find_map(|point| {
             let under = window_under_point(point.0, point.1);

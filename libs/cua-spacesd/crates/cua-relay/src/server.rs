@@ -618,7 +618,7 @@ impl Relay {
     pub fn router(&self) -> Router {
         Router::new()
             // Liveness: the process answers. Never touches the disk.
-            .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
+            .route("/healthz", get(crate::route_marker::healthz))
             // The state volume: a write probe, free space, each store's
             // last write (503 when the probe or a store fails).
             .route("/readyz", get(readyz))
@@ -1595,12 +1595,17 @@ async fn readyz(State(relay): State<Relay>, headers: HeaderMap) -> Response {
     } else {
         body["mesh_nodes_connected"] = serde_json::json!(relay.mesh.connected());
     }
-    let status = if ready {
-        StatusCode::OK
+    let (status, marker) = if ready {
+        (StatusCode::OK, crate::route_marker::RouteMarker::Ok)
     } else {
-        StatusCode::SERVICE_UNAVAILABLE
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::route_marker::RouteMarker::NotReady,
+        )
     };
-    (status, axum::Json(body)).into_response()
+    let mut response = (status, axum::Json(body)).into_response();
+    crate::route_marker::stamp(&mut response, marker);
+    response
 }
 
 /// `GET /metrics`: the state counters in Prometheus text format (no
@@ -2544,6 +2549,8 @@ async fn proxy(state: State<Relay>, request: Request) -> Response {
     response
         .extensions_mut()
         .insert(crate::conn_metrics::Kind::Client);
+    // The probe contract (`x-cua-relay-route`, src/route_marker.rs).
+    crate::route_marker::stamp_client_route(&mut response);
     response
 }
 
@@ -3185,6 +3192,12 @@ fn harden_response(
     share: Option<&ShareCtx>,
     phone: bool,
 ) {
+    // The computer answered. It cannot claim to be the relay: whatever it
+    // sent under the probe-contract header is replaced.
+    headers.insert(
+        crate::route_marker::HEADER,
+        HeaderValue::from_static(crate::route_marker::RouteMarker::Forwarded.as_str()),
+    );
     match share {
         Some(sh) if sh.isolated => {
             headers.remove("service-worker-allowed");

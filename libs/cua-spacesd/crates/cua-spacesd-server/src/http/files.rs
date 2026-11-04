@@ -273,8 +273,9 @@ pub struct FilesState {
 /// Most of a refused or partly read request body that is read and dropped
 /// before answering, and for how long. Closing with unread bytes in the
 /// socket makes the kernel reset the connection, which can destroy the
-/// response before the client reads it; past either limit the connection is
-/// closed regardless.
+/// response before the client reads it. A longer or slower body can still
+/// be reset. A client waiting on `Expect: 100-continue` has sent no body,
+/// and reading would invite it to, so it is not drained.
 const UNREAD_BODY_DRAIN_BYTES: usize = 8 << 20;
 const UNREAD_BODY_DRAIN_TIME: Duration = Duration::from_secs(5);
 
@@ -288,6 +289,9 @@ pub async fn handle(
 ) -> Response {
     let mut body = body.into_data_stream();
     let response = serve(&state, &method, &uri, &headers, &mut body).await;
+    if headers.contains_key(header::EXPECT) {
+        return response;
+    }
     let drain = async {
         let mut drained = 0;
         while drained <= UNREAD_BODY_DRAIN_BYTES {

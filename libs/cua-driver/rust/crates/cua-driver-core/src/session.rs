@@ -622,6 +622,12 @@ fn activate_session_inner(
 /// recycled public label after its tombstone is cleared. Cleanup is completed
 /// before the transition, then the tombstone removal and live owner binding
 /// happen under one lock order.
+///
+/// An ended episode is revived only by the transport that owned it, until that
+/// transport exits. After that nobody can revive it, so another transport may
+/// start the same id again: the old episode's cleanup completes first, and the
+/// new episode is bound to the new transport. A live session, or an ended one
+/// whose owner is still connected, is never transferred.
 #[allow(clippy::too_many_arguments)]
 pub fn activate_or_revive_session_for_owner(
     session_id: &str,
@@ -638,8 +644,12 @@ pub fn activate_or_revive_session_for_owner(
 
     let needs_cleanup = {
         let ended = ended_sessions().lock().unwrap();
+        let orphaned = orphaned_ended_sessions()
+            .lock()
+            .unwrap()
+            .contains(session_id);
         match ended.get(session_id) {
-            Some(Some(owner)) if owner != owner_transport => {
+            Some(Some(owner)) if owner != owner_transport && !orphaned => {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -656,8 +666,9 @@ pub fn activate_or_revive_session_for_owner(
     let now = Instant::now();
     let revived = {
         let mut ended = ended_sessions().lock().unwrap();
+        let mut orphaned = orphaned_ended_sessions().lock().unwrap();
         let revived = match ended.get(session_id) {
-            Some(Some(owner)) if owner != owner_transport => {
+            Some(Some(owner)) if owner != owner_transport && !orphaned.contains(session_id) => {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -697,6 +708,7 @@ pub fn activate_or_revive_session_for_owner(
                 .lock()
                 .unwrap()
                 .remove(session_id);
+            orphaned.remove(session_id);
         }
         revived
     };
@@ -848,6 +860,17 @@ pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -
     for id in &ids {
         end_session_with_reason(id, reason);
     }
+    if reason == SessionEndReason::ProcessExit {
+        // Episodes this transport ended earlier (explicitly or by idle) can no
+        // longer be revived by their owner either.
+        let ended = ended_sessions().lock().unwrap();
+        let mut orphaned = orphaned_ended_sessions().lock().unwrap();
+        for (id, owner) in ended.iter() {
+            if owner.as_deref() == Some(owner_transport) {
+                orphaned.insert(id.clone());
+            }
+        }
+    }
     ids.len()
 }
 
@@ -998,6 +1021,14 @@ static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLo
 /// idle sweep reclaimed it. Mutated only while holding the `ENDED_SESSIONS`
 /// lock, and meaningful only while the matching tombstone exists.
 static IDLE_ENDED_IMPLICIT_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Tombstoned sessions whose owning transport has exited (its control
+/// connection closed or its process ended). No transport can revive such an
+/// episode any more, so an explicit `start_session` from another transport may
+/// start the same public label again as a fresh episode, once the old one's
+/// cleanup has completed. Mutated only while holding the `ENDED_SESSIONS` lock,
+/// reset whenever a tombstone is written, and meaningful only while the
+/// matching tombstone exists.
+static ORPHANED_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// Runtime generations that have received terminal revoke-all.
 ///
 /// This latch is intentionally independent of grants and public session
@@ -1023,6 +1054,10 @@ fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
 
 fn idle_ended_implicit_sessions() -> &'static Mutex<HashSet<String>> {
     IDLE_ENDED_IMPLICIT_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn orphaned_ended_sessions() -> &'static Mutex<HashSet<String>> {
+    ORPHANED_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
@@ -1269,13 +1304,22 @@ fn mark_session_ended(
             .as_ref()
             .is_some_and(|record| record.implicit && record.owner_transport == session_id);
     let mut idle_ended = idle_ended_implicit_sessions().lock().unwrap();
+    let mut orphaned = orphaned_ended_sessions().lock().unwrap();
     if ended.contains_key(session_id) {
         // A later explicit or transport end makes an idle end terminal.
         if reason != SessionEndReason::IdleTimeout {
             idle_ended.remove(session_id);
         }
+        if reason == SessionEndReason::ProcessExit {
+            orphaned.insert(session_id.to_owned());
+        }
         false
     } else {
+        if reason == SessionEndReason::ProcessExit {
+            orphaned.insert(session_id.to_owned());
+        } else {
+            orphaned.remove(session_id);
+        }
         ended.insert(
             session_id.to_owned(),
             owner_transport
@@ -2002,6 +2046,130 @@ mod tests {
         assert!(session_snapshot(sid, owner_a, DEFAULT_SESSION_IDLE_TTL).is_some());
         assert!(session_snapshot(sid, owner_b, DEFAULT_SESSION_IDLE_TTL).is_none());
         assert!(end_session_for_owner(sid, owner_a));
+    }
+
+    #[test]
+    fn exited_transports_ended_label_can_be_started_by_another_transport() {
+        let explicit = "test-orphan-explicit-E1F2A3";
+        let live = "test-orphan-live-E1F2A3";
+        let owner_a = "test-orphan-owner-a-E1F2A3";
+        let owner_b = "test-orphan-owner-b-E1F2A3";
+        let cleanups = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = cleanups.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            seen.lock().unwrap().push(id.to_owned());
+        });
+        let start = |sid: &str, owner: &str| {
+            activate_or_revive_session_for_owner(
+                sid,
+                Some(sid),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+        assert_eq!(start(explicit, owner_a), Ok(false));
+        assert_eq!(start(live, owner_a), Ok(false));
+        assert!(end_session_for_owner(explicit, owner_a));
+
+        // While A is connected its ended label stays A's to revive.
+        assert!(start(explicit, owner_b).is_err());
+
+        // A exits: its live session ends, and both labels are orphaned.
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            1
+        );
+        assert!(is_session_ended(explicit) && is_session_ended(live));
+        let ended_cleanups = cleanups.lock().unwrap().clone();
+        assert_eq!(
+            ended_cleanups.iter().filter(|id| *id == explicit).count(),
+            1
+        );
+        assert_eq!(ended_cleanups.iter().filter(|id| *id == live).count(), 1);
+
+        // An ordinary call from B still never revives an ended name.
+        assert_eq!(
+            begin_session_dispatch(
+                live,
+                Some(live),
+                owner_b,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+            .err(),
+            Some("session has ended")
+        );
+
+        // An explicit start from B begins a fresh episode bound to B.
+        for sid in [explicit, live] {
+            assert_eq!(start(sid, owner_b), Ok(true));
+            assert!(!is_session_ended(sid));
+            assert!(session_snapshot(sid, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+            assert!(session_snapshot(sid, owner_a, DEFAULT_SESSION_IDLE_TTL).is_none());
+        }
+        // No cleanup ran again for the old episodes, and A cannot take the
+        // labels back while B holds them.
+        let after = cleanups.lock().unwrap().clone();
+        assert_eq!(after.iter().filter(|id| *id == explicit).count(), 1);
+        assert!(start(explicit, owner_a).is_err());
+
+        // B ending the label explicitly makes it B's again, not claimable by
+        // a third transport while B is connected.
+        assert!(end_session_for_owner(explicit, owner_b));
+        assert!(start(explicit, "test-orphan-owner-c-E1F2A3").is_err());
+        assert_eq!(start(explicit, owner_b), Ok(true));
+        end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit);
+    }
+
+    #[test]
+    fn exited_transport_with_incomplete_cleanup_is_not_claimable() {
+        let sid = "test-orphan-cleanup-F2A3B4";
+        let owner_a = "test-orphan-cleanup-a-F2A3B4";
+        let owner_b = "test-orphan-cleanup-b-F2A3B4";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_hook = calls.clone();
+        let _registration =
+            register_scoped_fallible_session_end_hook("orphan-cleanup-test", move |ended| {
+                if ended != sid {
+                    return Ok(());
+                }
+                if calls_for_hook.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err("retry me".into())
+                } else {
+                    Ok(())
+                }
+            });
+        activate_session(
+            sid,
+            Some("orphan-cleanup"),
+            owner_a,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+        assert!(is_session_ended(sid));
+        let start = || {
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("orphan-cleanup"),
+                owner_b,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+        // The old episode's cleanup must finish before anyone reuses the id.
+        assert!(start().is_err());
+        assert!(is_session_ended(sid));
+        assert_eq!(start(), Ok(true));
+        end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit);
     }
 
     #[test]

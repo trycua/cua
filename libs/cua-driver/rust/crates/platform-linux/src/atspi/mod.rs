@@ -291,6 +291,21 @@ fn bridge_disabled_reason(environ: &[u8]) -> Option<String> {
         })
 }
 
+/// The error for a pid with no window the driver can see. On Wayland a window
+/// that never joined AT-SPI is not listed at all, so the tree fallback never
+/// runs and this is the only place left to say why.
+pub fn no_windows_error(pid: impl std::fmt::Display) -> String {
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+    no_windows_message(pid, &environ)
+}
+
+fn no_windows_message(pid: impl std::fmt::Display, environ: &[u8]) -> String {
+    match bridge_disabled_reason(environ) {
+        Some(reason) => format!("No windows found for pid {pid}. {reason}"),
+        None => format!("No windows found for pid {pid}. Provide window_id."),
+    }
+}
+
 /// Perform the first advertised action on element `idx` within pid's app tree.
 /// Returns `Ok((action_name, suspected_noop, unacknowledged))` on success —
 /// `suspected_noop` is true when the actuated node looked like a silent
@@ -1107,7 +1122,26 @@ mod token_dispatch_tests {
 
 #[cfg(test)]
 mod bridge_disabled_reason_tests {
-    use super::bridge_disabled_reason;
+    use super::{bridge_disabled_reason, no_windows_message};
+
+    #[test]
+    fn no_windows_names_the_variable_when_it_explains_them() {
+        let message = no_windows_message(7, b"HOME=/home/test\0NO_AT_BRIDGE=1\0");
+        assert!(
+            message.starts_with("No windows found for pid 7."),
+            "{message}"
+        );
+        assert!(message.contains("atspi_bridge_disabled"), "{message}");
+        assert!(message.contains("launch_app"), "{message}");
+    }
+
+    #[test]
+    fn no_windows_keeps_its_advice_when_the_bridge_is_allowed() {
+        assert_eq!(
+            no_windows_message(7, b"NO_AT_BRIDGE=0\0"),
+            "No windows found for pid 7. Provide window_id."
+        );
+    }
 
     #[test]
     fn names_the_variable_that_turned_the_bridge_off() {

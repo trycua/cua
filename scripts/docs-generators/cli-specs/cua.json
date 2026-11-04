@@ -14849,6 +14849,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Keep it off your cua.ai account. By default a Space running on a computer signed in and sharing is listed there, so your phone and your other computers see and open it (`cua config set relay.spaces off` turns that off for all of them). A child Space follows its parent. Same as `--label cua.relay=off`",
+       "hidden": false,
+       "name": "no-relay",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "With --parent: let its network be more open than its parent's (recorded on the Space)",
        "hidden": false,
        "name": "widen",

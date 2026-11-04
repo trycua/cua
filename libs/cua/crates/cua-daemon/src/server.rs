@@ -131,6 +131,11 @@ const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
 /// Space's settings.
 #[cfg(feature = "spaces")]
 const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
+
+/// How often the Spaces listed on the account are looked at again without
+/// being woken.
+#[cfg(feature = "spaces")]
+const PUBLISH_TO_RELAY: Duration = Duration::from_secs(15);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -774,6 +779,42 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 tokio::select! {
                     _ = rx.changed() => return,
                     _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
+                }
+            }
+        }));
+    }
+    // Spaces running on this computer are listed on the signed-in account
+    // (the phone and the owner's other computers open them): a Space made
+    // by any path, one that was already here, and one that stopped or was
+    // deleted are kept in line with the relay (`relay.spaces`).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            loop {
+                // A shutdown never waits for a pass that is still working.
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    r = rt.spaces().publish_to_relay() => match r {
+                        Ok(r) if !r.published.is_empty() || !r.unpublished.is_empty() => {
+                            tracing::info!(
+                                listed = r.published.len(),
+                                taken_off = r.unpublished.len(),
+                                "Spaces on the account updated"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::debug!(error = %e, "Spaces on the account not updated"),
+                    },
+                }
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = cua_spaces::share::PUBLISH_CHANGED.notified() => {
+                        // A burst of changes is one pass.
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    _ = tokio::time::sleep(PUBLISH_TO_RELAY) => {}
                 }
             }
         }));

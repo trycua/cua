@@ -152,7 +152,17 @@ pub struct ShareAudit {
 struct Attached {
     /// The relay machine id of an attached (non-host) Space.
     machine: String,
+    /// Listed on the relay by Cua itself ([`publish`]), not by hand: Cua
+    /// also takes it off again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    auto: bool,
+    /// The account (its id) that listed it, for an automatic one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    account: String,
 }
+
+mod publish;
+pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport};
 
 /// Normalizes an invitee: an email (lowercased) or an account id. Teams and
 /// organizations are not relay principals, so `team:` / `org:` entries are
@@ -367,6 +377,26 @@ impl Spaces {
             .collect()
     }
 
+    /// The relay machines Cua listed itself for Spaces on this computer
+    /// ([`publish`]): the Space is listed once, as the local one.
+    pub(crate) fn auto_published_machines(&self) -> std::collections::HashSet<String> {
+        self.attached()
+            .into_values()
+            .filter(|a| a.auto)
+            .map(|a| a.machine)
+            .collect()
+    }
+
+    /// Changes the attached Spaces under a lock, so Spaces attached side by
+    /// side do not overwrite each other.
+    fn update_attached(&self, f: impl FnOnce(&mut BTreeMap<String, Attached>)) -> Result<()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = self.attached();
+        f(&mut all);
+        self.save_attached(&all)
+    }
+
     fn save_attached(&self, all: &BTreeMap<String, Attached>) -> Result<()> {
         let path = self.shares_path();
         cua_home::guard_write(&path)?;
@@ -528,7 +558,7 @@ impl Spaces {
         }
         let s = self.space(&canonical).await?;
         s.require(RELAY_ATTACH_FEATURE)?;
-        let mut all = self.attached();
+        let all = self.attached();
         let machine = match all.get(&canonical) {
             Some(a) => a.machine.clone(),
             None => format!("space-{:016x}", rand::random::<u64>()),
@@ -581,13 +611,11 @@ impl Spaces {
             })
             .await
             .map_err(|e| Error::Env(cua_spacesd_client::Error::from(e)))?;
-        all.insert(
-            canonical.clone(),
-            Attached {
-                machine: machine.clone(),
-            },
-        );
-        self.save_attached(&all)?;
+        // Re-read under the lock: Spaces attach side by side, and a Space
+        // listed before keeps what was recorded about it.
+        self.update_attached(|all| {
+            all.entry(canonical.clone()).or_default().machine = machine.clone();
+        })?;
         self.audit_share("attach", &canonical, &format!("machine={machine}"));
         // The driver dials out on its own: wait (bounded) until the relay
         // lists it online.

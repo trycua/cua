@@ -136,6 +136,13 @@ pub struct SpaceCreate {
     /// On a linked cloud: the region its host must be in. `None`: any the
     /// cloud offers.
     pub region: Option<String>,
+    /// `Some(false)`: keep the Space off the owner's account, so the phone
+    /// and the owner's other computers never see it (`--no-relay`; the
+    /// label `cua.relay=off` says the same on every path, the daemon's
+    /// included). `None` and `Some(true)`: it is listed while this computer
+    /// is signed in and sharing (the `relay.spaces` setting), and a child
+    /// follows its parent's `off`.
+    pub relay: Option<bool>,
 }
 
 /// Where [`SpaceCreate::progress`] reports go.
@@ -758,6 +765,14 @@ impl Spaces {
         let facts = self.team_facts();
         let provided_here: std::collections::HashSet<String> =
             provided.iter().map(|p| p.relay_machine.clone()).collect();
+        // A Space this computer listed on the account itself is the local
+        // one, once.
+        #[cfg(feature = "spaces-agents")]
+        let provided_here = {
+            let mut here = provided_here;
+            here.extend(self.auto_published_machines());
+            here
+        };
         let cache = self.inner.relay_cache.lock().expect("relay cache");
         // Its name on the relay is the one your other devices see: a rename
         // there (from another device) shows here too. The name it was
@@ -2575,6 +2590,10 @@ impl Spaces {
         };
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
         let labels = opts.labels.clone();
+        let relay_off = opts.relay == Some(false)
+            || labels
+                .get(crate::registry::RELAY_LABEL)
+                .is_some_and(|v| crate::registry::RelaySetting::parse(v).is_ok_and(|s| !s.is_on()));
         let joined_tree = opts.tree.clone().filter(|_| opts.parent.is_none());
         let egress = opts.egress.clone();
         let network = crate::network::CreateNetwork {
@@ -2706,11 +2725,17 @@ impl Spaces {
             let kept = self.inner.registry.update_meta(&id, |m| {
                 m.labels = labels.clone();
                 m.created_at_unix = now;
+                if relay_off {
+                    m.relay = crate::registry::RelaySetting::Off;
+                }
                 // A member of a tree that started on another computer.
                 if let Some(t) = &joined_tree {
                     m.overlay_tree = Some(t.clone());
                 }
             });
+            // The daemon lists it on the account without waiting for its tick.
+            #[cfg(feature = "spaces-agents")]
+            crate::share::PUBLISH_CHANGED.notify_waiters();
             // The policy was enforced from the guest's first instruction
             // (by this machine's runtime, or the host that created it).
             let applied = match &kept {
@@ -3903,6 +3928,8 @@ impl Spaces {
                 let control = sandboxes
                     .power_control(name)
                     .unwrap_or(cua_sandbox_core::PowerControl::Stop);
+                #[cfg(feature = "spaces-agents")]
+                crate::share::PUBLISH_CHANGED.notify_waiters();
                 Ok(SpacePower::new(&id.to_string(), control, state))
             }
             // A Space in your own cloud: its sandbox stops and starts

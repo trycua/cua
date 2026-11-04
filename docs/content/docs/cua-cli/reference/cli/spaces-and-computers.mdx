@@ -157,6 +157,7 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--durable"></span>`--durable` | boolean | `false` | Keep it on your machines (with `--on auto`): when its machine goes away it is created again on another one, with the same name (its disk starts fresh). `cua spaces delete <name>` deletes it for good. |
 | <span id="cua-spaces-create--children"></span>`--children` | boolean | `false` | Let it make child Spaces of its own: `cua`, the SDKs and the agent's tools in it create, list and delete Spaces that belong to it, on this computer, never wider than it (`cua spaces children`). Agent runs turn this on by themselves. |
 | <span id="cua-spaces-create--forkable"></span>`--forkable` | boolean | `false` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it. |
+| <span id="cua-spaces-create--no-relay"></span>`--no-relay` | boolean | `false` | Keep it off your cua.ai account. By default a Space running on a computer signed in and sharing is listed there, so your phone and your other computers see and open it (`cua config set relay.spaces off` turns that off for all of them). A child Space follows its parent. Same as `--label cua.relay=off`. |
 | <span id="cua-spaces-create--widen"></span>`--widen` | boolean | `false` | With --parent: let its network be more open than its parent's (recorded on the Space). |
 
 **Examples**

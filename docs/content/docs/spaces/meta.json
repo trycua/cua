@@ -39,6 +39,7 @@
     "guides/child-spaces",
     "guides/keep-a-command-running",
     "guides/long-running-jobs",
+    "guides/reinforcement-learning",
     "guides/cua-ci",
     "---Keep it working---",
     "guides/troubleshoot",

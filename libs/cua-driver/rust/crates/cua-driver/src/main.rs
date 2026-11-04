@@ -26,6 +26,7 @@ mod doctor;
 mod driver_service_http;
 #[cfg(any(target_os = "macos", all(test, unix)))]
 mod duplicate_copies;
+mod env_vars;
 mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;

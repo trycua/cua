@@ -246,8 +246,7 @@ impl Default for Endpoints {
 /// installer. Empty values count as unset.
 pub(crate) fn token_from_env() -> Option<String> {
     ["GH_TOKEN", "GITHUB_TOKEN"].iter().find_map(|name| {
-        std::env::var(name)
-            .ok()
+        crate::env_vars::var(name)
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
     })
@@ -566,7 +565,6 @@ fn feed_tags(feed: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
-    use std::collections::HashMap;
 
     /// Scripted HTTP client. Responses are keyed by URL prefix; every call is
     /// recorded with the bearer token it carried.
@@ -1020,32 +1018,13 @@ mod tests {
 
     #[test]
     fn token_env_prefers_gh_token_and_ignores_blank_values() {
-        let _guard = crate::version_check::ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let saved: HashMap<&str, Option<std::ffi::OsString>> = ["GH_TOKEN", "GITHUB_TOKEN"]
-            .iter()
-            .map(|name| (*name, std::env::var_os(name)))
-            .collect();
-        unsafe {
-            std::env::set_var("GH_TOKEN", "  ");
-            std::env::set_var("GITHUB_TOKEN", "from-github-token");
-        }
+        let mut env = crate::env_vars::Overrides::new();
+        env.set("GH_TOKEN", "  ")
+            .set("GITHUB_TOKEN", "from-github-token");
         assert_eq!(token_from_env().as_deref(), Some("from-github-token"));
-        unsafe {
-            std::env::set_var("GH_TOKEN", "from-gh-token");
-        }
+        env.set("GH_TOKEN", "from-gh-token");
         assert_eq!(token_from_env().as_deref(), Some("from-gh-token"));
-        unsafe {
-            std::env::remove_var("GH_TOKEN");
-            std::env::remove_var("GITHUB_TOKEN");
-        }
+        env.unset("GH_TOKEN").unset("GITHUB_TOKEN");
         assert_eq!(token_from_env(), None);
-        for (name, value) in saved {
-            match value {
-                Some(value) => unsafe { std::env::set_var(name, value) },
-                None => unsafe { std::env::remove_var(name) },
-            }
-        }
     }
 }

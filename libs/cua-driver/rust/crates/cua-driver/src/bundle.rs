@@ -108,12 +108,12 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
 /// (case-insensitive). Anything else, including unset, is falsy.
 #[cfg(target_os = "windows")]
 pub fn is_env_truthy(name: &str) -> bool {
-    match std::env::var(name) {
-        Ok(value) => matches!(
+    match crate::env_vars::var(name) {
+        Some(value) => matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"
         ),
-        Err(_) => false,
+        None => false,
     }
 }
 
@@ -139,14 +139,14 @@ mod tests {
     #[test]
     fn env_truthiness_is_strict() {
         let name = "CUA_DRIVER_RS_TEST_TRUTHY";
+        let mut env = crate::env_vars::Overrides::new();
         for value in ["1", "true", "TRUE", "Yes", "on", " 1 "] {
-            std::env::set_var(name, value);
+            env.set(name, value);
             assert!(is_env_truthy(name), "expected truthy for {value:?}");
         }
         for value in ["0", "false", "no", "off", ""] {
-            std::env::set_var(name, value);
+            env.set(name, value);
             assert!(!is_env_truthy(name), "expected falsy for {value:?}");
         }
-        std::env::remove_var(name);
     }
 }

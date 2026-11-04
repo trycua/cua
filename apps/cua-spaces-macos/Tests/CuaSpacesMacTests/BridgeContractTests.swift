@@ -115,10 +115,12 @@ struct BridgeContractTests {
         let agents = FakeAgentsTools()
         let drive = FakeDriveTools()
         let keys = FakeAgentKeysTools()
+        let github = FakeGithubTools()
         init(_ inner: FixtureSpacesBackend) { self.inner = inner }
 
         func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
             if tool.hasPrefix("agent_keys.") { return try await keys.agentsTool(tool, args) }
+            if tool.hasPrefix("github.") { return try await github.agentsTool(tool, args) }
             // An agent's home and its files: the Agents fake.
             let home = ["volume_read", "volume_history", "volume_restore"].contains(tool)
                 || (tool == "volume_ls" && (args["path"] as? String ?? "").hasPrefix("agents/"))
@@ -147,6 +149,20 @@ struct BridgeContractTests {
             try await inner.createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
         }
         func stopLink(id: String) async throws -> [String] { try await inner.stopLink(id: id) }
+        func approveLink(id: String, always: Bool) async throws -> ShareLink { try await inner.approveLink(id: id, always: always) }
+        func denyLink(id: String) async throws { try await inner.denyLink(id: id) }
+        func shareSettings() async throws -> ShareSettingsRow { try await inner.shareSettings() }
+        func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow { try await inner.setShareSettings(settings) }
+        func removeShareEdge() async throws -> [String] { try await inner.removeShareEdge() }
+        func network(id: String) async throws -> [String: Any] { try await inner.network(id: id) }
+        func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+            try await inner.setNetwork(id: id, word: word, allow: allow, deny: deny, widen: widen, tree: tree, via: via)
+        }
+        func networkLog(id: String) async throws -> [[String: Any]] { try await inner.networkLog(id: id) }
+        func ackNetworkNotice(id: String) async throws { try await inner.ackNetworkNotice(id: id) }
+        func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+            try await inner.setAccess(id: id, clipboard: clipboard, volume: volume)
+        }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -234,8 +250,15 @@ struct BridgeContractTests {
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
-            ("cli.plan", [:]),
+            ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
+            ("shares.settings.get", [:]), ("shares.edge.remove", [:]),
+            ("network.get", ["spaceId": space]),
+            ("network.set", ["spaceId": space, "network": "internet", "allow": [String](), "deny": [String]()]),
+            ("network.log", ["spaceId": space]), ("network.ackNotice", ["spaceId": space]),
+            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
+            ("shares.settings.set", ["settings": ["landing": "auto", "relayFallback": true, "dailyCapMib": 2048, "defaultAllow": [String](), "approveAgentShares": true, "alwaysAllowSpaces": [String](), "edgeConsent": [String](), "usedToday": 0]]),
+            ("cli.plan", [:]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
             ("spaces.setPower", ["id": space, "on": true]),
@@ -256,7 +279,10 @@ struct BridgeContractTests {
             ("agents.revokeComputer", ["agent": "ada", "machine": "relay:0123"]),
             ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
+            ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
+            ("github.enable", ["host": "github.com", "enabled": false]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
             ("clouds.disconnect", ["provider": "aws", "deleteResources": false]),
@@ -305,6 +331,7 @@ struct BridgeContractTests {
         "session.signIn": "starts a device sign-in that waits for the browser",
         "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
         "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
+        "onboarding.reset": "FirstRunTests covers it (removes the state file)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",
         "spaces.deleteMany": "removes fixture Spaces the later cases use; BulkDeleteTests covers it",
@@ -324,7 +351,7 @@ struct BridgeContractTests {
         "teleport.windows": "lists this Mac's real windows", "teleport.remoteWindows": "needs a Space's stream",
         "teleport.icon": "needs the SDK's teleport handle", "teleport.thumbnail": "needs the SDK's teleport handle",
         "teleport.plan": "needs the SDK's teleport handle", "teleport.run": "needs the SDK's teleport handle",
-        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.streamWindow": "opens a native window",
+        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.readiness": "checks a browser through the Keyvault", "teleport.streamWindow": "opens a native window",
         "volume.approve": "the fake has no request", "volume.deny": "the fake has no request",
         "volume.revoke": "the fake has no grant", "volume.resolve": "changes the fake's conflicts",
         "volume.reveal": "opens Finder", "loginItem.openSettings": "opens System Settings",
@@ -339,6 +366,13 @@ struct BridgeContractTests {
         "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
         "cli.install": "writes the CLI into a bin folder and a shell profile; CliBridgeTests covers it on temp folders",
+        "ci.overview": "runs the bundled cua ci app; CiRunnersTests covers the arguments and answers with a fake cua",
+        "ci.connect": "as ci.overview (it starts a GitHub install)",
+        "ci.connectToken": "as ci.overview (it makes a pool from a GitHub token)",
+        "ci.connectCancel": "as ci.overview",
+        "ci.repositories": "as ci.overview (it changes which repositories may run jobs)",
+        "ci.goal": "as ci.overview (it changes a cloud's goal)",
+        "ci.log": "as ci.overview",
         "thread.read": "answers the daemon's thread_read as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.post": "answers the daemon's thread_post as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.members": "answers the daemon's agent_members as-is (the page maps it); ThreadBridgeTests covers the arguments",
@@ -426,6 +460,13 @@ struct BridgeContractTests {
             KvDomainCount(domain: "slack.com", cookies: 4, sessionCookies: 1, localStorage: 2, passwords: 0,
                           signin: true, identityProvider: false, unavailable: 0, unavailableReason: ""),
         ], notes: [])
+        let readiness = KvReadiness(
+            providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: false,
+            profile: "Profile 1", defaultProfile: "Default",
+            profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                       KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+            files: KvReadinessCheck(state: "denied", say: "Turn on Full Disk Access."),
+            tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
@@ -441,6 +482,7 @@ struct BridgeContractTests {
             ("teleport.plan", BridgeValue.encode(plan)),
             ("teleport.run", WebUIBridge.runReport(report)),
             ("teleport.sites", BridgeValue.encode(sites)),
+            ("teleport.readiness", BridgeValue.encode(readiness)),
             ("teleport.streamWindow", NSNull()),
         ].map { ($0.0, try json($0.1)) }
     }

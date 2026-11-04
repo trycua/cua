@@ -530,6 +530,31 @@ pub async fn resolve_with(
     backend: Backend,
     arch: &str,
 ) -> Result<ResolvedImage> {
+    let found = resolve_listed(src, reference, backend, arch).await;
+    // The macOS Space with developer tools is published like the other macOS
+    // images; where it is not (yet, or at all) it is built on this computer
+    // from its parent, so it resolves as the parent's Lume build under its
+    // own name. The digest is then the parent's: a new parent is a new build.
+    let input = NormalizedRef::parse(reference)?;
+    if let Err(ImageError::NotFound(_)) = &found
+        && let Some(parent) = crate::catalog::derived_from(&input.full())
+        && backend.accepts().contains(&Variant::Lume)
+    {
+        let mut r = Box::pin(resolve_listed(src, parent, backend, arch)).await?;
+        r.reference = input.full();
+        r.variant_ref = input.full();
+        r.spacesd = Some(true);
+        return Ok(r);
+    }
+    found
+}
+
+async fn resolve_listed(
+    src: &dyn ManifestSource,
+    reference: &str,
+    backend: Backend,
+    arch: &str,
+) -> Result<ResolvedImage> {
     let input = NormalizedRef::parse(reference)?;
     let accepts = backend.accepts();
     let primary = match probe(src, &input.full(), arch).await {

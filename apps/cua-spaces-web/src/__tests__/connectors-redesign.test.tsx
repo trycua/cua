@@ -40,6 +40,17 @@ const click = (el: Element) =>
     fireEvent.click(el);
   });
 
+/** Opens a provider's sheet from its row and disconnects it there. */
+const disconnect = async (id: string) => {
+  await click(await found(`[data-connector-provider=${id}]`));
+  await click(await found(`[data-provider-detail=${id}] [data-connector-provider-action='sign-out']`));
+};
+/** Show all, so the search and the rest of the providers are there. */
+const openMore = async () => {
+  const toggle = await found("[data-connectors-more-toggle]");
+  if (toggle.getAttribute("aria-expanded") !== "true") await click(toggle);
+};
+
 function host(calls: { op: string; args: unknown }[]) {
   return { failsCreates: false, listsGhost: false, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) };
 }
@@ -56,7 +67,12 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     expect(qa("[data-connectors-apps] [role=switch]").length).toBe(1); // Set up new apps automatically only
     expect(qa("[data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "custom"]);
     expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Not connected");
-    expect(q("[data-connector-provider=openai]")!.textContent).toContain("Disconnect");
+    // Compact rows like the coding apps: a check and Connected, a chevron to the sheet, and nothing else on the row.
+    const openai = q("[data-connector-provider=openai]")!;
+    expect(openai.textContent).toContain("Connected");
+    expect(openai.querySelector("[data-connector-chevron]")).not.toBeNull();
+    expect(openai.textContent).not.toContain("Disconnect");
+    for (const r of qa("[data-connector-provider]")) expect(r.textContent).not.toMatch(/Works with|Added /);
     expect(document.body.textContent).not.toContain("Account keys");
   });
 
@@ -88,7 +104,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp("/settings/connections", host(calls));
     // The demo has an OpenAI key saved; sign out first so nothing reads one.
-    await click(await found("[data-connector-provider=openai] [data-connector-provider-action='sign-out']"));
+    await disconnect("openai");
     await waitFor(() => expect(q("[data-connector-app=opencode]")!.dataset.state).toBe("not-connected"));
     await click(q("[data-connector-app=opencode] [data-connector-connect]")!);
     // The sheet for its first provider, with the others one click away in a searchable choice.
@@ -128,6 +144,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
   it("a provider without a sign-in of its own asks for a key; Disconnect removes it", async () => {
     await mountApp("/settings/connections", host([]));
     // GitHub is in More providers: search for it, then Connect.
+    await openMore();
     fireEvent.change(await found("[data-connectors-search]"), { target: { value: "copilot" } });
     await click(await found("[data-connector-provider=github] [data-connector-provider-action]"));
     await found("[data-provider-sheet=github]");
@@ -137,7 +154,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     await click(q("[data-provider-save]")!);
     await waitFor(() => expect(q("[data-connector-provider=github]")!.dataset.state).toBe("connected"));
     expect(q("[data-provider-sheet]")).toBeNull();
-    await click(q("[data-connector-provider=github] [data-connector-provider-action]")!);
+    await disconnect("github");
     await waitFor(() => expect(q("[data-connector-provider=github]")!.dataset.state).toBe("not-connected"));
   });
 
@@ -155,7 +172,7 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp("/settings/connections", host(calls));
     // OpenAI starts connected in the demo with a key; sign out first.
-    await click(await found("[data-connector-provider=openai] [data-connector-provider-action='sign-out']"));
+    await disconnect("openai");
     await waitFor(() => expect(q("[data-connector-app=codex]")!.dataset.state).toBe("not-connected"));
     await click(q("[data-connector-app=codex] [data-connector-connect]")!);
     const code = await found("[data-device-code]");

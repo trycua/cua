@@ -400,15 +400,63 @@ pub fn is_machine_desktop(space: &Space) -> bool {
         .is_some_and(|own| !own.is_empty() && !own.contains('/') && !own.starts_with("space-"))
 }
 
-/// The Spaces the user can open, in `spaces`' order: every Space but the
-/// machines' own desktops ([`is_machine_desktop`]): not This machine, even
-/// while it provides Spaces, and not one of your machines on the relay. A
-/// Space a machine provides is listed. The notch's tiles list these; its
-/// tab and the menu bar item count the ones that are on ([`on_count`]).
+/// Whether `space` is the desktop of one of your other machines, reached
+/// through the relay (`relay:<machine>`, no host above it): a machine's
+/// own desktop that is not This machine's. A Space the machine provides is
+/// a Space, not this.
+pub fn is_remote_desktop(space: &Space) -> bool {
+    is_machine_desktop(space) && space.id.starts_with("relay:")
+}
+
+/// Whether a machine's desktop can be opened right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DesktopAvailability {
+    /// The machine answers and says it shares its desktop.
+    Available,
+    /// The machine does not answer, or has not said what it shares.
+    Offline,
+    /// The machine answers but does not share its desktop (it only
+    /// provides Spaces, or shares neither), or its owner stopped sharing
+    /// it with you.
+    NotShared,
+}
+
+/// Whether the other machine's desktop `space` can be opened: the machine
+/// answers and its features say it streams its desktop
+/// ([`feature::DESKTOP_STREAM`]). Without that evidence there is no
+/// desktop to list, so a machine that has not said what it shares stays
+/// out, as before (#5190).
+pub fn desktop_availability(space: &Space) -> DesktopAvailability {
+    if crate::machines::says_stopped_sharing(space) || sidebar::shares_desktop(space) == Some(false)
+    {
+        return DesktopAvailability::NotShared;
+    }
+    match &space.sdk {
+        Some(sdk) if sdk.reachable && has_feature(space, feature::DESKTOP_STREAM) => {
+            DesktopAvailability::Available
+        }
+        _ => DesktopAvailability::Offline,
+    }
+}
+
+/// The Spaces the user can open, in `spaces`' order: every Space, and the
+/// desktops of your other machines while they are there to open
+/// ([`desktop_availability`] is `Available`): a shared desktop is a Space.
+/// Not This machine, even while it provides Spaces, and not a machine that
+/// has no desktop to open (it only provides Spaces, is off or has not
+/// answered): the notch listed those as if they were Spaces (#5190). A Space a machine
+/// provides is listed. The notch's tiles list these (and the desktops a
+/// person pinned, [`crate::notch::tiles_matching`]); its tab and the menu
+/// bar item count the ones that are on ([`on_count`]).
 pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
     spaces
         .iter()
-        .filter(|s| !is_machine_desktop(s))
+        .filter(|s| {
+            !is_machine_desktop(s)
+                || (is_remote_desktop(s)
+                    && desktop_availability(s) == DesktopAvailability::Available)
+        })
         .cloned()
         .collect()
 }
@@ -858,6 +906,65 @@ mod tests {
         let idle = this_machine_space(None, 0, SpaceOs::Macos);
         assert!(is_machine_desktop(&idle));
         assert_eq!(openable_count(&[idle]), 0);
+    }
+
+    /// The desktop of one of your other machines is a Space while it is
+    /// there to open: shown and counted when it runs. A machine with no
+    /// desktop to open (it only provides Spaces, is off, or has not
+    /// answered) and This machine are not.
+    #[test]
+    fn a_shared_desktop_is_a_space_and_a_machine_without_one_is_not() {
+        use crate::host::this_machine_space;
+        let machine = |id: &str, features: &[&str], reachable: bool| {
+            let mut r = row();
+            r.id = format!("relay:{id}");
+            r.provider = "relay".into();
+            r.features = features.iter().map(|f| f.to_string()).collect();
+            r.reachable = reachable;
+            row_to_space(&r, 0)
+        };
+        let shared = machine("wsl", &["desktop_stream", "host_spaces"], true);
+        let spaces_only = machine("studio", &["host_spaces", "files"], true);
+        let off = machine("old", &["desktop_stream"], false);
+        // Answers, but has not said what it shares: no desktop to list.
+        let silent = machine("mini", &[], true);
+        for (space, want) in [
+            (&shared, DesktopAvailability::Available),
+            (&spaces_only, DesktopAvailability::NotShared),
+            (&off, DesktopAvailability::Offline),
+            (&silent, DesktopAvailability::Offline),
+        ] {
+            assert!(is_machine_desktop(space) && is_remote_desktop(space));
+            assert_eq!(desktop_availability(space), want, "{}", space.id);
+        }
+        let this_mac = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(is_machine_desktop(&this_mac) && !is_remote_desktop(&this_mac));
+        let ids = |v: Vec<Space>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        let all = vec![
+            this_mac,
+            shared.clone(),
+            spaces_only.clone(),
+            off.clone(),
+            silent.clone(),
+        ];
+        assert_eq!(
+            ids(openable_spaces(&all)),
+            ["relay:wsl"],
+            "only the desktops there to open"
+        );
+        // A running one counts like a Space; the off one, the one that
+        // keeps its desktop to itself and the silent one do not.
+        assert_eq!(openable_count(&all), 1);
+        assert_eq!(on_count(&all), 1);
+        assert_eq!(on_count(&[off, spaces_only]), 0);
+        // A Space a machine provides is a Space either way.
+        let mut provided = row();
+        provided.id = "relay:wsl/dev".into();
+        provided.provider = "relay".into();
+        provided.host = Some("wsl".into());
+        let provided = row_to_space(&provided, 0);
+        assert!(!is_remote_desktop(&provided));
+        assert_eq!(ids(openable_spaces(&[provided])), ["relay:wsl/dev"]);
     }
 
     /// The notch and the menu bar count the Spaces on or starting, never a

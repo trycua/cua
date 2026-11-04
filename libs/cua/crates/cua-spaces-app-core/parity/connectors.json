@@ -72,6 +72,21 @@
     { "forApp": "claude-code", "query": "", "expanded": false },
     { "forApp": null, "query": "kimi", "expanded": false }
   ],
+  "models": [
+    { "step": "nothing connected", "input": { "keys": { "keys": [] } } },
+    { "step": "an Anthropic key, an OpenAI key and a DeepSeek key", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "aa11", "addedMs": 1790000100000 },
+      { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "bb22", "addedMs": 1790000200000 },
+      { "provider": "deepseek", "env": "DEEPSEEK_API_KEY", "last4": "cc33", "addedMs": 1790000300000 } ] } } },
+    { "step": "only a Claude sign-in and a ChatGPT sign-in (each is its own app's)", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000 },
+      { "provider": "openai", "env": "CODEX_AUTH_JSON", "last4": "", "addedMs": 1790000200000 } ] } } },
+    { "step": "a Claude sign-in that ran out and an OpenAI key", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000, "expired": true },
+      { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "bb22", "addedMs": 1790000200000 } ] } } },
+    { "step": "a provider with no list falls back to its default", "input": { "keys": { "keys": [
+      { "provider": "zai", "env": "GLM_API_KEY", "last4": "7d1f", "addedMs": 1790000300000, "region": "coding-global" } ] } } }
+  ],
   "plans": ["claude-code", "codex", "hermes", "vscode", "copilot-cli"],
   "details": ["claude-code", "vscode"],
   "summon": {

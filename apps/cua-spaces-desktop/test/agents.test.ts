@@ -478,6 +478,31 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agentKeys.remove", {})).toBe("bad_args");
   });
 
+  it("keeps several keys for one provider and tells an app which one to use", async () => {
+    const { bridge } = makeBridge();
+    // Another key beside the first one, named; one removed by its slot; the first removed while the others stay.
+    const added = (await call(bridge, "agentKeys.set", { provider: "openai", value: "sk-work-0000-9z9z", add: true, label: "Work key" })) as { keys: { env: string; slot?: string; label?: string }[] };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "openai", value: "sk-work-0000-9z9z", add: true, label: "Work key" }]);
+    const work = added.keys.find((k) => k.slot);
+    expect(work).toMatchObject({ env: "OPENAI_API_KEY", label: "Work key" });
+    expect(JSON.stringify(added)).not.toContain("sk-work");
+    // Which key an app uses: names only, and nothing is signed out or deleted by choosing.
+    const used = (await call(bridge, "agentKeys.use", { app: "hermes", env: "OPENAI_API_KEY", slot: work!.slot })) as { keys: unknown[]; uses?: Record<string, { env: string; slot?: string }> };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.use", { app: "hermes", env: "OPENAI_API_KEY", slot: work!.slot }]);
+    expect(used.uses?.hermes).toMatchObject({ env: "OPENAI_API_KEY", slot: work!.slot });
+    expect(used.keys).toHaveLength(2);
+    const cleared = (await call(bridge, "agentKeys.use", { app: "hermes" })) as { uses?: unknown };
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.use", { app: "hermes" }]);
+    expect(cleared.uses).toBeUndefined();
+    await call(bridge, "agentKeys.remove", { env: "OPENAI_API_KEY", slot: work!.slot });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "OPENAI_API_KEY", slot: work!.slot }]);
+    await call(bridge, "agentKeys.remove", { env: "OPENAI_API_KEY", keep_others: true });
+    expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "OPENAI_API_KEY", keep_others: true }]);
+    expect(await code(bridge, "agentKeys.use", {})).toBe("bad_args");
+    // A native row is the first key for a variable; the ones beside it are the web page's.
+    expect(agentKeysInput({ keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "1111", added_ms: 1 }, { provider: "openai", env: "OPENAI_API_KEY", slot: "k1", last4: "2222", added_ms: 2 }] }, null).keys).toHaveLength(1);
+  });
+
   it("fails a key call in the daemon's words, or without a daemon", async () => {
     const { bridge } = makeBridge({ tools: null });
     expect(await message(bridge, "agentKeys.list")).toBe("Agent keys need the cua daemon");

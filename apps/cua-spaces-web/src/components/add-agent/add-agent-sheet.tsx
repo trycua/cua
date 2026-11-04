@@ -17,7 +17,7 @@ import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, Loader2Icon, Pl
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
-import { HarnessMark, HARNESSES } from "@/components/space-thread/harness-marks";
+import { HarnessMark, HARNESSES, harnessInfo } from "@/components/space-thread/harness-marks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -37,11 +37,16 @@ export interface AddAgentSpace {
 type Stage = "pick" | "start" | "connect";
 export type AddAgentStage = Stage;
 
-/** Start an agent here lists these, in this order. */
-export const START_HARNESSES = ["hermes", "claude-code", "codex", "cursor", "openclaw"] as const;
-const START_NAMES: Record<string, string> = { hermes: "Hermes Agent", "claude-code": "Claude Code", codex: "Codex CLI", cursor: "Cursor CLI", openclaw: "OpenClaw" };
-const SHORT: Record<string, string> = { hermes: "Hermes", "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor", openclaw: "OpenClaw" };
-const HANDLE: Record<string, string> = { hermes: "hermes", "claude-code": "claude", codex: "codex", cursor: "cursor", openclaw: "openclaw" };
+/**
+ * Start an agent here lists these, in this order. Each is a harness id of the
+ * Rust registry (`cua_agents::harness`), the id `agent_add` takes verbatim;
+ * a drift guard test keeps the two in step. Cursor and T3 Code are not
+ * harnesses a Space can start, so they are not offered here.
+ */
+export const START_HARNESSES = ["hermes", "claude-code", "openai-codex", "openclaw"] as const;
+const START_NAMES: Record<string, string> = { hermes: "Hermes Agent", "claude-code": "Claude Code", "openai-codex": "Codex CLI", openclaw: "OpenClaw" };
+const SHORT: Record<string, string> = { hermes: "Hermes", "claude-code": "Claude Code", "openai-codex": "Codex", openclaw: "OpenClaw" };
+const HANDLE: Record<string, string> = { hermes: "hermes", "claude-code": "claude", "openai-codex": "codex", openclaw: "openclaw" };
 
 /** A free handle for a new member: `hermes`, else `hermes-2`, ... */
 export function freeHandle(base: string, taken: readonly string[]): string {
@@ -253,7 +258,7 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
               <HarnessMark harness={h} px={24} />
             </span>
             <span className="text-[13px]">{START_NAMES[h]}</span>
-            <span className="flex-1 text-xs text-muted-foreground">{HARNESSES.find((x) => x.id === h)?.maker}</span>
+            <span className="flex-1 text-xs text-muted-foreground">{harnessInfo(h)?.maker}</span>
             {harness === h ? <CheckIcon className="size-4 text-brand" /> : null}
           </button>
         ))}

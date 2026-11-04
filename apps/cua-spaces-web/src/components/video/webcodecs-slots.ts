@@ -38,6 +38,14 @@
  * in the background, and the session opens again with activation when the
  * Space says that window needs it (`would_require_activation`).
  *
+ * Leaving a Space and coming back reuses the live session: a viewer slot
+ * (the desktop, not a window) whose picture is live is parked for
+ * `PARK_MS` instead of closed, with its canvas and decoder still running, and
+ * the next viewer slot for that Space adopts it and is live on the spot. A
+ * parked session is released when its stream ends (the Space stopped, the
+ * machine went away), when the page is hidden, past `MAX_PARKED` Spaces
+ * (the oldest first), and after `PARK_MS`.
+ *
  * The viewer slots (`full`: the Space page's desktop, a PiP window) draw
  * presence over the picture (`presence.ts`): the other participants'
  * cursors and yours, shown only while the slot is live.
@@ -121,6 +129,16 @@ interface Slot {
   detach: (() => void)[];
 }
 
+/** How long a viewer's live session outlives its slot (the Mac app's `slotGrace`). */
+export const PARK_MS = 45_000;
+/** The most Spaces kept parked at once. */
+export const MAX_PARKED = 3;
+
+/** What a parked session is found by: only the desktop viewer parks. */
+function parkKey(options: Pick<SlotOptions, "spaceId" | "tier" | "windowId">): string | null {
+  return options.tier === "full" && !options.windowId ? options.spaceId : null;
+}
+
 /** Tells one ticket request from the next (the bridge envelope's id). */
 let ticketSeq = 0;
 
@@ -139,6 +157,9 @@ export class WebCodecsSlots {
   /** Watches for a modal dialog opening or closing (while any slot is mounted). */
   private modalWatch: MutationObserver | null = null;
   private modal = false;
+  /** Live viewer sessions of Spaces the page left, by Space id, oldest first. */
+  private readonly parked = new Map<string, { slot: Slot; timer: ReturnType<typeof setTimeout> }>();
+  private watchingVisibility = false;
 
   /** The video bench's counters, while the shell asks for them. */
   readonly stats: VideoStats | null;
@@ -155,6 +176,9 @@ export class WebCodecsSlots {
 
   /** Starts `el`'s video; the returned function stops it and removes the canvas. */
   register(el: HTMLElement, options: SlotOptions, listener: (status: SlotStatus) => void): () => void {
+    const key = parkKey(options);
+    const parked = key ? this.takeParked(key) : null;
+    if (parked) return this.adopt(parked, el, options, listener);
     const id = `${options.spaceId}#${options.tier}#${++this.next}`;
     const canvas = this.doc.createElement("canvas");
     canvas.dataset.webcodecs = options.tier;
@@ -178,28 +202,121 @@ export class WebCodecsSlots {
       });
     }
     this.stats?.open(id, options.spaceId, options.tier);
-    this.slots.set(id, slot);
-    if (this.slots.size === 1) {
-      this.doc.addEventListener("visibilitychange", this.onVisibility);
-      this.watchModal();
-    }
-    if (this.modal) this.stepBack(slot, true);
-    if (options.interactive) this.wireFocus(slot);
+    this.track(slot);
     this.open(slot);
-    return () => {
-      if (!this.slots.delete(id)) return;
-      this.close(slot);
-      for (const off of slot.detach.splice(0)) off();
-      slot.presence?.detach();
-      canvas.remove();
-      this.stats?.close(id);
-      if (this.slots.size === 0) {
+    return this.unregister(slot);
+  }
+
+  /** Starts watching for a slot: the page's visibility, and modal dialogs. */
+  private track(slot: Slot): void {
+    this.slots.set(slot.id, slot);
+    if (!this.watchingVisibility) {
+      this.watchingVisibility = true;
+      this.doc.addEventListener("visibilitychange", this.onVisibility);
+    }
+    if (this.slots.size === 1) this.watchModal();
+    if (this.modal) this.stepBack(slot, true);
+    if (slot.options.interactive) this.wireFocus(slot);
+  }
+
+  /** Stops the watching nothing needs any more. */
+  private untrack(): void {
+    if (this.slots.size === 0) {
+      this.modalWatch?.disconnect();
+      this.modalWatch = null;
+      this.modal = false;
+      if (this.parked.size === 0 && this.watchingVisibility) {
+        this.watchingVisibility = false;
         this.doc.removeEventListener("visibilitychange", this.onVisibility);
-        this.modalWatch?.disconnect();
-        this.modalWatch = null;
-        this.modal = false;
       }
+    }
+  }
+
+  private unregister(slot: Slot): () => void {
+    return () => {
+      if (!this.slots.delete(slot.id)) return;
+      if (this.canPark(slot)) this.park(slot);
+      else this.teardown(slot);
+      this.untrack();
     };
+  }
+
+  private teardown(slot: Slot): void {
+    this.close(slot);
+    for (const off of slot.detach.splice(0)) off();
+    slot.presence?.detach();
+    slot.presence = null;
+    slot.canvas.remove();
+    this.stats?.close(slot.id);
+  }
+
+  /** A live desktop viewer, on a visible page, outlives its slot for `PARK_MS`. */
+  private canPark(slot: Slot): boolean {
+    return parkKey(slot.options) !== null && PARK_MS > 0 && slot.session !== null && slot.status.phase === "live" && this.doc.visibilityState !== "hidden";
+  }
+
+  private park(slot: Slot): void {
+    const key = parkKey(slot.options)!;
+    this.discardParked(key);
+    // No slot to show or take input: its keys, presence and canvas leave the page, the session goes on.
+    for (const off of slot.detach.splice(0)) off();
+    if (this.doc.activeElement === slot.canvas) slot.canvas.blur();
+    slot.presence?.detach();
+    slot.presence = null;
+    slot.canvas.remove();
+    slot.listener = () => {};
+    const timer = setTimeout(() => this.discardParked(key), PARK_MS);
+    this.parked.set(key, { slot, timer });
+    while (this.parked.size > MAX_PARKED) this.discardParked(this.parked.keys().next().value!);
+  }
+
+  /** Takes the Space's parked session out of the parking (the caller shows it). */
+  private takeParked(key: string): Slot | null {
+    const entry = this.parked.get(key);
+    if (!entry) return null;
+    clearTimeout(entry.timer);
+    this.parked.delete(key);
+    return entry.slot;
+  }
+
+  /** Closes the Space's parked session, if any. */
+  private discardParked(key: string): void {
+    const slot = this.takeParked(key);
+    if (!slot) return;
+    this.teardown(slot);
+    this.untrack();
+  }
+
+  private isParked(slot: Slot): boolean {
+    const key = parkKey(slot.options);
+    return key !== null && this.parked.get(key)?.slot === slot;
+  }
+
+  /** A new slot for a Space with a parked session: it shows that session, live at once. */
+  private adopt(slot: Slot, el: HTMLElement, options: SlotOptions, listener: (status: SlotStatus) => void): () => void {
+    slot.el = el;
+    slot.options = options;
+    slot.listener = listener;
+    const inset = options.inset ?? 0;
+    Object.assign(slot.canvas.style, {
+      inset: `${inset}px`,
+      width: `calc(100% - ${2 * inset}px)`,
+      height: `calc(100% - ${2 * inset}px)`,
+      borderRadius: `${options.radius}px`,
+    });
+    el.append(slot.canvas);
+    if (options.tier === "full") {
+      slot.presence = this.createPresence(this.desktop, slot.canvas, el, {
+        spaceId: options.spaceId,
+        ...(options.windowId ? { windowId: options.windowId } : {}),
+        interactive: options.interactive,
+      });
+      slot.presence.setLive(slot.status.phase === "live");
+    }
+    slot.status = { ...slot.status, focused: false };
+    this.track(slot);
+    listener(slot.status);
+    return this.unregister(slot);
   }
 
   /**
@@ -265,7 +382,7 @@ export class WebCodecsSlots {
   private open(slot: Slot): void {
     if (this.doc.visibilityState === "hidden") return;
     const gen = ++slot.generation;
-    const current = () => gen === slot.generation && this.slots.get(slot.id) === slot;
+    const current = () => gen === slot.generation && (this.slots.get(slot.id) === slot || this.isParked(slot));
     this.set(slot, { phase: "connecting" });
     const { interactive } = slot.options;
     const target = streamTarget(slot.options, slot.activate);
@@ -310,6 +427,13 @@ export class WebCodecsSlots {
 
   /** `opening`: no ticket came, so no stream ever existed. */
   private fail(slot: Slot, reason: string, opening = false): void {
+    // A parked session that ended (the Space stopped, the machine went
+    // away) is let go; nothing is shown for it.
+    if (this.isParked(slot)) {
+      this.stats?.failed(slot.id, reason);
+      this.discardParked(parkKey(slot.options)!);
+      return;
+    }
     this.close(slot);
     this.stats?.failed(slot.id, reason);
     this.set(slot, { phase: "failed", reason, ...(opening ? { opening } : {}) });
@@ -325,6 +449,7 @@ export class WebCodecsSlots {
 
   private onVisibility = (): void => {
     const hidden = this.doc.visibilityState === "hidden";
+    if (hidden) for (const key of [...this.parked.keys()]) this.discardParked(key);
     for (const slot of this.slots.values()) {
       if (hidden) {
         if (slot.session || slot.status.phase === "connecting") {

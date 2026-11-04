@@ -32,5 +32,7 @@ def test_pull_requests_keep_the_cheap_tauri_checks():
     # `rust` compiles and tests src-tauri; `frontend` runs vitest + typecheck.
     for name in ("rust", "frontend"):
         condition = JOBS[name].get("if", "")
+        # Only the draft-skip clause may mention pull_request.
+        condition = condition.replace("github.event_name != 'pull_request' || !github.event.pull_request.draft", "")
         assert "pull_request" not in condition and "ci:full" not in condition
     assert "src-tauri/Cargo.toml" in str(JOBS["rust"]["steps"])

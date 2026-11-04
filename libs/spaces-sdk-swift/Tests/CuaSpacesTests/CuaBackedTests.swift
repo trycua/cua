@@ -106,6 +106,14 @@ struct Fixtures {
         XCTAssertEqual(listed.map(\.id), [space.id])
         XCTAssertTrue(listed[0].isReady)
 
+        // Opening a stream resolves just this Space (no list of every Space,
+        // no guest round trip), and it is the same Space.
+        let forStream = try await connection.attachForStream(to: space.id)
+        XCTAssertEqual(forStream.id, space.id)
+        XCTAssertEqual(forStream.provider, .direct)
+        XCTAssertTrue(forStream.isReady)
+        XCTAssertEqual(forStream.info.operatingSystem, listed[0].operatingSystem)
+
         // §1, live: many calls in a row, each answered with its own shape.
         for i in 0..<12 {
             let out = try await space.bash("echo step-\(i)")

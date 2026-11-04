@@ -1142,6 +1142,12 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
              allows. Stop or delete one, then create it again.",
             machine
         )),
+        "host_capacity" => help(format!(
+            "It failed twice for the same reason: {} has no room for another VM right now. \
+             Stop or delete a Space you are not using (the message names what is running), or \
+             close other programs, then create it again.",
+            machine
+        )),
         "local_network" | "local_network_denied" | "local_network_vpn" => help(format!(
             "It failed twice for the same reason: Cua can't reach the new VM{on}. Turn on \
              Local Network access for Cua Spaces in System Settings (or turn off a VPN), then \
@@ -1577,7 +1583,9 @@ pub fn power_failed_text(on: bool, error: &str) -> String {
             )
         }
         Some(FailureCause::LocalNetworkVpn) => "a VPN or firewall on the Mac running it is \
-             blocking that Mac's own network. Turn off the VPN there and try again."
+             blocking that Mac's own network. Turn off the VPN there and try again. If it can't be \
+             turned off, ask whoever manages it to let 192.168.64.0/24 (that Mac's VM network) \
+             skip the VPN."
             .into(),
         Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
              up space there (or run `cua cache prune` in Terminal), then try again."
@@ -1619,7 +1627,8 @@ fn vpn_text(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String 
     }
     format!(
         "A VPN or firewall on {subject} is blocking that Mac's own network, so it can't connect \
-         to its new macOS Space. Turn off the VPN there and try again."
+         to its new macOS Space. Turn off the VPN there and try again. If it can't be turned off, ask \
+         whoever manages it to let 192.168.64.0/24 (that Mac's VM network) skip the VPN."
     )
 }
 
@@ -2174,6 +2183,7 @@ mod tests {
             "runtime_permission",
             "virtualization_unavailable",
             "vm_limit",
+            "host_capacity",
             "local_network",
             "local_network_denied",
             "local_network_vpn",

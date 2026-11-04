@@ -381,7 +381,9 @@ function stringMap(v: unknown): Map<string, string> {
 
 /** The core's input for `agent_keys.list`'s answer (never a value). */
 export function agentKeysInput(report: Json | null, error: string | null): AppAgentKeysInput {
+  // Keys saved beside the first one for a variable (they have a slot) are the web page's; a native row is the first.
   const keys = arr(report ?? {}, "keys")
+    .filter((k) => k.slot === undefined || k.slot === null)
     .map((k) => ({
       provider: typeof k.provider === "string" ? k.provider : "other",
       env: typeof k.env === "string" ? k.env : "",

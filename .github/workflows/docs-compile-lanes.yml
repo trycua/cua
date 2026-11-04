@@ -54,7 +54,7 @@ jobs:
     # Not on main pushes: those exist to keep the rust lane's cache warm.
     if: ${{ github.event_name != 'push' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: swift blocks
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -1496,11 +1496,23 @@ fn release(g: &mut Inner, spec: &JobSpec, kind: &str) {
 /// it never got to write.
 pub(crate) fn exit_reason(code: i32, stdout: &[u8], stderr: &[u8]) -> String {
     let last = [stderr, stdout].iter().find_map(|b| {
-        String::from_utf8_lossy(b)
+        let text = String::from_utf8_lossy(b);
+        let lines: Vec<&str> = text
             .lines()
             .map(str::trim)
-            .rfind(|l| !l.is_empty())
-            .map(|l| l.chars().take(240).collect::<String>())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let last = lines.last()?;
+        // Node ends an uncaught error with a bare `Node.js v24.1.0` line, and
+        // the cause (`code: 'ENOSPC'`, a full disk) sits a few lines above
+        // it: keep those with it.
+        if last.starts_with("Node.js v") && lines.len() > 1 {
+            let from = lines.len().saturating_sub(7);
+            let joined = lines[from..].join(" ");
+            let skip = joined.chars().count().saturating_sub(240);
+            return Some(joined.chars().skip(skip).collect::<String>());
+        }
+        Some(last.chars().take(240).collect::<String>())
     });
     match last {
         Some(l) => format!("exited with code {code}: {l}"),
@@ -1535,6 +1547,25 @@ mod exit_reason_tests {
         assert_eq!(
             super::exit_reason(3, b"out\n", b"err\n"),
             "exited with code 3: err"
+        );
+    }
+
+    /// A Node crash ends with `Node.js v24.1.0`; the reason keeps the lines
+    /// above it, where a full disk says `ENOSPC` (CUA-3000).
+    #[test]
+    fn a_node_crash_keeps_the_lines_above_its_version_footer() {
+        let err = b"node:fs:2397\n  throw err;\nError: ENOSPC: no space left on device, write\n    at writeSync (node:fs:2397:20) {\n  errno: -28,\n  code: 'ENOSPC',\n  syscall: 'write'\n}\n\nNode.js v24.21.0\n";
+        let r = super::exit_reason(1, b"", err);
+        assert!(r.starts_with("exited with code 1: "), "{r}");
+        assert!(
+            r.contains("ENOSPC") && r.contains("Node.js v24.21.0"),
+            "{r}"
+        );
+        assert!(!r.contains('\n'), "{r}");
+        // A lone footer is still just the footer.
+        assert_eq!(
+            super::exit_reason(1, b"", b"Node.js v24.21.0\n"),
+            "exited with code 1: Node.js v24.21.0"
         );
     }
 }

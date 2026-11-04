@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { connectorsInputOf, providerPicker, providerSheet } from "../connectors";
+import { connectorsInputOf, modelsView, providerPicker, providerSheet } from "../connectors";
 import { METHOD_KINDS, PROVIDER_REGISTRY } from "../generated/providers";
 import { agentKeysFromWire, tauriAgentKeysOps, webkitAgentKeysOps } from "../ops/agent-keys";
 import { testCore, wasmBuilt } from "./testCore";
@@ -30,6 +30,32 @@ describe.skipIf(!wasmBuilt)("the registry in the web app", () => {
       for (const w of sheet.ways) expect([...METHOD_KINDS, "api_key"]).toContain(w.kind);
       if (p.keyEnv) expect(sheet.ways.some((w) => w.id === "key" || w.id === "endpoint")).toBe(true);
     }
+  });
+});
+
+describe.skipIf(!wasmBuilt)("the model menu in the web app", () => {
+  const key = (provider: string, env: string, extra: Record<string, unknown> = {}) => ({ provider, env, last4: "1234", addedMs: 1, ...extra });
+
+  it("lists only connected providers, the core's models equal the generated registry's, and the first fast one is the default", async () => {
+    const core = await testCore();
+    expect(modelsView(core, connectorsInputOf([], { keys: [] }))).toMatchObject({ groups: [], default: null, empty: "Connect a provider to pick a model." });
+    const view = modelsView(core, connectorsInputOf([], { keys: [key("anthropic", "ANTHROPIC_API_KEY"), key("openai", "OPENAI_API_KEY")] } as never))!;
+    expect(view.groups.map((g) => g.provider)).toEqual(["anthropic", "openai"]);
+    for (const g of view.groups) {
+      const reg = PROVIDER_REGISTRY.find((p) => p.id === g.provider)!;
+      expect(g.models.map((m) => m.id)).toEqual(reg.models.map((m) => m.id));
+      expect(g.harness).toBeNull();
+    }
+    expect(view.default).toEqual({ provider: "anthropic", model: "claude-haiku-4-5" });
+  });
+
+  it("marks a sign-in as its own app's and an expired one as needing a reconnect, listed last", async () => {
+    const core = await testCore();
+    const view = modelsView(core, connectorsInputOf([], { keys: [key("anthropic", "CLAUDE_CODE_OAUTH_TOKEN", { expired: true }), key("openai", "CODEX_AUTH_JSON")] } as never))!;
+    expect(view.groups.map((g) => [g.provider, g.state, g.harness])).toEqual([
+      ["openai", "connected", "openai-codex"],
+      ["anthropic", "needs-reconnect", null],
+    ]);
   });
 });
 

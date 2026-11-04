@@ -818,6 +818,23 @@ impl ConnectParts {
         mcp: true,
         sign_in: true,
     };
+
+    /// Only the sign-in: Cua's skills and MCP entry are not added to the agent, and
+    /// nothing is written outside the Cua home (the copy goes to Keyvault, the note
+    /// of it to `<cua home>/agent-setup.json`). For a demo or a home Space that needs
+    /// the credential and must not touch the person's agent configuration. Claude
+    /// Code is never run to refresh its own sign-in either (an expired one is
+    /// refused), see [`Self::tools_free`].
+    pub const SIGN_IN_ONLY: ConnectParts = ConnectParts {
+        skills: false,
+        mcp: false,
+        sign_in: true,
+    };
+
+    /// Neither skills nor MCP: the agent's own files and programs are left alone.
+    pub fn tools_free(self) -> bool {
+        !self.skills && !self.mcp
+    }
 }
 
 impl AgentSetup {
@@ -961,6 +978,13 @@ impl AgentSetup {
         wait: Duration,
         mut show: Option<ShowDeviceSignIn<'_>>,
     ) -> crate::Result<Vec<ConnectResult>> {
+        // A sign-in-only connect leaves the agent's own files and programs alone: Claude
+        // Code is not run to refresh its sign-in (a zero wait means never).
+        let wait = if parts.tools_free() {
+            Duration::ZERO
+        } else {
+            wait
+        };
         let mut out = Vec::new();
         for id in agents {
             let a = registry::find(id).ok_or_else(|| signin::unknown(id))?;

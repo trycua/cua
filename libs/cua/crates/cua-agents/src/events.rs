@@ -296,6 +296,32 @@ impl AgentEvent {
         self.summary = self.summary();
     }
 
+    /// The tool call this event is about, as one short row (see
+    /// [`crate::tool_row`]). Uses the arguments in `raw` when it has them.
+    pub fn tool_row(&self) -> crate::tool_row::ToolRow {
+        let u = &self.raw["update"];
+        let u = if u.is_null() {
+            &self.raw["toolCall"]
+        } else {
+            u
+        };
+        let name = s(u, "name")
+            .or_else(|| {
+                u["_meta"]["claudeCode"]["toolName"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let location = u["locations"][0]["path"].as_str().unwrap_or("");
+        crate::tool_row::tool_row(
+            &name,
+            self.tool_kind.as_deref().unwrap_or(""),
+            self.tool_title.as_deref().unwrap_or(""),
+            &u["rawInput"],
+            location,
+        )
+    }
+
     /// One short line saying what an `activity` event was, for a muted row:
     /// `Installing node: cached`, `Tool mcp__cua-driver__click`, `Thinking:
     /// ...`, `Turn 1 ended (end_turn)`. `None` for other categories and for

@@ -1112,6 +1112,13 @@ public protocol KeyvaultClientProtocol: AnyObject, Sendable {
     func overview() async  -> KeyvaultOverview
 
     /**
+     * Whether a teleport of `app` can work now: the Keyvault's state, what
+     * macOS lets the daemon read, and the profiles. Reads no value and asks
+     * for no presence.
+     */
+    func readiness(app: String, profile: String?) async throws  -> KvReadiness
+
+    /**
      * Creates the vault with a passphrase (and a recovery key, returned
      * once). The passphrase goes only to the broker over the verified
      * Keyvault socket; it is never logged or kept, and zeroized here.
@@ -1295,6 +1302,28 @@ open func overview()async  -> KeyvaultOverview  {
             liftFunc: FfiConverterTypeKeyvaultOverview_lift,
             errorHandler: nil
 
+        )
+}
+
+    /**
+     * Whether a teleport of `app` can work now: the Keyvault's state, what
+     * macOS lets the daemon read, and the profiles. Reads no value and asks
+     * for no presence.
+     */
+open func readiness(app: String, profile: String?)async throws  -> KvReadiness  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_keyvaultclient_readiness(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(app),FfiConverterOptionString.lower(profile)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeKvReadiness_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
         )
 }
 
@@ -17041,6 +17070,41 @@ public struct AppExperiments: Equatable, Hashable {
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
     public var webUi: Bool
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    public var secureSpaces: Bool
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var childSpaces: Bool
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var askFirst: Bool
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    public var ciRunners: Bool
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var tcpShares: Bool
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    public var mobile: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17058,11 +17122,46 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * The shared web UI is the main window. Always on in the macOS shell
          * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool) {
+         */webUi: Bool,
+        /**
+         * Secure Spaces: a Space reaches the internet and nothing else on the
+         * network unless it is opened. Off unless turned on; the daemon enforces
+         * it (the switch is kept in the cua home).
+         */secureSpaces: Bool,
+        /**
+         * Child Spaces: a Space may make Spaces of its own. Off unless turned
+         * on; the daemon enforces it (the switch is kept in the cua home).
+         */childSpaces: Bool,
+        /**
+         * Ask first: an agent asks on a card before something leaves its Space
+         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */askFirst: Bool,
+        /**
+         * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+         * and the CI Runners page). Off unless turned on; the daemon and the
+         * `cua` command enforce it (the switch is kept in the cua home).
+         */ciRunners: Bool,
+        /**
+         * Public TCP shares: a raw TCP service in a Space (a game server) at a
+         * public address. Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */tcpShares: Bool,
+        /**
+         * Mobile: the computer answers the Cua Spaces phone app (its tools and
+         * push events). Off unless turned on; the daemon enforces it (the switch
+         * is kept in the cua home).
+         */mobile: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
         self.webUi = webUi
+        self.secureSpaces = secureSpaces
+        self.childSpaces = childSpaces
+        self.askFirst = askFirst
+        self.ciRunners = ciRunners
+        self.tcpShares = tcpShares
+        self.mobile = mobile
     }
 
 
@@ -17084,7 +17183,13 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 cuaVolume: FfiConverterBool.read(from: &buf),
                 yourCloud: FfiConverterBool.read(from: &buf),
                 sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf)
+                webUi: FfiConverterBool.read(from: &buf),
+                secureSpaces: FfiConverterBool.read(from: &buf),
+                childSpaces: FfiConverterBool.read(from: &buf),
+                askFirst: FfiConverterBool.read(from: &buf),
+                ciRunners: FfiConverterBool.read(from: &buf),
+                tcpShares: FfiConverterBool.read(from: &buf),
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17093,6 +17198,12 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.yourCloud, into: &buf)
         FfiConverterBool.write(value.sharing, into: &buf)
         FfiConverterBool.write(value.webUi, into: &buf)
+        FfiConverterBool.write(value.secureSpaces, into: &buf)
+        FfiConverterBool.write(value.childSpaces, into: &buf)
+        FfiConverterBool.write(value.askFirst, into: &buf)
+        FfiConverterBool.write(value.ciRunners, into: &buf)
+        FfiConverterBool.write(value.tcpShares, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
     }
 }
 
@@ -27126,6 +27237,11 @@ public struct AppNotchState: Equatable, Hashable {
      */
     public var signedIn: [String]
     /**
+     * The Spaces and desktops pinned to the notch, in the order they were
+     * pinned (`AppSettings::notch_pinned`): their tiles come first.
+     */
+    public var pinned: [String]
+    /**
      * "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
      * the notch, and hover, clicks and window drags do nothing.
      */
@@ -27169,6 +27285,10 @@ public struct AppNotchState: Equatable, Hashable {
          * carry the key.
          */signedIn: [String],
         /**
+         * The Spaces and desktops pinned to the notch, in the order they were
+         * pinned (`AppSettings::notch_pinned`): their tiles come first.
+         */pinned: [String],
+        /**
          * "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
          * the notch, and hover, clicks and window drags do nothing.
          */hidden: Bool) {
@@ -27182,6 +27302,7 @@ public struct AppNotchState: Equatable, Hashable {
         self.transfer = transfer
         self.keyvault = keyvault
         self.signedIn = signedIn
+        self.pinned = pinned
         self.hidden = hidden
     }
 
@@ -27211,6 +27332,7 @@ public struct FfiConverterTypeAppNotchState: FfiConverterRustBuffer {
                 transfer: FfiConverterOptionTypeAppNotchTransfer.read(from: &buf),
                 keyvault: FfiConverterOptionString.read(from: &buf),
                 signedIn: FfiConverterSequenceString.read(from: &buf),
+                pinned: FfiConverterSequenceString.read(from: &buf),
                 hidden: FfiConverterBool.read(from: &buf)
         )
     }
@@ -27226,6 +27348,7 @@ public struct FfiConverterTypeAppNotchState: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppNotchTransfer.write(value.transfer, into: &buf)
         FfiConverterOptionString.write(value.keyvault, into: &buf)
         FfiConverterSequenceString.write(value.signedIn, into: &buf)
+        FfiConverterSequenceString.write(value.pinned, into: &buf)
         FfiConverterBool.write(value.hidden, into: &buf)
     }
 }
@@ -27371,6 +27494,22 @@ public struct AppNotchTile: Equatable, Hashable {
      * Signed in through the Keyvault (and not dismissed): the key badge.
      */
     public var signedIn: Bool
+    /**
+     * One of your other machines' desktops, not a Space it provides: the
+     * tile reads "Desktop" and opens the same desktop the machine's page
+     * does, creating nothing.
+     */
+    public var desktop: Bool
+    /**
+     * Pinned to the notch (Pin to notch in the Space's "..." menu): the
+     * tiles list pinned ones first.
+     */
+    public var pinned: Bool
+    /**
+     * Why a pinned desktop cannot be opened now ("Offline", "Not
+     * shared"); `None` while it can. The tile stays, dimmed, and says it.
+     */
+    public var note: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -27419,7 +27558,20 @@ public struct AppNotchTile: Equatable, Hashable {
          */progressLabel: String?,
         /**
          * Signed in through the Keyvault (and not dismissed): the key badge.
-         */signedIn: Bool) {
+         */signedIn: Bool,
+        /**
+         * One of your other machines' desktops, not a Space it provides: the
+         * tile reads "Desktop" and opens the same desktop the machine's page
+         * does, creating nothing.
+         */desktop: Bool,
+        /**
+         * Pinned to the notch (Pin to notch in the Space's "..." menu): the
+         * tiles list pinned ones first.
+         */pinned: Bool,
+        /**
+         * Why a pinned desktop cannot be opened now ("Offline", "Not
+         * shared"); `None` while it can. The tile stays, dimmed, and says it.
+         */note: String?) {
         self.id = id
         self.name = name
         self.os = os
@@ -27433,6 +27585,9 @@ public struct AppNotchTile: Equatable, Hashable {
         self.progress = progress
         self.progressLabel = progressLabel
         self.signedIn = signedIn
+        self.desktop = desktop
+        self.pinned = pinned
+        self.note = note
     }
 
 
@@ -27463,7 +27618,10 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
                 location: FfiConverterString.read(from: &buf),
                 progress: FfiConverterOptionUInt32.read(from: &buf),
                 progressLabel: FfiConverterOptionString.read(from: &buf),
-                signedIn: FfiConverterBool.read(from: &buf)
+                signedIn: FfiConverterBool.read(from: &buf),
+                desktop: FfiConverterBool.read(from: &buf),
+                pinned: FfiConverterBool.read(from: &buf),
+                note: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -27481,6 +27639,9 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.progress, into: &buf)
         FfiConverterOptionString.write(value.progressLabel, into: &buf)
         FfiConverterBool.write(value.signedIn, into: &buf)
+        FfiConverterBool.write(value.desktop, into: &buf)
+        FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
     }
 }
 
@@ -35673,6 +35834,13 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var dismissedAccess: [String]
     /**
+     * The Spaces and the machines' desktops pinned to the notch ("Pin to
+     * notch" in a Space's "..." menu), in the order they were pinned: the
+     * notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+     * nothing secret; an id whose Space is gone is kept and draws nothing.
+     */
+    public var notchPinned: [String]
+    /**
      * Keyvault rows may load a site's icon from Google's favicon service
      * when the source browser had none (Settings, Keyvault; on by default).
      * Off, only icons read locally are shown.
@@ -35754,6 +35922,12 @@ public struct AppSettings: Equatable, Hashable {
          * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
          */dismissedAccess: [String],
         /**
+         * The Spaces and the machines' desktops pinned to the notch ("Pin to
+         * notch" in a Space's "..." menu), in the order they were pinned: the
+         * notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+         * nothing secret; an id whose Space is gone is kept and draws nothing.
+         */notchPinned: [String],
+        /**
          * Keyvault rows may load a site's icon from Google's favicon service
          * when the source browser had none (Settings, Keyvault; on by default).
          * Off, only icons read locally are shown.
@@ -35788,6 +35962,7 @@ public struct AppSettings: Equatable, Hashable {
         self.experiments = experiments
         self.newUi = newUi
         self.dismissedAccess = dismissedAccess
+        self.notchPinned = notchPinned
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.teleportChoices = teleportChoices
         self.autoConnect = autoConnect
@@ -35823,6 +35998,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
                 newUi: FfiConverterOptionBool.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
+                notchPinned: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
@@ -35844,6 +36020,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterOptionBool.write(value.newUi, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
+        FfiConverterSequenceString.write(value.notchPinned, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
         FfiConverterBool.write(value.autoConnect, into: &buf)
@@ -39161,6 +39338,14 @@ public struct AppSpaceMenuInput: Equatable, Hashable {
      * You may leave it.
      */
     public var canLeave: Bool
+    /**
+     * It can be pinned to the notch (not This machine).
+     */
+    public var canPin: Bool
+    /**
+     * It is pinned to the notch now (Unpin from notch).
+     */
+    public var pinned: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -39197,7 +39382,13 @@ public struct AppSpaceMenuInput: Equatable, Hashable {
          */canDelete: Bool,
         /**
          * You may leave it.
-         */canLeave: Bool) {
+         */canLeave: Bool,
+        /**
+         * It can be pinned to the notch (not This machine).
+         */canPin: Bool,
+        /**
+         * It is pinned to the notch now (Unpin from notch).
+         */pinned: Bool) {
         self.kind = kind
         self.role = role
         self.maker = maker
@@ -39209,6 +39400,8 @@ public struct AppSpaceMenuInput: Equatable, Hashable {
         self.canRename = canRename
         self.canDelete = canDelete
         self.canLeave = canLeave
+        self.canPin = canPin
+        self.pinned = pinned
     }
 
 
@@ -39237,7 +39430,9 @@ public struct FfiConverterTypeAppSpaceMenuInput: FfiConverterRustBuffer {
                 canShare: FfiConverterBool.read(from: &buf),
                 canRename: FfiConverterBool.read(from: &buf),
                 canDelete: FfiConverterBool.read(from: &buf),
-                canLeave: FfiConverterBool.read(from: &buf)
+                canLeave: FfiConverterBool.read(from: &buf),
+                canPin: FfiConverterBool.read(from: &buf),
+                pinned: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -39253,6 +39448,8 @@ public struct FfiConverterTypeAppSpaceMenuInput: FfiConverterRustBuffer {
         FfiConverterBool.write(value.canRename, into: &buf)
         FfiConverterBool.write(value.canDelete, into: &buf)
         FfiConverterBool.write(value.canLeave, into: &buf)
+        FfiConverterBool.write(value.canPin, into: &buf)
+        FfiConverterBool.write(value.pinned, into: &buf)
     }
 }
 
@@ -44569,7 +44766,7 @@ public func FfiConverterTypeAppWizardFact_lower(_ value: AppWizardFact) -> RustB
 public struct AppWizardField: Equatable, Hashable {
     /**
      * `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-     * `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+     * `cpus`, `memory`, `disk`, `name`,
      * `open-when-ready`, `address`, `token`, `address-name`.
      */
     public var id: String
@@ -44595,7 +44792,7 @@ public struct AppWizardField: Equatable, Hashable {
     public init(
         /**
          * `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-         * `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+         * `cpus`, `memory`, `disk`, `name`,
          * `open-when-ready`, `address`, `token`, `address-name`.
          */id: String,
         /**
@@ -46859,6 +47056,92 @@ public func FfiConverterTypeKvAuditEntry_lower(_ value: KvAuditEntry) -> RustBuf
 }
 
 
+public struct KvBrowserProfile: Equatable, Hashable {
+    /**
+     * Directory name (`Default`, `Profile 1`).
+     */
+    public var dir: String
+    /**
+     * The name the person gave it.
+     */
+    public var name: String
+    /**
+     * The account signed in to it.
+     */
+    public var account: String?
+    /**
+     * The browser used it last.
+     */
+    public var lastUsed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Directory name (`Default`, `Profile 1`).
+         */dir: String,
+        /**
+         * The name the person gave it.
+         */name: String,
+        /**
+         * The account signed in to it.
+         */account: String?,
+        /**
+         * The browser used it last.
+         */lastUsed: Bool) {
+        self.dir = dir
+        self.name = name
+        self.account = account
+        self.lastUsed = lastUsed
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvBrowserProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvBrowserProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvBrowserProfile {
+        return
+            try KvBrowserProfile(
+                dir: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                account: FfiConverterOptionString.read(from: &buf),
+                lastUsed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvBrowserProfile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.dir, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.account, into: &buf)
+        FfiConverterBool.write(value.lastUsed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvBrowserProfile_lift(_ buf: RustBuffer) throws -> KvBrowserProfile {
+    return try FfiConverterTypeKvBrowserProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvBrowserProfile_lower(_ value: KvBrowserProfile) -> RustBuffer {
+    return FfiConverterTypeKvBrowserProfile.lower(value)
+}
+
+
 public struct KvCaller: Equatable, Hashable {
     /**
      * Pid.
@@ -49048,6 +49331,218 @@ public func FfiConverterTypeKvPendingRow_lift(_ buf: RustBuffer) throws -> KvPen
 #endif
 public func FfiConverterTypeKvPendingRow_lower(_ value: KvPendingRow) -> RustBuffer {
     return FfiConverterTypeKvPendingRow.lower(value)
+}
+
+
+public struct KvReadiness: Equatable, Hashable {
+    /**
+     * Provider id.
+     */
+    public var providerId: String
+    /**
+     * App name.
+     */
+    public var appDisplay: String
+    /**
+     * The Keyvault exists.
+     */
+    public var keyvaultInitialized: Bool
+    /**
+     * The Keyvault is unlocked.
+     */
+    public var keyvaultUnlocked: Bool
+    /**
+     * The profile checked: the one asked for, else the last used.
+     */
+    public var profile: String?
+    /**
+     * The profile a teleport reads when none is named.
+     */
+    public var defaultProfile: String?
+    /**
+     * Every profile.
+     */
+    public var profiles: [KvBrowserProfile]
+    /**
+     * Reading the app's files (Full Disk Access).
+     */
+    public var files: KvReadinessCheck
+    /**
+     * Reading the app's open tabs (Automation).
+     */
+    public var tabs: KvReadinessCheck
+    /**
+     * The checked profile has no sign-in data.
+     */
+    public var profileEmpty: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider id.
+         */providerId: String,
+        /**
+         * App name.
+         */appDisplay: String,
+        /**
+         * The Keyvault exists.
+         */keyvaultInitialized: Bool,
+        /**
+         * The Keyvault is unlocked.
+         */keyvaultUnlocked: Bool,
+        /**
+         * The profile checked: the one asked for, else the last used.
+         */profile: String?,
+        /**
+         * The profile a teleport reads when none is named.
+         */defaultProfile: String?,
+        /**
+         * Every profile.
+         */profiles: [KvBrowserProfile],
+        /**
+         * Reading the app's files (Full Disk Access).
+         */files: KvReadinessCheck,
+        /**
+         * Reading the app's open tabs (Automation).
+         */tabs: KvReadinessCheck,
+        /**
+         * The checked profile has no sign-in data.
+         */profileEmpty: Bool) {
+        self.providerId = providerId
+        self.appDisplay = appDisplay
+        self.keyvaultInitialized = keyvaultInitialized
+        self.keyvaultUnlocked = keyvaultUnlocked
+        self.profile = profile
+        self.defaultProfile = defaultProfile
+        self.profiles = profiles
+        self.files = files
+        self.tabs = tabs
+        self.profileEmpty = profileEmpty
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvReadiness: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvReadiness: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvReadiness {
+        return
+            try KvReadiness(
+                providerId: FfiConverterString.read(from: &buf),
+                appDisplay: FfiConverterString.read(from: &buf),
+                keyvaultInitialized: FfiConverterBool.read(from: &buf),
+                keyvaultUnlocked: FfiConverterBool.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf),
+                defaultProfile: FfiConverterOptionString.read(from: &buf),
+                profiles: FfiConverterSequenceTypeKvBrowserProfile.read(from: &buf),
+                files: FfiConverterTypeKvReadinessCheck.read(from: &buf),
+                tabs: FfiConverterTypeKvReadinessCheck.read(from: &buf),
+                profileEmpty: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvReadiness, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.providerId, into: &buf)
+        FfiConverterString.write(value.appDisplay, into: &buf)
+        FfiConverterBool.write(value.keyvaultInitialized, into: &buf)
+        FfiConverterBool.write(value.keyvaultUnlocked, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterOptionString.write(value.defaultProfile, into: &buf)
+        FfiConverterSequenceTypeKvBrowserProfile.write(value.profiles, into: &buf)
+        FfiConverterTypeKvReadinessCheck.write(value.files, into: &buf)
+        FfiConverterTypeKvReadinessCheck.write(value.tabs, into: &buf)
+        FfiConverterBool.write(value.profileEmpty, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadiness_lift(_ buf: RustBuffer) throws -> KvReadiness {
+    return try FfiConverterTypeKvReadiness.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadiness_lower(_ value: KvReadiness) -> RustBuffer {
+    return FfiConverterTypeKvReadiness.lower(value)
+}
+
+
+public struct KvReadinessCheck: Equatable, Hashable {
+    /**
+     * `granted`, `denied` or `unknown` (only known by trying).
+     */
+    public var state: String
+    /**
+     * What it means and what to do, in plain words (empty when nothing).
+     */
+    public var say: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `granted`, `denied` or `unknown` (only known by trying).
+         */state: String,
+        /**
+         * What it means and what to do, in plain words (empty when nothing).
+         */say: String) {
+        self.state = state
+        self.say = say
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvReadinessCheck: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvReadinessCheck: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvReadinessCheck {
+        return
+            try KvReadinessCheck(
+                state: FfiConverterString.read(from: &buf),
+                say: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvReadinessCheck, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterString.write(value.say, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadinessCheck_lift(_ buf: RustBuffer) throws -> KvReadinessCheck {
+    return try FfiConverterTypeKvReadinessCheck.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvReadinessCheck_lower(_ value: KvReadinessCheck) -> RustBuffer {
+    return FfiConverterTypeKvReadinessCheck.lower(value)
 }
 
 
@@ -51559,6 +52054,10 @@ public struct TeleportConsent: Equatable, Hashable {
      * choice; `None`: those of `cookie_domains`).
      */
     public var passwordDomains: [String]?
+    /**
+     * The browser profile to read (`Profile 1`); `None`: `Default`.
+     */
+    public var profile: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -51593,7 +52092,10 @@ public struct TeleportConsent: Equatable, Hashable {
         /**
          * The sites whose saved passwords to send (the review's own
          * choice; `None`: those of `cookie_domains`).
-         */passwordDomains: [String]? = nil) {
+         */passwordDomains: [String]? = nil,
+        /**
+         * The browser profile to read (`Profile 1`); `None`: `Default`.
+         */profile: String? = nil) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -51603,6 +52105,7 @@ public struct TeleportConsent: Equatable, Hashable {
         self.fromVault = fromVault
         self.includePasswords = includePasswords
         self.passwordDomains = passwordDomains
+        self.profile = profile
     }
 
 
@@ -51629,7 +52132,8 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
                 exclude: FfiConverterSequenceString.read(from: &buf),
                 fromVault: FfiConverterOptionSequenceString.read(from: &buf),
                 includePasswords: FfiConverterBool.read(from: &buf),
-                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf)
+                passwordDomains: FfiConverterOptionSequenceString.read(from: &buf),
+                profile: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -51643,6 +52147,7 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
         FfiConverterBool.write(value.includePasswords, into: &buf)
         FfiConverterOptionSequenceString.write(value.passwordDomains, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
     }
 }
 
@@ -58598,6 +59103,15 @@ public enum AppNotchEvent: Equatable, Hashable {
          * The Space ids signed in (their tiles carry the key).
          */signedIn: [String]
     )
+    /**
+     * The pinned Spaces and desktops changed (Pin to notch, Unpin from
+     * notch, or settings read at start): their ids in pin order.
+     */
+    case pinned(
+        /**
+         * The pinned ids.
+         */ids: [String]
+    )
 
 
 
@@ -58652,6 +59166,9 @@ public struct FfiConverterTypeAppNotchEvent: FfiConverterRustBuffer {
         )
 
         case 14: return .keyvault(label: try FfiConverterOptionString.read(from: &buf), signedIn: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 15: return .pinned(ids: try FfiConverterSequenceString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -58725,6 +59242,11 @@ public struct FfiConverterTypeAppNotchEvent: FfiConverterRustBuffer {
             writeInt(&buf, Int32(14))
             FfiConverterOptionString.write(label, into: &buf)
             FfiConverterSequenceString.write(signedIn, into: &buf)
+
+
+        case let .pinned(ids):
+            writeInt(&buf, Int32(15))
+            FfiConverterSequenceString.write(ids, into: &buf)
 
         }
     }
@@ -62886,6 +63408,10 @@ public enum AppSpaceMenuItemId: Equatable, Hashable {
      * Leaves it (asks first: `spaces.bulkConfirm`).
      */
     case leave
+    /**
+     * Pins it to the notch, or unpins it (the label says which).
+     */
+    case pin
 
 
 
@@ -62922,6 +63448,8 @@ public struct FfiConverterTypeAppSpaceMenuItemId: FfiConverterRustBuffer {
         case 7: return .delete
 
         case 8: return .leave
+
+        case 9: return .pin
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -62961,6 +63489,10 @@ public struct FfiConverterTypeAppSpaceMenuItemId: FfiConverterRustBuffer {
 
         case .leave:
             writeInt(&buf, Int32(8))
+
+
+        case .pin:
+            writeInt(&buf, Int32(9))
 
         }
     }
@@ -76977,6 +77509,31 @@ fileprivate struct FfiConverterSequenceTypeKvAuditEntry: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeKvBrowserProfile: FfiConverterRustBuffer {
+    typealias SwiftType = [KvBrowserProfile]
+
+    public static func write(_ value: [KvBrowserProfile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvBrowserProfile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvBrowserProfile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvBrowserProfile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvBrowserProfile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeKvCategoryRow: FfiConverterRustBuffer {
     typealias SwiftType = [KvCategoryRow]
 
@@ -79421,6 +79978,18 @@ public func appNotchTileAt(layout: AppNotchLayout, tiles: [AppNotchTile], row: B
 })
 }
 /**
+ * `pinned` (the notch's pins, in pin order) with `id` pinned or, when it
+ * already is, unpinned: Pin to notch and Unpin from notch.
+ */
+public func appNotchTogglePin(pinned: [String], id: String) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_notch_toggle_pin(
+        FfiConverterSequenceString.lower(pinned),
+        FfiConverterString.lower(id),$0
+    )
+})
+}
+/**
  * The notch panel as drawn.
  */
 public func appNotchView(state: AppNotchState, spaces: [AppSpace]) -> AppNotchView  {
@@ -80197,7 +80766,9 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 })
 }
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
     return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
@@ -80230,7 +80801,8 @@ public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> A
 })
 }
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 public func appSettingsSave(path: String, settings: AppSettings)throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(
@@ -82102,6 +82674,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_notch_tile_at() != 23982) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_notch_toggle_pin() != 49031) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_notch_view() != 50142) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -82312,7 +82887,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 42027) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
@@ -82321,7 +82896,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 30129) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() != 34252) {
@@ -82712,6 +83287,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_overview() != 65171) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_readiness() != 1765) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_setup_with_passphrase() != 6939) {

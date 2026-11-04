@@ -56,9 +56,9 @@ At a console the installer shows a checklist first. Add `--cli-only`
 `--no-host`, `--dry-run` and `--yes` (`-Select`, `-CliOnly` and so on on Windows).
 
 In a terminal the installer then signs you in. Over ssh, or on Linux without a
-display, it shows a code to approve in a browser on another device. Signing in
+display, it shows a code to approve in a browser on another computer. Signing in
 adds this computer to your account, so it shows up in Cua Spaces on your other
-devices. It provides Spaces and keeps its screen private; a computer set up
+computers. It provides Spaces and keeps its screen private; a computer set up
 before keeps its settings. Add `--no-host` (`-NoHost`) to sign in without
 adding it.
 
@@ -88,6 +88,13 @@ need. The prompt asks for your password in a desktop session with a polkit
 authentication agent, local or over a remote desktop such as xrdp. `sudo apt remove cua-spaces`
 turns off what the app set up (see
 [Check, pause or remove](/spaces/guides/add-a-computer#check-pause-or-remove)).
+
+The download page offers the x64 package. On an arm64 computer, take
+`cua-spaces_<version>_arm64.deb` from the
+[GitHub release](https://github.com/trycua/cua/releases) instead: `apt` refuses
+the x64 package there with a list of packages it cannot install. The .deb
+installs the app only. To get the `cua` command as well, run
+`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only`.
 
 The **AppImage** is a portable build, not a supported one. It cannot use the
 browser sandbox (it starts with `--no-sandbox`), and without the system's

@@ -372,7 +372,8 @@ pub fn find_setup_token(out: &str) -> Option<String> {
 ///
 /// When the copy found has run out, Claude Code is asked to refresh its own
 /// sign-in (a one-line request through `claude -p`, up to `wait`) and the
-/// sign-in is read again.
+/// sign-in is read again. A zero `wait` never runs Claude Code (a sign-in-only
+/// connect): an expired sign-in is refused instead.
 fn claude_import(
     env: &HostEnv,
     keychain: &dyn claude_login::Keychain,
@@ -382,6 +383,7 @@ fn claude_import(
     let mut lookup = claude_login::lookup(env, keychain, now_ms());
     if let Lookup::Found(f) = &lookup
         && f.oauth.expired(now_ms())
+        && !wait.is_zero()
         && claude_login::ask_claude_to_refresh(env, wait)
     {
         lookup = claude_login::lookup(env, keychain, now_ms());

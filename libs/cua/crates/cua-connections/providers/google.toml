@@ -19,6 +19,11 @@ kind = "api_key"
 env = "GEMINI_API_KEY"
 aliases = ["GOOGLE_API_KEY"]
 
+[[model]]
+id = "gemini-3.8-flash"
+name = "Gemini 3.8 Flash"
+fast = true
+
 [delivery]
 gemini-cli = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
 google-antigravity = ["GEMINI_API_KEY"]

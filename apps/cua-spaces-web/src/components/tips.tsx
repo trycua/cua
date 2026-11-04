@@ -37,6 +37,7 @@ import {
   type TipPlace,
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { canDelete, canPower, realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -106,7 +107,11 @@ export function useTipsLoaded(): boolean {
 
 /** What the tips read, from the page's data. `space`: the Space page's Space. */
 export function useTipFacts(space?: Space): TipFacts | null {
-  const { data: all = [] } = useSpaces();
+  const { data: everything = [] } = useSpaces();
+  // The home warming for Home's box is not something to try until a person wrote into it.
+  const { core: bridgeCore } = useBridge();
+  const warming = useHiddenSpaceIds(bridgeCore);
+  const all = useMemo(() => everything.filter((s) => !warming.has(s.id)), [everything, warming]);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const agents = useAgentSetup();

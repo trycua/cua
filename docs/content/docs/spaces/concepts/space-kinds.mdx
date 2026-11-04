@@ -67,17 +67,17 @@ microVMs. On `vz` and Containerization microVMs it is refused.
 ### Your own cloud and your other computers
 
 - **Another of your computers** runs the kinds it reports to your account.
-- **AWS**: a pool machine needs KVM for VM and microVM Spaces. Of the machine
-  types Cua offers, only bare metal (`c6g.metal`) has it. A metal machine costs
+- **AWS**: a pool computer needs KVM for VM and microVM Spaces. Of the computer
+  types Cua offers, only bare metal (`c6g.metal`) has it. A metal computer costs
   dollars an hour, so a single small request is refused unless you allow it
   with `cua cloud budget --allow-metal on`.
-- **Hetzner and Google Cloud**: the machine types Cua offers have no KVM, so
+- **Hetzner and Google Cloud**: the computer types Cua offers have no KVM, so
   they run containers only.
 - **Modal**: `--on modal --kind microvm` (or `--runtime microvm`) runs the
   sandbox on Modal's VM runtime. Linux images only.
 
 `cua cloud plan --kind microvm` shows where microVM Spaces would go and which
-machines the pool would add for them. See
+computers the pool would add for them. See
 [Use your own cloud](/cua-sdk/guides/your-cloud).
 
 ## How the default is chosen
@@ -172,7 +172,7 @@ app sends the same `kind="microvm"` as the CLI.
 A kind or runtime the location does not offer fails with `InvalidPlacement`,
 and the message lists the valid values.
 
-The [E2B, Daytona and Modal SDKs](/spaces/guides/sandbox-sdks#what-you-get-on-your-own-machines)
+The [E2B, Daytona and Modal SDKs](/spaces/guides/sandbox-sdks#what-you-get-on-your-own-computers)
 take the kind as `cua.kind` in E2B metadata, Daytona labels and Modal
 `experimental_options`, and
 [cua-e2b](/spaces/guides/sandbox-sdks#use-cua-e2b-in-place-of-e2b) takes

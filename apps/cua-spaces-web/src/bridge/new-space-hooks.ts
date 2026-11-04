@@ -3,7 +3,7 @@
 
 /** New Space and "Connect a cloud" for components (see `new-space.ts`). */
 
-import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
@@ -17,6 +17,7 @@ import {
   cloudSheetInput,
   cloudSheetReduce,
   cloudSheetView,
+  firstPrompts,
   firstSpaceOffers,
   localBlocked,
   loadNewSpaceHostData as loadHostData,
@@ -30,6 +31,7 @@ import {
   wizardOffered,
   wizardReduce,
   wizardView,
+  type FirstPrompts,
   type FirstSpaceOffer,
   type NewSpaceSession,
 } from "./new-space";
@@ -70,6 +72,8 @@ export interface NewSpaceWizardHook {
   /** Opens the wizard; `on` presets "Run on" (`host:<machine>`, a cloud);
    * `os` opens it on that system, on this machine (an empty home tile). */
   show(on?: string | null, os?: SpaceOs): void;
+  /** Opens "Add a machine by its address" (New Space's menu): the address form, not the wizard's steps. */
+  showAddress(): void;
   close(): void;
   send(action: WizardAction): void;
   /** Starts the plan's create through the bridge's creates flow and closes:
@@ -112,12 +116,24 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: on ?? null }));
       void ctx.ready.then(loadHostData);
     },
+    showAddress() {
+      if (!offered) return;
+      const state = wizardReduce(core, wizardInitial(core, env), { type: "show-address" }, env);
+      update((x) => ({ ...x, open: true, pinnedEnv: null, state, placeOn: null }));
+      void ctx.ready.then(loadHostData);
+    },
     close: () => update((x) => ({ ...x, open: false, state: null, pinnedEnv: null, placeOn: null })),
     send,
     create() {
       if (!view) return null;
       const plan = view.plan;
-      const args = wizardCreateArgs(core, plan);
+      let args: ReturnType<typeof wizardCreateArgs> & { network?: string } = wizardCreateArgs(core, plan);
+      // The Network choice under Advanced (Internet only unless changed).
+      const net = ctx.adapter?.network;
+      if (net && net.wizardPreset !== "internet") {
+        args = { ...args, network: net.wizardPreset === "localhost" ? "localhost:all" : net.wizardPreset };
+      }
+      net?.setWizardPreset("internet");
       update((x) => ({ ...x, open: false, state: null, pinnedEnv: null }));
       const pendingId = newPendingId();
       return { pendingId, done: createSpace({ ...args, os: plan.image.os }, pendingId) };
@@ -197,6 +213,12 @@ export function useFirstSpaceOffers(): FirstSpaceHook {
     blockedReason: (ref) => (offered && s.options ? localBlocked(core, env, ref) : null),
     macosVmsRunning: s.options?.macosVmsRunning ?? null,
   };
+}
+
+/** The example jobs for this machine, the core's choice from what it can do now; null until the core is ready. */
+export function useFirstPrompts(): FirstPrompts | null {
+  const { core, env } = useNewSpaceEnv();
+  return useMemo(() => firstPrompts(core, env), [core, env]);
 }
 
 /**

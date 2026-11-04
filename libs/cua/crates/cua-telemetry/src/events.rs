@@ -760,6 +760,72 @@ pub fn agent_run_completed(
         .s("duration_bucket", duration_bucket(elapsed))
 }
 
+/// What `cua_durable_agent` is built from. Every text field is a fixed word
+/// chosen from its vocabulary (anything else becomes the fallback), every
+/// number is bounded; no name, path, address or message is ever taken.
+#[derive(Debug, Clone, Default)]
+pub struct DurableAgent<'a> {
+    /// One of [`schema::DURABLE_PHASES`].
+    pub phase: &'a str,
+    /// A cua-agents harness id.
+    pub harness: &'a str,
+    /// The session's placement word (`auto`, anything else is `host`).
+    pub on: &'a str,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    /// One of [`schema::DURABLE_REASONS`].
+    pub reason: &'a str,
+    /// One of [`schema::DURABLE_ENDS`].
+    pub end: &'a str,
+    /// One of [`schema::DURABLE_FAILURES`].
+    pub failure: &'a str,
+    pub failover: bool,
+    pub machines: u32,
+    pub recovery_time_ms: u64,
+    pub interrupted_calls: u32,
+    /// The salted hash of the session (see [`crate::Telemetry::salted_hash`]).
+    pub session: &'a str,
+}
+
+/// `cua_durable_agent`; None for a phase outside the vocabulary or a
+/// session id that is not a salted hash.
+pub fn durable_agent(d: &DurableAgent<'_>) -> Option<Event> {
+    let phase = schema::DURABLE_PHASES
+        .iter()
+        .copied()
+        .find(|p| *p == d.phase)?;
+    schema::is_salted_hash(d.session).then_some(())?;
+    Some(
+        Event::new(event::DURABLE_AGENT)
+            .s("phase", phase)
+            .s("harness", harness(d.harness))
+            .s(
+                "placement",
+                if matches!(d.on.trim(), "" | "auto") {
+                    "auto"
+                } else {
+                    "host"
+                },
+            )
+            .n("attempt", u64::from(d.attempt.min(100)))
+            .n("max_attempts", u64::from(d.max_attempts.min(100)))
+            .s("reason", pick(schema::DURABLE_REASONS, d.reason, "other"))
+            .s("end", pick(schema::DURABLE_ENDS, d.end, "none"))
+            .s(
+                "failure",
+                pick(schema::DURABLE_FAILURES, d.failure, "other"),
+            )
+            .b("failover", d.failover)
+            .n("machines", u64::from(d.machines.min(1000)))
+            .n("recovery_time_ms", d.recovery_time_ms.min(86_400_000))
+            .n(
+                "interrupted_calls",
+                u64::from(d.interrupted_calls.min(10_000)),
+            )
+            .owned("session", d.session.to_string()),
+    )
+}
+
 /// A fixed cause word for a failed agent run, chosen from its recorded
 /// error text: `no_api_key`, `provider_error`, `timeout`, `user_cancelled`,
 /// else `AgentFailed`. The text is only matched, never kept or sent.
@@ -1010,6 +1076,62 @@ pub struct SpaceCreate<'a> {
     pub error_subclass: &'a str,
 }
 
+/// The step a failed create stopped at (`schema::FAILED_STEPS`), read from
+/// the failure's fixed words only: the specific cause (`error_subclass`,
+/// `error_kind`) first, since it names the step, then the phase. `unknown`
+/// when nothing narrows the phase down (a failure in `preparing` that no
+/// word explains), so reports can rank what still needs a name.
+pub fn failed_step(
+    phase: &str,
+    kind: &str,
+    subclass: &str,
+    guest_os: &str,
+    create_kind: &str,
+) -> &'static str {
+    // A download that failed stays a download, whatever the runtime said.
+    if kind.starts_with("image_pull") {
+        return "pull_image";
+    }
+    // The cause's own step, where one word names it.
+    let by_cause = match subclass {
+        "runtime_start"
+        | "runtime_install_failed"
+        | "runtime_not_signed"
+        | "runtime_unresponsive"
+        | "runtime_too_old"
+        | "runtime_api_error" => Some("start_runtime"),
+        "daemon_unresponsive" => Some("reach_daemon"),
+        "pull_interrupted" => Some("pull_image"),
+        "vm_never_started" => Some("start_vm"),
+        "vm_config_invalid" => Some("configure_vm"),
+        _ => match kind {
+            "runtime_missing" | "runtime_not_running" | "runtime_permission" => {
+                Some("start_runtime")
+            }
+            "virtualization_unavailable" | "host_capacity" => Some("check_host"),
+            // The checks before anything starts refuse these in `preparing`.
+            "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),
+            "vm_boot_timeout" => Some("start_vm"),
+            "services_unreachable" | "env" => Some("connect_services"),
+            "invalid_argument" | "invalid_placement" | "unsupported" => Some("configure_vm"),
+            "not_found" => Some("resolve_image"),
+            _ => None,
+        },
+    };
+    if let Some(step) = by_cause {
+        return step;
+    }
+    let vm = create_kind == "vm" || matches!(guest_os, "macos" | "windows");
+    match phase {
+        "pulling" => "pull_image",
+        "creating" if vm => "clone_disk",
+        "creating" => "create_container",
+        "booting" => "start_vm",
+        "waiting_for_services" | "connecting" => "connect_services",
+        _ => "unknown",
+    }
+}
+
 /// `cua_space_create`.
 pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) -> Event {
     let failed_phase = match outcome {
@@ -1033,24 +1155,29 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         },
         _ => "none",
     };
+    let error_subclass = match outcome {
+        Outcome::Cancelled => "none",
+        _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+    };
+    let guest = guest_os(s.guest_os);
+    let create_kind = sandbox_kind(s.kind);
+    let step = match outcome {
+        Outcome::Error => failed_step(failed_phase, error_kind, error_subclass, guest, create_kind),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
-        .s("guest_os", guest_os(s.guest_os))
-        .s("kind", sandbox_kind(s.kind))
+        .s("guest_os", guest)
+        .s("kind", create_kind)
         .s("outcome", outcome.as_str())
         .s("error_kind", error_kind)
         .s("failed_phase", failed_phase)
+        .s("failed_step", step)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
         .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
-        .s(
-            "error_subclass",
-            match outcome {
-                Outcome::Cancelled => "none",
-                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
-            },
-        )
+        .s("error_subclass", error_subclass)
 }
 
 /// `cua_space_create_started`.

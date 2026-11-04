@@ -262,8 +262,8 @@ pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
 }
 
 /// Walk the UIA tree with caller-supplied caps. `max_elements`/`max_depth`
-/// truncate the walk and the rendered markdown identically. Issue #22865:
-/// caps protect against Electron / large web apps that produce 10k+
+/// truncate the walk and the rendered markdown identically. These caps
+/// protect against Electron / large web apps that produce 10k+
 /// element trees and blow context windows.
 pub fn walk_tree_bounded(
     hwnd: u64,

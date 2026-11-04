@@ -15,10 +15,10 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, PowerIcon } from "lucide-react";
+import { ArrowDownCircleIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, PinIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 
-import { useBridge, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
+import { useBridge, useNotchPins, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { toast, toastError } from "@/components/ui/toast";
@@ -96,6 +96,7 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               <p data-space-name="" className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold">
                 {space.name}
               </p>
+              <PinnedMark id={space.id} />
               {item.desktop ? <DesktopTag /> : null}
               {/* The state, in the core's words ("Running", "Suspended", "Turning off…"), flush right; the hover "⋯" takes its place. */}
               <StateLabel
@@ -169,6 +170,13 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
       {more ? <div className="absolute top-[calc(100%-2.75rem)] right-0 z-10">{more}</div> : null}
     </div>
   );
+}
+
+/** A small pin after the name of a Space or desktop pinned to the notch (Pin to notch in its "⋯" menu). */
+export function PinnedMark({ id }: { id: string }) {
+  const { pinned } = useNotchPins();
+  if (!pinned.has(id)) return null;
+  return <PinIcon data-pinned-mark="" role="img" aria-label="Pinned to notch" className="size-3 shrink-0 self-center text-muted-foreground" />;
 }
 
 /** The "Desktop" tag beside a machine's own desktop in the list. */

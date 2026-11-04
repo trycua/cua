@@ -16,12 +16,13 @@ use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
-    cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview, drive_page,
-    drive_settings, driver_preview, experiments, host, local_network, login_item, machines, notch,
-    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon, telemetry,
-    tips, upsell, window, wizard,
+    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, ci_runners,
+    cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
+    drive_page, drive_settings, driver_preview, experiments, github_connection, host,
+    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, prepare, presence, relay_usage, resources,
+    runtimes, settings, share, sign_in, space_menu, summon, telemetry, thread_cards, tips, upsell,
+    window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -79,6 +80,7 @@ pub const METHODS: &[&str] = &[
     "wizard.view",
     "wizard.createArgs",
     "wizard.firstSpaceOffers",
+    "firstPrompts.choose",
     "wizard.pickerImages",
     "wizard.pickerGroups",
     "wizard.findImage",
@@ -168,6 +170,7 @@ pub const METHODS: &[&str] = &[
     "onboarding.reduce",
     "onboarding.view",
     "onboarding.copy",
+    "onboarding.resetPlan",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
     "signIn.footer",
@@ -200,6 +203,7 @@ pub const METHODS: &[&str] = &[
     "connectors.connectPlan",
     "connectors.providerSheet",
     "connectors.providerPicker",
+    "connectors.models",
     "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
@@ -222,6 +226,7 @@ pub const METHODS: &[&str] = &[
     "about.allowedChannels",
     "notch.layout",
     "notch.tiles",
+    "notch.togglePin",
     "notch.initial",
     "notch.reduce",
     "notch.view",
@@ -328,6 +333,13 @@ pub const METHODS: &[&str] = &[
     "checklist.reduce",
     "checklist.view",
     "checklist.observeFrom",
+    "ciRunners.view",
+    "ciRunners.reduce",
+    "prepare.reduce",
+    "prepare.view",
+    "prepare.metrics",
+    "prepare.hidden",
+    "prepare.listed",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -365,9 +377,37 @@ pub const METHODS: &[&str] = &[
     "spaces.bulkDone",
     "tips.view",
     "tips.reduce",
+    "githubConnection.view",
+    "threadCards.exportCard",
+    "threadCards.author",
     "settings.choose",
     "upsell.proBanner",
     "account.menu",
+    // The phone's views and state machines (`phone`).
+    "startTask.view",
+    "startTask.plan",
+    "startTask.parseRepo",
+    "toolRows.group",
+    "toolRows.label",
+    "outbox.initial",
+    "outbox.reduce",
+    "outbox.view",
+    "outbox.found",
+    "cache.line",
+    "approvals.view",
+    "approvals.result",
+    "sendMode.view",
+    "voice.view",
+    "voice.insert",
+    "push.route",
+    "push.registration",
+    "push.settings",
+    "diff.labels",
+    "diff.changes",
+    "diff.file",
+    "diff.preview",
+    "directory.view",
+    "placement.offered",
 ];
 
 struct Args(Value);
@@ -571,6 +611,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
+        "firstPrompts.choose" => out(crate::first_prompts::choose_for(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "wizard.placementOptions" => out(wizard::placement_options_on(
             &a.get("state")?,
             &a.get("env")?,
@@ -698,6 +743,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<tips::TipsState>>("state")?
                 .unwrap_or_default(),
             &a.get::<tips::TipsEvent>("event")?,
+        )),
+        "githubConnection.view" => out(github_connection::view(
+            &a.get::<Option<github_connection::GithubInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "threadCards.exportCard" => out(thread_cards::export_card_view(
+            &a.get::<thread_cards::ExportCardInput>("input")?,
+        )),
+        "threadCards.author" => out(thread_cards::author_view(
+            &a.get::<thread_cards::AuthorInput>("author")?,
         )),
         "settings.choose" => out(settings::choose(
             &a.get::<Option<settings::AppSettings>>("settings")?
@@ -937,6 +992,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
+        "onboarding.resetPlan" => out(crate::onboarding_reset::plan()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
             a.get::<Option<String>>("identity")?.as_deref(),
         )),
@@ -1013,6 +1069,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             a.get::<Option<bool>>("expanded")?.unwrap_or(false),
         )),
+        "connectors.models" => out(connectors::models_view(&a.get("input")?)),
         "connectors.importSheet" => out(connectors::import_sheet_on(
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
@@ -1103,9 +1160,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("screen")?,
             a.get::<Option<bool>>("prompt")?.unwrap_or(false),
         )),
-        "notch.tiles" => out(notch::tiles(
+        "notch.tiles" => out(notch::tiles_pinned(
             &a.get::<Vec<Space>>("spaces")?,
             a.get::<Option<String>>("targeted")?.as_deref(),
+            "",
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+        )),
+        "notch.togglePin" => out(notch::toggle_pin(
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+            &a.get::<String>("id")?,
         )),
         "notch.initial" => out(notch::NotchState::default()),
         "notch.reduce" => out(notch::reduce(&a.get("state")?, &a.get("event")?)),
@@ -1444,6 +1507,39 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<checklist::ChecklistSeen>>("seen")?
                 .unwrap_or_default(),
         )),
+        "ciRunners.view" => out(ci_runners::view(
+            &a.get::<Option<ci_runners::Overview>>("overview")?
+                .unwrap_or_default(),
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "ciRunners.reduce" => out(ci_runners::reduce(
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<ci_runners::Action>("action")?,
+        )),
+        "prepare.reduce" => out(prepare::reduce(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<prepare::Action>("action")?,
+        )),
+        "prepare.view" => out(prepare::view(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.hidden" => out(prepare::hidden_spaces(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.listed" => out(prepare::listed(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<Vec<String>>("ids")?,
+        )),
+        "prepare.metrics" => out(prepare::metrics(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(
             &a.get::<Vec<palette::PaletteEntry>>("entries")?,
@@ -1459,7 +1555,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<experiments::Experiments>>("experiments")?
                 .unwrap_or_default(),
         )),
-        other => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        other => match crate::phone::call(other, &a.0) {
+            Some(r) => r,
+            None => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        },
     }
 }
 

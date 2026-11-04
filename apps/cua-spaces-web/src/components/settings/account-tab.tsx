@@ -24,12 +24,12 @@ const planName = (label: string) => label.replace(/ plan$/i, "");
 /** 6.5, 20 and 6 hours: one decimal at most, none when whole. */
 const hours = (n: number) => String(Math.round(n * 10) / 10);
 
-/** The team the core names ("Acme Robotics", "Owner · Pro plan"), as "Acme Robotics · Owner". */
+/** The team the core names ("Acme Robotics", "Owner · Pro plan"), as "Acme Robotics, Owner". */
 function teamLine(teams: SettingsSection | undefined): string | null {
   const head = teams?.rows.find((r) => /^team:[^:]+$/.test(r.id));
   if (!head) return null;
   const role = head.value?.split(" · ")[0];
-  return role ? `${head.label} · ${role}` : head.label;
+  return role ? `${head.label}, ${role}` : head.label;
 }
 
 /** One bar of the usage meter: `used` of `limit` (no bar without a limit). */

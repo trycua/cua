@@ -29,9 +29,13 @@ export interface SpaceMenuInput {
   canRename?: boolean;
   canDelete?: boolean;
   canLeave?: boolean;
+  /** It can be pinned to the notch (not This machine). */
+  canPin?: boolean;
+  /** It is pinned now (Unpin from notch). */
+  pinned?: boolean;
 }
 
-export type SpaceMenuItemId = "open" | "power" | "share" | "manageSharing" | "teleport" | "rename" | "delete" | "leave";
+export type SpaceMenuItemId = "open" | "power" | "share" | "manageSharing" | "teleport" | "rename" | "delete" | "leave" | "pin";
 
 export interface SpaceMenuItem {
   id: SpaceMenuItemId;

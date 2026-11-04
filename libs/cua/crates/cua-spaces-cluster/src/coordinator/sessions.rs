@@ -84,6 +84,8 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+mod telemetry;
+
 use super::store::{self, NewJob, state as jstate};
 use super::{CoordError, Coordinator, sanitize_name};
 use cua_cluster::model::{JobSpec, now_ms};
@@ -232,6 +234,11 @@ pub struct Hist {
     pub exit_code: Option<i32>,
     /// More.
     pub detail: String,
+    /// Why a drive ended badly, as a fixed word (`process_exit`, `stall`,
+    /// `host_down`, `driver_lost`, `fenced`); empty otherwise. Telemetry
+    /// reads it; it never holds free text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cause: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -245,6 +252,10 @@ pub(crate) struct Row {
     max_attempts: u32,
     driver_job: i64,
     node: String,
+    /// The machine of the previous drive (kept when `node` is cleared for
+    /// the next one): the next drive starts there first, where the journal is.
+    #[serde(default)]
+    last_node: String,
     error: String,
     next_attempt_ms: i64,
     /// The Space lease's fencing token of the current epoch.
@@ -254,6 +265,10 @@ pub(crate) struct Row {
     history: Vec<Hist>,
     created_ms: i64,
     updated_ms: i64,
+    /// What [`Row::note`] recorded since this row was loaded: telemetry
+    /// reads it once the row is saved. Never stored.
+    #[serde(skip)]
+    fresh: Vec<Hist>,
 }
 
 /// What `spec` shows back: no environment values, no bundle.
@@ -306,6 +321,10 @@ pub struct SessionView {
     pub error: String,
     /// Seconds since the running driver last wrote output (stall watch on).
     pub last_output_age_secs: Option<i64>,
+    /// Why the driver is not running yet: no machine has room for it (empty
+    /// when it runs or has not been tried).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub waiting: String,
     /// What it runs (no secrets).
     pub spec: SpecView,
     /// What happened, oldest first.
@@ -332,6 +351,7 @@ impl Row {
             node: self.node.clone(),
             error: self.error.clone(),
             last_output_age_secs: None,
+            waiting: String::new(),
             spec: SpecView {
                 argv: self.spec.argv.clone(),
                 env_keys: self.spec.env.keys().cloned().collect(),
@@ -351,7 +371,17 @@ impl Row {
     }
 
     fn note(&mut self, event: &str, exit_code: Option<i32>, detail: impl Into<String>) {
-        self.history.push(Hist {
+        self.note_cause(event, exit_code, detail, "");
+    }
+
+    fn note_cause(
+        &mut self,
+        event: &str,
+        exit_code: Option<i32>,
+        detail: impl Into<String>,
+        cause: &str,
+    ) {
+        let h = Hist {
             epoch: self.epoch,
             attempt: self.attempts,
             at_ms: now_ms(),
@@ -360,7 +390,10 @@ impl Row {
             job: self.driver_job,
             exit_code,
             detail: detail.into(),
-        });
+            cause: cause.into(),
+        };
+        self.fresh.push(h.clone());
+        self.history.push(h);
         if self.history.len() > HISTORY_MAX {
             let cut = self.history.len() - HISTORY_MAX;
             self.history.drain(..cut);
@@ -441,8 +474,8 @@ pub(crate) fn remove_named(c: &Connection, name: &str) -> Result<bool, String> {
 
 /// The driver of `r`'s epoch ended badly (`event`: `crashed`, `fenced` or
 /// `stalled`): back off for the next drive, or give up at the cap.
-fn mark_crashed(r: &mut Row, event: &str, code: Option<i32>, why: String) {
-    r.note(event, code, why.clone());
+fn mark_crashed(r: &mut Row, event: &str, code: Option<i32>, why: String, cause: &str) {
+    r.note_cause(event, code, why.clone(), cause);
     if r.attempts >= r.max_attempts {
         r.state = sstate::FAILED.into();
         r.reason = reason::EXHAUSTED.into();
@@ -500,7 +533,12 @@ impl Coordinator {
             }])
             .await
             .map_err(CoordError::Store)?;
-        Ok(outs.first().is_some_and(|o| o.applied()).then_some(r))
+        let applied = outs.first().is_some_and(|o| o.applied());
+        if applied && !r.fresh.is_empty() {
+            let machines = self.nodes().len() as u32;
+            telemetry::session_changed(&r, machines);
+        }
+        Ok(applied.then_some(r))
     }
 
     /// A session with its driver's machine filled in.
@@ -515,6 +553,9 @@ impl Coordinator {
             && !j.node.is_empty()
         {
             v.node = j.node;
+        }
+        if r.state == sstate::RUNNING && r.driver_job > 0 {
+            v.waiting = self.queued_waiting(r.driver_job);
         }
         if r.state == sstate::RUNNING
             && let Some((job, _, at)) = self
@@ -799,15 +840,15 @@ impl Coordinator {
         let mut n = r.clone();
         n.node = j.node.clone();
         let why = format!(
-            "epoch {}: driver job {} wrote no output for {} s (limit {limit} s): wedged, cancelled",
-            n.epoch,
-            j.id,
+            "drive {} of {}: the driver wrote no output for {} s (limit {limit} s): wedged, cancelled",
+            n.attempts,
+            n.max_attempts,
             (now - changed) / 1000
         );
         if let Err(e) = self.cancel_job(j.id).await {
             tracing::warn!(session = %name, job = j.id, "cancelling a wedged driver: {e}");
         }
-        mark_crashed(&mut n, "stalled", None, why);
+        mark_crashed(&mut n, "stalled", None, why, "stall");
         let state = n.state.clone();
         let Some(n) = self.session_save(n, rev).await? else {
             return self.session_reload(&name).await;
@@ -833,7 +874,10 @@ impl Coordinator {
         r.node = j.node.clone();
         let code = j.exit_code;
         let why = {
-            let mut w = format!("epoch {}: driver job {} {}", r.epoch, j.id, j.state);
+            let mut w = format!(
+                "drive {} of {}: the driver ended ({})",
+                r.attempts, r.max_attempts, j.state
+            );
             if let Some(c) = code {
                 w.push_str(&format!(", exit {c}"));
             }
@@ -860,7 +904,22 @@ impl Coordinator {
             r.note("permanent", code, why);
         } else {
             let fenced = code == Some(EXIT_FENCED);
-            mark_crashed(&mut r, if fenced { "fenced" } else { "crashed" }, code, why);
+            let cause = if fenced {
+                "fenced"
+            } else if j.error.ends_with(" went down") {
+                "host_down"
+            } else if code.is_some() {
+                "process_exit"
+            } else {
+                "driver_lost"
+            };
+            mark_crashed(
+                &mut r,
+                if fenced { "fenced" } else { "crashed" },
+                code,
+                why,
+                cause,
+            );
         }
         let state = r.state.clone();
         let Some(r) = self.session_save(r, rev).await? else {
@@ -957,6 +1016,9 @@ impl Coordinator {
         next.attempts += 1;
         next.state = sstate::RUNNING.into();
         next.driver_job = 0;
+        if !next.node.is_empty() {
+            next.last_node = next.node.clone();
+        }
         next.node.clear();
         next.error.clear();
         next.next_attempt_ms = 0;
@@ -1018,6 +1080,9 @@ impl Coordinator {
         let run = format!("session-{}", r.name);
         let key = format!("session:{}:{}", r.name, r.epoch);
         let spec = driver_job(&r, &run, lease.as_ref())?;
+        // The journal is in the data folder of the machine that ran the last
+        // drive: start there again when that machine has room.
+        self.prefer_host(&run, &r.last_node);
         let ids = self
             .submit(
                 &run,

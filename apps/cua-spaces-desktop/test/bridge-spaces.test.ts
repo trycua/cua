@@ -355,11 +355,12 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
           setSpaces: (spaces) => calls.push(`spaces:${spaces.length}`),
           setShown: (shown) => calls.push(`shown:${shown}`),
           setKeyvault: (label, signedIn) => calls.push(`keyvault:${label ?? "none"}:${signedIn?.length ?? 0}`),
+          setPinned: (ids) => calls.push(`pinned:${ids.join(",")}`),
           setActivity: (hotspot, transfer) => calls.push(`activity:${hotspot}:${transfer ? "transfer" : "none"}`),
         },
         model,
       );
-      expect(calls).toEqual([`spaces:${model.spaces.length}`, "shown:true", "keyvault:none:0", "activity:false:none"]);
+      expect(calls).toEqual([`spaces:${model.spaces.length}`, "shown:true", "pinned:", "keyvault:none:0", "activity:false:none"]);
       calls.length = 0;
       const end = model.activity.begin();
       model.activity.setHotspot(true);
@@ -373,6 +374,34 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       calls.length = 0;
       model.activity.setHotspot(false);
       expect(calls).toEqual([]);
+    });
+
+    it("lights the hotspot for Spaces that exit through this computer, only while Secure Spaces is on", async () => {
+      const feed = { setSpaces: () => {}, setShown: () => {}, setKeyvault: () => {}, setPinned: () => {}, setActivity: () => {} };
+      const settle = () => new Promise((r) => setTimeout(r, 0));
+      backend.exitsNow = ["local:aurora"];
+      // Off (the default): the backend is not even asked.
+      const asked = backend.exitsThroughThisMachine.bind(backend);
+      let reads = 0;
+      backend.exitsThroughThisMachine = async () => (reads++, asked());
+      feedNotch(feed, model)();
+      await settle();
+      expect(reads).toBe(0);
+      expect(model.activity.hotspot).toBe(false);
+      // On: the hotspot shows, and its Spaces are kept.
+      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: true } };
+      model.saveSettings();
+      feedNotch(feed, model)();
+      await settle();
+      expect(reads).toBe(1);
+      expect(model.activity.hotspot).toBe(true);
+      expect(model.activity.exitSpaces).toEqual(["local:aurora"]);
+      // Off again: it goes out.
+      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: false } };
+      model.saveSettings();
+      feedNotch(feed, model)();
+      await settle();
+      expect(model.activity.hotspot).toBe(false);
     });
 
     it("gives a tile the store's thumbnail, no older than the open interval", async () => {

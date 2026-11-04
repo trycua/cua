@@ -75,12 +75,6 @@
     "partial-line": 3,
     "outlined-box": 1
   },
-  "components/settings/account-tab.tsx": {
-    "dot-chain": 1
-  },
-  "components/settings/notices-dialog.tsx": {
-    "dot-chain": 2
-  },
   "components/settings/snippet.tsx": {
     "outlined-box": 1,
     "partial-line": 1

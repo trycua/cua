@@ -72,7 +72,8 @@ public final class AgentKeysModel {
     }
 
     static func input(report: [String: Any]?, error: String?) -> AppAgentKeysInput {
-        let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.map { k in
+        // Keys saved beside the first one for a variable (they have a slot) are the web page's; a native row is the first.
+        let keys = (report?["keys"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.filter { $0["slot"] == nil }.map { k in
             AppAgentKeyInput(provider: k["provider"] as? String ?? "other", env: k["env"] as? String ?? "",
                              last4: k["last4"] as? String ?? "",
                              addedMs: (k["added_ms"] as? NSNumber)?.uint64Value ?? 0,
@@ -82,7 +83,7 @@ public final class AgentKeysModel {
                              fields: (k["fields"] as? [String: String]) ?? [:])
         }
         let unavailable = report?["available"] as? Bool == false
-            ? (report?["unavailable"] as? String ?? "this computer can't keep keys") : nil
+            ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil
         return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, error: error)
     }
 

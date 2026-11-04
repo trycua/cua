@@ -8,8 +8,8 @@
 import type { Native } from "../native/load";
 import type { AppCreateSpaceArgs, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
-import type { RuntimeFix } from "../model/windows-runtime";
-import { kindOf, osOf, runtimeOf } from "../model/backend";
+import { RUNTIME_FIX_ACTIONS, type RuntimeFix, type RuntimeFixAction } from "../model/windows-runtime";
+import { createNetworks, kindOf, osOf, runtimeOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
 import type { BridgeContext } from "./context";
@@ -133,9 +133,9 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     },
     "spaces.fixRuntime": (args) => {
       const action = string(args, "action");
-      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!(RUNTIME_FIX_ACTIONS as readonly string[]).includes(action)) throw Failure.badArgs(`action: ${RUNTIME_FIX_ACTIONS.join(" | ")}`);
       if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
-      model.fixRuntime(action);
+      model.fixRuntime(action as RuntimeFixAction);
       return null;
     },
     // `{config, pendingId, os?, notifyWhenReady?}`. The create belongs to the app, not to the window:
@@ -147,6 +147,9 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       if (!config || typeof config !== "object" || Array.isArray(config)) throw Failure.badArgs("config: object");
       const defaultOn = "local"; // Cua Cloud has ended
       const a = createArgs(native, config as BridgeArgs, defaultOn);
+      // The New Space's Network choice goes with the create (by its id).
+      const net = (config as BridgeArgs).network;
+      if (typeof net === "string" && net) createNetworks.set(pendingId, net);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;
       let id: string;
@@ -162,6 +165,8 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       } catch (error) {
         if (isCancelled(error)) throw new Failure("cancelled", "cancelled");
         throw error;
+      } finally {
+        createNetworks.delete(pendingId);
       }
       const made = model.spaces.find((s) => s.id === id);
       // A create the first run started: "<Space> is ready", window or not.
@@ -191,6 +196,35 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       const s = model.spaces.find((x) => x.id === id);
       if (!s) throw Failure.notFound(`no Space ${id}`);
       await model.rename(s, string(args, "name"));
+      return {};
+    },
+    // A Space's network, clipboard and Volume settings (the SDK's).
+    "network.get": async (args) => {
+      const b = model.backend;
+      if (!b.network) throw Failure.unsupported("network settings");
+      return await b.network(string(args, "spaceId"));
+    },
+    "network.set": async (args) => {
+      const b = model.backend;
+      if (!b.setNetwork) throw Failure.unsupported("network settings");
+      const list = (k: string) => (Array.isArray(args[k]) ? (args[k] as unknown[]).filter((x): x is string => typeof x === "string") : []);
+      const via = typeof args.via === "string" ? args.via : undefined;
+      const applied = await b.setNetwork(string(args, "spaceId"), string(args, "network"), list("allow"), list("deny"), args.widen === true, args.tree === true, via);
+      return { applied };
+    },
+    "network.log": async (args) => {
+      const b = model.backend;
+      return b.networkLog ? await b.networkLog(string(args, "spaceId")) : [];
+    },
+    "network.ackNotice": async (args) => {
+      await model.backend.ackNetworkNotice?.(string(args, "spaceId"));
+      return {};
+    },
+    "spaces.setAccess": async (args) => {
+      const b = model.backend;
+      const word = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : null);
+      if (!b.setAccess) throw Failure.unsupported("these settings");
+      await b.setAccess(string(args, "spaceId"), word("clipboard"), word("volume"));
       return {};
     },
     "spaces.cancelCreate": (args) => {

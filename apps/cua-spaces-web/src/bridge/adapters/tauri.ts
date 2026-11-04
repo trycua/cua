@@ -36,6 +36,7 @@ import { newSpaceTauriOps } from "../ops/new-space";
 import { tauriShareOps } from "../ops/share";
 import { tauriAgentDetailOps } from "../ops/agent-detail";
 import { tauriAgentKeysOps } from "../ops/agent-keys";
+import { tauriGithubOps } from "../ops/github";
 import { KEYVAULT_MANAGE_TAURI_UNSUPPORTED } from "../ops/keyvault-manage";
 import { tauriKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { TELEPORT_TAURI_UNSUPPORTED, tauriTeleportOps } from "../ops/teleport";
@@ -63,6 +64,7 @@ import { MACHINES_OPERATIONS } from "../ops/machines";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { LINKS_OPERATIONS } from "../ops/links";
 import { CLI_OPERATIONS } from "../ops/cli";
+import { CI_OPERATIONS } from "../ops/ci";
 import { THREAD_OPERATIONS } from "../ops/thread";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { cloudApproveTauriOps } from "../ops/cloud-approve";
@@ -90,6 +92,11 @@ export const TAURI_EVENTS = {
 /** Operations the Tauri shell has no command for; they reject with `UnsupportedOperationError`. */
 export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
   "spaces.deleteMany",
   "spaces.leave",
   "spaces.rename",
@@ -117,6 +124,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
+  ...CI_OPERATIONS,
   ...THREAD_OPERATIONS,
   "crashReporting.config",
   ...PRESENCE_OPERATIONS,
@@ -246,6 +254,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
           throw new UnsupportedOperationError("tauri", "settings.set updateChannel");
         // The app core's own settings file is the Mac and Electron apps'; the page keeps this for the session.
         case "tips":
+        case "notchPinned":
           throw new UnsupportedOperationError("tauri", `settings.set ${key}`);
       }
       return readSettings();
@@ -287,6 +296,10 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       await invoke("complete_onboarding", { mode });
       return null;
     },
+    "session.resetOnboarding": async () => {
+      await invoke("reset_onboarding");
+      return null;
+    },
     "session.openExternal": async ({ url }) => {
       await invoke("open_external", { url });
       return null;
@@ -310,6 +323,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     ...tauriShareOps(invoke),
     ...tauriAgentDetailOps(invoke),
     ...tauriAgentKeysOps(invoke),
+    ...tauriGithubOps(invoke),
     ...tauriKeyvaultSetupOps(invoke),
     ...tauriVolumeOps(invoke, win),
     ...tauriSettingsOps(invoke, { read: readUi, write: writeUi }),

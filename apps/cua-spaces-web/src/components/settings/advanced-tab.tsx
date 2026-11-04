@@ -4,6 +4,8 @@
 import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
+import { SharedLinks } from "@/components/links/shared-links";
+import { SharingSettings } from "@/components/links/sharing-settings";
 import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { RuntimeKindRows } from "@/components/settings/runtime-rows";
@@ -18,7 +20,7 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /**
  * Settings, Advanced: early releases, Labs, which software runs Spaces on
@@ -44,6 +46,7 @@ export function AdvancedTab() {
     <div data-settings-tab="advanced">
       <EarlyReleases />
       <Labs />
+      <Sharing />
       {runtimes || autoConnect || overflow ? (
         <SettingsGroup title="Which software runs Spaces on this machine">
           {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
@@ -121,6 +124,18 @@ function flagRow(id: string, label: string, on: boolean): CoreRow {
   };
 }
 
+/** Public TCP shares (Labs): how they are shared, and what is shared now. Only while the Labs switch is on. */
+function Sharing() {
+  const on = useExperiments().data?.experiments.tcpShares === true;
+  if (!on) return null;
+  return (
+    <>
+      <SharingSettings />
+      <SharedLinks />
+    </>
+  );
+}
+
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
   return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
@@ -133,10 +148,17 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const newSetup = useFlag("spaces_new_onboarding");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
+    "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
+    "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
+    "experiment:ask_first": "An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+    "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
+    "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
+    "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
   };
   return (
     <SettingsGroup title="Labs">
@@ -144,6 +166,14 @@ function Labs() {
         row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_new_onboarding", "Try the new setup", newSetup && askFirst)}
+        description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
+        onChoose={(_, option) => {
+          setFlagOverride("spaces_new_onboarding", option === "on");
+          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
+        }}
       />
       {askFirst ? (
         <CoreSettingsRow

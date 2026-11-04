@@ -14,14 +14,14 @@ import type { MouseEvent, ReactNode, RefObject } from "react";
 
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
-import { DesktopTag } from "@/components/spaces/space-tile";
+import { DesktopTag, PinnedMark } from "@/components/spaces/space-tile";
 import { useWindowedRows } from "@/hooks/use-windowed-rows";
 import { lastUsedText, sizeCell, type SpacesSort } from "@/lib/spaces-page";
 import { WINDOW_FROM } from "@/lib/windowing";
 import { cn } from "@/lib/utils";
 
 import { PeopleStack, SpaceMark } from "./avatars";
-import { desktopWord, type SpaceItem } from "./model";
+import { desktopWord, hasHideButton, hasMenu, type SpaceItem } from "./model";
 
 export interface SpaceListProps {
   items: SpaceItem[];
@@ -79,7 +79,7 @@ export function SpaceList({ items, sort, onSort, now, selection, menu, more, hid
       </div>
       <div role="rowgroup" ref={windowed.ref as RefObject<HTMLDivElement>} style={windowed.style}>
         {items.slice(from, to).map((item) => {
-          const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={item.desktop ? undefined : more?.(item)} hide={item.desktop ? () => hide?.(item) : undefined} />;
+          const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={hasMenu(item) ? more?.(item) : undefined} hide={hasHideButton(item) ? () => hide?.(item) : undefined} />;
           return menu ? <div key={item.space.id}>{menu(item, row)}</div> : row;
         })}
       </div>
@@ -126,6 +126,7 @@ function ListRow({ item, cols, now, selection, more, hide }: { item: SpaceItem; 
         >
           {space.name}
         </Link>
+        <PinnedMark id={space.id} />
         {item.desktop ? <DesktopTag /> : null}
         <PeopleStack access={access} />
       </span>

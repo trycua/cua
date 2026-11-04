@@ -61,9 +61,10 @@ import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, R
 import type { ShareEntry, ShareRemoval } from "./share";
 import type { BulkResult } from "./spaces-page";
 import type { CreateFix, CreatingElsewhere, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
-import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
+import type { CatalogEntry, ConsentItem, KvBrowserProfile, KvDomainCount, KvInventory, KvReadiness, KvReadinessCheck, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
+import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from "../ops/github";
 import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
@@ -71,13 +72,14 @@ import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
-import type { ShareLink } from "../ops/links";
+import type { ShareLink, ShareSettings } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
+import type { CiConnectAnswer, CiGithub, CiJob, CiLogLine, CiOverview, CiPilotClass, CiRepoChoice, CiRepoUse, CiSetupStep, CiTarget } from "./ci-runners";
 import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -106,6 +108,61 @@ const CliInstallPlanShape = ref(
     pathLine: optNull(str),
     found: optNull(str),
   }),
+);
+
+
+/* ---- CI Runners (`cua ci app <op>`) ------------------------------------------------- */
+
+const CiSetupStepShape = ref("CiSetupStep", obj<CiSetupStep>()({ id: str, state: str, detail: str }));
+const CiGithubShape = ref("CiGithub", obj<CiGithub>()({ connected: bool, mode: str, login: str, choose_url: str, note: opt(str) }));
+const CiJobShape = ref(
+  "CiJob",
+  obj<CiJob>()({
+    job_key: str,
+    name: str,
+    repo: str,
+    state: str,
+    queued_ms: num,
+    wait_ms: optNull(num),
+    run_ms: optNull(num),
+    cost_micros: optNull(num),
+    all_in_micros: optNull(num),
+    start_mode: str,
+    machine: str,
+    machine_type: str,
+    cloud: str,
+    spot: bool,
+    log_pool: str,
+    log_slot: str,
+  }),
+);
+const CiPilotClassShape = ref(
+  "CiPilotClass",
+  obj<CiPilotClass>()({ class: str, phase: str, jobs_seen: num, warm_now: num, idle_ttl_secs: num, spot: bool, reasons: strings }),
+);
+const CiTargetShape = ref(
+  "CiTarget",
+  obj<CiTarget>()({ target: str, goal: str, warm: optNull(num), autopilot: optNull(object({ classes: list(CiPilotClassShape) })) }),
+);
+const CiOverviewShape = ref(
+  "CiOverview",
+  obj<CiOverview>()({
+    generated_ms: num,
+    setup: list(CiSetupStepShape),
+    github: CiGithubShape,
+    repositories: object({
+      used: list(obj<CiRepoUse>()({ name: str, jobs_7d: num })),
+      all: nullable(list(obj<CiRepoChoice>()({ name: str, allowed: bool }))),
+    }),
+    usage: object({ starts_24h: num, jobs_7d: num, pass_rate_7d: nullable(num), spend_7d_micros: num }),
+    jobs: list(CiJobShape),
+    targets: list(CiTargetShape),
+    budget: object({ month_committed_micros: num, monthly_micros: num, state: str }),
+  }),
+);
+const CiConnectAnswerShape = ref(
+  "CiConnectAnswer",
+  obj<CiConnectAnswer>()({ state: oneOf("waiting", "connected", "sign_in", "failed"), url: optNull(str), message: optNull(str), login: opt(str) }),
 );
 
 const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
@@ -381,6 +438,7 @@ const SettingsShape = ref(
       updateChannel: nullable(oneOf("stable", "beta")),
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
+      notchPinned: opt(strings),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -405,7 +463,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }),
 );
 
 const RepoCacheShape = ref(
@@ -566,10 +624,36 @@ const NotificationShape = ref(
 const AgentKeysShape = ref(
   "AgentKeysReport",
   obj<AgentKeysReport>()({
-    keys: list(object({ provider: str, env: str, last4: str, addedMs: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+    keys: list(object({ provider: str, env: str, slot: opt(str), last4: str, addedMs: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+    uses: opt(dict(object({ provider: str, env: str, slot: opt(str) }))),
     providers: list(object({ id: str, label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
+  }),
+);
+
+const GithubSourceId = oneOf("saved", "env", "gh", "git");
+const GithubShape = ref(
+  "GithubReport",
+  obj<GithubReport>()({
+    hosts: list(
+      obj<GithubHost>()({
+        host: str,
+        enabled: bool,
+        source: opt(GithubSourceId),
+        login: opt(str),
+        envName: opt(str),
+        line: str,
+        problem: bool,
+        warning: opt(str),
+        accounts: list(obj<GithubAccount>()({ login: str, active: bool, selected: bool, chosen: bool, valid: bool, scopes: list(str) })),
+        sources: list(obj<GithubSourceRow>()({ id: GithubSourceId, used: bool, present: bool, line: str })),
+      }),
+    ),
+    ghFound: bool,
+    ghOld: bool,
+    canSave: bool,
+    scannedMs: num,
   }),
 );
 
@@ -931,6 +1015,28 @@ const ShareLinkShape = obj<ShareLink>()({
   owner: str,
   createdAtUnix: nullable(num),
   expiresAtUnix: nullable(num),
+  tcpConnectWith: optNull(str),
+  tcpAddress: optNull(str),
+  route: optNull(str),
+  routeLine: optNull(str),
+  allow: opt(strings),
+  waiting: optNull(oneOf("approval", "consent")),
+  waitingText: optNull(str),
+});
+
+/** The public TCP share settings (`ops/links.ts`). */
+const ShareSettingsShape = obj<ShareSettings>()({
+  landing: oneOf("auto", "only_my_cloud", "allow_relay"),
+  relayFallback: bool,
+  dailyCapMib: num,
+  defaultAllow: strings,
+  approveAgentShares: bool,
+  alwaysAllowSpaces: strings,
+  edgeConsent: strings,
+  usedToday: num,
+  edgeCloud: nullable(str),
+  edgeHost: nullable(str),
+  edgeMonthlyUsd: nullable(num),
 });
 
 /** An agent member's identity (CUA-2262, `ops/thread.ts`). */
@@ -968,7 +1074,7 @@ const ThreadEntryShape = ref(
     replyTo: nullable(num),
     task: nullable(object({ to: str, session: nullable(num) })),
     attachments: list(obj<ThreadAttachment>()({ path: str, name: str, size: nullable(num), mime: nullable(str) })),
-    approval: nullable(object({ action: str, details: str, state: str })),
+    approval: nullable(object({ action: str, details: str, state: str, card: opt(nullable(dict(any))) })),
     answer: nullable(object({ approval: num, approve: bool, note: nullable(str) })),
     noteFor: nullable(num),
     update: nullable(object({ task: num, state: taskState, session: nullable(num), note: nullable(str) })),
@@ -1186,6 +1292,38 @@ const MachinesViewShape = ref(
   }),
 );
 
+/* ---- Network ------------------------------------------------------------------- */
+
+const SpaceNetworkShape = ref(
+  "SpaceNetwork",
+  obj<SpaceNetworkWire>()({
+    preset: str,
+    localhostPorts: opt(list(num)),
+    allLocalhostPorts: opt(bool),
+    allow: opt(strings),
+    deny: opt(strings),
+    customBase: opt(str),
+    via: optNull(str),
+    topologyJson: opt(str),
+    widenedBy: optNull(str),
+    summary: str,
+    widenings: opt(strings),
+    enforcement: str,
+    point: str,
+    note: optNull(str),
+    parent: optNull(str),
+    root: optNull(str),
+    alwaysBlocked: opt(strings),
+    noticePending: bool,
+    clipboard: str,
+    volume: str,
+  }),
+);
+const NetworkEventShape = ref(
+  "NetworkEvent",
+  obj<NetworkEventWire>()({ reason: str, dst: str, proto: optNull(str), count: num, lastUnix: optNull(num) }),
+);
+
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
   "spaces.create": SpaceRowShape,
@@ -1195,6 +1333,11 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.deleteMany": BulkResultsShape,
   "spaces.leave": BulkResultsShape,
   "spaces.rename": nul,
+  "network.get": SpaceNetworkShape,
+  "network.set": object({ applied: oneOf("now", "next_start") }),
+  "network.log": list(NetworkEventShape),
+  "network.ackNotice": nul,
+  "spaces.setAccess": nul,
   "spaces.open": nul,
   "machines.list": list(MachineRowShape),
   "host.status": hostStatusOrNull,
@@ -1218,6 +1361,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "session.signOut": nul,
   "session.completeOnboarding": nul,
   "session.openExternal": nul,
+  "session.resetOnboarding": nul,
   "agents.list": list(
     obj<PersistentAgent>()({
       name: str,
@@ -1333,6 +1477,18 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     ),
     notes: opt(strings),
   }),
+  "teleport.readiness": obj<KvReadiness>()({
+    provider_id: str,
+    app_display: str,
+    keyvault_initialized: bool,
+    keyvault_unlocked: bool,
+    profile: opt(nullable(str)),
+    default_profile: opt(nullable(str)),
+    profiles: list(obj<KvBrowserProfile>()({ dir: str, name: str, account: opt(nullable(str)), last_used: bool })),
+    files: obj<KvReadinessCheck>()({ state: oneOf("granted", "denied", "unknown"), say: str }),
+    tabs: obj<KvReadinessCheck>()({ state: oneOf("granted", "denied", "unknown"), say: str }),
+    profile_empty: bool,
+  }),
   "teleport.remembered": nullable(strings),
   "teleport.streamWindow": nul,
   "sharing.list": shares,
@@ -1345,8 +1501,13 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.check": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
+  "agentKeys.use": AgentKeysShape,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysShape,
+  "github.status": GithubShape,
+  "github.rescan": GithubShape,
+  "github.use": GithubShape,
+  "github.enable": GithubShape,
 
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
@@ -1423,8 +1584,20 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "links.list": object({ links: list(ShareLinkShape) }),
   "links.create": ShareLinkShape,
   "links.stop": object({ stopped: strings }),
+  "links.approve": ShareLinkShape,
+  "links.deny": object({ denied: str }),
+  "shares.settings.get": ShareSettingsShape,
+  "shares.settings.set": ShareSettingsShape,
+  "shares.edge.remove": object({ ended: strings }),
   "cli.plan": nullable(CliInstallPlanShape),
   "cli.install": CliInstallPlanShape,
+  "ci.overview": CiOverviewShape,
+  "ci.connect": CiConnectAnswerShape,
+  "ci.connectToken": CiConnectAnswerShape,
+  "ci.connectCancel": nul,
+  "ci.repositories": object({ changed: opt(strings) }),
+  "ci.goal": object({ goal: str, applied: bool }),
+  "ci.log": object({ lines: list(obj<CiLogLine>()({ at_ms: num, text: str })) }),
   "thread.read": ThreadPageShape,
   "thread.post": nullable(ThreadEntryShape),
   "thread.members": object({ members: list(AgentMemberShape) }),
@@ -1625,6 +1798,7 @@ const WkSettingsShape = ref(
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
+    notchPinned: opt(strings),
     runtimes: optNull(RuntimesInputShape),
   }),
 );
@@ -1662,10 +1836,32 @@ const WkMachinesShape = ref(
 
 /** The daemon's `agent_keys.*` answer, which `agentKeysFromWire` reads. */
 const AgentKeysWire = object({
-  keys: list(object({ provider: str, env: str, last4: str, added_ms: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+  keys: list(object({ provider: str, env: str, slot: opt(str), last4: str, added_ms: num, expired: opt(bool), label: opt(str), region: opt(str), fields: opt(dict(str)) })),
+  uses: opt(dict(object({ provider: str, env: str, slot: opt(str) }))),
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),
+});
+
+/** The daemon's `github.*` answer, which `githubFromWire` reads. */
+const GithubWire = object({
+  gh: object({ found: bool, version: optNull(str), old: bool }),
+  hosts: list(
+    object({
+      host: str,
+      enabled: bool,
+      source: optNull(GithubSourceId),
+      login: optNull(str),
+      env_name: optNull(str),
+      line: str,
+      problem: bool,
+      warning: optNull(str),
+      accounts: list(object({ login: str, active: bool, selected: bool, chosen: bool, valid: bool, scopes: list(str) })),
+      sources: list(object({ id: GithubSourceId, used: bool, present: bool, line: str })),
+    }),
+  ),
+  can_save: bool,
+  scanned_ms: num,
 });
 
 const WkAppInfoShape = object({ platform: str, host: str, version: str, experiments: ExperimentsShape, methods: strings });
@@ -1726,6 +1922,20 @@ const WkKvInventory = object({
   notes: strings,
 });
 
+const WkReadinessCheck = object({ state: oneOf("granted", "denied", "unknown"), say: str });
+const WkKvReadiness = object({
+  providerId: str,
+  appDisplay: str,
+  keyvaultInitialized: bool,
+  keyvaultUnlocked: bool,
+  profile: optNull(str),
+  defaultProfile: optNull(str),
+  profiles: list(object({ dir: str, name: str, account: optNull(str), lastUsed: bool })),
+  files: WkReadinessCheck,
+  tabs: WkReadinessCheck,
+  profileEmpty: bool,
+});
+
 /** What the SwiftUI host answers each method with (shapes `adapters/webkit.ts` reads). */
 export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "app.info": WkAppInfoShape,
@@ -1735,6 +1945,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   // The first run is this page's on both hosts (`WkOnboarding`).
   "onboarding.get": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
   "onboarding.complete": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
+  "onboarding.reset": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
   "spaces.list": WkSpacesShape,
   "spaces.setPower": WkSpacesShape,
   "spaces.delete": WkSpacesShape,
@@ -1743,6 +1954,11 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   // `{}`: the new name comes with the next `spaces.list`.
   "spaces.rename": object({}),
   "spaces.open": nul,
+  "network.get": SpaceNetworkShape,
+  "network.set": object({ applied: oneOf("now", "next_start") }),
+  "network.log": list(NetworkEventShape),
+  "network.ackNotice": object({}),
+  "spaces.setAccess": object({}),
   // The page's wizard runs on `env`, and reads `local`.
   "spaces.createOptions": ref("WkCreateOptions", createOptions(true)),
   "spaces.create": WkSpaceShape,
@@ -1782,8 +1998,13 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.check": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
+  "agentKeys.use": AgentKeysWire,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysWire,
+  "github.status": GithubWire,
+  "github.rescan": GithubWire,
+  "github.use": GithubWire,
+  "github.enable": GithubWire,
   "clouds.status": nullable(OP_SHAPES["clouds.status"]),
   "clouds.test": OP_SHAPES["clouds.test"],
   "clouds.connect": OP_SHAPES["clouds.connect"],
@@ -1798,6 +2019,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "teleport.plan": WkTeleportPlan,
   "teleport.run": OP_SHAPES["teleport.run"],
   "teleport.sites": WkKvInventory,
+  "teleport.readiness": WkKvReadiness,
   "teleport.remembered": nullable(strings),
   "teleport.streamWindow": nul,
   "sharing.list": shares,
@@ -1889,8 +2111,21 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "links.list": OP_SHAPES["links.list"],
   "links.create": OP_SHAPES["links.create"],
   "links.stop": OP_SHAPES["links.stop"],
+  "links.approve": OP_SHAPES["links.approve"],
+  "links.deny": OP_SHAPES["links.deny"],
+  "shares.settings.get": OP_SHAPES["shares.settings.get"],
+  "shares.settings.set": OP_SHAPES["shares.settings.set"],
+  "shares.edge.remove": OP_SHAPES["shares.edge.remove"],
   "cli.plan": OP_SHAPES["cli.plan"],
   "cli.install": OP_SHAPES["cli.install"],
+  "ci.overview": OP_SHAPES["ci.overview"],
+  "ci.connect": OP_SHAPES["ci.connect"],
+  "ci.connectToken": OP_SHAPES["ci.connectToken"],
+  // The host answers `{state: "idle"}`; the adapter hands the page null.
+  "ci.connectCancel": object({ state: str }),
+  "ci.repositories": OP_SHAPES["ci.repositories"],
+  "ci.goal": OP_SHAPES["ci.goal"],
+  "ci.log": OP_SHAPES["ci.log"],
 };
 
 /** Methods whose answer has no shape here, and why. */

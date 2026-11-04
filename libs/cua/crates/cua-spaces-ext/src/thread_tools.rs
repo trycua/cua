@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::persistent::members::{ImportEntry, MemberOptions, PostArgs, may_manage, member_row};
+use crate::persistent::members::{
+    AnswerArgs, ImportEntry, MemberOptions, PostArgs, may_manage, member_row,
+};
 use crate::persistent::{AgentSpec, Persistent, SpacesPersistent as _, parse_schedule};
 use crate::thread::policy::{self, Rights};
 use cua_agents::RunStatus;
@@ -90,6 +92,14 @@ pub(crate) async fn call(
         }
         "thread_post" => {
             let a: i::ThreadPost = crate::args(tool, a)?;
+            // The phone's extras: a retry key and a standing answer's scope.
+            if a.client_id.is_some()
+                || a.answer
+                    .as_ref()
+                    .is_some_and(|x| x.scope.is_some() || x.client_id.is_some())
+            {
+                crate::persistent::phone::require_mobile()?;
+            }
             let t = p.thread(caller, &a.space).await?;
             let e = t
                 .post(PostArgs {
@@ -99,10 +109,15 @@ pub(crate) async fn call(
                     approval: a
                         .approval
                         .map(|x| (x.action, x.details.unwrap_or_default())),
-                    answer: a
-                        .answer
-                        .map(|x| (x.approval, x.approve, x.note.unwrap_or_default())),
+                    answer: a.answer.map(|x| AnswerArgs {
+                        approval: x.approval,
+                        approve: x.approve,
+                        note: x.note.unwrap_or_default(),
+                        scope: x.scope,
+                        client_id: x.client_id,
+                    }),
                     to_session: a.to_session,
+                    client_id: a.client_id,
                     view: a.view.map(|v| crate::thread::ViewContext {
                         kind: v.kind,
                         app: v.app,
@@ -237,19 +252,27 @@ pub(crate) async fn call(
                 }
             }
             let me = p.author_for(caller).id;
+            // One read of the records, not one per row.
+            let records = p.list().unwrap_or_default();
             for row in &mut rows {
                 let name = row["name"].as_str().unwrap_or_default().to_string();
-                if let Ok(rec) = p.get(&name) {
-                    row["you_can"] = Persistent::rights_of(&rec).you_can(p.role_of(caller), &me);
+                if let Some(rec) = records.iter().find(|r| r.name == name) {
+                    row["you_can"] = Persistent::rights_of(rec).you_can(p.role_of(caller), &me);
                 }
             }
             // The Agents tab (CUA-2266): each agent's DM with the caller.
             if a.overview.unwrap_or(false) && caller.agent_member().is_none() {
                 let t = p.thread(caller, &a.space).await?;
-                for row in &mut rows {
-                    let name = row["name"].as_str().unwrap_or_default().to_string();
-                    let may_approve = row["you_can"]["approve"].as_bool().unwrap_or(true);
-                    let sum = t.dm_summary(&name, may_approve)?;
+                let asks: Vec<(String, bool)> = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row["name"].as_str().unwrap_or_default().to_string(),
+                            row["you_can"]["approve"].as_bool().unwrap_or(true),
+                        )
+                    })
+                    .collect();
+                for (row, sum) in rows.iter_mut().zip(t.dm_summaries(&asks)?) {
                     row["dm"] = json!({"unread": sum.unread, "last": sum.last});
                     row["needs_you"] = json!(sum.needs_you);
                 }
@@ -312,6 +335,7 @@ pub(crate) async fn agent_add(
             harness: a.agent,
             space,
             model: a.model,
+            brief: a.brief,
             base_url: a.base_url,
             env_from_host: a.env_from_host,
             env: a.env,
@@ -323,6 +347,7 @@ pub(crate) async fn agent_add(
             sessions: a.sessions,
             rights,
             durable_space,
+            standby: a.standby,
         },
     )?;
     let mut out = with_member(&rec, p);
@@ -478,33 +503,84 @@ async fn member_run(spaces: &Spaces, caller: &Caller, a: Value) -> Result<ToolOu
         .and_then(Value::as_str)
         .ok_or_else(|| Error::invalid("agent_message: `text` is required"))?;
     let force = a.get("force").and_then(Value::as_bool).unwrap_or(false);
+    // The same message sent again (a retry after a lost connection) is the
+    // first one: nothing is delivered twice.
+    let client_id = a
+        .get("client_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    if client_id.is_some() {
+        crate::persistent::phone::require_mobile()?;
+    }
+    if let Some(c) = client_id {
+        if c.len() > 128 {
+            return Err(Error::invalid("client_id: at most 128 characters"));
+        }
+        if let Some(first) = crate::persistent::phone::sent::replay(&p, caller, name, c)? {
+            return Ok(ToolOutcome::json(&first));
+        }
+    }
     let s = spaces.space(space).await?;
     let agents = s.agents().await?;
-    if let Some(run) = &rec.run_id {
+    let out = if let Some(run) = &rec.run_id {
         let st = agents.status(run).await?;
         if st.status == RunStatus::Running && !force {
             // Queued after the running turn, as agent_message does.
             let st = agents.send(run, text, vec![]).await?;
-            return Ok(ToolOutcome::json(&json!({
+            // The thread shows what was said, as it does for any message.
+            let entry = p.record_sent(caller, name, text)?;
+            json!({
                 "delivered": true, "run_id": run, "status": st.status, "phase": st.phase,
+                "mode": "queued", "entry_seq": entry,
                 "reason": "queued after the running turn",
-            })));
-        }
-        if st.status == RunStatus::Running {
-            agents.interrupt(run).await?;
-            // The interrupted turn ends before the next one starts.
-            for _ in 0..40 {
-                if agents.status(run).await?.status != RunStatus::Running {
-                    break;
+            })
+        } else {
+            let steered = st.status == RunStatus::Running;
+            if steered {
+                agents.interrupt(run).await?;
+                // The interrupted turn ends before the next one starts.
+                for _ in 0..40 {
+                    if agents.status(run).await?.status != RunStatus::Running {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(250)).await;
             }
+            deliver(
+                &p,
+                caller,
+                &agents,
+                name,
+                text,
+                if steered { "steered" } else { "started" },
+            )
+            .await?
         }
+    } else {
+        deliver(&p, caller, &agents, name, text, "started").await?
+    };
+    if let Some(c) = client_id {
+        crate::persistent::phone::sent::remember(&p, caller, name, c, &out)?;
     }
-    let d = p.send_as(caller, name, text).await?;
+    Ok(ToolOutcome::json(&out))
+}
+
+/// Delivers `text` to member `name` as a turn of its own (a new one in the
+/// same session, or a new run with its home restored).
+async fn deliver(
+    p: &crate::persistent::Persistent,
+    caller: &Caller,
+    agents: &cua_spaces::agents::Agents,
+    name: &str,
+    text: &str,
+    mode: &str,
+) -> Result<Value> {
+    let (d, entry) = p.send_as_entry(caller, name, text).await?;
     let st = agents.status(&d.run_id).await?;
-    Ok(ToolOutcome::json(&json!({
+    Ok(json!({
         "delivered": true, "run_id": d.run_id, "status": st.status, "phase": st.phase,
+        "mode": mode, "entry_seq": entry,
         "reason": if d.started { "a new run with the agent's home restored" } else { "a new turn in the same session" },
-    })))
+    }))
 }

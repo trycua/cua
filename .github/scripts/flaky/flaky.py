@@ -14,7 +14,21 @@ wraps the runner and reads its result file:
             expired entry.
   file-issues
             open or update one GitHub issue per flaky test (label `flaky`)
-            from the JSON artifacts that `run` wrote.
+            from the JSON artifacts that `run` (or `detect`) wrote.
+  gate-check
+            for ci-gate: read the failed jobs of one workflow run on stdin
+            ("<job id>\t<job name>" lines) and print `all` when every one
+            matches an active job entry whose `signature` is in its log.
+            ci-gate then reruns the failed jobs once; a quarantined job that
+            fails again is reported and does not fail the gate.
+  detect    for the nightly flake scan: find jobs that failed and then passed
+            on a rerun of the same commit, and write `file-issues` reports.
+
+Quarantine entries (.github/flaky/quarantine.json) name either a `test` (a
+test id, matched inside a job by `run`) or a `job` (a check name glob, with an
+optional `workflow` name glob, matched by ci-gate). A `job` entry must also
+carry a `signature`: a regex that must appear in the failed job's log, so only
+the known failure is forgiven, never a new one in the same job.
 
 Result formats (--format): junit (cargo nextest), vitest (the reporter in
 .github/flaky/vitest-reporter.mjs), playwright (the JSON reporter), log (swift
@@ -152,10 +166,22 @@ def check_entries(entries: List[dict], today: dt.date) -> Tuple[List[str], List[
     errors: List[str] = []
     expired: List[str] = []
     for i, entry in enumerate(entries):
-        label = entry.get("test", f"entry {i}")
-        for key in ("test", "owner", "issue", "expires"):
+        label = entry.get("test") or entry.get("job") or f"entry {i}"
+        kind = "job" if "job" in entry else "test"
+        if "job" in entry and "test" in entry:
+            errors.append(f"{label}: set `test` or `job`, not both")
+        for key in (kind, "owner", "issue", "expires"):
             if not str(entry.get(key, "")).strip():
                 errors.append(f"{label}: missing `{key}`")
+        if kind == "job":
+            signature = str(entry.get("signature") or "")
+            if not signature.strip():
+                errors.append(f"{label}: a `job` entry needs a `signature` regex from the failure log")
+            else:
+                try:
+                    re.compile(signature)
+                except re.error as exc:
+                    errors.append(f"{label}: `signature` is not a valid regex ({exc})")
         if entry.get("issue") and not ISSUE_RE.match(entry["issue"]):
             errors.append(f"{label}: `issue` must be CUA-123, #123, or an issue URL, got {entry['issue']!r}")
         try:
@@ -183,6 +209,8 @@ def active_entries(entries: List[dict], today: dt.date) -> List[dict]:
 
 def is_quarantined(test_id: str, suite: str, entries: List[dict]) -> Optional[dict]:
     for entry in entries:
+        if "test" not in entry:
+            continue
         if not (fnmatch.fnmatchcase(test_id, entry["test"]) or test_id.endswith("::" + entry["test"])):
             continue
         if entry.get("suite") and not fnmatch.fnmatchcase(suite, entry["suite"]):
@@ -411,7 +439,7 @@ def cmd_file_issues(args: argparse.Namespace) -> int:
         issue = by_key.get(key)
         if issue is None:
             body = "\n".join([
-                f"`{clean(test_id, 300)}` passes only on retry in CI. Fix the race, or quarantine it in "
+                f"`{clean(test_id, 300)}` passes only on retry in CI. Fix the cause, or quarantine it in "
                 "`.github/flaky/quarantine.json` with an owner, this issue and an expiry date.",
                 "",
                 "Failure history is in the comments below, one per CI run.",
@@ -419,7 +447,7 @@ def cmd_file_issues(args: argparse.Namespace) -> int:
                 f"<!-- flaky-key:{key} -->",
             ])
             url = gh("issue", "create", "--repo", repo, "--label", "flaky",
-                     "--title", f"Flaky test: {clean(test_id, 200)}", "--body", body).strip()
+                     "--title", f"Flaky {'job' if report.get('kind') == 'job' else 'test'}: {clean(test_id, 200)}", "--body", body).strip()
             number = url.rsplit("/", 1)[-1]
             print(f"opened {url}")
         else:
@@ -432,6 +460,108 @@ def cmd_file_issues(args: argparse.Namespace) -> int:
                 gh("issue", "reopen", number, "--repo", repo)
         gh("issue", "comment", number, "--repo", repo, "--body", "\n".join(entry))
         print(f"#{number}: recorded {run_url}")
+    return 0
+
+
+# --- gate-check (ci-gate) -------------------------------------------------------
+
+
+def job_entry(workflow: str, job: str, entries: List[dict]) -> Optional[dict]:
+    for entry in entries:
+        if "job" not in entry or not entry.get("signature"):
+            continue
+        if not fnmatch.fnmatchcase(job, entry["job"]):
+            continue
+        if entry.get("workflow") and not fnmatch.fnmatchcase(workflow, entry["workflow"]):
+            continue
+        return entry
+    return None
+
+
+def job_log(repo: str, job_id: str) -> str:
+    done = subprocess.run(["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
+                          capture_output=True, text=True, errors="replace")
+    return done.stdout if done.returncode == 0 else ""
+
+
+def cmd_gate_check(args: argparse.Namespace, fetch_log=job_log) -> int:
+    today = dt.date.fromisoformat(args.today) if args.today else dt.date.today()
+    path = Path(args.quarantine) if args.quarantine else QUARANTINE_FILE
+    try:
+        live = active_entries(json.loads(path.read_text()).get("entries", []), today)
+    except (OSError, ValueError):
+        live = []
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    verdicts = []
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        job_id, _, name = line.rstrip("\n").partition("\t")
+        entry = job_entry(args.workflow, name, live)
+        hit = entry is not None and re.search(entry["signature"], fetch_log(repo, job_id)) is not None
+        verdicts.append((name, entry if hit else None))
+    for name, entry in verdicts:
+        if entry:
+            print(f"::warning title=Quarantined job ({args.workflow})::{name} failed with its known flake "
+                  f"(owner {entry['owner']}, {entry['issue']}, expires {entry['expires']})", file=sys.stderr)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary and any(e for _, e in verdicts):
+        with open(summary, "a") as fh:
+            fh.write(f"\n**Quarantined flakes in {cell(args.workflow)}**\n\n| Job | Issue | Expires |\n|---|---|---|\n")
+            fh.writelines(f"| `{cell(n)}` | {e['issue']} | {e['expires']} |\n" for n, e in verdicts if e)
+    print("all" if verdicts and all(e for _, e in verdicts) else "none")
+    return 0
+
+
+# --- detect (nightly) -------------------------------------------------------------
+
+
+def gh_json(path: str) -> dict:
+    return json.loads(gh("api", path))
+
+
+def cmd_detect(args: argparse.Namespace, api=gh_json) -> int:
+    """Jobs that failed and then passed on a rerun of the same commit are flaky."""
+    repo = os.environ["GITHUB_REPOSITORY"]
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=args.since_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    found = 0
+    page = 1
+    while True:
+        data = api(f"repos/{repo}/actions/runs?status=success&created=%3E%3D{since}&per_page=100&page={page}")
+        runs = data.get("workflow_runs", [])
+        for run in runs:
+            attempt = int(run.get("run_attempt") or 1)
+            if attempt < 2:
+                continue
+            before = api(f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt - 1}/jobs?per_page=100")
+            failed = {j["name"] for j in before.get("jobs", []) if j.get("conclusion") in ("failure", "timed_out")}
+            if not failed:
+                continue
+            after = api(f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+            passed = {j["name"] for j in after.get("jobs", []) if j.get("conclusion") == "success"}
+            flaky_jobs = sorted(failed & passed)
+            if not flaky_jobs:
+                continue
+            prs = run.get("pull_requests") or []
+            name = run.get("name", "")
+            report = {
+                "repo": repo, "run_id": str(run["id"]), "run_attempt": str(attempt), "workflow": name,
+                "job": ", ".join(flaky_jobs), "ref": run.get("head_branch") or "", "sha": run.get("head_sha", ""),
+                "pr": prs[0]["number"] if prs else None, "suite": name, "kind": "job",
+                "flaky": [dict(id=f"{name} / {j}",
+                               message=f"failed on attempt {attempt - 1}, passed on attempt {attempt} of the same commit")
+                          for j in flaky_jobs],
+                "quarantined": [],
+            }
+            (out_dir / f"run-{run['id']}.json").write_text(json.dumps(report, indent=2))
+            found += len(flaky_jobs)
+            print(f"{name}: {', '.join(flaky_jobs)} (run {run['id']}, attempt {attempt})")
+        if len(runs) < 100 or page >= args.max_pages:
+            break
+        page += 1
+    print(f"{found} flaky job(s) since {since}")
     return 0
 
 
@@ -453,8 +583,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     issues = sub.add_parser("file-issues")
     issues.add_argument("--dir", required=True)
     issues.add_argument("--dry-run", action="store_true")
+    gate = sub.add_parser("gate-check")
+    gate.add_argument("--workflow", required=True)
+    gate.add_argument("--quarantine", help="quarantine file (ci-gate passes the base commit's copy)")
+    gate.add_argument("--today")
+    detect = sub.add_parser("detect")
+    detect.add_argument("--out", required=True)
+    detect.add_argument("--since-hours", type=int, default=26)
+    detect.add_argument("--max-pages", type=int, default=200)
     args = parser.parse_args(argv)
-    return {"run": cmd_run, "validate": cmd_validate, "file-issues": cmd_file_issues}[args.cmd](args)
+    return {"run": cmd_run, "validate": cmd_validate, "file-issues": cmd_file_issues,
+            "gate-check": cmd_gate_check, "detect": cmd_detect}[args.cmd](args)
 
 
 if __name__ == "__main__":

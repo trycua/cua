@@ -195,4 +195,14 @@ impl Dialer {
             drop(e.forward);
         }
     }
+
+    /// Drops every forward and the connections they carry (the process is
+    /// short of descriptors); the next [`Dialer::route`] opens a fresh one.
+    /// Returns how many there were.
+    pub async fn forget_all(&self) -> usize {
+        let mut forwards = self.forwards.lock().await;
+        let n = forwards.len();
+        forwards.clear();
+        n
+    }
 }

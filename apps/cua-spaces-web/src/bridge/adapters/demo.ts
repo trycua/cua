@@ -32,12 +32,13 @@ import {
   demoMachineRows,
   demoKeyvaultItems,
   demoKeyvaultOverview,
+  demoDesktopRows,
   demoSpaceRows,
   demoTelemetry,
 } from "./demo-data";
 import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewSpaceState } from "./demo/new-space";
 import { demoShareHandlers } from "./demo/share";
-import { demoThreadHandlers } from "./demo/thread";
+import { DEMO_THREAD_SPACE, demoThreadHandlers, hangingSpace, seedLongDm } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
 import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
@@ -52,16 +53,25 @@ import { createDemoSettings } from "./demo/settings";
 import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
 import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
+import { demoGithubHandlers, demoGithubState, type DemoGithubStart } from "./demo/github";
+import { demoCiHandlers, demoCiState, type DemoCiStart } from "./demo/ci";
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
-import { demoLinksHandlers, demoLinksState, type DemoLinksState } from "./demo/links";
+import { demoLinksHandlers, demoLinksState, type DemoLinksState, type DemoSharesPreset } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
+import { createDemoNetwork, demoNetworkSpaceRows } from "./demo/network";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
 export interface DemoOptions {
+  /** The Ask first experiment is on (`?demo=ask-first`; the GitHub demos turn it on too): Settings, Connections lists GitHub and Labs has its switch. */
+  askFirst?: boolean;
+  /** Connections, GitHub: `gh` with two accounts and an Enterprise host (default), `?demo=github-none`, `github-saved` (a saved token) or `github-warning` (scopes broader than needed). */
+  github?: DemoGithubStart;
+  /** CI Runners: nothing connected (`?demo=ci-fresh`), GitHub connected and no job yet (`?demo=ci-connected`), or a week of jobs (default). */
+  ci?: DemoCiStart;
   /** Round-trip latency of every call (ms). */
   latencyMs?: number;
   /** Time per create phase and per power change (ms). */
@@ -75,15 +85,21 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Machines that are only signed in (`?demo=signed-in-machines`): rows in the one list, "Signed in, not sharing", and the two that wait to be added. */
   signedInMachines?: boolean;
+  /** A sign-in that never finishes (`wait`: the browser never confirms) or fails at once as not confirmed in time (`timeout`). */
+  signIn?: "wait" | "timeout";
   /** Saved credentials the provider refuses (`?demo=rejected-key`: the OpenAI key): a check marks them as needing a reconnect. */
   rejectedKeys?: string[];
   /** Claude Code's sign-in on this Mac: imported already (`?demo=claude-signed-in`), imported and run out (`?demo=claude-expired`),
    * or none to import (`?demo=claude-none`: Connect finds nothing and offers the ways on). Default: there is one, not imported yet. */
   claudeLogin?: "signed-in" | "expired" | "none";
+  /** `?demo=chatgpt-signed-in`: a ChatGPT sign-in is saved for Codex (no OpenAI API key unless `no-keys` is left off). */
+  chatgptLogin?: boolean;
   /** Which connections are saved: `none` (`?demo=no-keys`, an empty Connections list) or `several` (`?demo=connections`: Anthropic, OpenRouter, a custom endpoint and a DeepSeek key the provider refuses). Default: an OpenAI key. */
   keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** `?demo=desktops`: the Linux box also shares its desktop (a Space row of its own, `relay:linux-box`). */
+  desktops?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
   extraSpaces?: number;
@@ -127,7 +143,7 @@ export interface DemoOptions {
    * built-in Linux runtime does not start; later attempts work,
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
-  failCreates?: "runtime-once" | "disk";
+  failCreates?: "runtime-once" | "disk" | "unsupported";
   /** The CLI the demo host reports: the released app's `cua` on PATH unless
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
@@ -142,6 +158,10 @@ export interface DemoOptions {
   threadAuthFailed?: boolean;
   /** `?demo=thread-paused`: agents wake each other until the daemon pauses agent to agent messages (CUA-2757). */
   threadPaused?: boolean;
+  /** `?demo=thread-slow`: the machine of the demo's thread Space does not answer. */
+  threadSlow?: boolean;
+  /** `?demo=thread-long`: this many more tasks for Hermes in the demo's thread Space. */
+  threadLongDm?: number;
   /** `?demo=thread-stranger`: an agent whose owner is not in the Space (its card opens their profile in place). */
   threadStranger?: boolean;
   /** Join codes: redeemed this long after they are made (null: never, `?demo=thread-join-slow`). */
@@ -150,9 +170,22 @@ export interface DemoOptions {
   joinExpireMs?: number;
   /** Linus's OpenClaw asks to join (`?demo=thread-request`). */
   threadRequest?: boolean;
+  /** The host asks whether Hermes may push a branch (`?demo=thread-push`, the release-checks Space). */
+  threadPushCard?: boolean;
+  /** The host asks about a push on a card and posts a notice (`?demo=thread-cards`). */
+  threadCards?: boolean;
   /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
    * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
   creatingElsewhere?: boolean;
+  /** Secure-by-default network settings on demo data (`?demo=network`, plus
+   * `net-blocked`, `net-volume`, `net-clipboard`, `net-exit`,
+   * `net-exit-down`): research-swarm and its
+   * workers, and each Space's network, Volume and clipboard settings. */
+  network?: Set<string>;
+  /** Public TCP shares (Labs) on, with a scene: `?demo=shares-consent` (the first share through a share edge asks first), `shares-routes` (shares on three routes and an agent's ask), `shares-settings` (Settings, Sharing with a share edge) or `shares-cap` (the same, with today's data). */
+  shares?: DemoSharesPreset;
+  /** The home's create takes its time (`?demo=slow-home`), the rest of the demo does not: the first run to look at while it is preparing. */
+  slowHome?: boolean;
 }
 
 /** What the Mac mini is creating (`?demo=creating-elsewhere`). */
@@ -163,13 +196,16 @@ export const DEMO_CREATING_ELSEWHERE: CreatingElsewhere[] = [
 /** The SDK's words for the failures `failCreates` plays. */
 export const DEMO_CREATE_FAILURES = {
   runtime: "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+  /** The daemon's refusal on a Mac that can't run virtual computers (#6323, `?demo=create-fail-unsupported`). */
+  unsupported:
+    "This Mac can't run Spaces itself, because it can't run virtual computers. That happens when the Mac is itself a virtual machine, or is an older Intel Mac. Add another computer to your account, or link your own cloud, and create the Space there.",
   disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
 } as const;
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
 /** `?demo=fresh` (signed out, first run), `?demo=no-team`, `?demo=team-full`, `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
- * `?demo=empty` (no Spaces yet), `?demo=nothread` (a daemon without the Space thread), `?demo=thread-lookalike` (a look-alike agent in the thread), `?demo=thread-request` (an agent asks to join), `?demo=thread-join-slow` / `?demo=thread-join-expire` (join codes never redeemed / expiring), `?demo=keychain` (the startup screen),
+ * `?demo=empty` (no Spaces yet), `?demo=nothread` (a daemon without the Space thread), `?demo=thread-lookalike` (a look-alike agent in the thread), `?demo=thread-request` (an agent asks to join), `?demo=thread-cards` (the host's push card and notice), `?demo=thread-join-slow` / `?demo=thread-join-expire` (join codes never redeemed / expiring), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
  * `?demo=agents-readonly` (Cua can't write Hermes's config),
@@ -183,6 +219,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
+ * `?demo=desktops` (the Linux box shares its desktop, a shared desktop row beside the Spaces), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 /** The account's signed-in machines that share nothing, as a host lists them (`?demo=signed-in-machines`): one enrolled, and the demo devices that wait. */
 function demoSignedInRows(nowMs: number): MachineRow[] {
@@ -226,13 +263,19 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
+    ...(flags.has("ask-first") ? { askFirst: true } : {}),
+    ...(flags.has("github-none") ? { github: "none" as const } : flags.has("github-saved") ? { github: "saved" as const } : flags.has("github-warning") ? { github: "warning" as const } : {}),
+    ...(flags.has("ci-fresh") ? { ci: "fresh" as const } : flags.has("ci-connected") ? { ci: "connected" as const } : {}),
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     ...(flags.has("signed-in-machines") ? { signedInMachines: true } : {}),
+    ...(flags.has("signin-wait") ? { signIn: "wait" as const } : flags.has("signin-timeout") ? { signIn: "timeout" as const } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
     ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
+    ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
     noSpaces: flags.has("empty"),
+    desktops: flags.has("desktops"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
       return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
@@ -245,7 +288,11 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     threadAuthFailed: flags.has("thread-auth-failed"),
     threadStranger: flags.has("thread-stranger"),
     threadPaused: flags.has("thread-paused"),
+    threadSlow: flags.has("thread-slow"),
+    ...(flags.has("thread-long") ? { threadLongDm: 60 } : {}),
     threadRequest: flags.has("thread-request"),
+    threadPushCard: flags.has("thread-push"),
+    threadCards: flags.has("thread-cards"),
     ...(flags.has("thread-join-slow") || flags.has("thread-join-expire") ? { joinRedeemMs: null } : {}),
     ...(flags.has("thread-join-expire") ? { joinExpireMs: 6_000 } : {}),
     keychain: flags.has("keychain"),
@@ -278,8 +325,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    ...(flags.has("network") ? { network: flags } : {}),
+    shares: (["consent", "routes", "settings", "cap"] as const).find((p) => flags.has(`shares-${p}`)),
+    // Slow creates, to look at a state before it is gone (`?demo=slow-create`).
+    ...(flags.has("slow-create") ? { stepMs: 5000 } : {}),
+    ...(flags.has("slow-home") ? { slowHome: true } : {}),
     creatingElsewhere: flags.has("creating-elsewhere"),
-    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
+    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : flags.has("create-fail-unsupported") ? "unsupported" : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -329,14 +381,14 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : [...demoSpaceRows(now()), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
+    rows: options.noSpaces ? [] : [...(options.network ? demoNetworkSpaceRows(now()) : []), ...demoSpaceRows(now()), ...(options.desktops ? demoDesktopRows(now()) : []), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,
     pendingRequests: true,
     revokedGrants: new Set(),
     // Kept as the Mac and Electron apps keep the core's settings: tips and the Pro banner's close.
-    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable", tips: { off: false, done: [] } },
+    settings: { ...DEFAULT_SETTINGS, launchAtLogin: true, updateChannel: "stable", tips: { off: false, done: [] }, notchPinned: [] },
     identity: options.signedIn === false ? undefined : DEMO_IDENTITY,
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
@@ -344,7 +396,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys),
+    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys, options.chatgptLogin),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
@@ -353,10 +405,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     removed: [],
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     runtimes: demoRuntimesState(),
-    volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
+    volume: (() => {
+      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, Boolean(options.askFirst || options.github), options.ci !== undefined);
+      return options.shares || options.network
+        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.network ? { secureSpaces: true } : {}) } }
+        : v;
+    })(),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
-    links: demoLinksState(),
+    links: demoLinksState(now(), options.shares),
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
@@ -461,6 +518,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     state.agents = state.agents.map((a) => (a.name === name ? { ...a, ...patch } : a));
   };
 
+  const githubState = demoGithubState(options.github ?? "gh");
+  const ciState = demoCiState(options.ci ?? "busy");
   const ctx = { state, now, wait, emit, findRow, stepMs: step };
   // Creates asked for so far (`failCreates: "runtime-once"` fails the first).
   let createAttempts = 0;
@@ -480,7 +539,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       try {
         // A failure the options ask for, after the create starts preparing.
         const failure =
-          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "unsupported" ? DEMO_CREATE_FAILURES.unsupported : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -488,6 +547,26 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           }
           throw new HostError(failure, "runtime");
         }
+        // The Space the new setup prepares, on a new Mac: the Linux runtime downloads, then the image, then the Space boots.
+        if (config.name?.startsWith("home-")) {
+          const MB = 1_048_576;
+          const homeStep = options.slowHome ? 7000 : step;
+          const legs: [string, string, number][] = [
+            ["preparing", "Setting up the Linux runtime", 440 * MB],
+            ["pulling", config.image ?? "image", 366 * MB],
+          ];
+          for (const [phase, detail, total] of legs) {
+            for (const fraction of [0, 0.15, 0.4, 0.7, 0.9]) {
+              if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
+              emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB } });
+              await wait(homeStep / 2);
+            }
+          }
+          for (const phase of ["creating", "booting", "waiting_for_services", "connecting"]) {
+            emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction: 0.5, detail: phase, space: id } });
+            await wait(homeStep / 2);
+          }
+        } else
         for (const phase of CREATE_PHASES) {
           for (const fraction of [0, 0.5]) {
             if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
@@ -589,6 +668,33 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return { results };
     },
 
+    // Every demo Space is on Internet only (the `?demo=network` preview keeps
+    // its own richer store, `DataAdapter.network`).
+    "network.get": async ({ spaceId }) => {
+      findRow(spaceId);
+      return {
+        preset: "internet",
+        summary: "Internet only",
+        enforcement: "enforced",
+        point: "the container engine's own network namespace",
+        noticePending: false,
+        clipboard: "viewing",
+        volume: "own",
+      };
+    },
+    "network.set": async ({ spaceId }) => {
+      findRow(spaceId);
+      return { applied: "now" as const };
+    },
+    "network.log": async ({ spaceId }) => {
+      findRow(spaceId);
+      return [];
+    },
+    "network.ackNotice": async () => null,
+    "spaces.setAccess": async ({ spaceId }) => {
+      findRow(spaceId);
+      return null;
+    },
     "spaces.rename": async ({ spaceId, name }) => {
       findRow(spaceId);
       const next = name.trim();
@@ -713,6 +819,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
 
     "session.get": () => session(),
     "session.signIn": () => {
+      if (options.signIn === "timeout") throw Object.assign(new Error("The sign-in was not completed in time."), { tag: "Timeout" });
+      if (options.signIn === "wait") return { method: "browser", verificationUri: "https://cua.ai/signin" };
       later(step * 3, () => {
         state.identity = DEMO_IDENTITY;
         emit({ type: "session.signedIn", identity: DEMO_IDENTITY });
@@ -722,6 +830,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "session.signOut": () => {
       state.identity = undefined;
       emit({ type: "session.signedOut" });
+      return null;
+    },
+    "session.resetOnboarding": () => {
+      state.onboarding = { completed: false, mode: null };
       return null;
     },
     "session.completeOnboarding": ({ mode }) => {
@@ -918,17 +1030,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now, store: state.keyStore }),
+    ...demoGithubHandlers({ state: githubState, wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
-    ...demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
+    ...((): ReturnType<typeof demoThreadHandlers> => {
+      const h = demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
       joinRedeemMs: options.joinRedeemMs,
       joinExpireMs: options.joinExpireMs,
       request: options.threadRequest ?? false,
-    }),
+      pushCard: options.threadPushCard ?? false,
+      cards: options.threadCards ?? false,
+    });
+      if (options.threadLongDm && !options.noThread) seedLongDm(h, options.threadLongDm);
+      return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
+    })(),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);
@@ -942,6 +1061,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoStartupHandlers(ctx),
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
+    ...demoCiHandlers({ state: ciState, now, wait, stepMs: step, signedIn: () => Boolean(state.identity) }),
     ...unsupportedPresenceOps("demo"),
     ...unsupportedRuntimeFixOps("demo"),
     "cli.plan": () => cliPlan(),
@@ -962,6 +1082,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return handler(args);
     },
     subscribe: (l) => events.subscribe(l),
+    ...(options.network ? { network: createDemoNetwork({ now, flags: options.network }) } : {}),
     ...(options.creatingElsewhere ? { creatingElsewhere: () => DEMO_CREATING_ELSEWHERE } : {}),
     dispose() {
       for (const t of timers) clearTimeout(t);

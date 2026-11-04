@@ -301,7 +301,7 @@ Python: `await space.send_file(path, cua.SpaceSendFileOptions(target_directory="
 Agents use the MCP tool `send_file` ([what your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).
 The options are in the [`send_file` reference](/spaces/reference/spaces#send_file).
 
-## Sync across devices
+## Sync across computers
 
 Two computers using the same bucket see each other's changes within
 seconds. Each change is also written to a small change log in the bucket
@@ -361,15 +361,32 @@ without saving anything. Keys go to the credential store, never to
 
 **Menu bar.** The menu shows the volume's sync state next to the number of
 Spaces (Synced, Syncing, Offline) and any conflicts, which open the Volume
-page. Nothing shows while the files stay on this Mac with no other device.
+page. Nothing shows while the files stay on this Mac with no other computer.
 
 **Volume page.** Status, not a file browser: Finder is. Open in Finder
-shows the volume, mounting it first when it is not mounted. Devices lists every
+shows the volume, mounting it first when it is not mounted. Computers lists every
 computer on the bucket, this one with its pending uploads and last sync.
 Conflicts lists files two computers wrote at once: Open shows the other
 copy in Finder, Resolve clears the entry and keeps both files.
 
-![The Volume page with two devices and a conflict](/img/spaces/spaces-volume-page.png)
+![The Volume page with two computers and a conflict](/img/spaces/spaces-volume-page.png)
+
+## With Secure Spaces on
+
+When the [Secure Spaces experiment](/spaces/guides/experiments) is on, a Space sees only its own folder:
+
+- A Space's folder carries the Space's own id, which never changes: `local:work` is `spaces/local-work--0a1b2c3d/`. If you delete a Space and later make another with the same name, the new one starts with an empty folder and cannot see the old one, which stays in your Cua Volume until you delete it. A folder from before ids existed (`spaces/local-work/`) is renamed the next time its Space mounts the volume, and that Space keeps the read-only access to `public/` it had before.
+- `public/` is read only through a grant: for one Space (`space:<id>`, which also covers the agent working in it) or for every Space of a tree (`tree:<root>`, the first Space and the Spaces it started). Only you grant, and every grant asks for Touch ID, your login password or the Keyvault passphrase first. Revoking a grant closes access at once.
+
+```bash skip="no-runner"
+cua volume grant space:local:work public/                     # one Space, read-only
+cua volume grant tree:local:lead public/datasets/ --for 2h    # a Space and its children
+```
+
+- A Space's Volume setting is **Own folder** (the default) or **Off** (`cua spaces set <space> --volume off`). Off takes the Space's folder away; the Space gets no `/volume` mount unless it also mounts a named volume. It applies to the running Space at once.
+- A named volume mounted with `--volume NAME:PATH` is read-only unless you add `:rw`. A mount saved before this keeps the mode it was saved with, and the daemon logs a warning each time it is mounted read-write.
+
+Without the experiment, `public/` is read by every Space and a mount without `:ro` is read-write, as before.
 
 ## Storage
 

@@ -28,7 +28,7 @@
         "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
       ],
       "step": "nothing connected",
-      "title": "Connections"
+      "title": "Providers"
     },
     {
       "apps": [
@@ -56,7 +56,7 @@
         "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
       ],
       "step": "Claude Code signed in, an OpenAI key pasted, Codex connecting",
-      "title": "Connections"
+      "title": "Providers"
     },
     {
       "apps": [
@@ -84,7 +84,7 @@
         "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
       ],
       "step": "Claude Code sign-in ran out (needs reconnect)",
-      "title": "Connections"
+      "title": "Providers"
     },
     {
       "apps": [
@@ -112,7 +112,7 @@
         "custom | top | not-connected | Not connected | - | OpenCode, Goose, Pi, Hermes, OpenClaw | Connect"
       ],
       "step": "Claude Code is reading its sign-in",
-      "title": "Connections"
+      "title": "Providers"
     },
     {
       "apps": [
@@ -144,7 +144,7 @@
         "zai | more | connected | Connected | API key •••• 7d1f, Global, Coding Plan | OpenCode, Goose, Pi, Hermes, OpenClaw | Disconnect"
       ],
       "step": "DeepSeek key and a custom endpoint, More providers searched",
-      "title": "Connections"
+      "title": "Providers"
     },
     {
       "lede": "Works with Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw and T3 Code.",
@@ -306,6 +306,48 @@
         "query": "kimi"
       },
       "title": "Connect a provider"
+    },
+    {
+      "connect": "Connect a provider | Connect a provider to pick a model.",
+      "default": "- | -",
+      "groups": [],
+      "models": "nothing connected"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "deepseek | DeepSeek | connected | - :: deepseek-flash | DeepSeek Flash | true | true"
+      ],
+      "models": "an Anthropic key, an OpenAI key and a DeepSeek key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "anthropic | claude-haiku-4-5",
+      "groups": [
+        "anthropic | Anthropic | connected | claude-code :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false",
+        "openai | OpenAI | connected | openai-codex :: gpt-5.5 | GPT-5.5 | false | true"
+      ],
+      "models": "only a Claude sign-in and a ChatGPT sign-in (each is its own app's)"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "openai | gpt-5.5",
+      "groups": [
+        "openai | OpenAI | connected | - :: gpt-5.5 | GPT-5.5 | false | true",
+        "anthropic | Anthropic | needs-reconnect | - :: claude-haiku-4-5 | Claude Haiku 4.5 | true | false / claude-sonnet-5 | Claude Sonnet 5 | false | true / claude-opus-5-5 | Claude Opus 5.5 | false | false"
+      ],
+      "models": "a Claude sign-in that ran out and an OpenAI key"
+    },
+    {
+      "connect": "Connect a provider | -",
+      "default": "zai | glm-5.3",
+      "groups": [
+        "zai | Z.AI (GLM) | connected | - :: glm-5.3 | glm-5.3 | false | true"
+      ],
+      "models": "a provider with no list falls back to its default"
     },
     {
       "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",

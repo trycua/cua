@@ -66,12 +66,20 @@ export interface StreamSurfaceProps {
   windowName?: string | null;
   /** Pointer and keys go to the Space (default). False only shows it (Watch). */
   interactive?: boolean;
+  /** The person may only watch this Space (shared as Can view): it says so instead of offering control. */
+  viewOnly?: boolean;
 }
 
 /** How long the desktop may take to send its first picture. After that the
  * cover says it didn't, why, and offers Try again: the viewer never waits
  * silently. */
 export const CONNECT_TIMEOUT_MS = 20_000;
+/** How long "Connecting…" may go on before the cover says it is taking longer
+ * than usual (a Space that was just turned on, a machine far away). */
+export const SLOW_CONNECT_MS = 4_000;
+/** The cover's second line once a connect is slow: plain words, and it goes
+ * with the picture. */
+export const SLOW_CONNECT_HINT = "Still connecting. This is taking longer than usual.";
 /** Why, when it timed out. */
 export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop within 20 seconds.";
 
@@ -96,7 +104,7 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 8;
 const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true }: StreamSurfaceProps) {
+export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true, viewOnly = false }: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -117,7 +125,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     attempt,
     spaceId,
     tier: "full",
-    interactive,
+    interactive: interactive && !viewOnly,
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,
@@ -126,6 +134,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
   // Try again (a picture that arrives later still shows).
   const timedOut = useTimedOut(slot?.phase === "connecting", CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
+  const slow = useTimedOut(slot?.phase === "connecting", SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
   const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" || timedOut ? "failed" : "connecting";
   const cover = useDesktopCover({ canStream, previewText, autoConnect, connectRequested: requested, stream: phase, access });
   const thumbnail = useSpaceThumbnail(spaceId, videoHere && canStream && !replaced && !access);
@@ -172,6 +181,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
             cover={cover}
             thumbnail={access ? null : thumbnail}
             reason={cover.kind === "status" ? reason : null}
+            hint={cover.kind === "connecting" && slow ? SLOW_CONNECT_HINT : null}
             onButton={press}
             onAction={onAccessAction}
             onOpen={slot?.phase === "failed" ? () => void open() : undefined}
@@ -198,7 +208,15 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
           )}
         </div>
       )}
-      {slot?.phase === "live" && slot.focused ? (
+      {slot?.phase === "live" && viewOnly ? (
+        <p
+          data-view-only=""
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
+        >
+          View only. You can watch, but not control this Space.
+        </p>
+      ) : slot?.phase === "live" && slot.focused ? (
         // While the desktop has the keyboard: how to give it back, over the
         // video's bottom edge. The host cuts the video out under it
         // (`data-video-hole`), so no strip under the stream is needed.
@@ -241,6 +259,7 @@ function DesktopCoverView({
   cover,
   thumbnail,
   reason,
+  hint,
   onButton,
   onAction,
   onOpen,
@@ -250,6 +269,8 @@ function DesktopCoverView({
   thumbnail: string | null;
   /** Why it could not connect, under the line. */
   reason?: string | null;
+  /** While it connects slowly: that it is still going. */
+  hint?: string | null;
   onButton: () => void;
   onAction?: () => void;
   /** The stream failed here: its own window instead. */
@@ -278,6 +299,11 @@ function DesktopCoverView({
         {reason ? (
           <p data-cover-reason="" className={cn("mt-1 max-w-md text-xs", dark ? "text-white/60" : "text-muted-foreground")}>
             {reason}
+          </p>
+        ) : null}
+        {hint ? (
+          <p data-cover-hint="" className="mt-1 max-w-md text-xs text-white/60">
+            {hint}
           </p>
         ) : null}
         {cover.action ? (

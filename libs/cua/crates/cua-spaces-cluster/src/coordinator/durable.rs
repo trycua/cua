@@ -66,6 +66,10 @@ pub struct DurableSpec {
     /// No desktop (`SpaceCreate::headless`): kept by every copy.
     #[serde(default)]
     pub headless: bool,
+    /// CPU architecture every copy must run on (`amd64`, `arm64`); empty:
+    /// any (the default: a durable Space may move between architectures).
+    #[serde(default)]
+    pub arch: String,
 }
 
 /// What a Space's `.cua/setup` did.
@@ -535,6 +539,8 @@ impl Coordinator {
             cpus: row.spec.cpus,
             memory_mb: row.spec.memory_mb,
             headless: row.spec.headless,
+            durable: true,
+            arch: row.spec.arch.clone(),
         };
         match self.place_space_excluding(req, &exclude).await {
             Ok(p) => {
@@ -570,6 +576,13 @@ impl Coordinator {
                 self.audit("durable", "coordinator", &row.name, &detail)
                     .await;
                 let row = self.durable_save(row).await?;
+                if row.generation > 1 {
+                    super::telemetry::space_recreated(
+                        &row.name,
+                        !from.is_empty() && from != row.node,
+                        self.nodes().len() as u32,
+                    );
+                }
                 self.durable_setup_spawn(&row);
                 Ok(row)
             }
@@ -703,6 +716,7 @@ impl Coordinator {
             .ok_or_else(|| CoordError::NotFound(format!("no durable Space {name}")))?;
         let now = now_ms();
         if r.leased(now) && r.holder != holder.trim() {
+            super::telemetry::lease_refused(name, self.nodes().len() as u32);
             return Err(CoordError::Denied(format!(
                 "{name} is held by {} for {} s more",
                 r.holder,
@@ -736,6 +750,7 @@ impl Coordinator {
             .filter(|r| r.state != state::DELETED)
             .ok_or_else(|| CoordError::NotFound(format!("no durable Space {name}")))?;
         if r.lease_token != token || !r.leased(now_ms()) {
+            super::telemetry::lease_refused(name, self.nodes().len() as u32);
             return Err(CoordError::Denied(format!(
                 "the lease of {name} with token {token} is no longer held (it ran out or was taken); acquire it again"
             )));

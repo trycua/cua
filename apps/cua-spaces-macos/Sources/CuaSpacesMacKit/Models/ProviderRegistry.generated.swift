@@ -37,6 +37,17 @@ public enum ProviderRegistry {
         "custom",
     ]
 
+    /// The model ids each visible provider lists, in the order the app core lists them.
+    public static let models: [String: [String]] = [
+        "anthropic": ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5"],
+        "openai": ["gpt-5.5"],
+        "openrouter": ["anthropic/claude-sonnet-5"],
+        "google": ["gemini-3.8-flash"],
+        "xai": ["grok-4.6"],
+        "deepseek": ["deepseek-flash"],
+        "kimi": ["kimi-k3"],
+    ]
+
     public static let methodKinds: [String] = [
         "api_key",
         "import_login",

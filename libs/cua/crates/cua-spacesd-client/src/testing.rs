@@ -1748,6 +1748,41 @@ impl ProcessService for Svc {
             killed: 0,
         }))
     }
+
+    async fn put_service(
+        &self,
+        _: tonic::Request<pb::PutServiceRequest>,
+    ) -> Result<tonic::Response<pb::PutServiceResponse>, Status> {
+        Err(Status::unimplemented("mock: services"))
+    }
+
+    async fn delete_service(
+        &self,
+        _: tonic::Request<pb::DeleteServiceRequest>,
+    ) -> Result<tonic::Response<pb::DeleteServiceResponse>, Status> {
+        Err(Status::unimplemented("mock: services"))
+    }
+
+    async fn list_services(
+        &self,
+        _: tonic::Request<pb::ListServicesRequest>,
+    ) -> Result<tonic::Response<pb::ListServicesResponse>, Status> {
+        Err(Status::unimplemented("mock: services"))
+    }
+
+    async fn control_service(
+        &self,
+        _: tonic::Request<pb::ControlServiceRequest>,
+    ) -> Result<tonic::Response<pb::ControlServiceResponse>, Status> {
+        Err(Status::unimplemented("mock: services"))
+    }
+
+    async fn get_service_logs(
+        &self,
+        _: tonic::Request<pb::GetServiceLogsRequest>,
+    ) -> Result<tonic::Response<pb::GetServiceLogsResponse>, Status> {
+        Err(Status::unimplemented("mock: services"))
+    }
 }
 
 // --------------------------------------------------------------- filesystem
@@ -3156,11 +3191,81 @@ impl TunnelService for Svc {
         Err(Status::unimplemented("mock: hotspot"))
     }
 
+    async fn start_exit(
+        &self,
+        _: tonic::Request<pb::StartExitRequest>,
+    ) -> Result<tonic::Response<pb::StartExitResponse>, Status> {
+        Err(Status::unimplemented("mock: exit"))
+    }
+
+    async fn stop_exit(
+        &self,
+        _: tonic::Request<pb::StopExitRequest>,
+    ) -> Result<tonic::Response<pb::StopExitResponse>, Status> {
+        Err(Status::unimplemented("mock: exit"))
+    }
+
+    async fn start_host_ports(
+        &self,
+        _: tonic::Request<pb::StartHostPortsRequest>,
+    ) -> Result<tonic::Response<pb::StartHostPortsResponse>, Status> {
+        Err(Status::unimplemented("mock: host ports"))
+    }
+
+    async fn stop_host_ports(
+        &self,
+        _: tonic::Request<pb::StopHostPortsRequest>,
+    ) -> Result<tonic::Response<pb::StopHostPortsResponse>, Status> {
+        Err(Status::unimplemented("mock: host ports"))
+    }
+
     async fn get_hotspot_status(
         &self,
         _: tonic::Request<pb::GetHotspotStatusRequest>,
     ) -> Result<tonic::Response<pb::GetHotspotStatusResponse>, Status> {
         Err(Status::unimplemented("mock: hotspot"))
+    }
+
+    async fn start_spawn(
+        &self,
+        _: tonic::Request<pb::StartSpawnRequest>,
+    ) -> Result<tonic::Response<pb::StartSpawnResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn stop_spawn(
+        &self,
+        _: tonic::Request<pb::StopSpawnRequest>,
+    ) -> Result<tonic::Response<pb::StopSpawnResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn get_spawn_status(
+        &self,
+        _: tonic::Request<pb::GetSpawnStatusRequest>,
+    ) -> Result<tonic::Response<pb::GetSpawnStatusResponse>, Status> {
+        Err(Status::unimplemented("mock: spawn"))
+    }
+
+    async fn publish_share_slot(
+        &self,
+        _: tonic::Request<pb::PublishShareSlotRequest>,
+    ) -> Result<tonic::Response<pb::PublishShareSlotResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
+    }
+
+    async fn unpublish_share_slot(
+        &self,
+        _: tonic::Request<pb::UnpublishShareSlotRequest>,
+    ) -> Result<tonic::Response<pb::UnpublishShareSlotResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
+    }
+
+    async fn list_share_slots(
+        &self,
+        _: tonic::Request<pb::ListShareSlotsRequest>,
+    ) -> Result<tonic::Response<pb::ListShareSlotsResponse>, Status> {
+        Err(Status::unimplemented("mock: share slots"))
     }
 }
 

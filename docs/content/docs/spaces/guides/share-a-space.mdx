@@ -1,6 +1,6 @@
 ---
 title: Share a Space
-description: 'Let someone in your team watch or use one of your Spaces through the relay, and reach a Space from your other machines.'
+description: 'Let someone in your team watch or use one of your Spaces through the relay, and reach a Space from your other computers.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -90,7 +90,7 @@ Sharing uses the same relay and allowlist as an
   account registers a computer for it, and the Space's own driver dials out
   over WSS, so no inbound port opens.
 - The relay keeps two lists per computer: `allow` (editors) and `viewers`.
-- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-machines).
+- Invitees need a verified email or account ID and an [added computer](/spaces/guides/add-a-computer#reach-it-from-your-other-computers).
 - Removing someone, or changing their role, cuts their open streams at once.
 - Team membership comes from your team in your Cua account, not from the
   relay. The Cua account service checks it when you share and again each time
@@ -99,7 +99,7 @@ Sharing uses the same relay and allowlist as an
   is deleted, its shares stop.
 - A team share works differently. The Space goes on the team's list of
   computers, and each time someone opens it, the relay checks with the Cua
-  account service that they are still in the team and that their device is
+  account service that they are still in the team and that their computer is
   approved.
 
 ```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"
@@ -124,7 +124,7 @@ Sharing asks you first:
 
 Removing someone needs no confirmation.
 
-## Reach a Space from your other machines
+## Reach a Space from your other computers
 
 To reach a Space from your phone or another computer without sharing it with
 anyone, publish it on the relay:
@@ -138,7 +138,7 @@ cua spaces relay-unregister local:studio
 let reg = ada.relay_register(&info.id).await.unwrap();
 ```
 
-Only your account's enrolled devices reach it until you share it. The MCP
+Only your account's added computers reach it until you share it. The MCP
 tools are `relay_register_space` and `relay_unregister_space`.
 
 ## Audit

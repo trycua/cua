@@ -63,6 +63,19 @@ pub struct MethodDef {
     pub field: Vec<FieldDef>,
 }
 
+/// One model a provider serves, as a person picks it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelDef {
+    /// The id the provider's API takes.
+    pub id: String,
+    /// The name a person reads.
+    pub name: String,
+    /// A quick, cheap model: the default of a new prompt picks the first one.
+    #[serde(default)]
+    pub fast: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionDef {
@@ -111,6 +124,10 @@ pub struct ProviderDef {
     pub method: Vec<MethodDef>,
     #[serde(default)]
     pub region: Vec<RegionDef>,
+    /// The models a person can pick, best known first. Empty: the provider
+    /// has no list here and `default_model` (if any) stands alone.
+    #[serde(default)]
+    pub model: Vec<ModelDef>,
     /// Harness id to the names it receives: `NAME`, or `DEST<-SRC`.
     #[serde(default)]
     pub delivery: BTreeMap<String, Vec<String>>,
@@ -305,6 +322,24 @@ pub fn check(all: &[ProviderDef]) -> Result<(), String> {
             if !region_ids.insert(r.id.clone()) {
                 return Err(at(&format!("duplicate region {}", r.id)));
             }
+        }
+        let mut model_ids = BTreeSet::new();
+        for m in &p.model {
+            if m.id.trim().is_empty() || m.id.len() > 128 || m.id.chars().any(char::is_whitespace) {
+                return Err(at(&format!("model {:?}: an id has no spaces", m.id)));
+            }
+            if !model_ids.insert(m.id.clone()) {
+                return Err(at(&format!("duplicate model {}", m.id)));
+            }
+            if m.name.trim().is_empty() || m.name.contains('\u{b7}') {
+                return Err(at(&format!("model {}: a name, without a middle dot", m.id)));
+            }
+        }
+        if !p.model.is_empty()
+            && !p.default_model.is_empty()
+            && !model_ids.contains(&p.default_model)
+        {
+            return Err(at("default_model is one of the listed models"));
         }
         if let Some(c) = &p.check {
             if !matches!(c.auth.as_str(), "bearer" | "x-api-key" | "x-goog-api-key") {

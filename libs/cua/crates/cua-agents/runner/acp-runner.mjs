@@ -86,8 +86,8 @@ const expandVars = (s) =>
   typeof s !== "string"
     ? s
     : s
-        .replace(/^~(?=\/|$)/, os.homedir())
-        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m);
+        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m)
+        .replace(/^~(?=\/|$)/, os.homedir());
 
 function loadDurable() {
   if (!cfg.durable) return null;
@@ -133,7 +133,9 @@ if (durable) fs.mkdirSync(durable.stateDir, { recursive: true, mode: 0o700 });
 
 if (durable) {
   process.env.CUA_RUN_DIR ??= path.resolve(dir);
-  process.env.CUA_SESSION_STATE_DIR ||= durable.stateDir;
+  // The expanded directory, never the `~/...` the session was given: `${CUA_SESSION_STATE_DIR}/work`
+  // is the harness's cwd, and a harness refuses a cwd that is not absolute.
+  process.env.CUA_SESSION_STATE_DIR = durable.stateDir;
   cfg.cwd = expandVars(cfg.cwd);
   cfg.agent = { ...cfg.agent, command: expandVars(cfg.agent.command), args: (cfg.agent.args ?? []).map(expandVars) };
   cfg.env = Object.fromEntries(Object.entries(cfg.env ?? {}).map(([k, v]) => [k, expandVars(v)]));
@@ -313,6 +315,60 @@ function emit(type, fields = {}) {
     JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...fields }),
   );
   appendJournal("events.jsonl", line, Boolean(durable) && SYNC_EVENTS.has(type));
+  if (durable) logActivity({ turn: state.turn, epoch: durable.epoch, type, ...fields });
+}
+
+// A short readable line on stdout for what happens in a durable run, so
+// `cua agent logs session:NAME` shows the agent's progress and not only the
+// heartbeat. Only the kind of a tool (execute, read, edit, ...) and short
+// notices: never the prompt, a tool's input or output, or the agent's text.
+// (stdout growing also tells the coordinator the driver is alive.)
+const toolSeen = new Map();
+export function activityLine(ev, toolStatusSeen = toolSeen) {
+  const c = (x, n) => clip(String(x ?? "").replace(/\s+/g, " ").trim(), n);
+  switch (ev.type) {
+    case "driver_start":
+      return `driver: epoch ${ev.epoch} started${ev.journal ? ", continuing the journal of this session" : ""}`;
+    case "session":
+      return ev.resumed ? "agent: reloaded its session" : "agent: opened a session";
+    case "degraded":
+      return "agent: could not reload its conversation; the recovery note carries the journal's summary";
+    case "turn_started":
+      if (ev.recovery) return `turn ${ev.resumesTurn ?? ev.turn} resumed with a recovery note listing what already ran`;
+      return `turn ${ev.turn} started${ev.noteAttached ? " (with a recovery note)" : ""}`;
+    case "turn_ended":
+      return `turn ${ev.turn} ended (${c(ev.stopReason ?? "no reason", 40)})`;
+    case "update": {
+      const u = ev.update ?? {};
+      if (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update") return null;
+      const id = u.toolCallId;
+      const status = u.status ?? (u.sessionUpdate === "tool_call" ? "pending" : null);
+      if (!status || status === "pending" || toolStatusSeen.get(id) === status) return null;
+      toolStatusSeen.set(id, status);
+      const kind = c(u.kind ?? toolInfo.get(id)?.toolKind ?? "tool", 20);
+      return `tool ${kind} ${status === "in_progress" ? "started" : status}`;
+    }
+    case "permission":
+      return ev.action === "deny" ? "tool call refused: it was already asked for and may have run" : null;
+    case "agent_restart":
+      return `agent restarted (${ev.n} of ${ev.of}): ${c(ev.reason, 100)}`;
+    case "notice":
+      return `notice: ${c(ev.message, 120)}`;
+    case "error":
+      return `error: ${c(String(ev.message ?? "").split("\n")[0], 160)}`;
+    case "cancel_requested":
+      return "cancel requested";
+    case "run_exited":
+      return `driver exiting (code ${ev.code}${ev.reason ? `, ${c(ev.reason, 100)}` : ""})`;
+    default:
+      return null;
+  }
+}
+function logActivity(ev) {
+  try {
+    const line = activityLine(ev);
+    if (line) process.stdout.write(`${new Date().toISOString().slice(11, 19)} ${redact(line)}\n`);
+  } catch {}
 }
 
 function save(patch = {}) {
@@ -593,8 +649,10 @@ function onUpdate(update) {
   }
   flush();
   if (durable) ledgerUpdate(update);
+  if (Array.isArray(update.configOptions)) onConfigOptions?.(update.configOptions);
   emit("update", { update });
 }
+let onConfigOptions = null;
 
 // ---- the agent -------------------------------------------------------------
 
@@ -607,8 +665,7 @@ const env = { ...process.env, ...(cfg.env ?? {}), ...secrets };
 // (cfg.keyCheck: url, headers with ${NAME} references into the run's env,
 // keyEnv), ask the provider once, in parallel with the agent's start. Only
 // a definitive "this key is invalid" (HTTP 401, or a 403 that says so, with
-// the provider's JSON error body) counts: no key, a base-URL or sign-in
-// override, a network error, a timeout, a 429 or a 5xx all resolve to null
+// the provider's JSON error body) counts: no key, a sign-in override, a network error, a timeout, a 429 or a 5xx all resolve to null
 // and the run goes on exactly as before, so the check can never block one.
 const KEY_CHECK_TIMEOUT_MS = 3000;
 
@@ -640,7 +697,12 @@ async function checkKey(spec) {
     if (res.status !== 401 && res.status !== 403) return null;
     const error = JSON.parse(await res.text())?.error;
     if (!error || typeof error !== "object") return null;
-    const invalid = error.type === "authentication_error" || error.code === "invalid_api_key";
+    // A custom endpoint (a gateway) words its 401 in its own shape: any 401
+    // with a JSON error is a rejection there.
+    const invalid =
+      error.type === "authentication_error" ||
+      error.code === "invalid_api_key" ||
+      (spec.anyAuthError === true && res.status === 401);
     if (res.status === 403 && !invalid) return null;
     const why = providerMessage(error) || "the API key was rejected.";
     return { status: res.status, message: `Failed to authenticate. ${spec.provider ?? "Provider"} API Error: ${res.status} ${why}` };
@@ -653,6 +715,41 @@ const keyCheck = checkKey(cfg.keyCheck).catch(() => null);
 const agentLog = fs.openSync(P("agent.log"), "a");
 const logStart = fs.fstatSync(agentLog).size;
 
+// Node reports a missing working folder, a missing program and a missing
+// shebang interpreter all as `spawn <program> ENOENT`. Say which it is, in
+// words a person can act on (the surfaces show this line first).
+function spawnProblem(error) {
+  if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return "";
+  let isDir = false;
+  try {
+    isDir = fs.statSync(cfg.cwd).isDirectory();
+  } catch {}
+  if (!isDir) {
+    return `The working folder ${cfg.cwd} is not available in this Space (a folder on the Cua Volume is missing until the Volume is attached again).`;
+  }
+  let head = "";
+  try {
+    const fd = fs.openSync(command, "r");
+    try {
+      const b = Buffer.alloc(256);
+      head = b.toString("utf8", 0, fs.readSync(fd, b, 0, 256, 0));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return `${cfg.agent.command} is not installed in this Space.`;
+  }
+  const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
+  if (m) {
+    const prog = path.basename(m[1]) === "env" && m[2] ? m[2] : m[1];
+    const found = prog.includes("/")
+      ? fs.existsSync(prog)
+      : (env.PATH ?? "").split(path.delimiter).some((d) => d && fs.existsSync(path.join(d, prog)));
+    if (!found) return `${prog === "node" ? "Node" : prog} is not installed in this Space.`;
+  }
+  return "";
+}
+
 function diagnostic(error, phase) {
   const size = fs.fstatSync(agentLog).size;
   const tail = Buffer.alloc(Math.min(4096, size - logStart));
@@ -662,7 +759,10 @@ function diagnostic(error, phase) {
   } finally {
     fs.closeSync(fd);
   }
-  return redact(`${error?.message ?? error}`
+  // macOS reports a missing shebang interpreter as exit 127 from env, not ENOENT.
+  const why = phase === "spawn" ? spawnProblem(error) : error?.exit127 ? spawnProblem({ code: "ENOENT" }) : "";
+  return redact((why ? `${why}\n` : "")
+    + `${error?.message ?? error}`
     + (error?.code != null ? ` (code ${error.code})` : "")
     + (error?.data != null ? ` ${JSON.stringify(error.data)}` : "")
     + ` (${phase}: ${cfg.agent.command})`
@@ -686,6 +786,11 @@ let restarts = 0;
 // start, or closes its stdout (the ACP transport) while still alive.
 function startAgent() {
   const myGen = ++gen;
+  // The working folder can be gone when a run starts again (it was on a
+  // Volume that is not attached yet): make it, or say it is not there.
+  try {
+    fs.mkdirSync(cfg.cwd, { recursive: true });
+  } catch {}
   const c = spawn(command, cfg.agent.args ?? [], {
     cwd: cfg.cwd,
     env,
@@ -716,7 +821,7 @@ function startAgent() {
 function goneDiagnostic(g) {
   if (g.error) return diagnostic(g.error, "spawn");
   if (g.stdoutClosed) return diagnostic(new Error("agent stdout closed"), "transport");
-  return diagnostic(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), "transport");
+  return diagnostic(Object.assign(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), { exit127: g.code === 127 }), "transport");
 }
 
 // End this run's cua-driver session on the guest MCP (cua-spacesd keys it by
@@ -801,7 +906,13 @@ async function answerPermission(params) {
   const e = byId.get(id);
   let action = "approve";
   let why = "";
-  if (e && e.decision === "approve" && !e.outcome) {
+  if (e && e.decision === "approve" && !e.outcome && e.approvedGen === gen) {
+    // The same agent process asks again for a call it has not finished: one
+    // call, a second permission (OpenCode asks for an external directory, then
+    // for the command, both under one call id). Nothing ran between the two
+    // requests and nothing restarted, so it is the same approval, not a repeat.
+    action = "again";
+  } else if (e && e.decision === "approve" && !e.outcome) {
     // The tool may be running, or may have half-run before a restart: never
     // approve it blindly a second time.
     if (durable.policy === "rerun-safe" && READ_ONLY_KINDS.has(info.toolKind)) {
@@ -817,9 +928,11 @@ async function answerPermission(params) {
     why = "repeat request for a tool call that already completed";
     ledger("duplicate", id, { name: info.name, action: "deny" });
   }
-  if (action === "approve" || action === "rerun") {
+  if (action === "approve" || action === "rerun" || action === "again") {
     if (action === "rerun") ledger("rerun", id, { name: info.name, policy: "rerun-safe" });
-    else {
+    else if (action === "again") {
+      // Already journaled (the intent of its first request): nothing to add.
+    } else {
       const { end } = ledger("intent", id, {
         name: info.name,
         toolKind: info.toolKind,
@@ -827,6 +940,8 @@ async function answerPermission(params) {
         input: clip(JSON.stringify(info.input ?? null) ?? "null", 400),
         decision: "approve",
       });
+      // Only this agent process may be asked again for it (see above).
+      byId.get(id).approvedGen = gen;
       if (durable.ship && !(await waitShipped(end))) {
         why = "the journal did not reach the Cua Volume in time; the call was not run";
         ledger("outcome", id, { name: info.name, status: "failed", summary: why, denied: true });
@@ -994,10 +1109,29 @@ async function drive(a) {
       }
     }
     const request = { cwd: cfg.cwd, mcpServers };
+    const openNewSession = async () => {
+      try {
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      } catch (e) {
+        // Some agents reject session MCP servers they cannot start; keep
+        // the run and say so rather than failing it.
+        if (fatal(e) || !request.mcpServers.length) throw e;
+        emit("notice", {
+          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
+        });
+        request.mcpServers = [];
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      }
+    };
     const wantSession = state.sessionId;
     let sessionId = null;
     let resumed = false;
     let modes = null;
+    // The agent's session options (the model among them), kept current from its responses and updates.
+    let configOptions = null;
+    onConfigOptions = (o) => {
+      configOptions = o;
+    };
     let degraded = false;
     if (wantSession && loadSession) {
       try {
@@ -1013,6 +1147,7 @@ async function drive(a) {
         // The agent's mode comes back to its default on a resume (measured on codex-acp: "Approve for me",
         // whatever the first drive selected), so the runner picks the mode again from this response.
         modes = res?.modes ?? null;
+        configOptions = res?.configOptions ?? null;
       } catch (e) {
         if (fatal(e)) throw e;
         emit("notice", { message: `could not resume session ${wantSession}: ${e?.message ?? e}; starting a new one` });
@@ -1029,21 +1164,10 @@ async function drive(a) {
           lostSessionId: wantSession,
         });
       }
-      let res;
-      try {
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      } catch (e) {
-        // Some agents reject session MCP servers they cannot start; keep
-        // the run and say so rather than failing it.
-        if (fatal(e) || !request.mcpServers.length) throw e;
-        emit("notice", {
-          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
-        });
-        request.mcpServers = [];
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      }
+      const res = await openNewSession();
       sessionId = res.sessionId;
       modes = res.modes ?? null;
+      configOptions = res.configOptions ?? null;
     }
     if (stale()) return;
     save({ sessionId, status: "idle", ...(durable ? { degraded: state.degraded || degraded } : {}) });
@@ -1069,16 +1193,49 @@ async function drive(a) {
     // Guard mode keeps the harness asking: it selects the harness's own
     // ask-for-approval mode when its default does not ask (Codex), else none.
     const want = (durable?.guard ? cfg.guardModeKinds : cfg.modeKinds) ?? [];
-    const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
-    // A resume response without modes: select the mode the first drive chose (kept in state.json).
-    const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
-    if (modeId && modeId !== modes?.currentModeId) {
+    const applyMode = async () => {
+      const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
+      // A resume response without modes: select the mode the first drive chose (kept in state.json).
+      const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
+      if (modeId && modeId !== modes?.currentModeId) {
+        try {
+          await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
+          save({ modeId });
+          emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
+        } catch (e) {
+          emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+        }
+      }
+    };
+    await applyMode();
+    // Set once the agent has answered a prompt of this session with anything but a refusal.
+    let sessionProven = false;
+
+    // The model a message asks for, applied to the open session just before its turn (no restart):
+    // the agent's own `model` option, set through ACP's `session/set_config_option`. A harness with
+    // no such option, or one that does not list the model, keeps the one it has (said once).
+    const modelOption = () => (configOptions ?? []).find((o) => o?.category === "model" || o?.id === "model");
+    const optionValues = (o) => (o?.options ?? []).flatMap((v) => (Array.isArray(v?.options) ? v.options : [v])).map((v) => v?.value ?? v?.id);
+    let modelNoticed = false;
+    async function applyModel(want) {
+      if (!want) return;
+      const opt = modelOption();
+      if (!opt) {
+        if (!modelNoticed) emit("notice", { message: `this agent has no model option; keeping its model (asked for ${want})` });
+        modelNoticed = true;
+        return;
+      }
+      if (opt.currentValue === want) return;
+      if (!optionValues(opt).includes(want)) {
+        emit("notice", { message: `this agent does not offer the model ${want}; keeping ${opt.currentValue}` });
+        return;
+      }
       try {
-        await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
-        save({ modeId });
-        emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
+        const res = await ctx.request(acp.methods.agent.session.setConfigOption, { sessionId, configId: opt.id, value: want });
+        configOptions = res?.configOptions ?? configOptions.map((o) => (o === opt ? { ...o, currentValue: want } : o));
+        emit("model", { modelId: want });
       } catch (e) {
-        emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+        emit("notice", { message: `could not switch to the model ${want}: ${e?.message ?? e}` });
       }
     }
 
@@ -1101,6 +1258,8 @@ async function drive(a) {
       }
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: text, files: msg.files ?? [], ...(msg.msgId ? { msgId: msg.msgId } : {}), ...extra });
+      await applyModel(msg.model);
+      if (stale()) return;
       const rejected = await keyCheck;
       if (stale()) return;
       if (rejected) {
@@ -1133,6 +1292,49 @@ async function drive(a) {
         return;
       }
       if (stale()) return;
+      if (durable && resumed && !sessionProven && res?.stopReason === "refusal") {
+        // The first prompt of a session the agent "resumed" came back refused
+        // at once: the agent does not have it. (Hermes answers session/resume
+        // for an id it lost, for example with the Space its database lived
+        // in, by making another session, and then refuses the old id.) Open
+        // a new session and send the recovery note again, as when the agent
+        // could not reload the session at all.
+        resumed = false;
+        degraded = true;
+        emit("degraded", { reason: "the agent refused the resumed session; it no longer has it", lostSessionId: sessionId });
+        try {
+          const ns = await openNewSession();
+          sessionId = ns.sessionId;
+          modes = ns.modes ?? null;
+        } catch (e) {
+          if (stale()) return;
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: could not open a new session: ${e?.message ?? e}`, isAuthError(e));
+        }
+        save({ sessionId, degraded: true });
+        emit("session", { sessionId, resumed: false, modes });
+        await applyMode();
+        const p = planFromJournal();
+        const note = buildRecoveryNote({
+          epoch: durable.epoch,
+          prevEpoch: p.prevEpoch,
+          entries: entries.slice(),
+          degraded: true,
+          history: p.history,
+          interrupted: extra.recovery ? p.open : null,
+        });
+        const again = extra.recovery ? note : `${note}\n\n${msg.text}`;
+        try {
+          res = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: blocks(again, msg.files) });
+        } catch (e) {
+          if (stale()) return;
+          flush();
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
+        }
+        if (stale()) return;
+      }
+      if (res?.stopReason !== "refusal") sessionProven = true;
       endTurn(res?.stopReason ?? null, res?.usage ?? null);
     };
 

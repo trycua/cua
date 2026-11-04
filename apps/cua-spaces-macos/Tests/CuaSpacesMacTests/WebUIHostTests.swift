@@ -47,7 +47,7 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
         #expect(v?["webUi"] as? Bool == true)
@@ -213,6 +213,27 @@ struct WebUIHostTests {
         let count = try await bridge.handle("keyvault.revokeGrant", ["id": "grant-1"]) as? NSNumber
         #expect(count?.intValue == 1)
         #expect(fake.commands.last == .revokeGrant(id: "grant-1"))
+    }
+
+    /// The teleport setup sheet's check goes to the Keyvault with the profile
+    /// asked for (none: the last used), reads no value, and is a method the
+    /// page may call.
+    @Test func theTeleportReadinessCheckAsksTheKeyvaultForTheProfile() async throws {
+        let fake = FakeKeyvault(try fixtureOverview())
+        let (bridge, model) = bridge(kv: fake)
+        await model.keyvault.refresh()
+        #expect(WebUIBridge.methods.contains("teleport.readiness"))
+        let r = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": "Profile 1"]) as? [String: Any]
+        #expect(r?["providerId"] as? String == "chrome")
+        #expect(r?["keyvaultInitialized"] as? Bool == true)
+        #expect((r?["files"] as? [String: Any])?["state"] as? String == "denied")
+        #expect((r?["profiles"] as? [Any])?.count == 2)
+        #expect(fake.readinessAsks.last?.app == "chrome" && fake.readinessAsks.last?.profile == "Profile 1")
+        _ = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": NSNull()])
+        #expect(fake.readinessAsks.last?.profile == nil)
+        #expect(await failure(bridge, "teleport.readiness", [:]) == "bad_args")
+        // The sites list reads the profile the page chose.
+        _ = try await bridge.handle("teleport.sites", ["providerId": "chrome", "profile": "Profile 2"])
     }
 
     /// "No Keyvault yet" on the web page: Set up Keyvault runs the core's

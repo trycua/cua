@@ -21,7 +21,7 @@ pub mod img;
 pub mod qmp;
 pub mod snapshot;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -202,6 +202,18 @@ pub struct QemuState {
     pub vnc_display: Option<u16>,
     #[serde(default)]
     pub qmp_port: Option<u16>,
+    /// Where QMP listens when not on `qmp_port`: `unix:<path>` (a unix
+    /// socket in a private directory) or `pipe:<name>` (a Windows named
+    /// pipe). Never a TCP port: the guest's user-mode network maps its
+    /// host alias (`10.0.2.2`) to the host's loopback. `None`: `qmp_port`
+    /// (a VM started by an older cua).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qmp_socket: Option<String>,
+    /// The VNC password of the current run: the display listens on the
+    /// host's loopback, which the guest can reach, so it never opens
+    /// without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_password: Option<String>,
     #[serde(default)]
     pub pid: Option<u32>,
     #[serde(default)]
@@ -214,6 +226,10 @@ pub struct QemuState {
     /// inherit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<crate::egress::EgressPolicy>,
+    /// Its network settings ([`crate::network`]); `None`: kept from before
+    /// them (its egress policy is migrated at start). Forks inherit them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
     /// The current run is inside its own network namespace (pasta), where
     /// the egress policy is enforced.
     #[serde(default)]
@@ -221,6 +237,11 @@ pub struct QemuState {
     /// pasta, holding that namespace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pasta_pid: Option<u32>,
+    /// The current run's network goes through the Cua network gateway
+    /// (macOS and Windows hosts): its readiness-probe endpoint
+    /// ([`crate::netgw::probe`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_control: Option<String>,
     #[serde(default)]
     pub extra_args: Vec<String>,
     /// Internal (`savevm`) snapshots taken while running.
@@ -274,6 +295,54 @@ pub struct QemuState {
     /// cold; a memory restore keeps the device set of the snapshot it loads.
     #[serde(default)]
     pub bulk: bool,
+    /// swtpm TPM 2.0 with state in `tpm/` of the entry directory; set at
+    /// creation for Windows on ARM; forks and checkpoints keep it.
+    #[serde(default)]
+    pub tpm: bool,
+}
+
+/// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
+fn is_windows_arm(os: GuestOs, arch: Arch) -> bool {
+    os == GuestOs::Windows && arch == Arch::Aarch64
+}
+
+/// Whether this host can run a Windows-on-ARM guest.
+fn windows_arm_host(os: GuestOs, guest: Arch, host: Arch, host_os: host::HostOs) -> Result<()> {
+    if !is_windows_arm(os, guest) {
+        return Ok(());
+    }
+    if host != Arch::Aarch64 {
+        return Err(VmmError::invalid(format!(
+            "Windows on ARM guests need an arm64 host (Apple silicon, or arm64 Linux with KVM); this host is {host}"
+        )));
+    }
+    if host_os == host::HostOs::Windows {
+        return Err(VmmError::invalid(
+            "Windows on ARM guests need swtpm for their TPM, which runs on macOS and Linux hosts only",
+        ));
+    }
+    Ok(())
+}
+
+/// Windows 11 needs 4 GB; `cua-vmm` cannot tell the 2048 MB default from an
+/// explicit 2048, so a smaller ask is raised.
+fn guest_memory_mb(os: GuestOs, arch: Arch, asked: u64) -> u64 {
+    if is_windows_arm(os, arch) {
+        asked.max(4096)
+    } else {
+        asked
+    }
+}
+
+/// A TPM VM's state cannot follow `what`: refuse before anything changes.
+fn refuse_tpm(st: &QemuState, what: &str) -> Result<()> {
+    if st.tpm {
+        return Err(VmmError::invalid(format!(
+            "'{}' has a TPM, whose state cannot follow {what}; stop it first",
+            st.name
+        )));
+    }
+    Ok(())
 }
 
 /// What `qemu` (a `qemu-system-*` binary) offers for virgl on this host:
@@ -321,6 +390,8 @@ pub async fn virgl_host(qemu: &std::path::Path) -> crate::gpu::VirglHost {
 pub struct QemuRuntime {
     cfg: QemuConfig,
     lock: Mutex<()>,
+    /// One lock per VM name (see [`Self::own`]).
+    vm_locks: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Serializes recording golden snapshots.
     golden_lock: Mutex<()>,
     /// VMs admitted whose launch has not finished (within
@@ -349,10 +420,23 @@ const LAYERS: &str = "_layers";
 const RUN_LINKS: &str = "_run";
 
 impl QemuRuntime {
+    /// Serializes whatever starts, stops, saves or copies VM `name`. Taken
+    /// before `self.lock`, never while holding it, and never while holding
+    /// another VM lock.
+    async fn own(&self, name: &str) -> Owner {
+        let lock = {
+            let mut locks = self.vm_locks.lock().unwrap_or_else(|e| e.into_inner());
+            locks.retain(|_, l| Arc::strong_count(l) > 1);
+            locks.entry(name.to_string()).or_default().clone()
+        };
+        Arc::new(lock.lock_owned().await)
+    }
+
     pub fn new(cfg: QemuConfig) -> Self {
         Self {
             cfg,
             lock: Mutex::new(()),
+            vm_locks: Default::default(),
             golden_lock: Mutex::new(()),
             pending: Default::default(),
             gc_asked: Default::default(),
@@ -612,13 +696,42 @@ impl QemuRuntime {
             return Ok(Firmware::Bios);
         }
         let bin = self.binary(arch).await?;
-        let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
+        let windows_arm = is_windows_arm(os, arch);
+        let cua_dir = host::cua_home().join("firmware").join("aavmf");
+        let override_dir = std::env::var_os(firmware::AAVMF_DIR_ENV)
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from);
+        let fw = (if windows_arm {
+            let real = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
+            let dirs = firmware::windows_arm_dirs(override_dir.as_deref(), &cua_dir, &bin, &real);
+            firmware::find_windows_arm(&dirs, |p| p.is_file())
+        } else {
+            firmware::find_uefi(arch, &bin)
+        })
+        .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                format!(
-                    "install edk2 (Homebrew qemu ships it; {})",
-                    QemuPackageManager::linux_hint()
-                ),
+                if let (true, Some(dir)) = (windows_arm, &override_dir) {
+                    format!(
+                        "{}={} does not hold AAVMF_CODE.secboot.fd and AAVMF_VARS.ms.fd",
+                        firmware::AAVMF_DIR_ENV,
+                        dir.display()
+                    )
+                } else if windows_arm {
+                    format!(
+                        "Windows on ARM needs a Secure Boot UEFI pair, AAVMF_CODE.secboot.fd and \
+                         AAVMF_VARS.ms.fd (Debian's qemu-efi-aarch64 package has them): put both \
+                         in {} or set {} to their directory; see \
+                         https://cua.ai/docs/cua-sdk/guides/local-runtimes#windows-on-arm",
+                        cua_dir.display(),
+                        firmware::AAVMF_DIR_ENV
+                    )
+                } else {
+                    format!(
+                        "install edk2 (Homebrew qemu ships it; {})",
+                        QemuPackageManager::linux_hint()
+                    )
+                },
             )
         })?;
         match fw.vars_template {
@@ -665,6 +778,18 @@ impl QemuRuntime {
             }
             let (os, want) = boot_hints(backing, arch, spec_like).await;
             let firmware = self.setup_firmware(&dir, arch, os, want).await?;
+            let tpm = is_windows_arm(os, arch);
+            if tpm {
+                std::fs::create_dir_all(dir.join("tpm"))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        dir.join("tpm"),
+                        std::fs::Permissions::from_mode(0o700),
+                    )?;
+                }
+            }
             Ok(QemuState {
                 name: name.to_string(),
                 kind: EntryKind::Instance,
@@ -680,13 +805,17 @@ impl QemuRuntime {
                 ports: BTreeMap::new(),
                 vnc_display: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 pid: None,
                 accel: String::new(),
                 ssh: spec_like.ssh.clone(),
                 restrict_network: spec_like.restrict_network,
                 egress: None,
+                network: None,
                 netns: false,
                 pasta_pid: None,
+                gateway_control: None,
                 extra_args: spec_like.extra_args.clone(),
                 snapshots: Vec::new(),
                 paused: false,
@@ -702,6 +831,7 @@ impl QemuRuntime {
                 shared_memory: spec_like.forkable,
                 pinned: false,
                 bulk: false,
+                tpm,
             })
         }
         .await;
@@ -752,6 +882,22 @@ impl QemuRuntime {
         boot: Boot,
         persist: bool,
     ) -> Result<()> {
+        windows_arm_host(st.os, st.arch, Arch::host(), host::HostOs::current())?;
+        let floored;
+        let spec = if guest_memory_mb(st.os, st.arch, spec.memory_mb) > spec.memory_mb {
+            tracing::info!(
+                sandbox = %st.name,
+                asked = spec.memory_mb,
+                "Windows 11 needs 4 GB; giving the VM 4096 MB"
+            );
+            floored = StartSpec {
+                memory_mb: guest_memory_mb(st.os, st.arch, spec.memory_mb),
+                ..spec.clone()
+            };
+            &floored
+        } else {
+            spec
+        };
         self.admit_waiting(
             &st.name,
             spec.cpus,
@@ -969,12 +1115,36 @@ impl QemuRuntime {
         persist: bool,
         force_tcg: bool,
     ) -> Result<()> {
+        let owner = boot.owner.clone();
         let bin = self.binary(st.arch).await?;
-        let dir = st
-            .disk
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.dir(&st.name));
+        let dir = self.run_dir(st);
+        let tpm_dir = dir.join("tpm");
+        let tpm_env: Option<(PathBuf, PathBuf)> = if st.tpm {
+            #[cfg(not(unix))]
+            return Err(VmmError::invalid("TPM requires a Unix host"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if owner.is_none() {
+                    return Err(VmmError::invalid(format!(
+                        "the TPM of '{}' is only launched by a start that owns the VM",
+                        st.name
+                    )));
+                }
+                let bin = host::which("swtpm").ok_or_else(|| {
+                    VmmError::missing(
+                        "swtpm",
+                        "install it (macOS: brew install swtpm; Debian/Ubuntu: sudo apt-get install swtpm) and add it to PATH",
+                    )
+                })?;
+                self.stop_tpm(st).await?;
+                std::fs::create_dir_all(&tpm_dir)?;
+                std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
+                Some((bin, tpm_dir.clone()))
+            }
+        } else {
+            None
+        };
         let mut guest_ports: Vec<u16> = spec.ports.clone();
         if st.ssh.is_some() && !guest_ports.contains(&22) {
             guest_ports.push(22);
@@ -999,13 +1169,41 @@ impl QemuRuntime {
             };
             qmp_port
         };
+        // QMP and the display only for this process (see `qmp_socket`).
+        st.qmp_socket = Some(qmp_listen(&dir, &st.name));
+        st.vnc_password = st.vnc_display.map(|_| vnc_password());
         // An egress policy that blocks anything: the VM runs inside its
         // own network namespace, where the policy is enforced
         // ([`netns_script`]).
-        let netns_rules = match st.egress.as_ref() {
-            Some(p) => Some(crate::egress::check(BackendKind::Qemu, p)?)
-                .filter(crate::egress::Rules::blocks_anything),
-            None => None,
+        //
+        // Under the secure default ([`crate::network`]) every VM on Linux
+        // runs in that namespace, policy or not: its network settings are
+        // compiled there (the host's own addresses closed, pasta's resolver
+        // open on 53) and the host's loopback is out of reach (`--no-map-gw`;
+        // `10.0.2.2` is the namespace's own loopback). On macOS and Windows
+        // the Cua network gateway enforces them instead.
+        let secure = secure_netns();
+        let netns_rules = if secure {
+            Some(
+                crate::network::vm_rules(
+                    st.network.as_ref(),
+                    st.egress.as_ref(),
+                    st.restrict_network || spec.restrict_network,
+                    &netns_context(),
+                )
+                .map_err(VmmError::from)?,
+            )
+        } else {
+            // Off Linux, under Secure Spaces, the network goes through the
+            // Cua network gateway, policy or not
+            // ([`QemuRuntime::start_gateway`]); its rules are not the
+            // namespace's.
+            let gateway = gateway_mode(st);
+            match st.egress.as_ref() {
+                Some(p) => Some(crate::egress::check(BackendKind::Qemu, p)?)
+                    .filter(|r| !gateway && r.blocks_anything()),
+                None => None,
+            }
         };
         st.accel = if force_tcg {
             "tcg".into()
@@ -1014,7 +1212,18 @@ impl QemuRuntime {
         };
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
-        st.restrict_network = spec.restrict_network;
+        st.restrict_network = spec.restrict_network
+            || st
+                .network
+                .as_ref()
+                .is_some_and(|n| n.preset == crate::network::NetworkPreset::None);
+        // No point to enforce rules on this host (macOS, Windows): no
+        // network at all (`restrict=on`; its published ports still answer)
+        // unless the user chose No protection.
+        if let Some(plan) = crate::network::gate(BackendKind::Qemu, &st.name, &qemu_settings(st))? {
+            st.restrict_network = !matches!(plan, crate::network::NetworkPlan::Open { .. });
+        }
+        st.gateway_control = None;
         if spec.gpu.is_some() {
             st.gpu = spec.gpu.clone();
         }
@@ -1083,6 +1292,14 @@ impl QemuRuntime {
             }
             false => None,
         };
+        // The gateway first: QEMU connects to it as it starts. It ends with
+        // QEMU; the guard ends it if QEMU never comes.
+        let (gateway, mut gateway_guard) = if gateway_mode(st) {
+            let (stream, pid) = self.start_gateway(st, &dir).await?;
+            (Some(stream), GatewayGuard(Some(pid)))
+        } else {
+            (None, GatewayGuard(None))
+        };
         let mut cfg = args::LaunchConfig {
             binary: bin.clone(),
             name: st.name.clone(),
@@ -1095,11 +1312,15 @@ impl QemuRuntime {
             disk_format: st.disk_format.clone(),
             seed_iso: st.seed_iso.clone(),
             install_iso: st.install_iso.clone(),
+            tpm_socket: tpm_env.as_ref().map(|_| tpm_dir.join("swtpm.sock")),
             firmware: st.firmware.clone(),
             forwards: st.ports.iter().map(|(g, h)| (*h, *g)).collect(),
             restrict_network: st.restrict_network,
+            gateway,
             vnc_display: st.vnc_display,
             qmp_port,
+            qmp_listen: st.qmp_socket.clone(),
+            vnc_password: st.vnc_password.is_some(),
             serial_log: Some(dir.join("serial.log")),
             pidfile: Some(pidfile.clone()),
             daemonize: false,
@@ -1127,7 +1348,13 @@ impl QemuRuntime {
         // A create cancelled between the launch and the moment its pid is
         // recorded would leave a running QEMU nothing knows about: the
         // guard ends whatever its pid file names unless the start finished.
-        let mut launch_guard = LaunchGuard::new(dir.join("qemu.pid"));
+        let mut launch_guard = LaunchGuard::new();
+        launch_guard.owner = owner.clone();
+        // Each launch has its own swtpm record, so cleanup can never reach
+        // another launch's TPM through a shared pidfile.
+        let record = tpm_env
+            .as_ref()
+            .map(|_| dir.join(format!("swtpm.{}.pid", unique_suffix())));
 
         // Launch detached: on Unix a throwaway `sh` backgrounds QEMU and exits,
         // so QEMU is re-parented to init (no zombie in long-lived callers) and
@@ -1141,63 +1368,120 @@ impl QemuRuntime {
             // In its namespace: pasta runs the script that installs the
             // rules and then execs QEMU (so the rules are there before
             // the guest's first instruction).
+            let mut relay: Option<PathBuf> = None;
+            let mut tree_argv: Vec<String> = Vec::new();
             let (program, args): (PathBuf, Vec<String>) = match &netns_rules {
                 Some(rules) => {
                     let pasta = host::which("pasta").ok_or_else(|| {
                         VmmError::missing(
                             "pasta",
-                            "install passt (Ubuntu: sudo apt-get install passt): a QEMU VM with \
-                             an egress policy runs in a network namespace pasta creates",
+                            "install passt (Ubuntu: sudo apt-get install passt): a QEMU VM runs \
+                             in a network namespace pasta creates, which keeps it off this \
+                             computer and your local network",
                         )
                     })?;
-                    std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules))?;
+                    std::fs::write(dir.join(NETNS_SCRIPT), netns_script(rules, !secure))?;
+                    // Its tree: the relay in the namespace, with a monitor
+                    // of its own to publish a guest port on the
+                    // namespace's loopback when a member connects; or a
+                    // refusal when its tree has running members and the
+                    // relay is missing (fail closed).
+                    let tree_qmp = tree_qmp_listen();
+                    relay = crate::tree::prepare_linux(
+                        &tree_key(&st.name),
+                        None,
+                        &dir,
+                        crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+                        args::GUEST_IP,
+                        Some(&tree_qmp),
+                    )?;
+                    if relay.is_some() {
+                        tree_argv = vec!["-qmp".into(), format!("{tree_qmp},server=on,wait=off")];
+                    }
                     let mut ports: Vec<u16> = st.ports.values().copied().collect();
-                    ports.push(qmp_port);
+                    if st.qmp_socket.is_none() {
+                        ports.push(qmp_port);
+                    }
                     if let Some(d) = st.vnc_display {
                         ports.push(5900 + d);
                     }
-                    let mut a = netns_pasta_args(&ports);
+                    let localhost = if secure {
+                        crate::network::vm_localhost_ports(st.network.as_ref())
+                            .map_err(VmmError::from)?
+                    } else {
+                        Vec::new()
+                    };
+                    let mut a = netns_pasta_args(
+                        &ports,
+                        &localhost,
+                        crate::pasta::supports_host_lo(&pasta),
+                    );
                     a.push(NETNS_SCRIPT.into());
                     a.push(bin.display().to_string());
                     a.extend(argv.iter().cloned());
+                    a.extend(tree_argv.iter().cloned());
                     (pasta, a)
                 }
                 None => (bin.clone(), argv.clone()),
             };
-            // The launch runs in its own task: a cancel that drops this
-            // future after the shell started QEMU but before we have its
-            // pid must still end that QEMU (the task checks the flag).
-            let abandoned = launch_guard.abandoned.clone();
-            let pid_cell = launch_guard.pid_cell.clone();
+            // The shell runs to completion even when this future is dropped;
+            // then the undo ends exactly this launch's QEMU and TPM record.
+            let tpm_log = tpm_env.as_ref().map_or(String::new(), |_| {
+                format!("; see {}", dir.join("swtpm.log").display())
+            });
             let (program2, args2, log2, dir2) =
                 (program.clone(), args.clone(), log_path.clone(), dir.clone());
-            let pid = tokio::spawn(async move {
-                let out = tokio::process::Command::new("/bin/sh")
+            let relay2 = relay.clone().unwrap_or_default();
+            let (record2, tpm_dir2) = (record.clone(), tpm_dir.clone());
+            let (record3, tpm_dir3) = (record.clone(), tpm_dir.clone());
+            let create = async move {
+                let mut command = tokio::process::Command::new("/bin/sh");
+                if let (Some((swtpm, tpm_dir)), Some(record)) = (&tpm_env, &record2) {
+                    command
+                        .env("CUA_SWTPM", swtpm)
+                        .env("CUA_TPM_DIR", tpm_dir)
+                        .env("CUA_TPM_RECORD", record);
+                }
+                let out = command
                     .arg("-c")
-                    .arg("\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!")
+                    .arg(if tpm_env.is_some() {
+                        TPM_LAUNCH
+                    } else {
+                        QEMU_LAUNCH
+                    })
                     .arg(&program2)
                     .args(&args2)
                     .env("CUA_QEMU_LOG", &log2)
+                    .env("CUA_NETGW_BIN", &relay2)
                     .current_dir(&dir2)
                     .output()
-                    .await?;
-                let pid = String::from_utf8_lossy(&out.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        VmmError::other(format!("could not launch {}: {e}", program2.display()))
-                    })?;
-                // Publish the pid, then look at the flag: the guard sets the
-                // flag, then looks at the pid; one of the two sees the other.
-                pid_cell.store(pid, std::sync::atomic::Ordering::SeqCst);
-                if abandoned.load(std::sync::atomic::Ordering::SeqCst) {
-                    end_launched(pid).await;
+                    .await;
+                let failed = match out {
+                    Ok(out) => match String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
+                        Ok(pid) => return Ok::<u32, VmmError>(pid),
+                        Err(e) => VmmError::other(format!(
+                            "could not launch {}: {e}{tpm_log}",
+                            program2.display()
+                        )),
+                    },
+                    Err(e) => e.into(),
+                };
+                if let Some(record) = &record2 {
+                    let _ = end_record(record, &tpm_dir2).await;
                 }
-                Ok::<u32, VmmError>(pid)
-            })
-            .await
-            .map_err(|e| VmmError::other(format!("launching qemu: {e}")))??;
+                Err(failed)
+            };
+            let owner2 = owner.clone();
+            let undo = move |pid: u32| async move {
+                let _owner = owner2;
+                end_launched(pid).await;
+                if let Some(record) = &record3 {
+                    let _ = end_record(record, &tpm_dir3).await;
+                }
+            };
+            let pid = crate::cleanup::complete_or_undo(create, undo).await?;
             launch_guard.pid = Some(pid);
+            launch_guard.tpm = record.map(|r| (r, tpm_dir.clone()));
             st.pid = Some(pid);
             if netns_rules.is_some() {
                 st.pasta_pid = Some(pid);
@@ -1208,12 +1492,14 @@ impl QemuRuntime {
         {
             // Off Linux a policy is refused before this (egress::check).
             debug_assert!(netns_rules.is_none());
+            let _ = &record; // TPM VMs are refused above off Unix.
             let log = std::fs::File::create(&log_path)?;
             let child = std::process::Command::new(&bin)
                 .args(&argv)
                 .stdout(log.try_clone()?)
                 .stderr(log)
                 .spawn()?;
+            launch_guard.pid = Some(child.id());
             st.pid = Some(child.id());
         }
         if persist {
@@ -1233,7 +1519,7 @@ impl QemuRuntime {
                     ),
                 });
             }
-            match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
+            match QmpClient::connect(&qmp_addr(st)?).await {
                 Ok(q) => {
                     if st.netns {
                         // QEMU is pasta's child: that is the VM's process.
@@ -1263,7 +1549,17 @@ impl QemuRuntime {
                 "qemu started but VM status is '{status}'"
             )));
         }
+        // The display opens only with its password (QEMU refuses every
+        // VNC login until one is set).
+        if let Some(pw) = &st.vnc_password {
+            q.execute(
+                "set_password",
+                Some(serde_json::json!({"protocol": "vnc", "password": pw})),
+            )
+            .await?;
+        }
         launch_guard.disarm();
+        gateway_guard.0 = None;
         Ok(())
     }
 
@@ -1288,12 +1584,16 @@ impl QemuRuntime {
             vnc: st.vnc_display.map(|d| VncEndpoint {
                 host: host.clone(),
                 port: 5900 + d,
-                password: None,
+                password: st.vnc_password.clone(),
             }),
-            qmp: st.qmp_port.map(|p| HostPort {
-                host: host.clone(),
-                port: p,
-            }),
+            // A unix socket or named pipe is no host port.
+            qmp: st
+                .qmp_port
+                .filter(|_| st.qmp_socket.is_none())
+                .map(|p| HostPort {
+                    host: host.clone(),
+                    port: p,
+                }),
             serial_log: Some(self.dir(&st.name).join("serial.log")),
             bulk: st.bulk.then(|| self.dir(&st.name).join(crate::bulk::FILE)),
             ssh: match (&st.ssh, st.ports.get(&22)) {
@@ -1318,15 +1618,16 @@ impl QemuRuntime {
                 "sandbox '{name}' is not running"
             )));
         }
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        QmpClient::connect(&format!("127.0.0.1:{port}")).await
+        QmpClient::connect(&qmp_addr(&st)?).await
     }
 
     /// Restore an internal snapshot taken by [`Runtime::checkpoint`] on a
     /// running instance (in place, RAM included).
     pub async fn restore(&self, name: &str, snapshot: &str) -> Result<()> {
+        refuse_tpm(
+            &self.load(name)?,
+            "an in-place restore (restore by forking a stopped checkpoint)",
+        )?;
         let mut q = self.qmp(name).await?;
         q.loadvm(snapshot).await?;
         let mut st = self.load(name)?;
@@ -1367,6 +1668,40 @@ impl QemuRuntime {
             }
             other => other.clone(),
         })
+    }
+
+    /// Copy the TPM state of `from` (stopped) into `to_dir/tpm`. Files are
+    /// copied, never linked; anything but plain files is an error.
+    fn copy_tpm(&self, from: &QemuState, to_dir: &Path) -> Result<()> {
+        if !from.tpm {
+            return Ok(());
+        }
+        // The disk of a checkpoint lives in the layer store: use the entry.
+        let src = self.dir(&from.name).join("tpm");
+        self.tpm_stopped(from)?;
+        let dst = to_dir.join("tpm");
+        std::fs::create_dir_all(&dst)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o700))?;
+        }
+        for entry in std::fs::read_dir(&src)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == "swtpm.sock" || name == ".lock" {
+                continue;
+            }
+            if !entry.file_type()?.is_file() {
+                return Err(VmmError::other(format!(
+                    "TPM state of '{}' holds {}, which is not a plain file",
+                    from.name,
+                    name.to_string_lossy()
+                )));
+            }
+            std::fs::copy(entry.path(), dst.join(&name))?;
+        }
+        Ok(())
     }
 
     /// Collects unreferenced layers after a removal. The collection reads
@@ -1423,6 +1758,21 @@ impl QemuRuntime {
         Ok(())
     }
 
+    /// The bootable instances under this runtime's root: [`Runtime::list`]
+    /// without the bases and checkpoints it also keeps there.
+    pub fn instances(&self) -> Result<Vec<InstanceSummary>> {
+        Ok(self
+            .all_states()?
+            .iter()
+            .filter(|st| st.kind == EntryKind::Instance)
+            .map(|st| InstanceSummary {
+                name: st.name.clone(),
+                backend: BackendKind::Qemu,
+                status: Self::status_of(st),
+            })
+            .collect())
+    }
+
     fn all_states(&self) -> Result<Vec<QemuState>> {
         let Ok(rd) = std::fs::read_dir(&self.cfg.root) else {
             return Ok(vec![]);
@@ -1458,6 +1808,51 @@ impl QemuRuntime {
         !host::pid_alive(pid)
     }
 
+    /// The directory a VM runs in (where its pidfiles and `tpm/` live). A
+    /// checkpoint's or base's disk lives in a shared store, so those use
+    /// their entry.
+    fn run_dir(&self, st: &QemuState) -> PathBuf {
+        match st.kind {
+            EntryKind::Instance => st.disk.parent().map(Path::to_path_buf),
+            EntryKind::Base | EntryKind::Checkpoint => None,
+        }
+        .unwrap_or_else(|| self.dir(&st.name))
+    }
+
+    /// End every swtpm this VM launched; a record goes only once its swtpm
+    /// has exited. The first failure is returned after trying them all.
+    async fn stop_tpm(&self, st: &QemuState) -> Result<()> {
+        let tpm_dir = self.run_dir(st).join("tpm");
+        let mut first = None;
+        for record in tpm_records(&self.run_dir(st))? {
+            if let Err(e) = end_record(&record, &tpm_dir).await {
+                first.get_or_insert(e);
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    /// Refuse while any swtpm of this VM is alive (or cannot be told apart
+    /// from one). Signals and removes nothing.
+    fn tpm_stopped(&self, st: &QemuState) -> Result<()> {
+        if !st.tpm {
+            return Ok(());
+        }
+        let run = self.run_dir(st);
+        let tpm_dir = run.join("tpm");
+        for record in tpm_records(&run)? {
+            if let Some(pid) = record_pid(&record)?
+                && swtpm_state(pid, &record, &tpm_dir) != Tpm::Gone
+            {
+                return Err(VmmError::invalid(format!(
+                    "the TPM of '{}' is still running (swtpm {pid}); stop the VM first",
+                    st.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
         // A stopped VM holds no memory, whatever it was still expected to
         // grow to.
@@ -1466,7 +1861,7 @@ impl QemuRuntime {
             st.pid = None;
             self.drop_aliases(Some(&self.dir(&st.name)));
             Self::end_netns(st);
-            return Ok(());
+            return self.stop_tpm(st).await;
         };
         if !graceful.is_zero() {
             let wait = if let Ok(mut q) = self.qmp(&st.name).await {
@@ -1482,7 +1877,7 @@ impl QemuRuntime {
                 st.pid = None;
                 self.drop_aliases(Some(&self.dir(&st.name)));
                 Self::end_netns(st);
-                return Ok(());
+                return self.stop_tpm(st).await;
             }
         }
         let quit = match self.qmp(&st.name).await {
@@ -1501,7 +1896,87 @@ impl QemuRuntime {
         st.pid = None;
         self.drop_aliases(Some(&self.dir(&st.name)));
         Self::end_netns(st);
-        Ok(())
+        self.stop_tpm(st).await
+    }
+
+    /// Writes the network gateway's rules and configuration into `dir` and
+    /// starts it: the guest gets QEMU's user-network layout (10.0.2.15
+    /// behind 10.0.2.2, DNS on 10.0.2.2 and 10.0.2.3), and the gateway
+    /// publishes the VM's ports on the host's loopback. Returns where QEMU
+    /// connects, and the gateway's pid.
+    async fn start_gateway(
+        &self,
+        st: &mut QemuState,
+        dir: &Path,
+    ) -> Result<(args::NetStream, u32)> {
+        let bin = crate::netgw::bin().ok_or_else(crate::netgw::missing)?;
+        let (rules, domains) = gateway_rules(st)?;
+        crate::netgw::write_rules_named(dir, &rules, &domains)?;
+        let (stream, listen, control) = if cfg!(unix) {
+            // Unix socket paths are short (104 bytes): a folder of its own
+            // under the temporary directory.
+            let run = gateway_run_dir(dir);
+            let _ = std::fs::remove_dir_all(&run);
+            std::fs::create_dir_all(&run)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let q = run.join("q.sock");
+            let c = run.join("c.sock");
+            (
+                args::NetStream::Unix(q.clone()),
+                format!("unix://{}", q.display()),
+                format!("unix://{}", c.display()),
+            )
+        } else {
+            let ports = host::free_ports(2)?;
+            (
+                args::NetStream::Tcp(ports[0]),
+                format!("tcp://127.0.0.1:{}", ports[0]),
+                format!("tcp://127.0.0.1:{}", ports[1]),
+            )
+        };
+        let net = crate::netgw::Network {
+            subnet: GATEWAY_SUBNET,
+            gateway_ip: GATEWAY_IP,
+            gateway_mac: GATEWAY_MAC,
+            // QEMU's user network has the host at its gateway address.
+            host_ip: Some(GATEWAY_IP),
+            dhcp: true,
+            static_leases: [(args::GUEST_IP.to_string(), args::GUEST_MAC.to_string())].into(),
+            vfkit: None,
+            qemu: Some(listen),
+            dns_ips: vec![GATEWAY_DNS_IP.into()],
+            forwards: st
+                .ports
+                .iter()
+                .map(|(g, h)| (format!("127.0.0.1:{h}"), format!("{}:{g}", args::GUEST_IP)))
+                .collect(),
+            control: Some(control.clone()),
+        };
+        // Its tree: the gateway carries connections to the tree's running
+        // members and takes theirs ([`crate::tree`]).
+        let joined = crate::tree::join(
+            &tree_key(&st.name),
+            None,
+            dir,
+            crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+        )?;
+        let mut config = crate::netgw::config(&net);
+        config["tree"] = crate::tree::GatewayTree {
+            sock: joined.sock,
+            guest_ip: args::GUEST_IP.to_string(),
+        }
+        .config();
+        std::fs::write(
+            dir.join(crate::netgw::CONFIG_FILE),
+            serde_json::to_vec_pretty(&config)?,
+        )?;
+        let pid = crate::netgw::start(&bin, dir, Duration::from_secs(10)).await?;
+        st.gateway_control = Some(control);
+        Ok((stream, pid))
     }
 
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
@@ -1512,6 +1987,8 @@ impl QemuRuntime {
             host::signal(p, "TERM");
         }
         st.netns = false;
+        // Its tree stops sending it connections.
+        let _ = crate::tree::leave(&tree_key(&st.name));
     }
 }
 
@@ -1522,6 +1999,7 @@ impl QemuRuntime {
     /// The guest's disk, ports and token are kept; its memory and running
     /// processes are not. A VM forked from a memory snapshot boots cold.
     async fn boot_from_disk(&self, name: &str, shape: &Resize) -> Result<Instance> {
+        let owner = self.own(name).await;
         let mut st = self.load(name)?;
         {
             let _g = self.lock.lock().await;
@@ -1570,6 +2048,8 @@ impl QemuRuntime {
         spec.probes = shape.probes.clone();
         spec.labels.insert(KEEP_SEED_LABEL.into(), "1".into());
         spec.labels.insert(KEEP_PORTS_LABEL.into(), "1".into());
+        // `start` takes the VM lock again and reloads the state.
+        drop(owner);
         self.start(&spec).await
     }
 
@@ -1582,6 +2062,12 @@ impl QemuRuntime {
         for probe in &spec.probes {
             loop {
                 let ok = match probe {
+                    Probe::Tcp { port } if st.gateway_control.is_some() => {
+                        let control = st.gateway_control.as_deref().expect("checked");
+                        crate::netgw::probe(control, &format!("{}:{port}", args::GUEST_IP))
+                            .await
+                            .unwrap_or(false)
+                    }
                     Probe::Tcp { port } => self.guest_tcp_established(st, *port).await?,
                     other => crate::probe::check(ep, other).await?,
                 };
@@ -1625,10 +2111,7 @@ impl QemuRuntime {
         // While our connection is open, slirp lists the guest leg of every
         // accepted forward as `TCP[<state>] … 127.0.0.1 <host_port> … <guest_port>`;
         // it only reaches ESTABLISHED once the guest accepted.
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        let mut q = QmpClient::connect(&format!("127.0.0.1:{port}")).await?;
+        let mut q = QmpClient::connect(&qmp_addr(st)?).await?;
         // The guest leg is up within a round trip or two when the guest
         // listens; when it refuses, slirp closes the host side.
         let mut buf = [0u8; 1];
@@ -1757,7 +2240,12 @@ pub(crate) struct Boot {
     /// Keep the host ports (forwards, QMP, VNC) of the last run: the same
     /// VM moved into a new process.
     pub keep_ports: bool,
+    /// The VM's lock; kept by the launch's own cleanup; a TPM launch needs it.
+    pub owner: Option<Owner>,
 }
+
+/// A held per-VM lock (see [`QemuRuntime::own`]).
+pub(crate) type Owner = Arc<tokio::sync::OwnedMutexGuard<()>>;
 
 /// The script pasta runs in a VM's namespace ([`netns_script`]).
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -1776,9 +2264,15 @@ const SLIRP_DNS: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 0, 2, 3);
 /// pasta's arguments for a VM's namespace: its host ports (`ports`, on
 /// loopback) forwarded to the same ports in the namespace, DNS to the
 /// host's resolver through [`DNS_FWD`], no way to the host's own loopback,
-/// then the script.
+/// then the script. `host_lo_to_ns_lo`: this pasta takes the option that
+/// keeps those forwards on the namespace's loopback, where QEMU listens
+/// ([`crate::pasta`]); without it a newer pasta delivers them to the
+/// namespace's public address and the connection is reset.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
+fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) -> Vec<String> {
+    // The `localhost` preset's ports only: the guest reaches them as
+    // `10.0.2.2:<port>` (the namespace's loopback, forwarded to the host's).
+    let out = crate::network::pasta_out_spec(localhost);
     let mut a: Vec<String> = [
         "--config-net",
         "-q",
@@ -1786,7 +2280,7 @@ fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
         "-u",
         "none",
         "-T",
-        "none",
+        out.as_str(),
         "-U",
         "none",
         "--dns-forward",
@@ -1802,6 +2296,9 @@ fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
+    if host_lo_to_ns_lo {
+        a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
+    }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
     }
@@ -1811,32 +2308,163 @@ fn netns_pasta_args(ports: &[u16]) -> Vec<String> {
 
 /// The script run in a VM's namespace before QEMU: the egress rules on
 /// `OUTPUT` (QEMU's user-mode network opens the guest's connections from
-/// QEMU itself), a private `/etc/resolv.conf` naming pasta's DNS forward
-/// (whose verdict is the policy's for the guest's resolver, `10.0.2.3`),
-/// then QEMU (`$@`).
+/// QEMU itself), a private `/etc/resolv.conf` naming pasta's DNS forward,
+/// then QEMU (`$@`). `legacy`: an old policy's rules, where the forward
+/// gets the verdict of the guest's resolver (`10.0.2.3`); compiled network
+/// settings name the forward themselves ([`netns_context`]).
 #[cfg_attr(not(unix), allow(dead_code))]
-fn netns_script(rules: &crate::egress::Rules) -> String {
-    let resolver = crate::egress::Resolver {
-        guest: SLIRP_DNS,
-        forward: DNS_FWD,
-    };
+fn netns_script(rules: &crate::egress::Rules, legacy: bool) -> String {
     format!(
-        "{rules}printf 'nameserver {DNS_FWD}\\n' > \"$PWD/resolv.conf\"\n\
+        "{rules}{tree}{relay}printf 'nameserver {DNS_FWD}\\n' > \"$PWD/resolv.conf\"\n\
          exec unshare -m sh -c 'mount --bind \"$0\" /etc/resolv.conf && exec \"$@\"' \"$PWD/resolv.conf\" \"$@\"\n",
-        rules = crate::egress::ns_script(rules, crate::egress::NsHook::Output, Some(resolver)),
+        rules = netns_rules_script(rules, legacy),
+        tree = crate::tree::ns_shell(crate::egress::NsHook::Output),
+        relay = crate::tree::relay_start(),
     )
 }
 
 /// The rules of a running namespaced VM, refilled ([`netns_script`]'s).
-fn netns_rules_script(rules: &crate::egress::Rules) -> String {
+fn netns_rules_script(rules: &crate::egress::Rules, legacy: bool) -> String {
     crate::egress::ns_script(
         rules,
         crate::egress::NsHook::Output,
-        Some(crate::egress::Resolver {
+        legacy.then_some(crate::egress::Resolver {
             guest: SLIRP_DNS,
             forward: DNS_FWD,
         }),
     )
+}
+
+/// Where a VM's QMP listens: its unix socket or named pipe, else (a VM
+/// an older cua started) its loopback port.
+pub(crate) fn qmp_addr(st: &QemuState) -> Result<String> {
+    qmp_addr_of(st.qmp_socket.as_deref(), st.qmp_port)
+}
+
+fn qmp_addr_of(listen: Option<&str>, port: Option<u16>) -> Result<String> {
+    match (listen, port) {
+        (Some(a), _) => Ok(a.to_string()),
+        (None, Some(port)) => Ok(format!("127.0.0.1:{port}")),
+        (None, None) => Err(VmmError::other("no QMP port recorded")),
+    }
+}
+
+/// Where VM `name`'s QMP listens: on Unix a socket with a random name in a
+/// private (0700) directory of this user, never under the VM's own
+/// directory (a warm-pool member's directory is renamed when a Space claims
+/// it, and the recorded path must stay valid); on Windows a named pipe with
+/// a random name.
+fn qmp_listen(dir: &Path, name: &str) -> String {
+    let _ = (dir, name);
+    #[cfg(unix)]
+    {
+        format!("unix:{}", qmp_socket_path().display())
+    }
+    #[cfg(not(unix))]
+    {
+        format!("pipe:cua-qmp-{}", random_token(16))
+    }
+}
+
+/// A QEMU VM's key in the tree book ([`crate::tree`]).
+fn tree_key(name: &str) -> String {
+    crate::tree::key("qemu", name)
+}
+
+/// The tree relay's own QMP socket on Linux (`unix:<path>`), beside the
+/// VM's own monitor socket and as private ([`qmp_socket_path`]).
+#[cfg_attr(not(unix), allow(dead_code))]
+fn tree_qmp_listen() -> String {
+    #[cfg(unix)]
+    {
+        format!("unix:{}", qmp_socket_path().display())
+    }
+    #[cfg(not(unix))]
+    {
+        String::new()
+    }
+}
+
+/// `<tmp>/cua-qmp-<uid>/<random>.sock`. The directory is created 0700; one
+/// that already exists must be ours and 0700, or the socket goes in a fresh
+/// random directory instead (another user could otherwise have made it
+/// first, in a shared `/tmp`).
+#[cfg(unix)]
+fn qmp_socket_path() -> PathBuf {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let ours = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .is_ok_and(|m| m.is_dir() && m.uid() == uid && m.permissions().mode() & 0o077 == 0)
+    };
+    let mut private = std::env::temp_dir().join(format!("cua-qmp-{uid}"));
+    if !private.exists() {
+        let _ = std::fs::create_dir(&private);
+        let _ = std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700));
+    }
+    if !ours(&private) {
+        private = std::env::temp_dir().join(format!("cua-qmp-{uid}-{}", random_token(12)));
+        let _ = std::fs::create_dir(&private);
+        let _ = std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700));
+    }
+    private.join(format!("{}.sock", random_token(16)))
+}
+
+/// `n` random lowercase hex characters, from the OS's randomness on every
+/// host (the standard library seeds its hasher keys from it).
+fn random_token(n: usize) -> String {
+    use std::hash::{BuildHasher as _, Hasher as _};
+    let mut out = String::new();
+    let mut i = 0u64;
+    while out.len() < n {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(i);
+        out.push_str(&format!("{:016x}", h.finish()));
+        i += 1;
+    }
+    out.truncate(n);
+    out
+}
+
+/// A VNC password for one run (VNC passwords are 8 characters at most).
+fn vnc_password() -> String {
+    random_token(8)
+}
+
+/// A VM's network settings: its own, or its old policy migrated.
+fn qemu_settings(st: &QemuState) -> crate::network::NetworkSettings {
+    st.network.clone().unwrap_or_else(|| {
+        crate::network::NetworkSettings::migrate(
+            &st.egress.clone().unwrap_or_default(),
+            st.restrict_network,
+        )
+    })
+}
+
+/// Whether VMs run in a pasta namespace with compiled network settings:
+/// on Linux, under the secure default.
+fn secure_netns() -> bool {
+    cfg!(target_os = "linux") && crate::network::Mode::from_env() == crate::network::Mode::Secure
+}
+
+/// What a VM's namespace knows for [`crate::network::compile`]: pasta's DNS
+/// forward is the resolver (open on 53); the host's own addresses (pasta
+/// would reach them) and the daemon's ports are closed. The host's loopback
+/// is not mapped at all (`--no-map-gw`), and `10.0.2.2` is the namespace's
+/// own loopback, where only this VM's forwards listen (QMP is a unix
+/// socket).
+fn netns_context() -> crate::network::NetworkContext {
+    crate::network::NetworkContext {
+        resolvers: vec![std::net::IpAddr::V4(DNS_FWD)],
+        host_aliases: vec![],
+        host_addrs: crate::network::host_addresses(),
+        // The tree range: the relay in the namespace carries it to the
+        // tree's running members only ([`crate::tree`]).
+        tree: crate::tree::context_tree(),
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
 }
 
 /// The first child of process `pid` (pasta's command).
@@ -2090,13 +2718,17 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             accel: String::new(),
             ssh: None,
             restrict_network: false,
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
+            gateway_control: None,
             extra_args: vec![],
             snapshots: vec![],
             paused: false,
@@ -2112,6 +2744,7 @@ impl Runtime for QemuRuntime {
             shared_memory: false,
             pinned: false,
             bulk: false,
+            tpm: false,
         };
         self.save(&st)?;
         Ok(CheckpointInfo::now(base_name, BackendKind::Qemu, source))
@@ -2140,11 +2773,30 @@ impl Runtime for QemuRuntime {
             _ => spec,
         };
         validate_name(&spec.name)?;
+        // Its tree (the start spec's), for its tree address and members.
+        crate::tree::assign(&tree_key(&spec.name), spec.tree.as_deref())?;
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::types::reject_mounts(BackendKind::Qemu, spec)?;
         crate::types::reject_injection(BackendKind::Qemu, spec)?;
-        crate::egress::check(BackendKind::Qemu, &spec.egress)?;
+        // Under the secure default a host with no point for rules starts the
+        // VM without network instead of refusing its lists (`launch_once`).
+        if crate::network::gate(
+            BackendKind::Qemu,
+            &spec.name,
+            &crate::network::spec_settings(spec),
+        )?
+        .is_none()
+        {
+            crate::egress::check(BackendKind::Qemu, &spec.egress)?;
+        }
         crate::cloudinit::check_guest_support(spec)?;
+        windows_arm_host(
+            spec.os,
+            spec.effective_arch(),
+            Arch::host(),
+            host::HostOs::current(),
+        )?;
+        let owner = self.own(&spec.name).await;
         let (mut st, fresh_backing) = {
             let _g = self.lock.lock().await;
             match self.load(&spec.name) {
@@ -2206,6 +2858,19 @@ impl Runtime for QemuRuntime {
         if st.egress.is_none() && !spec.egress.is_empty() {
             st.egress = Some(spec.egress.clone());
         }
+        // Network settings: the same (a VM from before them takes the
+        // spec's, else its policy is migrated at launch).
+        if st.network.is_none() {
+            st.network = spec.network.clone();
+        }
+        // A VM asked to have no network gets QEMU's `restrict=on` too.
+        if spec
+            .network
+            .as_ref()
+            .is_some_and(|n| n.preset == crate::network::NetworkPreset::None)
+        {
+            st.restrict_network = true;
+        }
         // A new VM of a configuration with a golden snapshot restores it
         // (recording it first if needed) instead of booting.
         if let Some(backing) = fresh_backing.as_deref()
@@ -2222,6 +2887,7 @@ impl Runtime for QemuRuntime {
             }
         }
 
+        let mut launched = false;
         if !Self::is_running(&st) {
             // Linux guests always get SSH access: the caller's, the one this
             // instance already has, or a managed per-instance key.
@@ -2289,6 +2955,7 @@ impl Runtime for QemuRuntime {
                     free_page_reporting: None,
                     headless: None,
                     keep_ports: spec.labels.contains_key(KEEP_PORTS_LABEL),
+                    owner: Some(owner.clone()),
                 };
                 if let Err(e) = self.launch(&mut st, spec, boot, true).await {
                     let _ = self.force_stop(&mut st, Duration::ZERO).await;
@@ -2298,7 +2965,9 @@ impl Runtime for QemuRuntime {
                 st.last_start = Some("cold".into());
                 self.save(&st)?;
             }
+            launched = true;
         }
+        drop(owner);
         let inst = self.instance(&st);
         if !spec.probes.is_empty() {
             crate::progress::report(crate::progress::Progress::phase(
@@ -2309,11 +2978,21 @@ impl Runtime for QemuRuntime {
         // Booted (or restored) and answering, or not going to: from here on
         // the VM counts what it really uses, not what it was expected to.
         self.release(&st.name);
-        ready?;
+        if let Err(e) = ready {
+            // A start that did not come up must not keep the VM it launched:
+            // nothing lists it, and its memory and vCPUs would count against
+            // every later create on this host until someone found it.
+            if launched {
+                let _ = self.force_stop(&mut st, Duration::from_secs(2)).await;
+                let _ = self.save(&st);
+            }
+            return Err(e);
+        }
         Ok(inst)
     }
 
     async fn stop(&self, name: &str) -> Result<()> {
+        let _owner = self.own(name).await;
         let mut st = self.load(name)?;
         let graceful = self.cfg.graceful_stop;
         self.force_stop(&mut st, graceful).await?;
@@ -2322,6 +3001,7 @@ impl Runtime for QemuRuntime {
     }
 
     async fn suspend(&self, name: &str) -> Result<()> {
+        let _owner = self.own(name).await;
         let mut q = self.qmp(name).await?;
         q.stop().await?;
         let mut st = self.load(name)?;
@@ -2333,8 +3013,10 @@ impl Runtime for QemuRuntime {
     /// ended; its disk is kept) boots again from its own disk, in the shape
     /// it had, as [`Self::resize`] boots it.
     async fn resume(&self, name: &str) -> Result<Instance> {
+        let owner = self.own(name).await;
         let st = self.load(name)?;
         if st.kind == EntryKind::Instance && !Self::is_running(&st) {
+            drop(owner);
             return self.boot_from_disk(name, &Resize::default()).await;
         }
         let mut q = self.qmp(name).await?;
@@ -2399,6 +3081,11 @@ impl Runtime for QemuRuntime {
                 "'{member}' is not a running VM, so it cannot be claimed"
             )));
         }
+        if st.tpm {
+            return Err(VmmError::invalid(format!(
+                "'{member}' has a TPM, whose swtpm is bound to the VM's directory; it cannot be claimed"
+            )));
+        }
         if self.dir(new_name).exists() {
             return Err(VmmError::AlreadyExists(new_name.to_string()));
         }
@@ -2450,16 +3137,23 @@ impl Runtime for QemuRuntime {
 
     async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
         validate_name(new_name)?;
-        let _g = self.lock.lock().await;
-        if self.state_path(new_name).exists() {
-            return Err(VmmError::AlreadyExists(new_name.to_string()));
-        }
         // `vm@snapshot` forks from an internal snapshot (disk state only).
         let (src_name, snapshot) = match source.split_once('@') {
             Some((a, b)) => (a, Some(b)),
             None => (source, None),
         };
+        let _owner = self.own(src_name).await;
+        let _g = self.lock.lock().await;
+        if self.state_path(new_name).exists() {
+            return Err(VmmError::AlreadyExists(new_name.to_string()));
+        }
         let mut src = self.load(src_name)?;
+        if src.tpm && snapshot.is_some() {
+            return refuse_tpm(&src, "a disk snapshot (fork a stopped checkpoint instead)");
+        }
+        if Self::is_running(&src) {
+            refuse_tpm(&src, "a live fork")?;
+        }
         let dir = self.dir(new_name);
         // A running VM forks with its memory: a one-time snapshot in the
         // fork's own directory, restored at the fork's first start.
@@ -2488,6 +3182,8 @@ impl Runtime for QemuRuntime {
                 ports: BTreeMap::new(),
                 vnc_display: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 pid: None,
                 snapshots: vec![],
                 paused: false,
@@ -2508,6 +3204,7 @@ impl Runtime for QemuRuntime {
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
             )));
         }
+        self.tpm_stopped(&src)?;
         let backing = match (snapshot, src.kind) {
             (Some(snap), _) => {
                 // A full copy of the disk at that snapshot.
@@ -2555,6 +3252,10 @@ impl Runtime for QemuRuntime {
             EntryKind::Base => self.setup_firmware(&dir, src.arch, src.os, None).await?,
             _ => self.copy_vars(&src.firmware, &dir)?,
         };
+        if let Err(e) = self.copy_tpm(&src, &dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
         let st = QemuState {
             name: new_name.into(),
             kind: EntryKind::Instance,
@@ -2564,6 +3265,8 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -2593,8 +3296,12 @@ impl Runtime for QemuRuntime {
 
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
         validate_name(checkpoint)?;
+        let _owner = self.own(name).await;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
+        if Self::is_running(&st) {
+            refuse_tpm(&st, "a live checkpoint")?;
+        }
         if Self::is_running(&st) && self.restores_memory() {
             // Live: a memory checkpoint entry (RAM, devices, a copy of the
             // disk layer); forks of it restore that memory with their own
@@ -2616,6 +3323,8 @@ impl Runtime for QemuRuntime {
                 ports: BTreeMap::new(),
                 pid: None,
                 qmp_port: None,
+                qmp_socket: None,
+                vnc_password: None,
                 vnc_display: None,
                 snapshots: vec![],
                 paused: false,
@@ -2680,10 +3389,15 @@ impl Runtime for QemuRuntime {
         if self.state_path(checkpoint).exists() {
             return Err(VmmError::AlreadyExists(checkpoint.to_string()));
         }
+        self.tpm_stopped(&st)?;
         let layer = self.freeze(&mut st).await?;
         self.save(&st)?;
         let dir = self.dir(checkpoint);
         let firmware = self.copy_vars(&st.firmware, &dir)?;
+        if let Err(e) = self.copy_tpm(&st, &dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
         let ck = QemuState {
             name: checkpoint.into(),
             kind: EntryKind::Checkpoint,
@@ -2692,6 +3406,8 @@ impl Runtime for QemuRuntime {
             ports: BTreeMap::new(),
             pid: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             vnc_display: None,
             snapshots: vec![],
             paused: false,
@@ -2723,17 +3439,49 @@ impl Runtime for QemuRuntime {
         name: &str,
         policy: &crate::egress::EgressPolicy,
     ) -> Result<crate::egress::Enforcement> {
-        let rules = crate::egress::check(BackendKind::Qemu, policy)?;
+        let legacy_rules = crate::egress::check(BackendKind::Qemu, policy)?;
+        let _owner = self.own(name).await;
         let _g = self.lock.lock().await;
         let mut st = self.load(name)?;
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
         }
+        if Self::is_running(&st) && !st.netns && legacy_rules.blocks_anything() {
+            refuse_tpm(&st, "a move into a new network namespace")?;
+        }
         let previous = st.egress.replace(policy.clone());
-        if Self::is_running(&st) {
+        let previous_network = st.network.clone();
+        // The lists are its network settings' own lists too.
+        st.network = Some(crate::network::NetworkSettings::with_lists(
+            st.network.take(),
+            policy,
+        ));
+        let secure = secure_netns();
+        let rules = if secure {
+            crate::network::vm_rules(
+                st.network.as_ref(),
+                None,
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?
+        } else {
+            legacy_rules
+        };
+        let (rules, domains) = if gateway_mode(&st) {
+            gateway_rules(&st)?
+        } else {
+            (rules, Default::default())
+        };
+        if gateway_mode(&st) {
+            // The gateway reloads its rules file at once (and closes the
+            // connections they now refuse); a stopped VM's are written at
+            // its next start.
+            crate::netgw::write_rules_named(&self.dir(name), &rules, &domains)?;
+        } else if Self::is_running(&st) {
             let applied = if st.netns {
                 let pid = st.pid.expect("running");
-                crate::egress::ns_apply(pid, &netns_rules_script(&rules)).await
+                crate::egress::ns_apply(pid, &netns_rules_script(&rules, !secure)).await
             } else if rules.blocks_anything() {
                 self.relaunch(&mut st).await
             } else {
@@ -2743,6 +3491,7 @@ impl Runtime for QemuRuntime {
                 if Self::is_running(&st) {
                     // Still in its old process: keep what it had.
                     st.egress = previous;
+                    st.network = previous_network;
                 }
                 let _ = self.save(&st);
                 return Err(e);
@@ -2754,6 +3503,113 @@ impl Runtime for QemuRuntime {
 
     async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
         Ok(self.load(name)?.egress.unwrap_or_default())
+    }
+
+    /// Kept with the VM. In its namespace (Linux) the rules are refilled at
+    /// once, except what pasta fixes at launch (the localhost ports), which
+    /// changes at its next start; elsewhere at its next start.
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        let st = self.load(name)?;
+        if gateway_mode(&st) {
+            // Behind the gateway, which logs every refused connection.
+            return Ok(crate::netgw::read_events(&self.dir(name)));
+        }
+        if !st.netns || !Self::is_running(&st) {
+            return Ok(vec![]);
+        }
+        let Some(pid) = st.pid else {
+            return Ok(vec![]);
+        };
+        let secure = secure_netns();
+        let rules = if secure {
+            crate::network::vm_rules(
+                st.network.as_ref(),
+                st.egress.as_ref(),
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?
+        } else {
+            match st.egress.as_ref() {
+                Some(p) => p.parse()?,
+                None => return Ok(vec![]),
+            }
+        };
+        let labels = crate::egress::ns_drop_labels(
+            &rules,
+            false,
+            (!secure).then_some(crate::egress::Resolver {
+                guest: SLIRP_DNS,
+                forward: DNS_FWD,
+            }),
+        );
+        let counts = crate::egress::ns_counters(pid).await?;
+        // Plus what the tree relay refused (an address outside its tree).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut events =
+            crate::egress::stamp_counted(name, crate::egress::drop_events(&labels, &counts), now);
+        events.extend(crate::netgw::read_events(&self.dir(name)));
+        Ok(crate::egress::merge_events(events))
+    }
+
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        settings.validate()?;
+        let _g = self.lock.lock().await;
+        let mut st = self.load(name)?;
+        if st.kind != EntryKind::Instance {
+            return Err(VmmError::invalid(format!("'{name}' is not a VM instance")));
+        }
+        let before = st.network.clone();
+        st.network = Some(settings.clone());
+        st.egress = Some(settings.custom.split_domains().0);
+        if Self::is_running(&st) {
+            // Whether its tree may still connect to it.
+            crate::tree::set_ingress(
+                &tree_key(name),
+                crate::tree::ingress_for(st.network.as_ref(), st.restrict_network),
+            )?;
+        }
+        let ports_change = crate::network::vm_localhost_ports(before.as_ref()).ok()
+            != crate::network::vm_localhost_ports(Some(settings)).ok();
+        let restrict_change =
+            (settings.preset == crate::network::NetworkPreset::None) != st.restrict_network;
+        let applied = if Self::is_running(&st) && st.netns && secure_netns() {
+            let rules = crate::network::vm_rules(
+                st.network.as_ref(),
+                None,
+                st.restrict_network,
+                &netns_context(),
+            )
+            .map_err(VmmError::from)?;
+            let pid = st.pid.expect("running");
+            crate::egress::ns_apply(pid, &netns_rules_script(&rules, false)).await?;
+            if ports_change || restrict_change {
+                crate::network::Applied::NextStart
+            } else {
+                crate::network::Applied::Now
+            }
+        } else if gateway_mode(&st) {
+            // Behind the gateway: it reloads its rules file at once (and
+            // closes connections they now refuse); a stopped VM reads it
+            // at its next start.
+            let (rules, domains) = gateway_rules(&st)?;
+            crate::netgw::write_rules_named(&self.dir(name), &rules, &domains)?;
+            if Self::is_running(&st) && !restrict_change {
+                crate::network::Applied::Now
+            } else {
+                crate::network::Applied::NextStart
+            }
+        } else {
+            crate::network::Applied::NextStart
+        };
+        self.save(&st)?;
+        Ok(applied)
     }
 
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
@@ -2831,6 +3687,7 @@ impl Runtime for QemuRuntime {
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
+        let owner = self.own(name).await;
         let st = self.load(name)?;
         // A fork made but not started yet restores this checkpoint's memory.
         if st.kind == EntryKind::Checkpoint {
@@ -2855,6 +3712,7 @@ impl Runtime for QemuRuntime {
             self.force_stop(&mut st, Duration::ZERO).await?;
             std::fs::remove_dir_all(self.dir(name))?;
             drop(_g);
+            drop(owner);
             return self.collect_layers().await;
         }
         // Stopping a VM waits on its own process, so it runs outside the
@@ -2868,7 +3726,10 @@ impl Runtime for QemuRuntime {
                 let _ = std::fs::remove_file(snap.state());
             }
             std::fs::remove_dir_all(self.dir(name))?;
+            // The network gateway's socket folder (macOS).
+            let _ = std::fs::remove_dir_all(gateway_run_dir(&self.dir(name)));
         }
+        drop(owner);
         self.collect_layers().await
     }
 
@@ -2877,11 +3738,17 @@ impl Runtime for QemuRuntime {
     }
 
     /// Slirp-aware: whether the guest side of a forwarded connection
-    /// reaches ESTABLISHED (`info usernet`).
+    /// reaches ESTABLISHED (`info usernet`); behind the network gateway,
+    /// whether the gateway can open a connection to the guest's port.
     async fn guest_tcp_listening(&self, name: &str, guest_port: u16) -> Result<Option<bool>> {
         let st = self.load(name)?;
         if !Self::is_running(&st) {
             return Ok(Some(false));
+        }
+        if let Some(control) = st.gateway_control.as_deref() {
+            return crate::netgw::probe(control, &format!("{}:{guest_port}", args::GUEST_IP))
+                .await
+                .map(Some);
         }
         self.guest_tcp_established(&st, guest_port).await.map(Some)
     }
@@ -2894,6 +3761,16 @@ impl Runtime for QemuRuntime {
             .map(|s| Arc::new(SshExec::from_endpoint(s)) as Arc<dyn GuestExec>))
     }
 }
+
+#[cfg(unix)]
+const QEMU_LAUNCH: &str = "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!";
+
+#[cfg(unix)]
+const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_RECORD" --tpmstate "dir=$CUA_TPM_DIR" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
+"$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!"#;
+
+#[cfg(all(test, unix))]
+mod tpm_tests;
 
 /// The snapshot RAM file a VM shares with others, as admission counts it
 /// ([`crate::density`]): a file mapped copy-on-write (`share=off`, a
@@ -2914,6 +3791,20 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
+        use super::gateway_run_dir;
+        use std::path::Path;
+        let long = Path::new("/Users/someone/.cua/vmm/qemu/a-very-long-space-name-for-a-vm");
+        let a = gateway_run_dir(long);
+        let b = gateway_run_dir(Path::new("/Users/someone/.cua/vmm/qemu/another"));
+        assert_ne!(a, b);
+        assert_eq!(a, gateway_run_dir(long), "the same VM, the same folder");
+        assert!(a.starts_with(std::env::temp_dir()));
+        // QEMU and the gateway need a socket path under 104 bytes.
+        assert!(a.join("q.sock").as_os_str().len() < 104, "{}", a.display());
+    }
+
     #[test]
     fn port_conflicts_in_qemu_stderr_are_recognised() {
         assert!(is_port_conflict(
@@ -3160,6 +4051,281 @@ mod tests {
         assert_eq!(left, 0, "unreferenced layers should be garbage-collected");
     }
 
+    #[test]
+    fn windows_arm_host_policy() {
+        use host::HostOs::*;
+        let x86 = "Windows on ARM guests need an arm64 host (Apple silicon, or arm64 Linux with KVM); this host is x86_64";
+        let win = "Windows on ARM guests need swtpm for their TPM, which runs on macOS and Linux hosts only";
+        let msg = |r: Result<()>| match r.unwrap_err() {
+            VmmError::Invalid(m) => m,
+            e => panic!("{e:?}"),
+        };
+        let (w, a) = (GuestOs::Windows, Arch::Aarch64);
+        assert_eq!(msg(windows_arm_host(w, a, Arch::X86_64, Linux)), x86);
+        assert_eq!(msg(windows_arm_host(w, a, Arch::Aarch64, Windows)), win);
+        assert!(windows_arm_host(w, a, Arch::Aarch64, Macos).is_ok());
+        assert!(windows_arm_host(w, a, Arch::Aarch64, Linux).is_ok());
+        assert!(windows_arm_host(GuestOs::Linux, a, Arch::X86_64, Linux).is_ok());
+        assert!(windows_arm_host(w, Arch::X86_64, Arch::X86_64, Linux).is_ok());
+    }
+
+    #[test]
+    fn windows_arm_memory_floor() {
+        let (w, a) = (GuestOs::Windows, Arch::Aarch64);
+        assert_eq!(guest_memory_mb(w, a, 2048), 4096);
+        assert_eq!(guest_memory_mb(w, a, 4096), 4096);
+        assert_eq!(guest_memory_mb(w, a, 8192), 8192);
+        assert_eq!(guest_memory_mb(GuestOs::Linux, a, 2048), 2048);
+        assert_eq!(guest_memory_mb(w, Arch::X86_64, 2048), 2048);
+    }
+
+    #[cfg(unix)]
+    fn invalid(r: Result<impl std::fmt::Debug>) -> String {
+        match r.unwrap_err() {
+            VmmError::Invalid(m) => m,
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    /// A runtime with a base, a stopped TPM VM `vm1`, and its TPM files.
+    async fn tpm_runtime(tmp: &Path) -> Option<QemuRuntime> {
+        if img::qemu_img().is_err() {
+            eprintln!("qemu-img missing; skipping");
+            return None;
+        }
+        let root = tmp.join("qemu");
+        let r = rt(&root);
+        let image = tmp.join("image.qcow2");
+        img::create_blank(&image, 1).await.unwrap();
+        r.ensure_base(&ImageSource::disk(&image), "base")
+            .await
+            .unwrap();
+        let mut base = r.load("base").unwrap();
+        base.arch = Arch::X86_64;
+        r.save(&base).unwrap();
+        r.fork("base", "vm1").await.unwrap();
+        let mut vm = r.load("vm1").unwrap();
+        vm.tpm = true;
+        r.save(&vm).unwrap();
+        let tpm = root.join("vm1/tpm");
+        std::fs::create_dir_all(&tpm).unwrap();
+        std::fs::write(tpm.join("tpm2-00.permall"), b"keys-1").unwrap();
+        Some(r)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tpm_state_follows_stopped_fork_and_checkpoint() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let _sock =
+            std::os::unix::net::UnixListener::bind(root.join("vm1/tpm/swtpm.sock")).unwrap();
+        r.checkpoint("vm1", "ck1").await.unwrap();
+        let (src, ck) = (
+            root.join("vm1/tpm/tpm2-00.permall"),
+            root.join("ck1/tpm/tpm2-00.permall"),
+        );
+        assert_eq!(std::fs::read(&ck).unwrap(), b"keys-1");
+        assert!(!root.join("ck1/tpm/swtpm.sock").exists());
+        assert!(r.load("ck1").unwrap().tpm);
+        assert_ne!(
+            std::fs::metadata(&src).unwrap().ino(),
+            std::fs::metadata(&ck).unwrap().ino()
+        );
+        std::fs::write(&src, b"keys-2").unwrap();
+        assert_eq!(std::fs::read(&ck).unwrap(), b"keys-1");
+        r.fork("ck1", "f1").await.unwrap();
+        assert_eq!(
+            std::fs::read(root.join("f1/tpm/tpm2-00.permall")).unwrap(),
+            b"keys-1"
+        );
+        assert!(r.load("f1").unwrap().tpm);
+        for d in ["ck1", "f1"] {
+            let m = std::fs::metadata(root.join(d).join("tpm")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o700, "{d}");
+        }
+        // A stopped fork of the VM itself carries the current state.
+        r.fork("vm1", "f2").await.unwrap();
+        assert_eq!(
+            std::fs::read(root.join("f2/tpm/tpm2-00.permall")).unwrap(),
+            b"keys-2"
+        );
+
+        let msg = "holds TPM state, which is not copied between hosts";
+        let err = invalid(r.export("ck1").await);
+        assert_eq!(err, format!("checkpoint 'ck1' {msg}"));
+        let mut state = serde_json::to_value(r.load("ck1").unwrap()).unwrap();
+        state["tpm"] = true.into();
+        let err = invalid(r.import("ck2", state, vec![]).await);
+        assert_eq!(err, format!("checkpoint 'ck2' {msg}"));
+    }
+
+    /// A stopped checkpoint's disk lives in the shared layer store; deleting
+    /// it must not treat that store as its run directory.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deleting_a_checkpoint_leaves_a_swtpm_in_the_layer_store_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        r.checkpoint("vm1", "ck1").await.unwrap();
+        let shared = r.load("ck1").unwrap().disk.parent().unwrap().to_path_buf();
+        assert_ne!(shared, r.dir("ck1"), "the checkpoint's disk is shared");
+        let link = super::tpm_tests::fake_swtpm_link(tmp.path());
+        let mut other = super::tpm_tests::spawn_fake(
+            &link,
+            &shared.join("swtpm.other.pid"),
+            &shared.join("tpm"),
+        );
+        r.delete("ck1").await.unwrap();
+        assert!(r.load("ck1").is_err());
+        assert!(
+            other.try_wait().unwrap().is_none(),
+            "a swtpm that is not the checkpoint's was stopped"
+        );
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tpm_copy_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        std::fs::create_dir(root.join("vm1/tpm/nested")).unwrap();
+        assert!(r.checkpoint("vm1", "ck1").await.is_err());
+        assert!(!root.join("ck1").exists());
+        std::fs::remove_dir_all(root.join("vm1/tpm")).unwrap();
+        assert!(r.checkpoint("vm1", "ck2").await.is_err());
+        assert!(!root.join("ck2").exists());
+        assert!(r.load("ck1").is_err() && r.load("ck2").is_err());
+        assert!(r.load("vm1").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fork_and_checkpoint_refuse_a_live_tpm_before_freezing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let link = super::tpm_tests::fake_swtpm_link(tmp.path());
+        let mut fake = super::tpm_tests::spawn_fake(
+            &link,
+            &root.join("vm1/swtpm.a.pid"),
+            &root.join("vm1/tpm"),
+        );
+        let disk = r.load("vm1").unwrap().disk;
+        let count = |r: &QemuRuntime| std::fs::read_dir(r.layers_dir()).map_or(0, |d| d.count());
+        let layers = count(&r);
+        let e = r.checkpoint("vm1", "ck1").await.unwrap_err().to_string();
+        assert!(e.contains("still running"), "{e}");
+        let e = r.fork("vm1", "vm2").await.unwrap_err().to_string();
+        assert!(e.contains("still running"), "{e}");
+        assert_eq!(r.load("vm1").unwrap().disk, disk);
+        assert_eq!(count(&r), layers);
+        assert!(r.load("ck1").is_err() && r.load("vm2").is_err());
+        fake.kill().unwrap();
+        fake.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_copy_waiting_for_its_vm_lets_unrelated_vms_proceed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let r = Arc::new(r);
+        let root = tmp.path().join("qemu");
+        // Each copy of vm1 waits behind its owner while a fork of another
+        // source completes; the copy finishes once vm1 is released.
+        for (other, checkpoint) in [("other1", false), ("other2", true)] {
+            let owner = r.own("vm1").await;
+            let r2 = r.clone();
+            let copy = tokio::spawn(async move {
+                match checkpoint {
+                    true => r2.checkpoint("vm1", "ck1").await.map(drop),
+                    false => r2.fork("vm1", "f1").await,
+                }
+            });
+            // The single-threaded test runtime runs the copy until it waits.
+            for _ in 0..10 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::timeout(Duration::from_secs(10), r.fork("base", other))
+                .await
+                .expect("an unrelated fork completes while a copy waits")
+                .unwrap();
+            assert!(!copy.is_finished(), "the copy waits for vm1");
+            drop(owner);
+            copy.await.unwrap().unwrap();
+        }
+        assert!(root.join("f1/tpm/tpm2-00.permall").exists());
+        assert!(root.join("ck1/tpm/tpm2-00.permall").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn live_tpm_vm_refusals() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(r) = tpm_runtime(tmp.path()).await else {
+            return;
+        };
+        let root = tmp.path().join("qemu");
+        let names = |r: &QemuRuntime| {
+            let mut v: Vec<_> = std::fs::read_dir(&r.cfg.root)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            v.sort();
+            v
+        };
+        let before = names(&r);
+        let refused = |what: &str| {
+            format!("'vm1' has a TPM, whose state cannot follow {what}; stop it first")
+        };
+        // A stopped TPM VM refuses a disk-snapshot fork.
+        assert_eq!(
+            invalid(r.fork("vm1@snap", "x").await),
+            refused("a disk snapshot (fork a stopped checkpoint instead)")
+        );
+        let mut vm = r.load("vm1").unwrap();
+        vm.pid = Some(std::process::id());
+        r.save(&vm).unwrap();
+        assert_eq!(invalid(r.fork("vm1", "x").await), refused("a live fork"));
+        assert_eq!(
+            invalid(r.checkpoint("vm1", "x").await),
+            refused("a live checkpoint")
+        );
+        assert_eq!(
+            invalid(r.restore("vm1", "s").await),
+            refused("an in-place restore (restore by forking a stopped checkpoint)")
+        );
+        let block = crate::egress::EgressPolicy {
+            deny: vec!["all".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            invalid(r.set_egress("vm1", &block).await),
+            refused("a move into a new network namespace")
+        );
+        // A policy that blocks nothing needs no namespace, so it is saved.
+        r.set_egress("vm1", &Default::default()).await.unwrap();
+        assert_eq!(names(&r), before);
+        assert!(!root.join("x").exists());
+    }
+
     #[tokio::test]
     async fn disk_chain_bookkeeping_without_booting() {
         if img::qemu_img().is_err() {
@@ -3249,6 +4415,100 @@ mod tests {
     }
 
     #[test]
+    fn the_secure_default_namespace_closes_the_host_and_opens_dns() {
+        crate::tree::force_enabled_in_this_test();
+        let mut ctx = netns_context();
+        ctx.host_addrs = vec!["10.0.1.5".parse().unwrap()];
+        ctx.daemon_ports = vec![4100];
+        let rules = crate::network::compile_mode(
+            &crate::network::NetworkSettings::internet(),
+            &ctx,
+            crate::network::Mode::Secure,
+        )
+        .unwrap();
+        let s = netns_script(&rules, false);
+        // The tree: QEMU's TCP to the range goes to the relay; anything
+        // else to it stops first in OUTPUT; the relay starts before QEMU.
+        assert!(
+            s.contains(
+                "iptables -t nat -A OUTPUT -d 198.19.0.0/16 -p tcp -j REDIRECT --to-ports 41919"
+            ),
+            "{s}"
+        );
+        assert!(
+            s.contains("iptables -I OUTPUT 1 -d 198.19.0.0/16 -j DROP"),
+            "{s}"
+        );
+        assert!(s.find("-tree-relay").unwrap() < s.find("exec unshare").unwrap());
+        assert!(s.contains("--ctorigdst 198.19.0.0/16 -j ACCEPT"), "{s}");
+        // The relay's own loopback traffic is accepted, a redirected
+        // connection is not (its original destination decides).
+        assert!(
+            s.contains("-o lo -m conntrack ! --ctstate DNAT -j ACCEPT"),
+            "{s}"
+        );
+        // pasta's DNS forward is open on 53 (no legacy verdict line).
+        assert!(
+            s.contains(
+                "-p udp -m conntrack --ctorigdst 169.254.1.53/32 --ctorigdstport 53 -j ACCEPT"
+            ),
+            "{s}"
+        );
+        assert!(!s.contains("-d 169.254.1.53/32 -p udp --dport 53"), "{s}");
+        // The host's own addresses, every address local to the namespace,
+        // metadata and the private ranges are closed.
+        assert!(s.contains("--ctorigdst 10.0.1.5/32 -j DROP"), "{s}");
+        assert!(
+            s.contains("-m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT -j DROP"),
+            "{s}"
+        );
+        assert!(s.contains("--ctorigdst 169.254.169.254/32 -j DROP"), "{s}");
+        assert!(s.contains("--ctorigdst 10.0.0.0/8 -j DROP"), "{s}");
+        // The daemon's port on every local address.
+        assert!(
+            s.contains(
+                "-p tcp -m addrtype --dst-type LOCAL -m conntrack ! --ctstate DNAT --ctorigdstport 4100 -j DROP"
+            ),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn qmp_never_listens_where_the_guest_can_reach_it() {
+        assert_eq!(
+            qmp_addr_of(Some("unix:/s/vm1/qmp.sock"), Some(4444)).unwrap(),
+            "unix:/s/vm1/qmp.sock"
+        );
+        assert_eq!(qmp_addr_of(None, Some(4444)).unwrap(), "127.0.0.1:4444");
+        assert!(qmp_addr_of(None, None).is_err());
+        let a = qmp_listen(Path::new("/s/vm1"), "vm1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let path = PathBuf::from(a.strip_prefix("unix:").unwrap());
+            assert!(
+                !path.starts_with("/s/vm1"),
+                "never under the VM's renamable folder"
+            );
+            assert!(path.as_os_str().len() < 104, "{}", path.display());
+            let dir = path.parent().unwrap();
+            let mode = std::fs::metadata(dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "private folder");
+            assert_ne!(
+                a,
+                qmp_listen(Path::new("/s/vm1"), "vm1"),
+                "a fresh name each run"
+            );
+        }
+        #[cfg(windows)]
+        assert!(a.starts_with("pipe:cua-qmp-"), "{a}");
+        let (p, q) = (vnc_password(), vnc_password());
+        assert_eq!(p.len(), 8);
+        assert_ne!(p, q, "a password per run");
+        assert_ne!(random_token(16), random_token(16));
+    }
+
+    #[test]
     fn a_vm_with_a_policy_runs_in_a_namespace_that_holds_it() {
         let rules = crate::egress::EgressPolicy {
             allow: vec!["1.1.1.1".into()],
@@ -3256,7 +4516,7 @@ mod tests {
         }
         .parse()
         .unwrap();
-        let s = netns_script(&rules);
+        let s = netns_script(&rules, true);
         // The rules, on OUTPUT (QEMU itself opens the guest's
         // connections), then QEMU: never the other way round.
         let rules_at = s.find("iptables-restore --noflush").expect("rules");
@@ -3286,8 +4546,16 @@ mod tests {
         }
         .parse()
         .unwrap();
-        assert!(netns_script(&allowed).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT"));
-        let a = netns_pasta_args(&[4000, 5901]);
+        assert!(
+            netns_script(&allowed, true).contains("-d 169.254.1.53/32 -p udp --dport 53 -j ACCEPT")
+        );
+        let a = netns_pasta_args(&[4000, 5901], &[], false);
+        assert!(a.windows(2).any(|w| w[0] == "-T" && w[1] == "none"));
+        let open = netns_pasta_args(&[4000], &[5432, 3000], false);
+        assert!(
+            open.windows(2).any(|w| w[0] == "-T" && w[1] == "5432,3000"),
+            "{open:?}"
+        );
         let has = |pair: [&str; 2]| a.windows(2).any(|w| w[0] == pair[0] && w[1] == pair[1]);
         assert!(has(["-t", "127.0.0.1/4000:4000"]) && has(["-t", "127.0.0.1/5901:5901"]));
         assert!(has(["--dns-forward", "169.254.1.53"]));
@@ -3296,6 +4564,16 @@ mod tests {
             "no way to the host's loopback"
         );
         assert_eq!(a[a.len() - 2..], ["--".to_string(), "/bin/sh".to_string()]);
+        // An older pasta rejects the option: not passed unless supported.
+        assert!(!a.contains(&"--host-lo-to-ns-lo".to_string()));
+        // A newer one needs it, before the first forward.
+        let new = netns_pasta_args(&[4000, 5901], &[], true);
+        let at = |s: &str| new.iter().position(|x| x == s).unwrap();
+        assert!(
+            at("--host-lo-to-ns-lo") < at("127.0.0.1/4000:4000"),
+            "{new:?}"
+        );
+        assert_eq!(new.len(), a.len() + 1);
     }
 
     #[test]
@@ -4083,18 +5361,156 @@ mod tests {
     }
 }
 
-/// Ends the QEMU a start launched when the start does not finish (its
-/// future dropped by a cancel, or an early error): the pid file QEMU writes
-/// names it even before the caller recorded the pid.
+/// What a recorded pid is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tpm {
+    /// The swtpm of that record.
+    Ours,
+    /// Not alive, or something else now (a reused pid, a zombie).
+    Gone,
+    /// Alive, but `ps` cannot say what it is: never signalled.
+    Unknown,
+}
+
+/// Whether `pid` is the swtpm launched with `record` for `tpm_dir`.
+fn swtpm_state(pid: u32, record: &Path, tpm_dir: &Path) -> Tpm {
+    if pid < 2 {
+        return Tpm::Gone;
+    }
+    let Some(cmd) = host::pid_command(pid) else {
+        return if host::pid_alive(pid) {
+            Tpm::Unknown
+        } else {
+            Tpm::Gone
+        };
+    };
+    // The shared pidfile earlier builds passed, spelled as they spelled it.
+    let file = if record.file_name().is_some_and(|n| n == "swtpm.pid") {
+        format!("file={}/../swtpm.pid", tpm_dir.display())
+    } else {
+        format!("file={}", record.display())
+    };
+    let dir = format!("dir={}", tpm_dir.display());
+    // Linux keeps argument boundaries (and a path with spaces): the program
+    // and arguments must be exactly ours. Elsewhere the program is the text
+    // before the `socket` subcommand.
+    let (is_swtpm, ours) = if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        let args: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+        let exe = std::str::from_utf8(args[0]).unwrap_or_default();
+        (
+            Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
+            args.contains(&file.as_bytes()) && args.contains(&dir.as_bytes()),
+        )
+    } else {
+        text_identity(&cmd, &file, &dir)
+    };
+    if is_swtpm && ours {
+        Tpm::Ours
+    } else {
+        Tpm::Gone
+    }
+}
+
+/// Without argument boundaries the record and directory must be the last
+/// options, in the launch script's order, so no longer path (`tpm -backup`,
+/// `tpm backup`) can pass for it.
+fn names_dir_text(cmd: &str, file: &str, dir: &str) -> bool {
+    cmd.ends_with(&format!("--pid {file} --tpmstate {dir}"))
+}
+
+/// (is swtpm, is this launch's) from `ps` text: the program is the text
+/// before the `socket` subcommand.
+fn text_identity(cmd: &str, file: &str, dir: &str) -> (bool, bool) {
+    let exe = cmd.split_once(" socket ").map_or_else(
+        || cmd.split_whitespace().next().unwrap_or_default(),
+        |(e, _)| e,
+    );
+    (
+        Path::new(exe).file_name().is_some_and(|n| n == "swtpm"),
+        names_dir_text(cmd, file, dir),
+    )
+}
+
+/// The pid a swtpm record holds.
+/// A vanished record is `None`; an unreadable or malformed one is an error,
+/// never "no TPM".
+fn record_pid(record: &Path) -> Result<Option<u32>> {
+    let text = match std::fs::read_to_string(record) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        r => r?,
+    };
+    text.trim().parse::<u32>().map(Some).map_err(|_| {
+        VmmError::other(format!(
+            "the swtpm record {} is malformed; remove it once its TPM is gone",
+            record.display()
+        ))
+    })
+}
+
+/// The swtpm records in a VM's run directory. Only a missing directory is
+/// empty: anything that cannot be listed is an error, never "no TPM".
+fn tpm_records(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        r => r?,
+    };
+    let mut out = Vec::new();
+    for e in entries {
+        let e = e?;
+        let n = e.file_name();
+        let n = n.to_string_lossy();
+        if n.starts_with("swtpm.") && n.ends_with(".pid") {
+            out.push(e.path());
+        }
+    }
+    Ok(out)
+}
+
+/// End the swtpm a record names: TERM, then KILL. The record is removed only
+/// once that swtpm is gone; otherwise it stays and this is an error.
+async fn end_record(record: &Path, tpm_dir: &Path) -> Result<()> {
+    let Some(pid) = record_pid(record)? else {
+        return Ok(());
+    };
+    for (sig, polls) in [("TERM", 20), ("KILL", 10)] {
+        if swtpm_state(pid, record, tpm_dir) != Tpm::Ours {
+            break;
+        }
+        host::signal(pid, sig);
+        for _ in 0..polls {
+            if swtpm_state(pid, record, tpm_dir) != Tpm::Ours {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    if swtpm_state(pid, record, tpm_dir) == Tpm::Gone {
+        let _ = std::fs::remove_file(record);
+        return Ok(());
+    }
+    Err(VmmError::other(format!(
+        "the TPM of '{}' (swtpm {pid}) did not exit",
+        tpm_dir
+            .parent()
+            .and_then(Path::file_name)
+            .unwrap_or_default()
+            .to_string_lossy()
+    )))
+}
+
+/// Ends the QEMU (and the TPM record) a start launched when the start does
+/// not finish, keeping the VM locked until that has run (its future dropped by a cancel, or an early error). The
+/// launch shell itself is covered by `complete_or_undo`; this covers the
+/// time from the reported pid until the start succeeds. It ends only the
+/// pid and record it was handed.
 struct LaunchGuard {
-    pidfile: PathBuf,
     armed: bool,
-    /// Set when dropped armed, for a launch task still in flight.
-    abandoned: Arc<std::sync::atomic::AtomicBool>,
     /// The launched process, once known.
     pid: Option<u32>,
-    /// The pid as the launch task learned it (0: not yet).
-    pid_cell: Arc<std::sync::atomic::AtomicU32>,
+    /// The swtpm record and TPM directory of this launch.
+    tpm: Option<(PathBuf, PathBuf)>,
+    /// The VM's lock, kept until the clean-up has run.
+    owner: Option<Owner>,
 }
 
 /// TERM, then KILL, a QEMU nobody will use.
@@ -4110,13 +5526,12 @@ async fn end_launched(pid: u32) {
 }
 
 impl LaunchGuard {
-    fn new(pidfile: PathBuf) -> Self {
+    fn new() -> Self {
         Self {
-            pidfile,
             armed: true,
-            abandoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pid: None,
-            pid_cell: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            tpm: None,
+            owner: None,
         }
     }
 
@@ -4127,41 +5542,17 @@ impl LaunchGuard {
 
 impl Drop for LaunchGuard {
     fn drop(&mut self) {
-        if !self.armed {
+        if !self.armed || (self.pid.is_none() && self.tpm.is_none()) {
             return;
         }
-        self.abandoned
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        let known =
-            self.pid.or_else(
-                || match self.pid_cell.load(std::sync::atomic::Ordering::SeqCst) {
-                    0 => None,
-                    p => Some(p),
-                },
-            );
-        if let Some(pid) = known {
-            crate::cleanup::spawn(async move { end_launched(pid).await });
-            return;
-        }
-        let pidfile = self.pidfile.clone();
+        let (pid, tpm, owner) = (self.pid, self.tpm.take(), self.owner.take());
         crate::cleanup::spawn(async move {
-            // QEMU writes the file a moment after it starts.
-            for _ in 0..40 {
-                if let Some(pid) = std::fs::read_to_string(&pidfile)
-                    .ok()
-                    .and_then(|t| t.trim().parse::<u32>().ok())
-                {
-                    host::signal(pid, "TERM");
-                    for _ in 0..20 {
-                        if !host::pid_alive(pid) {
-                            return;
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                    host::signal(pid, "KILL");
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+            let _owner = owner;
+            if let Some(p) = pid {
+                end_launched(p).await;
+            }
+            if let Some((r, d)) = tpm {
+                let _ = end_record(&r, &d).await;
             }
         });
     }
@@ -4178,7 +5569,7 @@ mod launch_guard_tests {
             .spawn()
             .unwrap();
         let pid = child.id();
-        let mut g = LaunchGuard::new(PathBuf::from("/nonexistent/qemu.pid"));
+        let mut g = LaunchGuard::new();
         g.pid = Some(pid);
         drop(g);
         assert!(crate::cleanup::settle(Duration::from_secs(10)).await);
@@ -4193,7 +5584,7 @@ mod launch_guard_tests {
             .arg("30")
             .spawn()
             .unwrap();
-        let mut g = LaunchGuard::new(PathBuf::from("/nonexistent/qemu.pid"));
+        let mut g = LaunchGuard::new();
         g.pid = Some(child.id());
         g.disarm();
         drop(g);
@@ -4203,5 +5594,78 @@ mod launch_guard_tests {
         assert!(child.try_wait().unwrap().is_none());
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+}
+
+/// Whether `st`'s network goes through the Cua network gateway: on macOS
+/// and Windows, under Secure Spaces, unless the VM has no network. Without
+/// the experiment QEMU's own user network carries it as it always did.
+fn gateway_mode(st: &QemuState) -> bool {
+    host::HostOs::current() != host::HostOs::Linux
+        && !st.restrict_network
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+}
+
+/// The rules a VM's network gateway enforces (macOS, Windows): its
+/// settings compiled with [`gateway_context`] under the secure default,
+/// else its old policy alone.
+fn gateway_rules(st: &QemuState) -> Result<(crate::egress::Rules, crate::egress::Domains)> {
+    crate::network::vm_rules_named(
+        st.network.as_ref(),
+        st.egress.as_ref(),
+        st.restrict_network,
+        &gateway_context(),
+    )
+    .map_err(VmmError::from)
+}
+
+/// What a VM's gateway knows: the guest's resolver ([`GATEWAY_DNS_IP`])
+/// is open on 53; the host is the gateway's address ([`GATEWAY_IP`]),
+/// opened only by the localhost preset's ports; the host's own addresses
+/// and the daemon's ports stay closed.
+fn gateway_context() -> crate::network::NetworkContext {
+    let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("a valid address") };
+    crate::network::NetworkContext {
+        resolvers: vec![ip(GATEWAY_DNS_IP)],
+        host_aliases: vec![ip(GATEWAY_IP)],
+        host_addrs: crate::network::host_addresses(),
+        // The tree range: the gateway carries it to the tree's running
+        // members only ([`crate::tree`]).
+        tree: crate::tree::context_tree(),
+        other_trees: vec![],
+        daemon_ports: crate::network::daemon_ports(),
+    }
+}
+
+/// The guest's network behind the Cua network gateway: QEMU's user-network
+/// layout, so a guest (or a snapshot of one) made under either works under
+/// the other.
+const GATEWAY_SUBNET: &str = "10.0.2.0/24";
+const GATEWAY_IP: &str = "10.0.2.2";
+const GATEWAY_DNS_IP: &str = "10.0.2.3";
+const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:dd";
+
+/// A short folder for the gateway's Unix sockets of the VM in `dir`.
+fn gateway_run_dir(dir: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(dir.to_string_lossy().as_bytes());
+    std::env::temp_dir().join(format!("cuagw-{}", hex12(&h)))
+}
+
+fn hex12(b: &[u8]) -> String {
+    b.iter().take(6).map(|x| format!("{x:02x}")).collect()
+}
+
+/// Ends a gateway whose QEMU never started (it would end by itself after
+/// two minutes).
+struct GatewayGuard(Option<u32>);
+
+impl Drop for GatewayGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.take()
+            && host::pid_alive(pid)
+        {
+            host::signal(pid, "TERM");
+        }
     }
 }

@@ -14,8 +14,18 @@ use crate::{Connected, ENDPOINT_HARNESSES, HARNESS_IDS, Provider, provider, visi
 /// sign-in) is skipped for every app but its own, even if a provider file
 /// listed it (the generator refuses such a file too).
 pub fn deliver(harness: &str, lookup: &dyn Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
+    deliver_from(harness, None, lookup)
+}
+
+/// [`deliver`] from one provider only (`only`: the provider the person told the
+/// app to use), or from every provider (`None`).
+pub fn deliver_from(
+    harness: &str,
+    only: Option<&str>,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    for p in visible() {
+    for p in visible().filter(|p| only.is_none_or(|o| o == p.id)) {
         for e in p.delivery_for(harness) {
             if p.scope_of(e.src).is_some_and(|s| s != harness) {
                 continue;
@@ -29,6 +39,24 @@ pub fn deliver(harness: &str, lookup: &dyn Fn(&str) -> Option<String>) -> BTreeM
         }
     }
     out
+}
+
+/// Whether `harness` can use a saved credential named `env`: a name it reads,
+/// or the key of a provider it is pointed at by endpoint. A sign-in scoped to
+/// another app (Claude Code's, Codex's) is never one.
+pub fn can_read(harness: &str, env: &str) -> bool {
+    if crate::reads(harness).contains(&env) {
+        return true;
+    }
+    let Some(p) = crate::provider_of_env(env).filter(|p| p.visible()) else {
+        return false;
+    };
+    p.scope_of(env).is_none()
+        && p.delivery_for(harness).is_empty()
+        && p.delivery.iter().all(|d| d.harness != harness)
+        && endpoint_wire(p, harness).is_some()
+        && p.key_method()
+            .is_some_and(|m| m.env == env || m.aliases.contains(&env))
 }
 
 /// The apps that can use `p`, in the order of the Connections page: those it

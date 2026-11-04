@@ -31,9 +31,28 @@ export function agentKeysMethods({ model }: BridgeContext): Handlers {
       const env = optionalString(args, "env");
       if (env) call.env = env;
       Object.assign(call, choices(args));
+      // Another key beside the first one for the provider, named (it replaces nothing).
+      if (args.add === true) call.add = true;
+      const label = optionalString(args, "label");
+      if (label) call.label = label;
       return model.agents.keys.call("agent_keys.set", call);
     },
-    "agentKeys.remove": (args) => model.agents.keys.call("agent_keys.remove", { env: string(args, "env") }),
+    "agentKeys.remove": (args) => {
+      const call: Record<string, unknown> = { env: string(args, "env") };
+      const slot = optionalString(args, "slot");
+      if (slot) call.slot = slot;
+      if (args.keep_others === true) call.keep_others = true;
+      return model.agents.keys.call("agent_keys.remove", call);
+    },
+    // Which saved credential an app that takes any provider uses from its next run (no `env`: the first that works).
+    "agentKeys.use": (args) => {
+      const call: Record<string, unknown> = { app: string(args, "app") };
+      const env = optionalString(args, "env");
+      if (env) call.env = env;
+      const slot = optionalString(args, "slot");
+      if (slot) call.slot = slot;
+      return model.agents.keys.call("agent_keys.use", call);
+    },
     // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
     "agentKeys.shell": () => model.agents.keys.call("agent_keys.shell"),
     "agentKeys.fromShell": (args) => model.agents.keys.call("agent_keys.from_shell", { env: string(args, "env"), ...choices(args) }),

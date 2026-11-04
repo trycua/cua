@@ -1838,6 +1838,16 @@ pub struct AppNotchTile {
     pub progress_label: Option<String>,
     /// Signed in through the Keyvault (and not dismissed): the key badge.
     pub signed_in: bool,
+    /// One of your other machines' desktops, not a Space it provides: the
+    /// tile reads "Desktop" and opens the same desktop the machine's page
+    /// does, creating nothing.
+    pub desktop: bool,
+    /// Pinned to the notch (Pin to notch in the Space's "..." menu): the
+    /// tiles list pinned ones first.
+    pub pinned: bool,
+    /// Why a pinned desktop cannot be opened now ("Offline", "Not
+    /// shared"); `None` while it can. The tile stays, dimmed, and says it.
+    pub note: Option<String>,
 }
 
 /// What the panel shows.
@@ -1880,6 +1890,9 @@ pub struct AppNotchState {
     /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
     /// carry the key.
     pub signed_in: Vec<String>,
+    /// The Spaces and desktops pinned to the notch, in the order they were
+    /// pinned (`AppSettings::notch_pinned`): their tiles come first.
+    pub pinned: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     pub hidden: bool,
@@ -1941,6 +1954,12 @@ pub enum AppNotchEvent {
         label: Option<String>,
         /// The Space ids signed in (their tiles carry the key).
         signed_in: Vec<String>,
+    },
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or settings read at start): their ids in pin order.
+    Pinned {
+        /// The pinned ids.
+        ids: Vec<String>,
     },
 }
 
@@ -4024,7 +4043,7 @@ pub type AppWizardField = core::wizard::WizardField;
 #[uniffi::remote(Record)]
 pub struct AppWizardField {
     /// `os`, `image`, `placement`, `kind`, `runtime`, `connect-cloud`,
-    /// `connect-by-address`, `cpus`, `memory`, `disk`, `name`,
+    /// `cpus`, `memory`, `disk`, `name`,
     /// `open-when-ready`, `address`, `token`, `address-name`.
     pub id: String,
     /// Label (or the link's title).
@@ -4330,6 +4349,59 @@ pub struct KvInventory {
     pub domains: Vec<KvDomainCount>,
     /// Notes.
     pub notes: Vec<String>,
+}
+
+/// One thing a teleport needs from the OS, as the setup sheet shows it
+/// (`cua_keyvault::broker::ReadinessCheck`).
+pub type KvReadinessCheck = core::keyvault::wire::KvReadinessCheck;
+#[uniffi::remote(Record)]
+pub struct KvReadinessCheck {
+    /// `granted`, `denied` or `unknown` (only known by trying).
+    pub state: String,
+    /// What it means and what to do, in plain words (empty when nothing).
+    pub say: String,
+}
+
+/// A browser profile to choose from (`cua_keyvault::broker::BrowserProfile`).
+pub type KvBrowserProfile = core::keyvault::wire::KvBrowserProfile;
+#[uniffi::remote(Record)]
+pub struct KvBrowserProfile {
+    /// Directory name (`Default`, `Profile 1`).
+    pub dir: String,
+    /// The name the person gave it.
+    pub name: String,
+    /// The account signed in to it.
+    pub account: Option<String>,
+    /// The browser used it last.
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now: the Keyvault, what the OS
+/// allows and the profiles to choose from. Reads no value and asks for no
+/// presence (`cua_keyvault::broker::Readiness`, plus the Keyvault's state).
+pub type KvReadiness = core::keyvault::wire::KvReadiness;
+#[uniffi::remote(Record)]
+pub struct KvReadiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// The Keyvault exists.
+    pub keyvault_initialized: bool,
+    /// The Keyvault is unlocked.
+    pub keyvault_unlocked: bool,
+    /// The profile checked: the one asked for, else the last used.
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    pub default_profile: Option<String>,
+    /// Every profile.
+    pub profiles: Vec<KvBrowserProfile>,
+    /// Reading the app's files (Full Disk Access).
+    pub files: KvReadinessCheck,
+    /// Reading the app's open tabs (Automation).
+    pub tabs: KvReadinessCheck,
+    /// The checked profile has no sign-in data.
+    pub profile_empty: bool,
 }
 
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
@@ -6896,6 +6968,29 @@ pub struct AppExperiments {
     /// The shared web UI is the main window. Always on in the macOS shell
     /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
+    /// Secure Spaces: a Space reaches the internet and nothing else on the
+    /// network unless it is opened. Off unless turned on; the daemon enforces
+    /// it (the switch is kept in the cua home).
+    pub secure_spaces: bool,
+    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
+    /// on; the daemon enforces it (the switch is kept in the cua home).
+    pub child_spaces: bool,
+    /// Ask first: an agent asks on a card before something leaves its Space
+    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
+    /// switch is kept in the cua home).
+    pub ask_first: bool,
+    /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+    /// and the CI Runners page). Off unless turned on; the daemon and the
+    /// `cua` command enforce it (the switch is kept in the cua home).
+    pub ci_runners: bool,
+    /// Public TCP shares: a raw TCP service in a Space (a game server) at a
+    /// public address. Off unless turned on; the daemon enforces it (the
+    /// switch is kept in the cua home).
+    pub tcp_shares: bool,
+    /// Mobile: the computer answers the Cua Spaces phone app (its tools and
+    /// push events). Off unless turned on; the daemon enforces it (the switch
+    /// is kept in the cua home).
+    pub mobile: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
@@ -7037,6 +7132,11 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// The Spaces and the machines' desktops pinned to the notch ("Pin to
+    /// notch" in a Space's "..." menu), in the order they were pinned: the
+    /// notch lists them first ([`crate::notch::tiles_pinned`]). Ids only,
+    /// nothing secret; an id whose Space is gone is kept and draws nothing.
+    pub notch_pinned: Vec<String>,
     /// Keyvault rows may load a site's icon from Google's favicon service
     /// when the source browser had none (Settings, Keyvault; on by default).
     /// Off, only icons read locally are shown.
@@ -11070,6 +11170,10 @@ pub struct AppSpaceMenuInput {
     pub can_delete: bool,
     /// You may leave it.
     pub can_leave: bool,
+    /// It can be pinned to the notch (not This machine).
+    pub can_pin: bool,
+    /// It is pinned to the notch now (Unpin from notch).
+    pub pinned: bool,
 }
 
 /// What an item does.
@@ -11092,6 +11196,8 @@ pub enum AppSpaceMenuItemId {
     Delete,
     /// Leaves it (asks first: `spaces.bulkConfirm`).
     Leave,
+    /// Pins it to the notch, or unpins it (the label says which).
+    Pin,
 }
 
 /// One menu item.

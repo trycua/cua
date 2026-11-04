@@ -67,6 +67,18 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null }), { timeout: 5000 });
   });
 
+  it("opens the task's own page, never the unlisted relay Space (trycua/cua#6363)", async () => {
+    setThisMacConfirmed(true);
+    await mountApp("/home", HOST);
+    await screen.findByText("What do you want to do?");
+    await pickThisMac();
+    await startJob("hi");
+    const id = askTasks()[0]!.id;
+    await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true }), { timeout: 5000 });
+    expect(screen.queryByText("This Space isn't here")).toBeNull();
+    expect(screen.getAllByText("This Mac").length).toBeGreaterThan(0);
+  });
+
   it("Pick another keeps the default and reopens the picker", async () => {
     await mountApp("/home", HOST);
     await screen.findByText("What do you want to do?");

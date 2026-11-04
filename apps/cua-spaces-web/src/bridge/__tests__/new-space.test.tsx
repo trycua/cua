@@ -264,11 +264,11 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     expect(hooks.connect.view!.fields.map((f) => [f.id, f.value])).toEqual([["place", "us-west-2"], ["budget", "200"], ["size", "4x16"]]);
   });
 
-  it("Connect by address adds the Space, and says why when it can't", async () => {
+  it("Add a machine by its address (New Space's arrow) adds the Space, and says why when it can't", async () => {
     const { hooks } = mount(await testCore());
     await waitFor(() => expect(hooks.spaces.data).toHaveLength(9));
-    act(() => hooks.wizard.show());
-    act(() => hooks.wizard.send({ type: "show-address" }));
+    // New Space's arrow opens the address form directly.
+    act(() => hooks.wizard.showAddress());
     expect(hooks.wizard.view!.mode).toBe("address");
     act(() => hooks.wizard.send({ type: "set-address", url: "studio.local" }));
     await act(() => hooks.wizard.submitAddress());

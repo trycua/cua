@@ -17,5 +17,10 @@ id = "key"
 kind = "api_key"
 env = "DEEPSEEK_API_KEY"
 
+[[model]]
+id = "deepseek-flash"
+name = "DeepSeek Flash"
+fast = true
+
 [delivery]
 hermes = ["DEEPSEEK_API_KEY"]

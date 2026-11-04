@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { MachinesView } from "./contracts/host";
+import type { NetworkPreview } from "./contracts/network";
 import type { CreatingElsewhere, ListStatus } from "./contracts/spaces";
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
 
@@ -41,6 +42,11 @@ export interface DataAdapter {
    * lists complete lists only.
    */
   listStatus?(): ListStatus;
+  /**
+   * Per-Space network, Volume and clipboard settings: the native hosts'
+   * (`bridge/network.ts`, over `network.*`) or the demo's (`?demo=network`).
+   * Undefined: the host has none, and none of it shows. */
+  readonly network?: NetworkPreview;
   /**
    * The Spaces your other computers are creating now, read with
    * `spaces.list` (CUA-2349). Undefined: the host does not read them.

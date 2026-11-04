@@ -23,7 +23,12 @@ import type { AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-
 
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
-  keys: { provider: string; env: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
+  /** The first key saved for each variable. */
+  keys: { provider: string; env: string; slot?: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
+  /** Keys saved beside the first for the same variable (named; an app that takes any provider can use one). */
+  extras?: { provider: string; env: string; slot?: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
+  /** Which credential each app that takes any provider uses, by app. */
+  uses?: Record<string, { provider: string; env: string; slot?: string }>;
   unavailable?: string | null;
   error?: string | null;
 }
@@ -82,17 +87,22 @@ export interface AgentKeyConfirm {
   cancelLabel: string;
 }
 
+const keyInput = ({ provider, env, slot, last4, addedMs, expired, label, region, fields }: AgentKeysReport["keys"][number]) => ({
+  provider,
+  env,
+  ...(slot ? { slot } : {}),
+  last4,
+  addedMs,
+  ...(expired ? { expired: true } : {}),
+  ...(label ? { label } : {}),
+  ...(region ? { region } : {}),
+  ...(fields && Object.keys(fields).length ? { fields } : {}),
+});
+
 export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Error | null): AgentKeysInput => ({
-  keys: (report?.keys ?? []).map(({ provider, env, last4, addedMs, expired, label, region, fields }) => ({
-    provider,
-    env,
-    last4,
-    addedMs,
-    ...(expired ? { expired: true } : {}),
-    ...(label ? { label } : {}),
-    ...(region ? { region } : {}),
-    ...(fields && Object.keys(fields).length ? { fields } : {}),
-  })),
+  keys: (report?.keys ?? []).filter((k) => !k.slot).map(keyInput),
+  ...((report?.keys ?? []).some((k) => k.slot) ? { extras: (report?.keys ?? []).filter((k) => k.slot).map(keyInput) } : {}),
+  ...(report?.uses && Object.keys(report.uses).length ? { uses: report.uses } : {}),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
   error: error ? error.message : null,
 });
@@ -227,20 +237,29 @@ export class AgentKeysStore {
   }
 
   /** Saves a key; the list after it replaces the shown one. Throws the host's words. */
-  async save(provider: AgentKeyProvider, value: string, env: string | null, choices: KeyChoices = {}): Promise<void> {
+  async save(provider: AgentKeyProvider, value: string, env: string | null, choices: KeyChoices = {}, more: { add?: boolean; label?: string } = {}): Promise<void> {
     this.epoch++;
-    const report = await this.adapter.call("agentKeys.set", { provider, value, env, ...choices });
+    const report = await this.adapter.call("agentKeys.set", { provider, value, env, ...choices, ...more });
     this.epoch++;
     this.pinned = false;
     this.set({ report, error: null, sheet: null });
   }
 
-  async remove(env: string): Promise<void> {
+  async remove(env: string, which: { slot?: string; keepOthers?: boolean } = {}): Promise<void> {
     this.epoch++;
-    const report = await this.adapter.call("agentKeys.remove", { env });
+    const report = await this.adapter.call("agentKeys.remove", { env, ...which });
     this.epoch++;
     this.pinned = false;
     this.set({ report, error: null, removing: null });
+  }
+
+  /** Tells `app` which saved credential to use from its next run (none: the first that works). Throws the host's words. */
+  async use(app: string, choice: { env: string; slot?: string } | null): Promise<void> {
+    this.epoch++;
+    const report = await this.adapter.call("agentKeys.use", { app, ...(choice ? { env: choice.env, ...(choice.slot ? { slot: choice.slot } : {}) } : {}) });
+    this.epoch++;
+    this.pinned = false;
+    this.set({ report, error: null });
   }
 
   openSheet(provider: AgentKeyProvider, env: string | null = null): void {
@@ -258,7 +277,8 @@ export class AgentKeysStore {
     this.pinned = true;
     this.loaded = true;
     const report: AgentKeysReport = {
-      keys: input.keys.map((k) => ({ ...k })),
+      keys: [...input.keys, ...(input.extras ?? [])].map((k) => ({ ...k })),
+      ...(input.uses ? { uses: input.uses } : {}),
       providers: [],
       available: !input.unavailable,
       unavailable: input.unavailable ?? null,
@@ -288,8 +308,10 @@ export interface AgentKeysHook extends AgentKeysState {
   /** The list after the providers were asked whether the saved keys still work. */
   check(): Promise<void>;
   /** Adds or replaces a key; `env` names an Other key. */
-  save(provider: AgentKeyProvider, value: string, env: string | null, choices?: KeyChoices): Promise<void>;
-  remove(env: string): Promise<void>;
+  save(provider: AgentKeyProvider, value: string, env: string | null, choices?: KeyChoices, more?: { add?: boolean; label?: string }): Promise<void>;
+  remove(env: string, which?: { slot?: string; keepOthers?: boolean }): Promise<void>;
+  /** Tells `app` which saved credential to use (null: the first that works). */
+  use(app: string, choice: { env: string; slot?: string } | null): Promise<void>;
   openSheet(provider: AgentKeyProvider, env?: string | null): void;
   closeSheet(): void;
   askRemove(env: string | null): void;
@@ -330,8 +352,9 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     core: ctx.core,
     refresh: () => (store ? store.refresh() : Promise.resolve()),
     check: () => (store ? store.check() : Promise.resolve()),
-    save: (provider, value, env, choices) => need().save(provider, value, env, choices),
-    remove: (env) => need().remove(env),
+    save: (provider, value, env, choices, more) => need().save(provider, value, env, choices, more),
+    remove: (env, which) => need().remove(env, which),
+    use: (app, choice) => need().use(app, choice),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),
     closeSheet: () => store?.closeSheet(),
     askRemove: (env) => store?.askRemove(env),

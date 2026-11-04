@@ -42,6 +42,8 @@ import {
   type SessionSnapshot,
   type SettingsSnapshot,
   type SettingsValues,
+  type NetworkEventWire,
+  type SpaceNetworkWire,
 } from "../protocol";
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
 import type { CreateProgress } from "../contracts/host";
@@ -53,6 +55,7 @@ import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
 import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitThreadOps } from "../ops/thread";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
+import { webkitGithubOps } from "../ops/github";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
@@ -63,7 +66,8 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
-import type { LinkCreate, ShareLink } from "../ops/links";
+import type { CiConnectAnswer, CiLogLine, CiOverview } from "../contracts/ci-runners";
+import type { LinkCreate, ShareLink, ShareSettings } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
@@ -318,6 +322,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
     telemetry: telemetry
@@ -607,6 +612,18 @@ export function createWebkitAdapter(
       await request("spaces.rename", { spaceId, name });
       return null;
     },
+    // A Space's network, as the host's SDK says it (camelCase JSON as-is).
+    "network.get": ({ spaceId }) => request<SpaceNetworkWire>("network.get", { spaceId }),
+    "network.set": (args) => request<{ applied: "now" | "next_start" }>("network.set", args),
+    "network.log": ({ spaceId }) => request<NetworkEventWire[]>("network.log", { spaceId }),
+    "network.ackNotice": async ({ spaceId }) => {
+      await request("network.ackNotice", { spaceId });
+      return null;
+    },
+    "spaces.setAccess": async (args) => {
+      await request("spaces.setAccess", args);
+      return null;
+    },
     "spaces.open": async ({ spaceId }) => {
       await request("spaces.open", { id: spaceId });
       return null;
@@ -651,6 +668,7 @@ export function createWebkitAdapter(
           break;
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
+        case "notchPinned":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();
@@ -688,6 +706,10 @@ export function createWebkitAdapter(
     },
     "session.signOut": async () => {
       await request("session.signOut");
+      return null;
+    },
+    "session.resetOnboarding": async () => {
+      await request("onboarding.reset");
       return null;
     },
     "session.completeOnboarding": async ({ mode, launchAtLogin }) => {
@@ -731,6 +753,7 @@ export function createWebkitAdapter(
     ...webkitAgentDetailOps(request),
     ...webkitThreadOps(request),
     ...webkitAgentKeysOps(request),
+    ...webkitGithubOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
     ...webkitKeyvaultSetupOps(request, () => new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only")),
     // Electron draws a Space's video in the page, on a ticket from the
@@ -759,9 +782,25 @@ export function createWebkitAdapter(
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
     "links.create": (a: LinkCreate) => request<ShareLink>("links.create", a as unknown as Record<string, unknown>),
     "links.stop": ({ id }) => request<{ stopped: string[] }>("links.stop", { id }),
+    "links.approve": ({ id, always }) => request<ShareLink>("links.approve", { id, always: always === true }),
+    "links.deny": ({ id }) => request<{ denied: string }>("links.deny", { id }),
+    "shares.settings.get": () => request<ShareSettings>("shares.settings.get"),
+    "shares.settings.set": ({ settings }) => request<ShareSettings>("shares.settings.set", { settings } as unknown as Record<string, unknown>),
+    "shares.edge.remove": () => request<{ ended: string[] }>("shares.edge.remove"),
     // The bundled CLI on PATH (the app core's installer in the host).
     "cli.plan": () => request<CliInstallPlan | null>("cli.plan"),
     "cli.install": ({ modifyPath }) => request<CliInstallPlan>("cli.install", { modifyPath }),
+    // CI Runners: the host runs the bundled `cua ci app <op>` (ops/ci.ts).
+    "ci.overview": ({ live }) => request<CiOverview>("ci.overview", { live: live === true }),
+    "ci.connect": ({ githubOrg }) => request<CiConnectAnswer>("ci.connect", githubOrg ? { githubOrg } : {}),
+    "ci.connectToken": ({ org, token }) => request<CiConnectAnswer>("ci.connectToken", token ? { org, token } : { org }),
+    "ci.connectCancel": async () => {
+      await request("ci.connectCancel");
+      return null;
+    },
+    "ci.repositories": ({ allow, remove }) => request<{ changed?: string[] }>("ci.repositories", { allow: allow ?? [], remove: remove ?? [] }),
+    "ci.goal": ({ target, goal }) => request<{ goal: string; applied: boolean }>("ci.goal", { target, goal }),
+    "ci.log": ({ jobKey, pool, slot }) => request<{ lines: CiLogLine[] }>("ci.log", { jobKey, pool, slot }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {

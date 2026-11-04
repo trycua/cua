@@ -82,7 +82,9 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 
 **Pausing.** While the window is fully hidden (minimized, covered, or on another Space), every session stops but the one the desktop's picture-in-picture panel shows. They open again when the window shows.
 
-**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session for `slotGrace` (1.5 s): the Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and the new slot binds to the same live session, with no reconnect.
+**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session warm for `slotGrace` (45 s). The Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and a person leaves a Space for the Spaces page and comes back: the new slot binds to the same live session and shows its current frame at once, with no reconnect (it was 1.5 s, so every real visit away reopened the stream). A warm session is bounded: at most `maxWarm` (3) Spaces stay warm, the oldest going first; one whose transport drops (the Space stopped, the machine went away) is released at once rather than reconnected for nobody; a hidden window, a closed window and a page load release every one; and one that was already reconnecting or failed when its slot left is not kept.
+
+Opening a stream no longer lists every Space on every machine first (`SpacesConnection.attachForStream`): that list waited for the relay directory, so a slow or unreachable relay delayed or failed the desktop of a Space on this Mac.
 
 ### Input and keyboard focus
 

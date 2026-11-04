@@ -88,6 +88,21 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         return inventoryResult
     }
 
+    /// What the Keyvault says about a teleport of an app (the setup sheet).
+    var readinessResult = KvReadiness(
+        providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: true,
+        profile: "Profile 1", defaultProfile: "Default",
+        profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                   KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+        files: KvReadinessCheck(state: "denied", say: "macOS is not letting Cua read this browser's files."),
+        tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
+    var readinessAsks: [(app: String, profile: String?)] = []
+
+    func readiness(app: String, profile: String?) async throws -> KvReadiness {
+        readinessAsks.append((app, profile))
+        return readinessResult
+    }
+
     /// Passphrases the page sent (test fixtures, never real secrets).
     var passphrases: [String] = []
 
@@ -417,7 +432,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"])
         // Sharing and Your cloud are on unless turned off; no New UI row.
         let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in

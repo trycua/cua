@@ -174,30 +174,54 @@ export function TrustSection({ trust, onTrust }: { trust: ThisMachineTrust; onTr
   );
 }
 
-/** Who reached this machine lately: a few lines, newest first. */
+/**
+ * "See recent access": a plain text link at the foot of a machine's page that opens who reached the
+ * machine, and when, in a small dialog. A failed read of that list stays on the page, since it says why
+ * the list may be short.
+ */
 export function RecentAccess({ lines, title, empty, now, error }: { lines: AccessLine[]; title: string; empty: string; now: number; error?: string | null }) {
+  const [open, setOpen] = useState(false);
   return (
     <>
-      <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{title}</h3>
-      <div className="border-y" data-machine-recent="">
-        {lines.length === 0 ? <p className="py-3 text-[13px] text-muted-foreground">{empty}</p> : null}
-        {lines.map((a, i) => (
-          <div key={`${a.ts}-${i}`} data-recent-row="" className={`flex min-h-10 items-center justify-between gap-4 py-2 ${i > 0 ? "border-t" : ""}`}>
-            <span className="flex min-w-0 items-center gap-2 text-[13px]">
-              {a.notable ? <UsersIcon className="size-3.5 shrink-0 text-warning" aria-label="Another account or an untrusted machine" /> : null}
-              <span className="select-text" data-recent-text="">
-                {a.text}
-              </span>
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">{relativeText(a.ts, now)}</span>
+      <button
+        type="button"
+        data-machine-recent-link=""
+        onClick={() => setOpen(true)}
+        className="cursor-default py-1 text-[13px] text-muted-foreground hover:text-foreground hover:underline hover:underline-offset-2"
+      >
+        See recent access
+      </button>
+      {error ? (
+        <p data-devices-read-error="" className="order-last w-full text-xs break-words text-destructive">
+          {error}
+        </p>
+      ) : null}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup className="w-[min(480px,calc(100vw-2rem))]">
+          <div className="px-5 pt-5 pb-4">
+            <DialogTitle className="text-[15px] font-semibold">{title}</DialogTitle>
+            <div className="mt-3 max-h-[50vh] overflow-y-auto border-y" data-machine-recent="">
+              {lines.length === 0 ? <p className="py-3 text-[13px] text-muted-foreground">{empty}</p> : null}
+              {lines.map((a, i) => (
+                <div key={`${a.ts}-${i}`} data-recent-row="" className={`flex min-h-10 items-center justify-between gap-4 py-2 ${i > 0 ? "border-t" : ""}`}>
+                  <span className="flex min-w-0 items-center gap-2 text-[13px]">
+                    {a.notable ? <UsersIcon className="size-3.5 shrink-0 text-warning" aria-label="Another account or an untrusted machine" /> : null}
+                    <span className="select-text" data-recent-text="">
+                      {a.text}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{relativeText(a.ts, now)}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-        {error ? (
-          <p data-devices-read-error="" className="border-t py-2.5 text-xs break-words text-destructive">
-            {error}
-          </p>
-        ) : null}
-      </div>
+          <div className="flex justify-end border-t bg-muted/60 px-5 py-3">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogPopup>
+      </Dialog>
     </>
   );
 }

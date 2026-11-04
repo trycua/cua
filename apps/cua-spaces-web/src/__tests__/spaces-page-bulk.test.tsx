@@ -146,8 +146,8 @@ describe.skipIf(!wasmBuilt)("on the page", () => {
     await mountApp("/spaces", HOST);
     await waitFor(() => expect(tile(RUNNING)).not.toBeNull());
     fireEvent.click(document.querySelector(`[data-space-more="${RUNNING}"]`)!);
-    // Shared with five people: Manage sharing…; Rename stays out (no host renames a Space yet).
-    await waitFor(() => expect(menuLabels("more")).toEqual(["Open", "Turn off", "Manage sharing…", "Teleport an app…", "Delete Space (red)"]));
+    // Shared with five people: Manage sharing…; Rename stays out (no host renames a Space yet); Pin to notch above the red Delete Space.
+    await waitFor(() => expect(menuLabels("more")).toEqual(["Open", "Turn off", "Manage sharing…", "Teleport an app…", "Pin to notch", "Delete Space (red)"]));
     fireEvent.click(document.querySelector('[data-space-menu="more"] [data-menu-item="delete"]')!);
     const dialog = await waitFor(() => document.querySelector<HTMLElement>("[data-bulk-confirm]") ?? Promise.reject(new Error("no confirm")));
     expect(dialog.textContent).toContain("Delete design-review?");
@@ -157,7 +157,7 @@ describe.skipIf(!wasmBuilt)("on the page", () => {
     await waitFor(() => expect(document.querySelector("[data-bulk-confirm]")).toBeNull());
 
     fireEvent.contextMenu(tile(STOPPED));
-    await waitFor(() => expect(menuLabels("context")).toEqual(["Open", "Turn on", "Share…", "Teleport an app…", "Delete Space (red)"]));
+    await waitFor(() => expect(menuLabels("context")).toEqual(["Open", "Turn on", "Share…", "Teleport an app…", "Pin to notch", "Delete Space (red)"]));
   });
 
   it("checkbox, ⌘-click and ⇧-click pick without opening; ⌘A picks every visible one; Esc clears", async () => {

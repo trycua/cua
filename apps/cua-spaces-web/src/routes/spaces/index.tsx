@@ -11,7 +11,7 @@ import { useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { ComputerWarnings } from "@/components/resources/computer-resources";
 import { useListedSpaces } from "@/components/spaces/listed";
-import { desktopOf, type SpaceItem } from "@/components/spaces/model";
+import { desktopOf, hasHideButton, hasMenu, type SpaceItem } from "@/components/spaces/model";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
 import { SpaceList } from "@/components/spaces/space-list";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
@@ -23,6 +23,7 @@ import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { useQuiet } from "@/hooks/use-quiet";
+import { NewSpaceButton } from "@/components/new-space/new-space-button";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { thisComputerText } from "@/lib/host-labels";
@@ -152,9 +153,7 @@ function SpacesPage() {
         title="Spaces"
         description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(counted.length, "Space")} on ${plural(machines.length, "machine")}, ${running} running`}
         actions={
-          <Button onClick={newSpace}>
-            <PlusIcon /> New Space
-          </Button>
+          <NewSpaceButton />
         }
       />
       {settled ? (
@@ -348,8 +347,8 @@ const GridTile = memo(function GridTile({
               className="opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[picking]/grid:opacity-100"
             />
           }
-          hide={item.desktop ? () => actions.hide?.(item) : undefined}
-          more={item.desktop ? undefined : <SpaceMoreMenu item={item} actions={actions} />}
+          hide={hasHideButton(item) ? () => actions.hide?.(item) : undefined}
+          more={hasMenu(item) ? <SpaceMoreMenu item={item} actions={actions} /> : undefined}
         />
       </SpaceContextMenu>
     </li>

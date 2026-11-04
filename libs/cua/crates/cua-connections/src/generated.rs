@@ -2,7 +2,7 @@
 // providers/*.toml. Do not edit: change a provider file and run the generator.
 // `--check` (and tests/generated.rs) fail when this file is stale.
 
-use crate::{Check, Delivery, Entry, Field, Kind, Method, MethodKind, Provider, Region, Tier};
+use crate::{Check, Delivery, Entry, Field, Kind, Method, MethodKind, Model, Provider, Region, Tier};
 
 /// Every provider, in rank order (hidden ones included).
 pub static PROVIDERS: &[Provider] = &[
@@ -76,6 +76,11 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+            Model { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", fast: true },
+            Model { id: "claude-sonnet-5", name: "Claude Sonnet 5", fast: false },
+            Model { id: "claude-opus-5-5", name: "Claude Opus 5.5", fast: false },
+        ],
         delivery: &[
             Delivery { harness: "claude-code", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, Entry { dest: "CLAUDE_CODE_OAUTH_TOKEN", src: "CLAUDE_CODE_OAUTH_TOKEN" }, Entry { dest: "ANTHROPIC_AUTH_TOKEN", src: "ANTHROPIC_AUTH_TOKEN" }, ] },
             Delivery { harness: "goose", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, ] },
@@ -140,6 +145,9 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+            Model { id: "gpt-5.5", name: "GPT-5.5", fast: false },
+        ],
         delivery: &[
             Delivery { harness: "goose", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
             Delivery { harness: "hermes", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
@@ -189,6 +197,9 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+            Model { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", fast: false },
+        ],
         delivery: &[
             Delivery { harness: "goose", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
             Delivery { harness: "hermes", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
@@ -236,6 +247,9 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
+            Model { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", fast: true },
         ],
         delivery: &[
             Delivery { harness: "gemini-cli", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, ] },
@@ -286,6 +300,9 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+            Model { id: "grok-4.6", name: "Grok 4.6", fast: false },
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "XAI_API_KEY", src: "XAI_API_KEY" }, ] },
         ],
@@ -329,6 +346,9 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
+            Model { id: "deepseek-flash", name: "DeepSeek Flash", fast: true },
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "DEEPSEEK_API_KEY", src: "DEEPSEEK_API_KEY" }, ] },
@@ -374,6 +394,9 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+            Model { id: "kimi-k3", name: "Kimi K3", fast: false },
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "KIMI_API_KEY", src: "KIMI_API_KEY" }, ] },
         ],
@@ -418,6 +441,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
         ],
     },
@@ -460,6 +485,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "HF_TOKEN", src: "HF_TOKEN" }, ] },
@@ -509,6 +536,8 @@ pub static PROVIDERS: &[Provider] = &[
             Region { id: "coding-global", name: "Global, Coding Plan", base_url: "https://api.z.ai/api/coding/paas/v4" },
             Region { id: "coding-cn", name: "China, Coding Plan", base_url: "https://open.bigmodel.cn/api/coding/paas/v4" },
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "GLM_API_KEY", src: "GLM_API_KEY" }, ] },
         ],
@@ -552,6 +581,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "FIREWORKS_API_KEY", src: "FIREWORKS_API_KEY" }, ] },
@@ -597,6 +628,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "NVIDIA_API_KEY", src: "NVIDIA_API_KEY" }, ] },
         ],
@@ -640,6 +673,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "OLLAMA_API_KEY", src: "OLLAMA_API_KEY" }, ] },
@@ -685,6 +720,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "DEEPINFRA_API_KEY", src: "DEEPINFRA_API_KEY" }, ] },
         ],
@@ -728,6 +765,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "NOVITA_API_KEY", src: "NOVITA_API_KEY" }, ] },
@@ -773,6 +812,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "NEBIUS_API_KEY", src: "NEBIUS_API_KEY" }, ] },
         ],
@@ -816,6 +857,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "GMI_API_KEY", src: "GMI_API_KEY" }, ] },
@@ -861,6 +904,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "UPSTAGE_API_KEY", src: "UPSTAGE_API_KEY" }, ] },
         ],
@@ -904,6 +949,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "ARCEEAI_API_KEY", src: "ARCEEAI_API_KEY" }, ] },
@@ -949,6 +996,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "AI_GATEWAY_API_KEY", src: "AI_GATEWAY_API_KEY" }, ] },
         ],
@@ -992,6 +1041,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "OPENCODE_ZEN_API_KEY", src: "OPENCODE_ZEN_API_KEY" }, ] },
@@ -1037,6 +1088,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "OPENCODE_GO_API_KEY", src: "OPENCODE_GO_API_KEY" }, ] },
         ],
@@ -1080,6 +1133,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "KILOCODE_API_KEY", src: "KILOCODE_API_KEY" }, ] },
@@ -1125,6 +1180,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "XIAOMI_API_KEY", src: "XIAOMI_API_KEY" }, ] },
         ],
@@ -1168,6 +1225,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "STEPFUN_API_KEY", src: "STEPFUN_API_KEY" }, ] },
@@ -1213,6 +1272,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "MINIMAX_API_KEY", src: "MINIMAX_API_KEY" }, ] },
         ],
@@ -1256,6 +1317,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "DASHSCOPE_API_KEY", src: "DASHSCOPE_API_KEY" }, ] },
@@ -1301,6 +1364,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "MODEL_API_KEY", src: "MODEL_API_KEY" }, ] },
         ],
@@ -1344,6 +1409,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "RAMP_ROUTER_API_KEY", src: "RAMP_ROUTER_API_KEY" }, ] },
@@ -1389,6 +1456,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "COMMANDCODE_API_KEY", src: "COMMANDCODE_API_KEY" }, ] },
         ],
@@ -1432,6 +1501,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "ACTUAL_API_KEY", src: "ACTUAL_API_KEY" }, ] },
@@ -1477,6 +1548,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "TOKENHUB_API_KEY", src: "TOKENHUB_API_KEY" }, ] },
         ],
@@ -1521,6 +1594,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
         ],
     },
@@ -1563,6 +1638,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
         ],
@@ -1607,6 +1684,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
         ],
     },
@@ -1649,6 +1728,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
         ],
@@ -1693,6 +1774,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
         ],
     },
@@ -1736,6 +1819,8 @@ pub static PROVIDERS: &[Provider] = &[
         ],
         regions: &[
         ],
+        models: &[
+        ],
         delivery: &[
         ],
     },
@@ -1778,6 +1863,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
         ],
@@ -1824,6 +1911,8 @@ pub static PROVIDERS: &[Provider] = &[
             },
         ],
         regions: &[
+        ],
+        models: &[
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "CUSTOM_ENDPOINT_API_KEY", src: "CUSTOM_ENDPOINT_API_KEY" }, ] },

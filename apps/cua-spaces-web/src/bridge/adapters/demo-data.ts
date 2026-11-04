@@ -63,6 +63,25 @@ const STREAMS = ["desktop_stream", "window_stream", "audio.desktop", "relay_atta
 /** `minutesAgo` → RFC 3339, relative to `now`. */
 const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
 
+/** The Linux box sharing its own desktop over the relay (`?demo=desktops`): a row of its own, no host above it. */
+export function demoDesktopRows(now: number): SpaceRow[] {
+  return [
+    {
+      id: "relay:linux-box",
+      name: "Linux box",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 600),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      arch: "amd64",
+      reachable: true,
+    },
+  ];
+}
+
 export function demoSpaceRows(now: number): SpaceRow[] {
   return [
     {

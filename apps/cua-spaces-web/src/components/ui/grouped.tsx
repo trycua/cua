@@ -65,12 +65,13 @@ export function GroupedSection({
   footer,
   children,
   className,
+  contentClassName,
   ...props
-}: { title?: ReactNode; action?: ReactNode; footer?: ReactNode } & Omit<Div, "title">) {
+}: { title?: ReactNode; action?: ReactNode; footer?: ReactNode; contentClassName?: string } & Omit<Div, "title">) {
   return (
     <section className={cn("min-w-0", className)}>
       {title ? <SectionHeading action={action}>{title}</SectionHeading> : null}
-      <div data-grouped="" className="overflow-hidden rounded-lg border bg-card [&>*+*]:border-t" {...props}>
+      <div data-grouped="" className={cn("overflow-hidden rounded-lg border bg-card [&>*+*]:border-t", contentClassName)} {...props}>
         {children}
       </div>
       {footer ? <div className="mt-1.5 px-1 text-xs text-muted-foreground">{footer}</div> : null}

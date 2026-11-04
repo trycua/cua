@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { useAgentChats, useAgents, useSpaces, type AgentRunSummary } from "@/bridge";
+import { useAgentChats, useSpaces, type AgentRunSummary } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { OsIcon } from "@/components/os-icon";
@@ -11,11 +11,18 @@ import { currentWhere, mostUsedAgent, SUGGESTIONS, useAskTasks, type AskTask, ty
 import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
-import { agentName, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { AskBox, type TaskWhere } from "./ask-box";
+import { agentName, chooseAgent } from "./task-agents";
+import { useInstalledAgents } from "./use-installed-agents";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
+import { PrepareLine } from "@/components/prepare/prepare-line";
+import { usePrepareAction } from "@/components/prepare/use-prepare-action";
+import { usePrepare } from "@/lib/prepare/store";
+
+const NONE: ReadonlySet<string> = new Set();
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -41,35 +48,24 @@ export function AskFirstHome() {
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
-  const { agentSetup } = useAgents();
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
-  const [installed, setInstalled] = useState<ReadonlySet<string>>(new Set());
-  useEffect(() => {
-    let live = true;
-    agentSetup()
-      .then((rows) => {
-        if (!live) return;
-        const found = new Set(rows.filter((r) => r.installed).map((r) => r.agent));
-        setInstalled(new Set(TASK_AGENTS.filter((a) => found.has(a.setupId)).map((a) => a.id)));
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Only agents on this computer are offered (the agent setup's detection, which skips files Cua wrote).
+  const installed = useInstalledAgents() ?? NONE;
   const mostUsed = mostUsedAgent(tasks);
   const [text, setText] = useState("");
   const [agent, setAgent] = useState<string | null>(null);
-  const chosenAgent = agent ?? mostUsed ?? TASK_AGENTS.find((a) => installed.has(a.id))?.id ?? "claude-code";
+  const chosenAgent = chooseAgent(agent, mostUsed, installed);
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
   const [picked, setWhere] = useState<TaskWhere | null>(null);
+  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  const prep = usePrepare();
+  const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
-  const pick = useWherePick(agentName(chosenAgent));
+  const pick = useWherePick(chosenAgent ? agentName(chosenAgent) : "Your agent");
   const where = currentWhere(picked, kinds, pickable);
   const submit = (prompt = text, w = where) => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || !chosenAgent) return;
     start({ prompt, agent: chosenAgent, where: w });
     setText("");
   };
@@ -78,7 +74,10 @@ export function AskFirstHome() {
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
   const { chats } = useAgentChats(attempts);
-  const first = !chats?.length && listed.counted.length === 0;
+  // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
+  // is asked for, the welcome and its suggestions stay.
+  const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
+  const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
@@ -102,6 +101,8 @@ export function AskFirstHome() {
           compact={!first}
           autoFocus
         />
+        {/* Preparing is silent: only a failed prepare says so, with Try again. */}
+        <PrepareLine view={prep.view} onRetry={onPrepareAction} />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -109,6 +110,7 @@ export function AskFirstHome() {
                 <button
                   type="button"
                   key={s.title}
+                  data-home-card=""
                   onClick={() => {
                     setText(s.prompt);
                     setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });

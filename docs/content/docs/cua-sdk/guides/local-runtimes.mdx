@@ -94,6 +94,46 @@ runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
 - VM images without cua-spacesd fall back to the runtime's agentless path (QMP,
   VNC, SSH or ADB) where there is one.
 
+## Windows on ARM
+
+A Windows 11 on ARM guest (`os="windows"`, `arch="aarch64"`) runs on the QEMU
+runtime of an arm64 macOS or Linux host. Windows 11 needs 4 GB: a guest started
+with less is given 4096 MB.
+
+**TPM.** The guest gets a persistent software TPM 2.0 automatically. It needs
+`swtpm` on the host's `PATH`:
+
+```bash skip="host-install"
+brew install swtpm                 # macOS
+sudo apt-get install swtpm         # Debian, Ubuntu
+```
+
+**Secure Boot firmware.** The guest needs `AAVMF_CODE.secboot.fd` and
+`AAVMF_VARS.ms.fd`, both in one directory. cua looks, in order, at
+`CUA_QEMU_AAVMF_DIR` (when set, nowhere else), `~/.cua/firmware/aavmf`, the
+QEMU prefix's `share/AAVMF`, then `/usr/share/AAVMF`. On Linux:
+
+```bash skip="host-install"
+sudo apt-get install qemu-efi-aarch64
+```
+
+Homebrew's QEMU does not ship this pair. On macOS, download Debian's
+architecture-independent `qemu-efi-aarch64` package, unpack it, and copy the
+two files (following links) into the cua directory:
+
+```bash skip="host-install"
+mkdir -p ~/.cua/firmware/aavmf
+cp -L usr/share/AAVMF/AAVMF_CODE.secboot.fd usr/share/AAVMF/AAVMF_VARS.ms.fd ~/.cua/firmware/aavmf/
+```
+
+**Network.** Windows 11 on ARM has no inbox virtio-net driver, so the guest has
+no network during Setup. Finish OOBE offline, then install NetKVM from the
+virtio-win ISO (`NetKVM\w11\ARM64`). cua does not ship or download it.
+
+**Fork and checkpoint** need the VM stopped, so its TPM state is copied
+consistently. A checkpoint with TPM state stays on the host that made it: it is
+not exported or imported.
+
 ## Many VMs on one machine
 
 Local QEMU VMs (`kind="vm"`) are admitted by what they really use, not by

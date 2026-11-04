@@ -640,6 +640,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let drive = Drive::open_local(dir.path());
         drive
+            .grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
+        drive
             .session(Context::user())
             .write("public/rules.md", b"be kind".to_vec(), Condition::None)
             .await
@@ -802,6 +805,9 @@ mod tests {
     async fn a_write_refused_after_it_was_held_fails_the_close() {
         let dir = tempfile::tempdir().unwrap();
         let drive = Drive::open_local(dir.path());
+        drive
+            .grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         drive
             .session(Context::user())
             .write("public/ro.md", b"x".to_vec(), Condition::None)

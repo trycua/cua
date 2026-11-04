@@ -9,6 +9,7 @@ import {
   currentUser,
   installFailedText,
   parseInstallResult,
+  parseFeatures,
   parseVirtualization,
   signedByDocker,
   windowsRuntimeAdvice,
@@ -16,7 +17,10 @@ import {
   type WindowsSystem,
 } from "./windows-runtime";
 
-const CLEAN: WindowsRuntimeFacts = { dockerInstalled: false, dockerRunning: false, virtualization: "on", restartPending: false };
+const CLEAN: WindowsRuntimeFacts = {
+  dockerInstalled: false, dockerRunning: false, virtualization: "on", restartPending: false,
+  features: { editionId: null, virtualMachinePlatform: "unknown", hypervisorPlatform: "unknown", subsystemLinux: "unknown" },
+};
 const IDLE = { kind: "idle" } as const;
 
 describe("windowsRuntimeAdvice", () => {
@@ -69,6 +73,17 @@ describe("windowsRuntimeAdvice", () => {
 });
 
 describe("probe parsing", () => {
+  it("reads edition and feature states independently, without treating absent features as disabled", () => {
+    for (const [input, expected] of [[1, "enabled"], [2, "disabled"], [3, "unknown"], [4, "unknown"], [null, "unknown"], ["2", "unknown"], [0, "unknown"]] as const) {
+      expect(parseFeatures(JSON.stringify({ editionId: "Core", virtualMachinePlatform: input, hypervisorPlatform: input, subsystemLinux: input }))).toEqual({
+        editionId: "Core", virtualMachinePlatform: expected, hypervisorPlatform: expected, subsystemLinux: expected,
+      });
+    }
+    expect(parseFeatures('{"editionId":"Core"}')).toEqual({ ...CLEAN.features, editionId: "Core" });
+    expect(parseFeatures('{"hypervisorPlatform":2}')).toEqual({ ...CLEAN.features, hypervisorPlatform: "disabled" });
+    for (const input of ["", "not JSON", "null", "[]", "42", '{"editionId":12}']) expect(parseFeatures(input)).toEqual(CLEAN.features);
+  });
+
   it("counts a running hypervisor as virtualization on (it hides the firmware flag)", () => {
     expect(parseVirtualization("True|False")).toBe("on");
     expect(parseVirtualization("False|True")).toBe("on");
@@ -108,6 +123,8 @@ function fakeSystem(state: {
   installed?: boolean;
   running?: boolean;
   hv?: string;
+  features?: string;
+  featureFailure?: "exit" | "throw";
   rebootPending?: boolean;
   signature?: string;
   result?: string;
@@ -120,6 +137,11 @@ function fakeSystem(state: {
     running: async () => state.running ?? false,
     async powershell(script) {
       ran.push(script);
+      if (script.includes("Win32_OptionalFeature")) {
+        if (state.featureFailure === "throw") throw new Error("unavailable");
+        if (state.featureFailure === "exit") return { code: 1, stdout: state.features ?? "", stderr: "unavailable" };
+        if (state.features !== undefined) return { code: 0, stdout: state.features, stderr: "" };
+      }
       if (script.includes("Win32_ComputerSystem")) return { code: 0, stdout: state.hv ?? "True|True", stderr: "" };
       if (script.includes("RebootPending")) return { code: 0, stdout: state.rebootPending ? "pending" : "clear", stderr: "" };
       if (script.includes("Get-AuthenticodeSignature")) return { code: 0, stdout: state.signature ?? "Valid|CN=Docker Inc, O=Docker Inc", stderr: "" };
@@ -150,6 +172,84 @@ function fakeSystem(state: {
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("WindowsRuntime", () => {
+  it("offers Windows Features for disabled Virtual Machine Platform on Home", async () => {
+    const f = fakeSystem({ installed: true, features: JSON.stringify({ editionId: "Core", virtualMachinePlatform: 2 }) });
+    const a = await new WindowsRuntime(f.sys, "C:\\tmp").advice();
+    expect(a.reason).toContain("Virtual Machine Platform");
+    expect(a.fix).toMatchObject({ action: "open-windows-features", label: "Open Windows Features", busy: false, termsUrl: null });
+    expect(a.fix?.note).toContain("restart this PC");
+    expect(JSON.stringify(a)).not.toContain("Hyper-V");
+  });
+
+  it("refreshes feature facts and preserves Docker, restart and active-install precedence across editions", async () => {
+    for (const editionId of ["Core", "CoreSingleLanguage", "Professional", "Enterprise"]) {
+      for (const feature of ["virtualMachinePlatform", "hypervisorPlatform", "subsystemLinux"]) {
+        const state = { installed: true, features: JSON.stringify({ editionId, [feature]: 2 }) };
+        const f = fakeSystem(state);
+        const w = new WindowsRuntime(f.sys, "C:\\tmp");
+        expect((await w.facts()).features).toMatchObject({ editionId, [feature]: "disabled" });
+        const a = await w.advice();
+        expect(a.fix?.action).toBe(feature === "hypervisorPlatform" ? "start-docker" : "open-windows-features");
+        if (feature === "subsystemLinux") expect(a.reason).toContain("Windows Subsystem for Linux");
+        const facts = await w.facts();
+        const alternatives = [
+          windowsRuntimeAdvice({ ...facts, dockerInstalled: false }, IDLE, 0),
+          windowsRuntimeAdvice({ ...facts, restartPending: true }, IDLE, 0),
+          windowsRuntimeAdvice(facts, { kind: "downloading", percent: 10 }, 0),
+          windowsRuntimeAdvice(facts, { kind: "installing" }, 0),
+        ] as const;
+        expect(alternatives[0].fix?.action).toBe("install-docker");
+        expect(alternatives[1].reason).toMatch(/^Restart this PC/);
+        expect(alternatives[1].fix).toBeNull();
+        expect(alternatives.slice(2).every((a) => a.fix?.busy)).toBe(true);
+        expect(JSON.stringify([a, ...alternatives])).not.toContain("Hyper-V");
+        state.features = JSON.stringify({ editionId, [feature]: 1 });
+        expect((await w.facts()).features).toMatchObject({ [feature]: "enabled" });
+        expect((await w.advice()).fix?.action).toBe("start-docker");
+      }
+    }
+  });
+
+  it("returns unknown facts on failed or malformed probes", async () => {
+    for (const featureFailure of [undefined, "exit", "throw"] as const) {
+      const f = fakeSystem({ installed: true, features: "invalid JSON", featureFailure });
+      const w = new WindowsRuntime(f.sys, "C:\\tmp");
+      expect((await w.facts()).features).toEqual(CLEAN.features);
+      expect((await w.advice()).fix?.action).toBe("start-docker");
+    }
+  });
+
+  it("opens only Windows Features without starting an install or changing phase", async () => {
+    const f = fakeSystem({ installed: true });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("open-windows-features");
+    await settle();
+    expect(f.ran).toEqual(["launch optionalfeatures.exe"]);
+    f.sys.running = async () => false;
+    expect((await w.advice()).fix?.action).toBe("start-docker");
+  });
+
+  it("skips feature probing while a download or install is active", async () => {
+    const f = fakeSystem({ features: '{"virtualMachinePlatform":2}' });
+    let finishDownload!: () => void;
+    let finishInstall!: () => void;
+    f.sys.download = () => new Promise<void>((resolve) => { finishDownload = resolve; });
+    const powershell = f.sys.powershell;
+    f.sys.powershell = (script, ms) => script.includes("-Verb RunAs") ? new Promise((resolve) => { finishInstall = () => resolve({ code: 0, stdout: "", stderr: "" }); }) : powershell(script, ms);
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    expect((await w.facts()).features.virtualMachinePlatform).toBe("disabled");
+    f.ran.length = 0;
+    w.run("install-docker");
+    expect((await w.advice()).fix?.label).toContain("Downloading");
+    expect(f.ran.some((s) => s.includes("Win32_OptionalFeature"))).toBe(false);
+    finishDownload();
+    await settle();
+    expect((await w.advice()).fix?.label).toContain("Installing");
+    expect(f.ran.some((s) => s.includes("Win32_OptionalFeature"))).toBe(false);
+    finishInstall();
+    await settle();
+  });
+
   it("installs, then starts Docker Desktop when no restart is needed", async () => {
     const f = fakeSystem({ result: "0|False|True" });
     const w = new WindowsRuntime(f.sys, "C:\\tmp", () => 1_000);

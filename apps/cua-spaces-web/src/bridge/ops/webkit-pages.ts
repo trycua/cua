@@ -22,7 +22,7 @@
 import { HostError } from "../adapter";
 import type { HostStatus } from "../contracts/host";
 import type { SpaceRow } from "../contracts/spaces";
-import type { CatalogEntry, KvInventory, RunEvent, TeleportPlan } from "../contracts/teleport";
+import type { CatalogEntry, KvInventory, KvReadiness, RunEvent, TeleportPlan } from "../contracts/teleport";
 import type { HostEvent, OpArgs, OpName, OpResult } from "../protocol";
 import type { WebkitMethod, WkHostState, WkSpace } from "../webkit-protocol";
 import { isSettingsPane } from "./host-setup";
@@ -49,6 +49,7 @@ export const WEBKIT_PAGE_OPS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",
@@ -231,7 +232,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     // As long as the run takes (an install downloads the app); it reports
     // progress as it goes (teleport.progress) and answers when it is done.
     "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }, null),
-    "teleport.sites": async ({ providerId }) => snake(await request("teleport.sites", { providerId })) as KvInventory,
+    "teleport.sites": async ({ providerId, profile }) => snake(await request("teleport.sites", { providerId, profile: profile ?? null })) as KvInventory,
+    "teleport.readiness": async ({ providerId, profile }) =>
+      snake(await request("teleport.readiness", { providerId, profile: profile ?? null })) as KvReadiness,
     "teleport.remembered": async ({ providerId, spaceId }) => (await request<string[] | null>("teleport.remembered", { providerId, spaceId })) ?? null,
     "teleport.streamWindow": none("teleport.streamWindow"),
 

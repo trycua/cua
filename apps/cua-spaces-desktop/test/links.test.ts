@@ -24,7 +24,24 @@ describe("links.*", () => {
     const b = backend({ shares: vi.fn(async () => [SHARE]) });
     const ctx = { model: { backend: b } } as unknown as BridgeContext;
     const r = await linksMethods(ctx)["links.list"]!({}, {});
-    expect(r).toEqual({ links: [{ ...SHARE, name: null, access: "team", createdAtUnix: 1000, expiresAtUnix: null }] });
+    expect(r).toEqual({
+      links: [
+        {
+          ...SHARE,
+          name: null,
+          access: "team",
+          createdAtUnix: 1000,
+          expiresAtUnix: null,
+          tcpConnectWith: null,
+          tcpAddress: null,
+          route: null,
+          routeLine: null,
+          allow: [],
+          waiting: null,
+          waitingText: null,
+        },
+      ],
+    });
     expect(validate(OP_SHAPES["links.list"], r, SHAPE_DEFS)).toEqual([]);
   });
 
@@ -53,5 +70,60 @@ describe("links.*", () => {
   it("needs a target", async () => {
     const ctx = { model: { backend: backend({}) } } as unknown as BridgeContext;
     await expect(linksMethods(ctx)["links.create"]!({}, {})).rejects.toThrow(/target/);
+  });
+
+  it("a TCP share carries its route, who may connect and what it waits for", async () => {
+    const shareTcp = vi.fn(async () => ({
+      ...SHARE,
+      access: PUBLIC,
+      kind: "space_port",
+      target: "space:mc:25565",
+      tcpConnectWith: "203.0.113.24:26500",
+      tcpAddress: "203.0.113.24:26500",
+      route: "host",
+      routeLine: "Through your AWS account",
+      allow: ["203.0.113.0/24"],
+      waiting: undefined,
+      waitingText: undefined,
+    }));
+    const ctx = { model: { backend: backend({ shareTcp }) } } as unknown as BridgeContext;
+    const r = await linksMethods(ctx)["links.create"]!({ target: "space:mc:25565", tcp: true, service: "minecraft", route: "host", allow: ["203.0.113.0/24"], checkHost: true, consent: true }, {});
+    expect(shareTcp).toHaveBeenCalledWith("space:mc:25565", "minecraft", undefined, undefined, "host", ["203.0.113.0/24"], true, true);
+    expect(r).toMatchObject({ route: "host", routeLine: "Through your AWS account", allow: ["203.0.113.0/24"], waiting: null, waitingText: null });
+    expect(validate(OP_SHAPES["links.create"], r, SHAPE_DEFS)).toEqual([]);
+  });
+
+  it("approves and turns down a waiting share, and removes the share edge", async () => {
+    const live = { ...SHARE, access: PUBLIC, tcpConnectWith: "x:1", route: "edge", routeLine: "Through your AWS account" };
+    const approveShare = vi.fn(async () => live);
+    const denyShare = vi.fn(async () => undefined);
+    const removeShareEdge = vi.fn(async () => ["share-1"]);
+    const m = linksMethods({ model: { backend: backend({ approveShare, denyShare, removeShareEdge }) } } as unknown as BridgeContext);
+    const a = await m["links.approve"]!({ id: "share-1", always: true }, {});
+    expect(approveShare).toHaveBeenCalledWith("share-1", true);
+    expect(validate(OP_SHAPES["links.approve"], a, SHAPE_DEFS)).toEqual([]);
+    expect(await m["links.deny"]!({ id: "share-1" }, {})).toEqual({ denied: "share-1" });
+    expect(denyShare).toHaveBeenCalledWith("share-1");
+    expect(await m["shares.edge.remove"]!({}, {})).toEqual({ ended: ["share-1"] });
+  });
+
+  it("reads the share settings in the page's words", async () => {
+    const shareSettings = vi.fn(async () => ({
+      landing: "OnlyMyCloud",
+      relayFallback: false,
+      dailyCapMib: 2048n,
+      defaultAllow: [],
+      approveAgentShares: true,
+      alwaysAllowSpaces: ["mc"],
+      edgeConsent: ["AWS"],
+      usedToday: 1_503_238_553n,
+      edgeCloud: "AWS",
+      edgeHost: "ec2-198-51-100-7.us-west-2.compute.amazonaws.com",
+      edgeMonthlyUsd: 7,
+    }));
+    const m = linksMethods({ model: { backend: backend({ shareSettings }) } } as unknown as BridgeContext);
+    const r = await m["shares.settings.get"]!({}, {});
+    expect(r).toMatchObject({ landing: "only_my_cloud", dailyCapMib: 2048, usedToday: 1_503_238_553, edgeCloud: "AWS", edgeMonthlyUsd: 7 });
+    expect(validate(OP_SHAPES["shares.settings.get"], r, SHAPE_DEFS)).toEqual([]);
   });
 });

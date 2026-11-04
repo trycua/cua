@@ -96,9 +96,18 @@ export function experimentsPage(model: AppModel) {
   return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
 }
 
+/** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+export function refreshDaemonExperiments(model: AppModel): void {
+  const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
+  const now = model.settings.experiments;
+  if (kept.secureSpaces === now.secureSpaces && kept.childSpaces === now.childSpaces && kept.askFirst === now.askFirst && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
+  model.settings = { ...model.settings, experiments: { ...now, secureSpaces: kept.secureSpaces, childSpaces: kept.childSpaces, askFirst: kept.askFirst, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
+}
+
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
  * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
+  refreshDaemonExperiments(model);
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
@@ -113,6 +122,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     runtimes: encode(model.runtimesInput()),
     // The app core's own settings the page changes (`settings.update`).
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
+    // The Spaces and machine desktops pinned to the notch, in pin order.
+    notchPinned: [...model.settings.notchPinned],
   };
 }
 
@@ -125,6 +136,11 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const { off, done } = t as { off?: unknown; done?: unknown };
     if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
     patch.tips = { off, done: done as string[] };
+  }
+  if ("notchPinned" in args) {
+    const ids = args.notchPinned;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
+    patch.notchPinned = ids as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;
@@ -336,7 +352,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       }
     },
     "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
-    // The page's tips (`AppSettings.tips`), saved as given.
+    // The page's tips (`AppSettings.tips`) and the notch's pins (`AppSettings.notchPinned`), saved as given.
     "settings.update": (args) => {
       save(settingsUpdate(args));
       return settingsState(model, parts());

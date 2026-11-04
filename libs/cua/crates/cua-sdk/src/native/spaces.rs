@@ -4105,6 +4105,7 @@ impl Spaces {
                             instance_type: text(&options.instance_type),
                             region: text(&options.region),
                             tree: None,
+                            relay: None,
                         })
                         .await?;
                     if options.children == Some(true)

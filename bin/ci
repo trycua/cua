@@ -598,9 +598,12 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                   fix="python3 scripts/spdx-headers.py --fsl --apply", safe_fix=True,
                   ci=(("ci-spdx-headers.yml", "python3 scripts/spdx-headers.py --fsl --check"),)))
     if changes.touches(r"^libs/cua-driver/.*\.(rs|swift)$"):
+        # Warn-only, as in CI, until the existing driver tree is stamped. The ref includes the
+        # step's continue-on-error line, so --verify-sync fails once CI enforces and this must too.
         add(Check("spdx-driver", "SPDX headers (Cua Driver, MIT)", "python3 scripts/spdx-headers.py --check libs/cua-driver",
-                  fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True,
-                  ci=(("ci-spdx-headers.yml", "python3 scripts/spdx-headers.py --check libs/cua-driver"),)))
+                  fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True, advisory=True,
+                  ci=(("ci-spdx-headers.yml",
+                       "continue-on-error: true\n        run: python3 scripts/spdx-headers.py --check libs/cua-driver"),)))
 
     lock_hits = changes.touches(LOCKFILE_RX)
     if lock_hits:

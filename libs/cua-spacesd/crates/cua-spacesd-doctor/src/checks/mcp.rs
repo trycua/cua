@@ -142,11 +142,16 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                 )
             }
         };
+        // The child-Space tools are the MCP server's alone (they call the
+        // Space's spawn channel); DriverService does not list them.
         let mcp: BTreeSet<String> = listed["result"]["tools"]
             .as_array()
             .map(|a| {
                 a.iter()
                     .filter_map(|t| t["name"].as_str().map(str::to_owned))
+                    .filter(|n| {
+                        !cua_spacesd_server::services::spawn_tools::TOOLS.contains(&n.as_str())
+                    })
                     .collect()
             })
             .unwrap_or_default();

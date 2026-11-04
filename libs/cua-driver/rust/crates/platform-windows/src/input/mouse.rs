@@ -20,9 +20,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
-    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, CS_DBLCLKS,
-    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE, GWL_EXSTYLE,
-    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, WindowFromPoint,
+    CS_DBLCLKS, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GA_ROOT, GCL_STYLE,
+    GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
     WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
@@ -507,7 +507,15 @@ pub fn send_click_synthesized_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
+    send_click_synthesized_mods_impl(
+        target,
+        sx,
+        sy,
+        count,
+        button,
+        modifiers,
+        ClickMode::NonActivating,
+    )
 }
 
 /// SendInput click for an explicit foreground request. Unlike the historical
@@ -522,7 +530,26 @@ pub fn send_click_synthesized_active_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Window)
+}
+
+/// Explicit desktop clicks leave the hardware cursor at the requested point.
+pub fn send_click_synthesized_desktop_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Desktop)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ClickMode {
+    NonActivating,
+    Window,
+    Desktop,
 }
 
 fn send_click_synthesized_mods_impl(
@@ -532,8 +559,9 @@ fn send_click_synthesized_mods_impl(
     count: usize,
     button: &str,
     modifiers: &[&str],
-    activate: bool,
+    mode: ClickMode,
 ) -> Result<()> {
+    let activate = mode != ClickMode::NonActivating;
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -620,7 +648,7 @@ fn send_click_synthesized_mods_impl(
         // Save previous foreground + cursor position so we can restore.
         let prev_fg = GetForegroundWindow();
         let mut prev_cursor = POINT::default();
-        let _ = GetCursorPos(&mut prev_cursor);
+        let prev_cursor_valid = GetCursorPos(&mut prev_cursor).is_ok();
 
         // Bring the target to the top of the VISIBLE z-order so the
         // coordinate-routed SendInput mouse click lands on it — WITHOUT stealing
@@ -744,7 +772,17 @@ fn send_click_synthesized_mods_impl(
                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
                 );
             }
-            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            if prev_cursor_valid {
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            }
+        } else if mode == ClickMode::Window && prev_cursor_valid {
+            // Restore our injected movement, but leave a later user/app move alone.
+            let mut current_cursor = POINT::default();
+            if GetCursorPos(&mut current_cursor).is_ok()
+                && cursor_still_at_injected_click(current_cursor.x, current_cursor.y, sx, sy)
+            {
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            }
         }
         drop(noactivate);
         if !sent_ok {
@@ -773,9 +811,13 @@ fn send_click_synthesized_mods_impl(
     Ok(())
 }
 
-/// Press-hold-move-release drag via `SendInput`. Companion to
-/// [`send_click_synthesized`] for the `drag` tool's `delivery_mode:"foreground"`
-/// path.
+fn cursor_still_at_injected_click(x: i32, y: i32, click_x: i32, click_y: i32) -> bool {
+    x.abs_diff(click_x) <= 2 && y.abs_diff(click_y) <= 2
+}
+
+/// Press-hold-move-release drag via `SendInput`, used by the `drag` tool's
+/// `scope:"desktop"` path, which intentionally acts on whatever is visible at
+/// the screen coordinates.
 ///
 /// Why a SendInput drag is needed at all: the PostMessage drag path posts
 /// `WM_LBUTTONDOWN` + `WM_MOUSEMOVE`s + `WM_LBUTTONUP` to the target HWND.
@@ -787,10 +829,16 @@ fn send_click_synthesized_mods_impl(
 /// input queue and DOES update GetKeyState, so a WPF Slider thumb actually
 /// tracks the drag.
 ///
+/// `modifiers` (ctrl/shift/alt/win) are held through the system input queue
+/// from before the press until after the release, so targets that read live
+/// key state (WPF `Keyboard.Modifiers`, Excel's Ctrl-drag copy) see a
+/// modified drag.
+///
 /// Same UIAccess constraints as [`send_click_synthesized`] — the
 /// `SetForegroundWindow` swap is rejected from non-UIAccess processes
 /// when foreground-lock is active; route through `cua-driver-uia.exe`
 /// for reliable operation.
+#[allow(clippy::too_many_arguments)]
 pub fn send_drag_synthesized(
     target: u64,
     sx_from: i32,
@@ -800,6 +848,76 @@ pub fn send_drag_synthesized(
     duration_ms: u64,
     steps: usize,
     button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_drag_synthesized_impl(
+        target,
+        sx_from,
+        sy_from,
+        sx_to,
+        sy_to,
+        duration_ms,
+        steps,
+        button,
+        modifiers,
+        false,
+    )
+}
+
+/// SendInput drag for an explicit window-targeted foreground request.
+///
+/// The drag is coordinate-routed: Windows delivers it to whatever window is
+/// under the pointer. The z-order-only raise used by the desktop path can
+/// silently fail to expose the target, and the whole stroke then lands in the
+/// window covering it. Like [`send_click_synthesized_active_mods`], this path
+/// activates the target instead, and it hit-tests the start point before the
+/// button goes down. When Windows refuses the activation, or another window
+/// still owns the start point, it returns `foreground_unavailable` without
+/// sending any mouse input. The caller owns any later foreground restore.
+/// `modifiers` are held as in [`send_drag_synthesized`].
+#[allow(clippy::too_many_arguments)]
+pub fn send_drag_synthesized_active(
+    target: u64,
+    sx_from: i32,
+    sy_from: i32,
+    sx_to: i32,
+    sy_to: i32,
+    duration_ms: u64,
+    steps: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_drag_synthesized_impl(
+        target,
+        sx_from,
+        sy_from,
+        sx_to,
+        sy_to,
+        duration_ms,
+        steps,
+        button,
+        modifiers,
+        true,
+    )
+}
+
+/// How long the active drag waits for the activated target to own its start
+/// point. Activation reorders windows synchronously in the common case; the
+/// short poll covers targets whose activation is still settling.
+const DRAG_START_HIT_TEST_TIMEOUT: Duration = Duration::from_millis(150);
+
+#[allow(clippy::too_many_arguments)]
+fn send_drag_synthesized_impl(
+    target: u64,
+    sx_from: i32,
+    sy_from: i32,
+    sx_to: i32,
+    sy_to: i32,
+    duration_ms: u64,
+    steps: usize,
+    button: &str,
+    modifiers: &[&str],
+    activate: bool,
 ) -> Result<()> {
     let target = HWND(target as *mut _);
     if target.0.is_null() {
@@ -814,6 +932,7 @@ pub fn send_drag_synthesized(
         "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
         _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
+    let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
 
     let (vd_x, vd_y, vd_w, vd_h) = unsafe {
         (
@@ -853,24 +972,117 @@ pub fn send_drag_synthesized(
         let prev_fg = GetForegroundWindow();
         let mut prev_cursor = POINT::default();
         let _ = GetCursorPos(&mut prev_cursor);
-
-        // Lock-free z-order raise (no focus steal) so the coordinate-routed drag
-        // lands on the target — same technique as send_click_synthesized.
-        // SetForegroundWindow is lock-denied without UIAccess and isn't needed
-        // for pointer input; NoActivateGuard keeps the press from activating it.
-        let _noact = crate::input::NoActivateGuard::arm(target);
         // Capture whether the target was ALREADY always-on-top so we only demote
         // below if WE promoted it (else we'd strip a legitimate topmost window).
         let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let _ = SetWindowPos(
-            target,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-        );
+
+        // Undo the desktop path's z-order raise and put the user's cursor back.
+        // The active path leaves z-order alone; its caller restores foreground.
+        // The cursor stays put when the release is unconfirmed: moving a cursor
+        // whose button may still be held would continue the drag.
+        let restore = |move_cursor: bool| {
+            if !activate {
+                if !was_topmost {
+                    let _ = SetWindowPos(
+                        target,
+                        HWND_NOTOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    );
+                }
+                if !prev_fg.0.is_null() && prev_fg != target {
+                    let _ = SetWindowPos(
+                        prev_fg,
+                        HWND_TOP,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    );
+                }
+            }
+            if move_cursor {
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            }
+        };
+
+        let noactivate = if activate {
+            if !crate::input::force_foreground_assisted(target).0 {
+                let actual = GetForegroundWindow();
+                bail!(
+                    "foreground_unavailable: Windows did not activate exact target HWND {:?} \
+                     (actual foreground HWND {:?}); no mouse input was sent",
+                    target.0,
+                    actual.0
+                );
+            }
+            None
+        } else {
+            // Lock-free z-order raise (no focus steal) so the coordinate-routed
+            // drag lands on the target — same technique as send_click_synthesized.
+            // SetForegroundWindow is lock-denied without UIAccess and isn't needed
+            // for pointer input; NoActivateGuard keeps the press from activating it.
+            let guard = crate::input::NoActivateGuard::arm(target);
+            let _ = SetWindowPos(
+                target,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            );
+            Some(guard)
+        };
+
+        // A coordinate-routed press goes to whichever window owns the start
+        // point. Refuse before the button goes down unless that is the target.
+        if activate {
+            let deadline = std::time::Instant::now() + DRAG_START_HIT_TEST_TIMEOUT;
+            while !crate::input::inject::target_visible_at_point(target, sx_from, sy_from) {
+                if std::time::Instant::now() >= deadline {
+                    let owner = WindowFromPoint(POINT {
+                        x: sx_from,
+                        y: sy_from,
+                    });
+                    bail!(
+                        "foreground_unavailable: the drag start ({sx_from},{sy_from}) is covered \
+                         by HWND {:?}, not target HWND {:?}; no mouse input was sent",
+                        GetAncestor(owner, GA_ROOT).0,
+                        target.0
+                    );
+                }
+                sleep(Duration::from_millis(15));
+            }
+        }
+
+        // Release the held modifiers, retrying once like the click path so a
+        // partially inserted release does not leave system key state held.
+        let release_modifiers = || {
+            let size = std::mem::size_of::<INPUT>() as i32;
+            mod_ups.is_empty()
+                || SendInput(&mod_ups, size) as usize == mod_ups.len()
+                || SendInput(&mod_ups, size) as usize == mod_ups.len()
+        };
+
+        // 0. Hold the modifiers before the press.
+        if !mod_downs.is_empty() {
+            let sent = SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            if sent as usize != mod_downs.len() {
+                let _ = release_modifiers();
+                restore(true);
+                drop(noactivate);
+                bail!(
+                    "SendInput inserted {sent}/{} modifier key presses; no mouse input was sent",
+                    mod_downs.len()
+                );
+            }
+            sleep(Duration::from_millis(5));
+        }
 
         // 1. Move + press at the start of the drag.
         let (nfx, nfy) = norm(sx_from, sy_from);
@@ -881,29 +1093,10 @@ pub fn send_drag_synthesized(
         ];
         let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
-            if !was_topmost {
-                let _ = SetWindowPos(
-                    target,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
-            }
-            if !prev_fg.0.is_null() && prev_fg != target {
-                let _ = SetWindowPos(
-                    prev_fg,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
-            }
-            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            // Records insert in order, so a short prelude never pressed the button.
+            let _ = release_modifiers();
+            restore(true);
+            drop(noactivate);
             bail!(
                 "SendInput drag-prelude inserted {sent}/{} events",
                 prelude.len()
@@ -914,51 +1107,58 @@ pub fn send_drag_synthesized(
         //    so both the visible cursor and the system input queue track the
         //    same path — WPF's drag-handler watches GetKeyState during each
         //    move event.
+        let mut moves_ok = true;
+        let mut cursor_at = (sx_from, sy_from);
         for i in 1..=steps {
             let t = i as f64 / steps as f64;
             let x = sx_from + ((sx_to - sx_from) as f64 * t).round() as i32;
             let y = sy_from + ((sy_to - sy_from) as f64 * t).round() as i32;
             let (nx, ny) = norm(x, y);
             let _ = SetCursorPos(x, y);
+            cursor_at = (x, y);
             let mv = [make_input(nx, ny, MOUSEEVENTF_MOVE)];
-            let _ = SendInput(&mv, std::mem::size_of::<INPUT>() as i32);
+            if SendInput(&mv, std::mem::size_of::<INPUT>() as i32) != 1 {
+                moves_ok = false;
+                break;
+            }
             if step_delay_ms > 0 {
                 sleep(Duration::from_millis(step_delay_ms));
             }
         }
 
-        // 3. Release at the end.
+        // 3. Release at the end. The button is held at this point, so always
+        //    attempt the release. A second attempt is a best-effort recovery;
+        //    when it lands, the drag completed normally.
         let (ntx, nty) = norm(sx_to, sy_to);
         let release = [make_input(ntx, nty, up_flag)];
-        let _ = SendInput(&release, std::mem::size_of::<INPUT>() as i32);
+        let released = SendInput(&release, std::mem::size_of::<INPUT>() as i32) == 1
+            || SendInput(&release, std::mem::size_of::<INPUT>() as i32) == 1;
 
-        // Brief settle, then restore z-order (demote target, restack user's
-        // window — no activation) and the cursor.
+        // Brief settle, so a target that samples live key state while handling
+        // the button release still sees the modifiers held. Then release them
+        // and restore z-order (demote target, restack user's window — no
+        // activation) and the cursor.
         sleep(Duration::from_millis(40));
-        if !was_topmost {
-            let _ = SetWindowPos(
-                target,
-                HWND_NOTOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        let modifiers_released = release_modifiers();
+        restore(released);
+        drop(noactivate);
+
+        if !released {
+            let (cx, cy) = cursor_at;
+            bail!(
+                "SendInput did not insert the drag's button release after a retry; the \
+                 button may still be held at screen ({cx},{cy}), so the cursor was left there."
             );
         }
-        if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetWindowPos(
-                prev_fg,
-                HWND_TOP,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        if !modifiers_released {
+            bail!(
+                "SendInput did not insert the drag's modifier key releases after a retry; \
+                 modifier keys may still be held."
             );
         }
-        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-        drop(_noact);
+        if !moves_ok {
+            bail!("SendInput inserted fewer drag moves than expected; the button was released.");
+        }
     }
 
     Ok(())
@@ -1131,6 +1331,20 @@ mod nc_hit_tests {
         assert_eq!(classify_nc_move_resize_hit(3), None); // HTSYSMENU (click, not drag-move)
         assert_eq!(classify_nc_move_resize_hit(-1), None); // HTERROR
         assert_eq!(classify_nc_move_resize_hit(18), None); // HTBORDER (non-resizable edge)
+    }
+}
+
+#[cfg(test)]
+mod cursor_restore_tests {
+    use super::cursor_still_at_injected_click;
+
+    #[test]
+    fn restore_only_while_the_cursor_remains_at_the_injected_point() {
+        assert!(cursor_still_at_injected_click(-100, 200, -100, 200));
+        assert!(cursor_still_at_injected_click(-98, 198, -100, 200));
+        assert!(!cursor_still_at_injected_click(-97, 200, -100, 200));
+        assert!(!cursor_still_at_injected_click(-100, 203, -100, 200));
+        assert!(!cursor_still_at_injected_click(i32::MIN, 0, i32::MAX, 0));
     }
 }
 

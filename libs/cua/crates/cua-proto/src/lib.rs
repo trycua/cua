@@ -45,6 +45,8 @@ pub mod daemon {
 pub const FILE_DESCRIPTOR_SET: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/cua_descriptor.bin"));
 
+pub mod bulk;
+
 /// Default TCP port of cua-spacesd (gRPC, gRPC-Web and HTTP routes).
 pub const SPACESD_DEFAULT_PORT: u16 = 3211;
 
@@ -67,8 +69,29 @@ pub const ENV_PROTOCOL_VERSION: u32 = 1;
 /// and `MetricsResponse.memory_limited` / `disk_limited`; 7 =
 /// `SystemService.AttachRelay` / `DetachRelay` (a running driver joins a
 /// relay so its Space can be shared); 8 = `HostSpacesService` (a host
-/// provides Spaces through the relay).
-pub const ENV_PROTOCOL_REVISION: u32 = 8;
+/// provides Spaces through the relay); 9 = the exec ledger and fencing epoch
+/// (`StartProcessRequest.request_id` / `epoch`, `ProcessStart.deduplicated`,
+/// `ProcessEnd.lost`, `ProcessService.GetExecRecord` / `AdvanceEpoch`); 10 =
+/// `InitRequest.new_machine` / `entropy` and `InitResponse.new_machine` (a
+/// claimed, restored or forked guest regenerates its per-machine secrets);
+/// 11 = file calls and signed URLs that act as another guest user (`run_as`),
+/// file `metadata` stored as extended attributes (`xattr_namespace`,
+/// `EntryInfo.metadata`, `FsEvent.metadata`), `POST multipart/form-data` on
+/// `PUT` signed URLs and `CreateSignedUrlRequest.create_parents` (features
+/// `fs.run_as`, `fs.xattr`, `files.multipart`); 12 = the raw terminating
+/// signal of a process (`ProcessEnd.signal_number` / `signal_name`).
+/// 13 = the bulk lane (`GetCapabilitiesResponse.bulk`,
+/// `ReadFileRequest.bulk_slot`, `UploadChunkRequest.bulk_slot`).
+pub const ENV_PROTOCOL_REVISION: u32 = 13;
+
+/// The first [`ENV_PROTOCOL_REVISION`] of Cua 0.8, the release that added the
+/// host RPCs a Cua 0.7 machine (revision 8) does not serve:
+/// `HostSnapshotsService` (checkpoints of Spaces on a host, and copying them),
+/// `HostSpacesService.SetHostWarm` / `SetHostSpaceEgress` and
+/// `HostJobsService`. A client checks the host's reported revision against
+/// this before calling one of them, instead of sending an RPC the host's
+/// access layer would reject as "unauthenticated".
+pub const HOST_SERVICES_MIN_REVISION: u32 = 9;
 
 /// `DiagnoseReport.schema_version` of this revision of the contract.
 pub const DIAGNOSE_REPORT_SCHEMA_VERSION: u32 = 1;
@@ -107,6 +130,49 @@ pub mod metadata {
     pub const TUNNEL_WS_PATH: &str = "/tunnel";
     /// Reverse-SOCKS hotspot WebSocket path (ticket-authenticated).
     pub const HOTSPOT_WS_PATH: &str = "/hotspot";
+    /// Spawn channel WebSocket path (ticket-authenticated): the host that
+    /// runs the Space serves its child-Space API over it.
+    pub const SPAWN_WS_PATH: &str = "/spawn";
+    /// Host ports WebSocket path (ticket-authenticated): the host that runs
+    /// the Space carries its listed host ports, published on the Space's
+    /// own loopback.
+    pub const HOST_PORTS_WS_PATH: &str = "/hostports";
+    /// File (in a [`spawn_dirs`] directory) holding a Space's spawn
+    /// capability.
+    pub const SPAWN_TOKEN_FILE: &str = "spawn-token";
+    /// File (in a [`spawn_dirs`] directory) holding the spawn listener's URL.
+    pub const SPAWN_ADDRESS_FILE: &str = "spawn-address";
+    /// Environment of processes in a Space: its id.
+    pub const ENV_SPACE: &str = "CUA_SPACE";
+    /// Environment of processes in a Space: the spawn listener's URL.
+    pub const ENV_SPAWN: &str = "CUA_SPAWN";
+    /// Environment of processes in a Space: the capability's file.
+    pub const ENV_SPAWN_TOKEN_FILE: &str = "CUA_SPAWN_TOKEN_FILE";
+
+    /// Where a guest keeps its spawn files, in the order cua-spacesd tries
+    /// them (it takes the first it can own) and clients look: `/run/cua`,
+    /// `$XDG_RUNTIME_DIR/cua-spawn`, `/dev/shm/cua-spawn-<uid>`, then the
+    /// temp dir's `cua-spawn-<uid>` (`cua-spawn` without a uid).
+    pub fn spawn_dirs(
+        uid: Option<u32>,
+        xdg_runtime_dir: Option<&std::path::Path>,
+        temp_dir: &std::path::Path,
+    ) -> Vec<std::path::PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(uid) = uid {
+            dirs.push(std::path::PathBuf::from("/run/cua"));
+            if let Some(x) = xdg_runtime_dir.filter(|x| !x.as_os_str().is_empty()) {
+                dirs.push(x.join("cua-spawn"));
+            }
+            dirs.push(std::path::PathBuf::from(format!(
+                "/dev/shm/cua-spawn-{uid}"
+            )));
+            dirs.push(temp_dir.join(format!("cua-spawn-{uid}")));
+        } else {
+            dirs.push(temp_dir.join("cua-spawn"));
+        }
+        dirs
+    }
     /// Cua Volume WebSocket path (ticket-authenticated): the client serves
     /// the guest's volume mount over it.
     pub const VOLUME_WS_PATH: &str = "/volume";
@@ -114,6 +180,11 @@ pub mod metadata {
     pub const FILES_PATH: &str = "/files";
     /// Streamable-HTTP MCP endpoint for the cua-driver tool registry.
     pub const MCP_PATH: &str = "/mcp";
+    /// A host's checkpoint files, by SHA-256 (`<path>/<sha256>`), for
+    /// copying them to the owner's other machines; authenticated by a
+    /// snapshot read grant (`HostSnapshotsService.ExportHostSnapshot`),
+    /// with HTTP range requests. Served by hosts that provide Spaces.
+    pub const SNAPSHOT_BLOBS_PATH: &str = "/v1/snapshots/blobs/{sha}";
     /// The web viewer (static page, unauthenticated; it reads its viewer
     /// ticket from the URL fragment). Served with and without the trailing
     /// slash; assets live under `/viewer/`.

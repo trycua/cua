@@ -52,7 +52,7 @@ let package = Package(
                            .product(name: "Cua", package: "Cua")],
             path: "Sources/CuaBotsMac"
         ),
-        .testTarget(name: "CuaBotsCoreTests", dependencies: ["CuaBotsCore", "CuaBotsUI"],
+        .testTarget(name: "CuaBotsCoreTests", dependencies: ["CuaBotsCore", "CuaBotsUI", "CuaBotsCua"],
                     path: "Tests/CuaBotsCoreTests"),
     ],
     swiftLanguageModes: [.v5]

@@ -582,6 +582,7 @@ fn main() {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -611,9 +612,11 @@ fn main() {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
+            platform_macos::apple_events::refuse_ungranted_automation(no_automation_prompts);
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
@@ -1006,6 +1009,7 @@ fn main() -> anyhow::Result<()> {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -1029,6 +1033,7 @@ fn main() -> anyhow::Result<()> {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
@@ -1043,7 +1048,7 @@ fn main() -> anyhow::Result<()> {
             // On Windows / Linux the flag is silently accepted for
             // CLI uniformity and ignored. The Claude-Code compat screenshot
             // surface is accepted on every platform for CLI uniformity.
-            let _ = no_permissions_gate;
+            let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(

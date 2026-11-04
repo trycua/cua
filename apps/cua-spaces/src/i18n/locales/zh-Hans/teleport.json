@@ -34,5 +34,14 @@
   "teleport.picker.preparing": "正在准备…",
   "teleport.picker.tabs_label": "传送",
   "teleport.picker.search": "搜索",
-  "teleport.drop_zone.label": "传送到 {name}"
+  "teleport.drop_zone.label": "传送到 {name}",
+  "teleport.move.app_only": "仅应用",
+  "teleport.move.app_with_files": "应用及文件或文件夹",
+  "teleport.move.app_with_state": "应用及其登录状态",
+  "teleport.sensitive.sign_ins.label": "保持我的登录状态",
+  "teleport.sensitive.sign_ins.detail": "会发送会话 Cookie。",
+  "teleport.sensitive.passwords.label": "已保存的密码",
+  "teleport.sensitive.passwords.detail": "会发送应用中已保存的密码。",
+  "teleport.sensitive.history.label": "浏览记录",
+  "teleport.sensitive.history.detail": "会发送访问过的页面记录，以及浏览器中一并保存的书签。"
 }

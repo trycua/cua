@@ -1,0 +1,47 @@
+{
+  "name": "aws-lan-mesh-c7g",
+  "route_prefix": "mesh direct",
+  "metrics": {
+    "rpc_health_ms": {
+      "p50": 1.36,
+      "p95": 1.414
+    },
+    "exec_run_ms": {
+      "p50": 3.887,
+      "p95": 4.088
+    },
+    "exec_sh_ms": {
+      "p50": 3.986,
+      "p95": 4.125
+    },
+    "upload_1MiB_ms": {
+      "p50": 19.106,
+      "p95": 21.64,
+      "MiBps_p50": 52.341
+    },
+    "download_1MiB_ms": {
+      "p50": 13.116,
+      "p95": 15.627,
+      "MiBps_p50": 76.242
+    },
+    "upload_100MiB_ms": {
+      "p50": 1378.204,
+      "p95": 1459.739,
+      "MiBps_p50": 72.558
+    },
+    "download_100MiB_ms": {
+      "p50": 859.423,
+      "p95": 895.079,
+      "MiBps_p50": 116.357
+    },
+    "stream_stdout": {
+      "MiBps": 106.082
+    }
+  },
+  "setup": "AWS us-west-2a, one subnet (a datacenter LAN, not a wired office LAN): coordinator c7g.large (cua daemon + SDK) -> pool host c7g.metal (Linux VM Space, QEMU/KVM, 2 vCPU, 2 GiB, created with --on host:<machine>) over the mesh's direct path; self-hosted relay (account mode, mesh on) in the same AZ. The guest ran this branch's cua-spacesd (overlaid). Measured 2026-10-20 with this branch.",
+  "targets": {
+    "exec_run_ms.p50": {
+      "max": 5.0
+    }
+  }
+}

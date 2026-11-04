@@ -148,7 +148,7 @@ struct LoginItemTests {
         #expect(serving.calls == ["register", "unregister"])
         #expect(m.loginItemStatus == .notRegistered)
         let note = general(m).first { $0.id == "launch-at-login-note" }?.label
-        #expect(note == "This computer provides Spaces, which stop after a restart until you open Cua Spaces.")
+        #expect(note == "This machine provides Spaces, which stop after a restart until you open Cua Spaces.")
 
         // Not serving and never chosen: left alone.
         let idle = FixtureLoginItem()

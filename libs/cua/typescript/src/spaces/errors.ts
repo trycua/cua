@@ -202,6 +202,9 @@ const CUA_TAGS: Record<string, SpacesErrorCode> = {
   Internal: 'protocol',
   // A pull, build or VM create would fill the disk (`cua cache prune`).
   InsufficientDisk: 'space_command',
+  // The machine has no room for another VM now (memory or vCPU limit, or
+  // low memory): delete a Space, size it down, or use on: "auto".
+  HostCapacity: 'space_command',
   // A catalog image CI has not published yet (pass the ref explicitly).
   ImageNotPublished: 'not_found',
 };

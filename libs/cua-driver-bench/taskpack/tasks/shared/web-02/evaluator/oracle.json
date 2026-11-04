@@ -1,0 +1,6 @@
+{
+  "task": "WEB-02",
+  "required_checks": ["order_count", "items", "address", "card_last4", "no_draft"],
+  "collection": "orders",
+  "fields": ["items", "address", "card_last4"]
+}

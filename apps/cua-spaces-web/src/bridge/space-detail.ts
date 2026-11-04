@@ -36,8 +36,14 @@ import type {
 
 export type * from "./ops/space-detail";
 
+/** This machine's own roster entry (the core's `host::THIS_MACHINE_ID`). */
+export const THIS_MACHINE_ID = "this-mac";
+
 export const USAGE_REFRESH_MS = 10_000;
 export const WINDOWS_REFRESH_MS = 5_000;
+/** The host's raw `cua:event` when its picture-in-picture panels change by
+ * themselves (`{ spaceId, open: rows }`; the SwiftUI app's `stream.pipChanged`). */
+export const PIP_CHANGED_EVENT = "stream.pipChanged";
 /** How often a shown Space's agent runs are read (`AgentRunsModel.poll`). */
 export const RUNS_REFRESH_MS = 4_000;
 
@@ -133,13 +139,15 @@ function fallbackSection(input: StreamSectionInput): StreamSection {
     const on = (input.open ?? []).includes(id);
     return [{ id: "pip" as const, symbol: on ? "pip.exit" : "pip.enter", help: on ? "Close picture in picture" : "Picture in picture", active: on }];
   };
-  const desktop = res ? `Desktop (${res})` : "Desktop";
+  // The resolution shows once, as the row's detail; the tooltip has both.
+  const desktop = "Desktop";
+  const desktopHelp = res ? `Desktop (${res})` : "Desktop";
   const windows = (input.windows ?? []).map((w) => {
     const label = w.title.trim() || w.appName.trim() || w.appId;
     return { id: w.id, kind: "window" as const, label, help: label, icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 }, actions: pip(w.id) };
   });
   return {
-    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktop, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
+    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktopHelp, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
     statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "No windows: the Space’s window host is not up." : "No open windows in this Space yet.",
   };
 }
@@ -186,7 +194,24 @@ export class SpaceDetailStore {
   constructor(
     private readonly adapter: DataAdapter,
     private readonly core: CoreClient,
-  ) {}
+  ) {
+    globalThis.window?.addEventListener?.("cua:event", this.onHostEvent);
+  }
+
+  /**
+   * The host closed or opened a picture-in-picture panel by itself (the
+   * panel's own close button): the page hears it now, not on the next
+   * windows read (`WINDOWS_REFRESH_MS`), so the inline desktop is back at
+   * once (`PIP_CHANGED_EVENT`).
+   */
+  private onHostEvent = (e: Event): void => {
+    const detail = (e as CustomEvent<{ event?: string; payload?: { spaceId?: unknown; open?: unknown } | null }>).detail;
+    if (detail?.event !== PIP_CHANGED_EVENT) return;
+    const { spaceId, open } = detail.payload ?? {};
+    if (typeof spaceId !== "string" || !Array.isArray(open) || this.held.has(spaceId)) return;
+    const rows = open.filter((r): r is string => typeof r === "string");
+    this.patch(spaceId, { open: pipReduce(this.core, this.get(spaceId).open, { type: "synced", rows }) });
+  };
 
   subscribe = (l: () => void): (() => void) => {
     this.listeners.add(l);
@@ -295,6 +320,7 @@ export class SpaceDetailStore {
 
   dispose(): void {
     this.disposed = true;
+    globalThis.window?.removeEventListener?.("cua:event", this.onHostEvent);
     for (const w of this.watched.values()) w.timers.forEach(clearTimeout);
     this.watched.clear();
     this.listeners.clear();
@@ -377,7 +403,11 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
   // windows: it is not asked (the core's detail says why in its note).
   // Nor is a machine on the relay while this device is not enrolled (the
   // relay refuses it; the detail says why).
-  const noDesktop = space ? sharesDesktop(ctx.core, space) === false || Boolean(seen.access && space.id.startsWith("relay:")) : false;
+  // Nor is this machine's own screen: it is not a Space, and nothing here
+  // streams it (the core's detail says so in its note).
+  const noDesktop = space
+    ? space.id === THIS_MACHINE_ID || sharesDesktop(ctx.core, space) === false || Boolean(seen.access && space.id.startsWith("relay:"))
+    : false;
   useEffect(() => {
     if (!details || !id || id.startsWith("pending:") || noDesktop) return;
     return details.watch(id);

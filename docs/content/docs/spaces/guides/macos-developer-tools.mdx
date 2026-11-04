@@ -1,0 +1,106 @@
+---
+title: macOS Space with developer tools
+description: 'A macOS Space where an agent can build and test iOS and macOS apps with Xcode and the iOS Simulator, how Cua makes it from the Xcode already on your Mac, what it needs, and why it is never downloaded.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The macOS Space with developer tools is a macOS Space where an agent can build
+and test Apple software with no setup. It has Xcode, the iOS Simulator with an
+iPhone ready to boot, the Metal toolchain, Rust with the iOS targets, CocoaPods,
+XcodeGen, sccache, Node with pnpm, Git and the GitHub CLI. The agent inside can
+run `xcodebuild`, boot the Simulator, drive it with the same computer-use tools
+it uses on any Space, and take screenshots of what it built.
+
+Like every macOS Space it runs on a Mac with Apple silicon, as a virtual
+machine, and it comes with the Cua Spaces tools and the permissions the agent
+needs to see and control the screen already granted.
+
+## Ask for it
+
+You do not pick an image or run a setup step. Ask for a macOS Space to develop
+Apple software and Cua uses this one.
+
+```bash skip="no-runner"
+cua sandbox create macos --tier dev
+```
+
+In the SDK it is `Image.macos(tier="xcode")`. `dev` and `xcode` are the same
+tier. The first time, Cua builds it on your Mac and shows its progress while it
+does. Every Space after that starts from the finished image in seconds, the way
+any other macOS Space does.
+
+## Where it comes from
+
+The image is published and pulled like the other macOS Space images: the first
+time you ask for it, Cua downloads it with progress and checks your free disk
+first, and every Space after that is a clone of it that starts in seconds. It
+is built by Cua's image pipeline, which gets Xcode from the pinned Xcode on its
+own build Mac. No Apple account is involved on your side.
+
+If the published image is not available, or you would rather use the Xcode you
+already have on your Mac, Cua builds the same image locally from the regular
+macOS Space image and your Xcode. Set `CUA_DEV_IMAGE=local` to prefer that.
+
+1. It starts from the regular macOS Space image it already keeps for you.
+2. It copies in the newest Xcode on your Mac, or the one Xcode selects. If
+   there is no installed Xcode it looks for an Xcode `.xip` you downloaded, in
+   `~/XcodesCache` and then `~/Downloads`.
+3. Inside the Space, Xcode downloads the matching iOS Simulator runtime from
+   Apple. That download needs no account.
+4. The remaining tools come from their public releases, each checked against a
+   pinned checksum.
+
+Your Xcode is only read.
+
+<Callout type="info">
+  Xcode and the iOS Simulator runtimes in this image are Apple software under
+  Apple's license, and the image is for use on Apple-branded hardware. It runs
+  only on a Mac with Apple silicon, and Cua refuses to pull it anywhere else.
+</Callout>
+
+<Callout type="info">
+  If the published image is not available and the Mac has no Xcode, creating
+  the Space stops at once and says what to do: install Xcode from the App Store,
+  or download the `.xip` from developer.apple.com and put it in `~/XcodesCache`,
+  then ask again. Apple requires a sign-in for that download, which Cua does not
+  do for you.
+</Callout>
+
+## What it needs
+
+The image adds about 27 GB on the Mac (measured with Xcode 26.6). Cua checks
+before it starts and stops early with how much is missing and how to make room:
+remove Spaces and images you no longer use with `cua cache prune`, or empty the
+Trash. The macOS Space image and the finished developer image are shared by every
+Space you create from them; a Space itself adds only what the agent writes.
+
+macOS runs at most two virtual machines at a time on one Mac, so a Space with
+developer tools counts as one of the two.
+
+## Using it
+
+Once the Space is running, the agent works as it would on a Mac of its own.
+
+```bash skip="no-runner"
+xcodegen generate
+xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=Cua iPhone' test
+xcrun simctl boot "Cua iPhone"
+```
+
+The Space has a Simulator device named `Cua iPhone`, already booted once so its
+first real boot is quick. Developer mode is on, so the debugger and Instruments
+do not ask for a password, and Xcode does not stop to ask whether to trust Swift
+package plug-ins and macros.
+
+Rust projects that target iOS build with `cargo build --target aarch64-apple-ios-sim`.
+sccache is installed, so set `RUSTC_WRAPPER=sccache` to keep a repeat build fast.
+
+## For maintainers
+
+The image is built and published by the macOS image pipeline like the other
+tiers (`libs/images/macos`). The fallback recipe is
+`libs/images/macos/derive-local.sh` with the tier script
+`libs/images/macos/files/tier-xcode.sh`, and every version is pinned in
+`libs/images/macos/versions.env`. The catalog entry lists the full macOS image
+it falls back to as `derived_from`.

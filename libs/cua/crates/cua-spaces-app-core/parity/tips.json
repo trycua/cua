@@ -1,0 +1,34 @@
+{
+  "name": "tips",
+  "about": "Tips (storyboard 9): a new Space is tried in your agent (the first connected of Hermes, Claude Code, Codex, Cursor), Next tip moves to power, powering from a tile finishes it, several stopped Spaces and a full disk offer Select stopped, a running Space's page offers its request and then Share, the sidebar's tip waits for page tips, Don't show tips, Settings turns them back on and Reset starts them over.",
+  "facts": {
+    "newestRunning": "cua-builder",
+    "spacePage": null,
+    "agentsConnected": ["claude-code"],
+    "agentsInstalled": ["cursor", "claude-code"],
+    "hasStopped": true,
+    "deletableStopped": 1,
+    "diskNearlyFull": false,
+    "secondComputerOnline": true,
+    "sharedAny": false
+  },
+  "steps": [
+    { "step": "a new Space, Claude Code connected", "place": "spaces" },
+    { "step": "Hermes connected too", "place": "spaces", "facts": { "agentsConnected": ["claude-code", "hermes"] } },
+    { "step": "no agent connected: the first installed", "place": "spaces", "facts": { "agentsConnected": [] } },
+    { "step": "no agent at all", "place": "spaces", "facts": { "agentsInstalled": [] } },
+    { "step": "Cursor connected: Open in Cursor", "place": "spaces", "facts": { "agentsConnected": ["cursor"] } },
+    { "step": "Next tip", "place": "spaces", "facts": { "agentsConnected": ["codex", "cursor"] }, "event": { "type": "next", "id": "try-agent" } },
+    { "step": "powered from a tile", "place": "spaces", "event": { "type": "powered" } },
+    { "step": "several stopped and a full disk", "place": "spaces", "facts": { "deletableStopped": 4, "diskNearlyFull": true } },
+    { "step": "a bulk delete", "place": "spaces", "event": { "type": "bulk-deleted" } },
+    { "step": "a running Space's page", "place": "space", "facts": { "spacePage": "cua-builder" } },
+    { "step": "share closed for now", "place": "space", "event": { "type": "close", "id": "share" } },
+    { "step": "settings: reset tips", "place": "space", "settings": { "row": "reset-tips", "option": "press" } },
+    { "step": "Don't show tips", "place": "spaces", "event": { "type": "dont-show" } },
+    { "step": "settings: show tips again", "place": "spaces", "settings": { "row": "tips", "option": "on" } },
+    { "step": "settings: show tips off", "place": "spaces", "settings": { "row": "tips", "option": "off" } },
+    { "step": "back on, on a page with no tip", "place": "sidebar", "settings": { "row": "tips", "option": "on" } },
+    { "step": "the sidebar's tip closed", "place": "sidebar", "event": { "type": "close", "id": "on-auto" } }
+  ]
+}

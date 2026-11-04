@@ -265,8 +265,30 @@ pub fn walk_tree_bounded_within(
     // Fallback: X11 window properties as minimal tree.
     let mut fallback = walk_via_x11_properties(xid, query);
     fallback.elapsed_ms = started.elapsed().as_millis();
-    fallback.degraded_reason = native_failure.map(|error| format!("atspi_walk_failed: {error}"));
+    fallback.degraded_reason = native_failure
+        .map(|error| format!("atspi_walk_failed: {error}"))
+        .or_else(|| {
+            std::fs::read(format!("/proc/{pid}/environ"))
+                .ok()
+                .and_then(|environ| bridge_disabled_reason(&environ))
+        });
     fallback
+}
+
+/// Why a process has no accessibility tree when its own environment explains
+/// it. GTK's AT-SPI bridge stays off under `NO_AT_BRIDGE=1`, and Electron sets
+/// that for itself, so anything started from an Electron terminal or agent
+/// host inherits it and looks like AT-SPI itself is down.
+fn bridge_disabled_reason(environ: &[u8]) -> Option<String> {
+    environ
+        .split(|&byte| byte == 0)
+        .any(|entry| entry == b"NO_AT_BRIDGE=1")
+        .then(|| {
+            "atspi_bridge_disabled: the target runs with NO_AT_BRIDGE=1, so its toolkit never \
+             joined the accessibility bus. Start it with launch_app, or with that variable \
+             unset, to get its tree."
+                .to_owned()
+        })
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
@@ -1080,5 +1102,32 @@ mod token_dispatch_tests {
             |_| panic!("re-resolved after the observed object answered"),
         );
         assert_eq!(observed.unwrap(), "/window_b/text");
+    }
+}
+
+#[cfg(test)]
+mod bridge_disabled_reason_tests {
+    use super::bridge_disabled_reason;
+
+    #[test]
+    fn names_the_variable_that_turned_the_bridge_off() {
+        let reason = bridge_disabled_reason(b"HOME=/home/test\0NO_AT_BRIDGE=1\0LANG=C\0");
+        let reason = reason.expect("the variable explains the missing tree");
+        assert!(reason.starts_with("atspi_bridge_disabled:"), "{reason}");
+        assert!(reason.contains("NO_AT_BRIDGE=1"), "{reason}");
+        assert!(reason.contains("launch_app"), "{reason}");
+    }
+
+    #[test]
+    fn stays_silent_when_the_bridge_is_allowed() {
+        for environ in [
+            &b"HOME=/home/test\0"[..],
+            b"NO_AT_BRIDGE=0\0",
+            b"NO_AT_BRIDGE=\0",
+            b"XNO_AT_BRIDGE=1\0",
+            b"",
+        ] {
+            assert_eq!(bridge_disabled_reason(environ), None);
+        }
     }
 }

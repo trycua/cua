@@ -70,8 +70,14 @@ jobs:
   # always run there. Any doubt means "run everything": see
   # .github/scripts/ci_reuse_pr_result.py. Rollback: set the repository
   # variable CI_REUSE_PR_RESULTS to "off".
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   reuse:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: reuse PR results
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -802,7 +808,8 @@ jobs:
 
   swift:
     name: swift smoke (macOS)
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full'))) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
     runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 60

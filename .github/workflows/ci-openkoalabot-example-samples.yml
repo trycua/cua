@@ -55,6 +55,11 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   typescript:
     needs: changes
     if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
@@ -111,6 +116,8 @@ jobs:
           npm run build:web
 
   changes:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10

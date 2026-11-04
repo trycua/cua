@@ -43,7 +43,14 @@ env:
   CARGO_BUILD_JOBS: "4"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   changes:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10

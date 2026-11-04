@@ -1826,6 +1826,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
  "cua-cluster",
  "cua-create-failure",
  "cua-disk",

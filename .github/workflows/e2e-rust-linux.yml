@@ -69,7 +69,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   source:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: "Resolve exact source"
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -62,7 +62,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   unit-python:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Python unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,6 +97,8 @@ jobs:
           uv run --frozen python verify_decision_cli.py --model mock --fixture native
 
   unit-typescript:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: TypeScript unit and typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -108,6 +117,8 @@ jobs:
         run: npm run typecheck
 
   mock-e2e-linux:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Linux mock E2E
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -345,6 +356,8 @@ jobs:
   # silently tests an older release. The candidate-source build above stays
   # Linux-only.
   released-driver-macos:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: macOS released Driver mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -461,6 +474,8 @@ jobs:
   # mock provider. verify_native.py launches a fresh harness per run and reads
   # the harness's own state file as the independent oracle.
   native-appkit-macos:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: macOS native AppKit mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -613,6 +628,8 @@ jobs:
           retention-days: 14
 
   released-driver-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Windows released Driver mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -727,6 +744,8 @@ jobs:
   # verify_native.py launches a fresh harness in task mode per run and reads
   # the harness's own state file as the independent oracle.
   native-wpf-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Windows native WPF mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -873,6 +892,8 @@ jobs:
   # default install.ps1, the deterministic mock provider, and the harness's
   # own state file as the independent oracle.
   native-winui3-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Windows native WinUI3 mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -1020,6 +1041,8 @@ jobs:
   # verify_native.py runs from the locked venv directly (not `uv run`, which
   # would put the venv's python3 first on PATH).
   native-gtk3-linux:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Linux native GTK3 mock E2E
     runs-on: ubuntu-latest
     timeout-minutes: 45

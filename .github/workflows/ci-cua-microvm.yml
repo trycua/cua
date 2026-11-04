@@ -54,7 +54,14 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   unit:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: unit (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -96,6 +103,8 @@ jobs:
           done
 
   macos:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: unit (macos)
     runs-on: macos-26
     timeout-minutes: 45
@@ -134,7 +143,8 @@ jobs:
 
   vz-e2e:
     name: vz e2e + perf guard (self-hosted Mac)
-    if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request') }}
     runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
     timeout-minutes: 120
     steps:

@@ -12,6 +12,7 @@ permissions:
   actions: write
   contents: read
   pull-requests: read
+  statuses: read
 
 jobs:
   ci-gate:
@@ -77,6 +78,54 @@ jobs:
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+      # Pull requests from our agents must carry a `local-ci` commit status on the head commit, set by
+      # `bin/ci --signoff` after a green local `bin/ci`. An agent PR is one opened by the Cua Agents
+      # GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch of this
+      # repository. Community PRs are not asked for it. The status usually lands a few seconds after
+      # the push, so the gate polls for it for five minutes before it fails.
+      # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
+      # set to "true"; that variable is the one switch that makes a missing status block the merge.
+      - name: Require local sign-off on agent pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.user.login, .head.sha, .head.ref, (.head.repo.full_name // "")] | @tsv')
+          IFS=$'\t' read -r author sha ref head_repo <<<"$info"
+          labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          why=
+          if [[ "$author" == "cua-agents[bot]" || "$author" == "cua-agents" ]]; then why="opened by $author"
+          elif [[ ",$labels," == *,agent,* ]]; then why="labelled agent"
+          elif [[ "$ref" == agent/* && "$head_repo" == "$GITHUB_REPOSITORY" ]]; then why="opened from the $ref branch"
+          fi
+          if [[ -z "$why" ]]; then echo "Not an agent pull request: no local-ci status required."; exit 0; fi
+          echo "Agent pull request ($why): requiring a successful local-ci status on ${sha:0:10}."
+          # Report-only: look once. Blocking: wait up to five minutes for the status.
+          tries=1
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=20
+          for _ in $(seq 1 "$tries"); do
+            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+            if [[ "$state" == success ]]; then echo "local-ci: success"; exit 0; fi
+            [[ "$state" == failure || "$state" == error ]] && break
+            sleep 15
+          done
+          msg="Run bin/ci and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
+            echo "::error title=local-ci missing::$msg"
+            exit 1
+          fi
+          echo "::warning title=local-ci missing (report-only)::$msg"
+          echo "local-ci is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."
+
       - name: Wait for every other workflow on the pull request head
         env:
           GH_TOKEN: ${{ github.token }}

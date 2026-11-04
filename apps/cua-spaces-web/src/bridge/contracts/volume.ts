@@ -40,9 +40,10 @@ export interface Experiments {
   tcpShares?: boolean;
   /** Mobile: the computer answers the Cua Spaces phone app. Off unless turned on; the daemon enforces it. */
   mobile?: boolean;
+  warmPools?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

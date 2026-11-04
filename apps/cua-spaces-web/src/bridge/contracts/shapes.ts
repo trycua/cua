@@ -463,7 +463,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
 );
 
 const RepoCacheShape = ref(

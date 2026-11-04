@@ -338,6 +338,9 @@ def run_entry(entry, args, out_dir, log):
         # --- lifecycle
         if "lifecycle" in cases:
             row_lifecycle(run, entry, name, row)
+        # --- warm claim
+        if "warm" in cases:
+            row_warm(run, entry, image, args, row)
         # --- cached ready times
         if args.n > 0 and "ready" in cases:
             times = []
@@ -576,6 +579,77 @@ def row_lifecycle(run, entry, name, row):
         else:
             notes.append("checkpoint refused: " + text[:80])
     row("lifecycle", "fail" if fails else "pass", "; ".join(fails + notes))
+
+
+def row_warm(run, entry, image, args, row):
+    """A pool of one: the member is claimed by a create, answers, is replaced, and the pool goes.
+
+    The runtime says what it does: a runtime with no warm claims refuses the pool in plain words (its
+    Spaces start cold); one that can claim hands out a Space that answers, and a second member is kept
+    ready afterwards (the refill)."""
+    caps = entry["capabilities"]
+    pool, claimed = "conf-warm", "conf-warm-1"
+    fails, notes = [], []
+    t0 = time.monotonic()
+    a = ["sandbox", "pool", "create", image, "--name", pool, "--min", "1", "--max", "1", "--kind", entry["kind"], "--cpu", "1", "--memory", "1GB", "--json"]
+    if entry["runtime"]:
+        a += ["--runtime", entry["runtime"]]
+    rc, o, e, ms = run.sh(*a, timeout=300)
+    if not caps["claim"]:
+        said = (o + e).strip()
+        if rc != 0 and len(said) >= 15:
+            row("warm", "pass", "no warm claims here, said in plain words: " + said[:120], ms)
+        else:
+            row("warm", "fail", "this runtime declares no warm claims, but the pool was not refused in plain words")
+        run.sh("sandbox", "pool", "rm", pool, timeout=120)
+        return
+
+    def ready():
+        rc, o, e, _ = run.sh("sandbox", "pool", "ls", "--json", timeout=60)
+        try:
+            for p in json.loads(o):
+                if p.get("name") == pool:
+                    return int(p.get("ready", 0)), (p.get("status") or p.get("reason") or "")
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return 0, (o + e).strip()[:120]
+
+    if rc != 0:
+        row("warm", "fail", "pool create: " + (e or o).strip()[:200])
+        return
+    try:
+        n, why = 0, ""
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            n, why = ready()
+            if n >= 1:
+                break
+            time.sleep(3)
+        if n < 1:
+            fails.append(f"no member was ready within 15 minutes ({why})")
+        else:
+            notes.append(f"member ready after {time.monotonic() - t0:.0f}s")
+            rc, o, e, ms = run.sh("sandbox", "create", "--pool", pool, "--name", claimed, "--json", timeout=args.timeout)
+            if rc != 0:
+                fails.append("create from the pool: " + (e or o).strip()[:200])
+            else:
+                notes.append(f"claim {ms:.0f} ms")
+                rc, o, e, _ = run.exec(claimed, "echo claimed-ok && cat /etc/machine-id 2>/dev/null | head -c 8")
+                if "claimed-ok" not in o:
+                    fails.append("the claimed Space does not answer: " + (e or o).strip()[:120])
+                # The pool keeps one member: a replacement comes.
+                again = False
+                for _ in range(200):
+                    if ready()[0] >= 1:
+                        again = True
+                        break
+                    time.sleep(3)
+                if not again:
+                    fails.append("no replacement member became ready in 10 minutes")
+    finally:
+        run.sh("sandbox", "rm", claimed, "-f", timeout=300)
+        run.sh("sandbox", "pool", "rm", pool, timeout=300)
+    row("warm", "fail" if fails else "pass", "; ".join(fails + notes), (time.monotonic() - t0) * 1000)
 
 
 def stop_apple_services(home):

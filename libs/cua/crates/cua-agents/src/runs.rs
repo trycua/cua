@@ -731,6 +731,50 @@ impl Agents {
         Ok(done)
     }
 
+    /// Whether a start of `h` must run the install script: asked for, and
+    /// something is missing. With every tool in place the script only prints
+    /// that it found them, and each of its steps writes an event (a process
+    /// or two in the guest, a quarter of a second each on a sandboxed
+    /// kernel), so a start with the tools there skips it.
+    async fn install_wanted(&self, h: &Harness, asked: bool) -> bool {
+        asked && !self.tools_in_place(h).await
+    }
+
+    /// Whether the tools of `h` (and the runner's own) are installed under
+    /// the guest user's home by this crate, in one guest call. A tool baked
+    /// into the image, or one with operating system packages, always takes
+    /// the script.
+    async fn tools_in_place(&self, h: &Harness) -> bool {
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        ids.extend(h.installs.iter().copied());
+        let Ok(order) = installables::resolve(&ids) else {
+            return false;
+        };
+        let mut tests = vec![];
+        for id in &order {
+            let Some(it) = installables::get(id) else {
+                return false;
+            };
+            if !it.apt.is_empty() {
+                return false;
+            }
+            tests.push(format!(
+                "[ -f {} ]",
+                quote(&format!(
+                    "{}/{}/{id}/{}/.cua-installed",
+                    self.home.trim_end_matches('/'),
+                    installables::TOOLS_DIR,
+                    it.version
+                ))
+            ));
+        }
+        let script = format!("{} && echo in-place", tests.join(" && "));
+        matches!(
+            self.sh(&script, Duration::from_secs(30)).await,
+            Ok(out) if out.trim() == "in-place"
+        )
+    }
+
     /// Puts what every start of `h` needs in the guest, once and in
     /// parallel: the bridge pipe, the runner and the cua skills, each skipped
     /// when it is already there. Safe to run ahead of a start (when an agent
@@ -1160,7 +1204,7 @@ impl Agents {
             h,
             &rdir,
             &runner_dir,
-            opts.install.unwrap_or(true),
+            self.install_wanted(h, opts.install.unwrap_or(true)).await,
             opts.repo
                 .as_deref()
                 .map(|r| (r, opts.branch.as_deref(), cwd.as_str())),
@@ -1227,11 +1271,19 @@ impl Agents {
             .and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
-    /// One run's status. Never disturbs the run.
+    /// One run's status. Never disturbs the run. The three guest reads it
+    /// takes (meta, state, whether the process lives) go out together, so it
+    /// costs one round trip.
     pub async fn status(&self, run_id: &str) -> Result<RunInfo> {
         valid_run_id(run_id)?;
         let rdir = self.run_dir(run_id);
-        let meta: Option<RunMeta> = match self.json_file(&format!("{rdir}/meta.json")).await {
+        let (meta_path, state_path) = (format!("{rdir}/meta.json"), format!("{rdir}/state.json"));
+        let (meta, state, alive) = tokio::join!(
+            self.json_file(&meta_path),
+            self.json_file(&state_path),
+            self.alive(run_id)
+        );
+        let meta: Option<RunMeta> = match meta {
             Ok(m) => m.and_then(|v| serde_json::from_value(v).ok()),
             Err(e) => {
                 return Ok(RunInfo {
@@ -1253,13 +1305,7 @@ impl Agents {
         let Some(meta) = meta else {
             return Err(Error::NotFound(format!("no run {run_id} in this sandbox")));
         };
-        let state = self
-            .json_file(&format!("{rdir}/state.json"))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(Value::Null);
-        let alive = self.alive(run_id).await;
+        let state = state.ok().flatten().unwrap_or(Value::Null);
         Ok(info(run_id, meta, &state, alive))
     }
 
@@ -1350,8 +1396,23 @@ impl Agents {
         model: Option<&str>,
     ) -> Result<RunInfo> {
         let before = self.status(run_id).await?;
+        self.send_after(run_id, text, files, &before, model).await?;
+        self.status(run_id).await
+    }
+
+    /// [`Self::send_with_model`] for a caller that read the run's status
+    /// just now (`before`): with a live runner it is one guest write, no
+    /// status reads around it. The events say what the turn it starts did.
+    pub async fn send_after(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        before: &RunInfo,
+        model: Option<&str>,
+    ) -> Result<()> {
         if matches!(before.status, RunStatus::Unknown) {
-            return Err(Error::Guest(before.reason));
+            return Err(Error::Guest(before.reason.clone()));
         }
         let rdir = self.run_dir(run_id);
         let mut paths = vec![];
@@ -1390,7 +1451,7 @@ impl Agents {
             }
             self.spawn_run(run_id).await?;
         }
-        self.status(run_id).await
+        Ok(())
     }
 
     /// Interrupts the turn in flight (ACP `session/cancel`); the session

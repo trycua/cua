@@ -298,8 +298,9 @@ class WorkflowWiringTests(unittest.TestCase):
             script = changes["steps"][-1]["run"]
             self.assertIn(f"check-manifests {lane}", script)
             self.assertIn(f"scope {lane}", script)
-            self.assertNotIn("needs", changes)
-            self.assertNotIn("if", changes)
+            # Only the quick stage (ci-quick.yml) comes before the scope job.
+            self.assertEqual(changes["needs"], "quick")
+            self.assertEqual(changes["if"], "${{ !failure() && !cancelled() }}")
             swift = jobs["swift"]
             self.assertEqual(swift["needs"], "changes")
             # The arm64 larger runner of the same macOS image (macos-26 is 3-core).
@@ -322,7 +323,7 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(self.load("openkoalabot")["jobs"]["typescript"]["needs"], "changes")
 
     def test_no_other_job_in_the_infinite_canvas_workflow(self):
-        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"changes", "swift"})
+        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"quick", "changes", "swift"})
 
 
 if __name__ == "__main__":

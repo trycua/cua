@@ -595,6 +595,35 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   seven series are present from process start.
 - `GET /v1/info` keeps `state_writable` (false while a store is failing).
 
+**Probe contract (`x-cua-relay-route`).** External probes match the
+status code and this header, never the wording of a refusal: the text a
+person reads changes with the relay's mode (phone support on answers an
+unknown id as an account computer) and with copy edits. Every response of
+`/healthz` (on every listener), `/readyz` and the client route
+(`/m/<id>/...`, host mode, any path forwarded to a computer) carries one of
+these values (`src/route_marker.rs`):
+
+| Value | Meaning |
+|---|---|
+| `ok` | `/healthz` (204), or `/readyz` ready (200) |
+| `not-ready` | `/readyz` 503 |
+| `forwarded` | the computer answered; status and body are its own (a computer cannot set this header itself) |
+| `refused-auth` | relay 401: no credential or one it does not accept |
+| `refused-denied` | relay 403: not shared, stopped sharing, revoked ticket |
+| `refused-limit` | relay 429 or 503: plan, rate or capacity limit |
+| `refused` | any other relay 4xx |
+| `offline` | the computer is not connected (502) |
+| `error` | any other relay 5xx |
+| `relay` | the relay answered itself without refusing (a redirect, a page it serves) |
+
+gRPC refusals (HTTP 200 with `grpc-status`) carry the marker of the
+relay's own status. An anonymous `GET /m/00000000-0000-0000-0000-000000000000/healthz`
+answers `401` with `refused-auth` in every mode (phone support on or off,
+admin token set or not, account sign-in on or off), and an edge or
+load-balancer error page carries no marker at all. The values are fixed:
+`tests/probe_contract.rs` fails if one changes or disappears. Changing them
+means changing the probes in trycua/cloud in the same release.
+
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and
 `error`; at most one line per store per second, `since_last_line` counts

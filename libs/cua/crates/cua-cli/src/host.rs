@@ -5898,8 +5898,20 @@ mod tests {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn machines_rm_rechecks_after_confirmation() {
             let f = fx(&["old-laptop"]).await;
+            // It connects while the prompt is open, and answers a fresh
+            // connection through the relay (one that only the directory
+            // lists as connected is a ghost, which a remove may take).
+            let srv = cua_spacesd_client::testing::MockServer::start(
+                cua_spacesd_client::testing::MockAuth {
+                    token: None,
+                    gateway: None,
+                    prefix: None,
+                },
+            )
+            .await;
             let (r, _, asked) = rm(&f, "old-laptop", false, || {
                 f.relay.set_online(ID, true, "1.0");
+                f.relay.tunnel(ID, &srv.url());
                 true
             })
             .await;

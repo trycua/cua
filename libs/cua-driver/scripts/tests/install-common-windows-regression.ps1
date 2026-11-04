@@ -216,7 +216,7 @@ try {
     $failure = $null
     try { Assert-ReleaseZipIntegrity (Join-Path $cosignRoot $zipName) '0.30.0' }
     catch { $failure = $_.Exception.Message }
-    Assert-True ("$failure" -like '*did not verify*') "a cosign that could not start was not refused: $failure"
+    Assert-True ("$failure" -like '*did not verify*could not start*') "a cosign that could not start was not refused: $failure"
 
     Write-Host 'Windows installer cosign check accepted a verified zip and refused an unverified one.'
 }

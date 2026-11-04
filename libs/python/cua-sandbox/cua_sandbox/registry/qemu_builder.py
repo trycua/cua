@@ -228,6 +228,26 @@ def _build_image_wsl2(
             capture_output=True,
         )
 
+    # Files on /mnt/<drive> go through 9p, which stalls the firmware and the installer. Stage everything
+    # QEMU opens on the WSL ext4 disk, and copy the disk image back when the install is done.
+    stage = f"$HOME/cua-build/{work_dir.name}"
+    staged_disk_wsl = None
+    for i, a in enumerate(wsl_cmd):
+        parts = a.split(",")
+        for j, part in enumerate(parts):
+            if part.startswith("file=/mnt/"):
+                src = part[len("file="):]
+                dst = f"{stage}/{src.rsplit('/', 1)[-1]}"
+                subprocess.run(
+                    ["wsl", "-e", "bash", "-c", f"mkdir -p {stage} && cp -u '{src}' {dst}"],
+                    check=True,
+                    capture_output=True,
+                )
+                parts[j] = f"file={dst}"
+                if src == _win_to_wsl(disk_path):
+                    staged_disk_wsl = (src, dst)
+        wsl_cmd[i] = ",".join(parts)
+
     shell_cmd = " ".join(wsl_cmd)
     logger.info(f"WSL2 QEMU command: {shell_cmd}")
 
@@ -296,6 +316,12 @@ def _build_image_wsl2(
         stderr = proc.stderr.read().decode() if proc.stderr else ""
         raise RuntimeError(f"QEMU WSL2 install failed (exit {proc.returncode}): {stderr}")
 
+    if staged_disk_wsl:
+        subprocess.run(
+            ["wsl", "-e", "bash", "-c", f"cp '{staged_disk_wsl[1]}' '{staged_disk_wsl[0]}'"],
+            check=True,
+            capture_output=True,
+        )
     logger.info(f"Windows install complete. Disk image: {disk_path}")
     config_path = work_dir / "config.json"
     config_path.write_text(json.dumps(asdict(config), indent=2))

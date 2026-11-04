@@ -184,6 +184,7 @@ async fn route_spec_consistency() {
         cua_proto::metadata::TUNNEL_WS_PATH,
         cua_proto::metadata::HOTSPOT_WS_PATH,
         cua_proto::metadata::SPAWN_WS_PATH,
+        cua_proto::metadata::HOST_PORTS_WS_PATH,
         cua_proto::metadata::VOLUME_WS_PATH,
         cua_proto::metadata::FILES_PATH,
         cua_proto::metadata::MCP_PATH,

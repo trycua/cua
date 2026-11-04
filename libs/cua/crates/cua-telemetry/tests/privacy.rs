@@ -1042,6 +1042,35 @@ fn a_switch_flipped_elsewhere_applies_after_refresh_and_clears_the_spool() {
     assert_eq!(t.spooled(), 0);
 }
 
+/// A failed sign-in's `failed_step` comes from its fixed kind only, is
+/// always a word of the schema, and is `none` on every other step.
+#[test]
+fn sign_in_failed_step_keeps_its_vocabulary() {
+    for (kind, want) in [
+        ("transport", "reach_service"),
+        ("http", "reach_service"),
+        ("timeout", "confirm_in_browser"),
+        ("permission_denied", "confirm_in_browser"),
+        ("unauthenticated", "exchange_code"),
+        ("internal", "save_session"),
+        ("cancelled", "cancelled"),
+        ("other", "unknown"),
+        ("ellie@example.com", "unknown"),
+    ] {
+        let e = events::sign_in_failed(kind);
+        let step = e.props["failed_step"].as_str().unwrap().to_string();
+        assert_eq!(step, want, "{kind}");
+        assert!(schema::SIGN_IN_STEPS.contains(&step.as_str()));
+        assert!(!serde_json::to_string(&e.props).unwrap().contains("ellie"));
+    }
+    let ok = events::onboarding_step("signed_in", Outcome::Ok).unwrap();
+    assert_eq!(ok.props["failed_step"], "none");
+    assert_eq!(
+        events::app_launched(Some(true)).props["failed_step"],
+        "none"
+    );
+}
+
 /// The "Telemetry and privacy" pages list every event and every property
 /// the schema declares, so nothing is sent that the docs do not name.
 /// `failed_step` is derived from the failure's fixed words, never text; it

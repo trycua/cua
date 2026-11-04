@@ -1359,6 +1359,9 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
         f.spaces.power_of(&space.local_space),
         ("suspend".to_string(), "stopped".to_string())
     );
+    // The topology hint, exits, host ports and the tree hub all ask this: it
+    // is the state ("running"), not the power control ("suspend").
+    assert!(!f.spaces.is_running(&space.local_space));
 
     // Its driver forgot the relay when it stopped.
     *f.env.state.relay_attached.lock().unwrap() = None;
@@ -1374,6 +1377,7 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
         on.message
     );
     assert_eq!(f.rt.running.lock().unwrap().get(&name), Some(&true));
+    assert!(f.spaces.is_running(&space.local_space));
     let attached = f.env.state.relay_attached.lock().unwrap().clone().unwrap();
     assert_eq!(attached.machine_id, "space-ada00011");
     assert_eq!(attached.machine_token, attach.machine_token);

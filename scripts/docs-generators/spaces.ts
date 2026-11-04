@@ -49,13 +49,13 @@ export const PAGES: Array<{ slug: string; title: string; description: string; ca
     slug: 'spaces',
     title: 'Spaces tools',
     description: 'Create, run, stream and serve from a Space: the Spaces tools with their parameters, results and errors.',
-    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services', 'hotspot'],
+    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services'],
   },
   {
-    slug: 'sharing-and-cloud',
-    title: 'Sharing and cloud tools',
-    description: 'Share a Space with other accounts, and create Spaces in your own cloud: the tools with their parameters, results and errors.',
-    categories: ['sharing', 'cloud'],
+    slug: 'sharing-and-clouds',
+    title: 'Sharing, hotspot and cloud tools',
+    description: 'Share a Space, give it this computer\'s network for a while, and link your cloud: the tools with their parameters, results and errors.',
+    categories: ['hotspot', 'sharing', 'cloud'],
   },
   {
     slug: 'agents',

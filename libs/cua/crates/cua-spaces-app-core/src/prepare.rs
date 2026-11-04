@@ -47,6 +47,7 @@
 //! "send to the agent session" and "send to the first model token" are
 //! measured the same way everywhere ([`metrics`]).
 
+use cua_create_failure::preflight::IssueKind;
 use serde::{Deserialize, Serialize};
 
 /// The state's schema; a state of another schema is dropped (preparing starts over).
@@ -610,7 +611,9 @@ pub fn reduce(state: &State, action: &Action) -> Reduced {
                     network: false,
                     message: message.clone(),
                 });
-                if s.failures < OTHER_ATTEMPTS {
+                // A refusal the app's own check words (this Mac can't run virtual computers, no
+                // engine, no room) does not pass by waiting: it stops at once with its next step.
+                if s.failures < OTHER_ATTEMPTS && lasting(message).is_none() {
                     s.rec_mut(step).state = StepState::Waiting;
                     let at = now_ms + backoff(s.failures);
                     s.retry_at_ms = Some(at);
@@ -864,6 +867,16 @@ pub struct View {
     pub action: Option<ActionView>,
 }
 
+/// The failed view's button when this computer can't run Spaces itself:
+/// the app opens "Add a computer".
+pub const ADD_COMPUTER_ACTION: &str = "add-computer";
+
+/// The app's own check's refusal `message` is, if it is one (its fixed
+/// sentences: [`IssueKind::of_text`]). Waiting does not fix any of them.
+fn lasting(message: &str) -> Option<IssueKind> {
+    IssueKind::of_text(&crate::errors::plain_error(message))
+}
+
 /// A button.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionView {
@@ -1024,10 +1037,11 @@ pub fn view(s: &State) -> View {
             Some("Your home Space is running".into()),
         )
     } else if failed {
+        // The host's words through the create's own wording: never the SDK's error tags.
         let why = s
             .trouble
             .as_ref()
-            .map(|t| t.message.trim())
+            .map(|t| crate::spaces::creating::failure_text(&t.message, None, None, false))
             .filter(|m| !m.is_empty())
             .map(|m| format!(": {m}"))
             .unwrap_or_default();
@@ -1051,9 +1065,24 @@ pub fn view(s: &State) -> View {
         "ready" | "idle" => None,
         _ => Some("Your message sends as soon as your agent is ready".to_string()),
     };
-    let action = (phase == "failed").then(|| ActionView {
-        id: "retry".into(),
-        label: "Try again".into(),
+    let can_not_run = s
+        .trouble
+        .as_ref()
+        .and_then(|t| lasting(&t.message))
+        .is_some_and(|k| k == IssueKind::VirtualizationUnavailable);
+    let action = (phase == "failed").then(|| {
+        if can_not_run {
+            // This computer can't run Spaces itself: the way on is another computer.
+            ActionView {
+                id: ADD_COMPUTER_ACTION.into(),
+                label: "Add a computer".into(),
+            }
+        } else {
+            ActionView {
+                id: "retry".into(),
+                label: "Try again".into(),
+            }
+        }
     });
     View {
         phase: phase.into(),
@@ -1374,6 +1403,43 @@ mod tests {
         assert_eq!(on.effects, vec![Effect::Create]);
         assert_eq!(on.state.runtime.state, StepState::Running);
         assert_eq!(view(&on.state).phase, "preparing");
+    }
+
+    #[test]
+    /// CUA-3193: a Mac that can't run Spaces stopped on "Preparing stopped: local runtime: ...",
+    /// after waiting to try again, with Try again as the only way on.
+    fn a_mac_that_cannot_run_spaces_stops_at_once_in_plain_words() {
+        let mac = cua_create_failure::preflight::MAC_UNSUPPORTED;
+        for raw in [
+            format!("local runtime: {mac}"),
+            format!("local runtime: [local] {mac}"),
+        ] {
+            let r = go(
+                &start(),
+                Action::Failed {
+                    now_ms: 1,
+                    message: raw.clone(),
+                    network: false,
+                },
+            );
+            assert_eq!(r.state.runtime.state, StepState::Failed, "{raw}");
+            assert!(
+                r.effects
+                    .iter()
+                    .all(|e| !matches!(e, Effect::WakeAt { .. }))
+            );
+            let v = view(&r.state);
+            let line = v.line.clone().unwrap();
+            assert_eq!(line, format!("Preparing stopped: {mac}"));
+            for internal in crate::errors::INTERNAL_TAGS {
+                assert!(!line.contains(internal.trim()), "{line}");
+            }
+            let action = v.action.unwrap();
+            assert_eq!(
+                (action.id.as_str(), action.label.as_str()),
+                (ADD_COMPUTER_ACTION, "Add a computer")
+            );
+        }
     }
 
     #[test]

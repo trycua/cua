@@ -156,7 +156,7 @@ pub(crate) fn walk_tree_for_recording(
 
 /// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
 /// means "use the walker's built-in default" (5 000 nodes; unlimited depth).
-/// Issue #22865: caps protect against Electron / large web apps that
+/// These caps protect against Electron / large web apps that
 /// produce 10k+ element trees and blow context windows.
 pub fn walk_tree_bounded(
     pid: u32,

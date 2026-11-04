@@ -56,6 +56,17 @@
       "metering": "free"
     },
     {
+      "tool": "network_log",
+      "sdk_symbol": "Spaces::network_events",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "network_set",
       "sdk_symbol": "Spaces::set_network",
       "providers": [

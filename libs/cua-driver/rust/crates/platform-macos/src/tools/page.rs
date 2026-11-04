@@ -10,8 +10,8 @@
 //! `cua_driver_core::page` — this file only implements the backend.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{ClickElementResult, PageBackend};
-use std::sync::Arc;
+use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult};
+use std::{future::Future, sync::Arc};
 
 use super::ToolState;
 use crate::browser::{is_wk_web_view_app, AXPageReader, BrowserJs, CdpClient, ElectronJs};
@@ -52,32 +52,17 @@ impl MacOsPageBackend {
 
 #[async_trait]
 impl PageBackend for MacOsPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
-
-        let use_ax_fallback = !BrowserJs::supports(&bundle_id)
-            && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
-                .await
-                .unwrap_or(false);
-
-        if use_ax_fallback {
-            return ax_text_fallback(pid, window_id, false).await;
-        }
-
-        // Try JS path first; on error, use a CDP session the driver already
-        // holds, then the window's web area.
-        let js = "document.body.innerText";
-        match execute_js(js, &bundle_id, pid, window_id).await {
-            Ok(result) => Ok(result),
-            Err(error) => {
-                if let Some(result) = self.attached_cdp_evaluate(pid, js).await {
-                    return Ok(result);
-                }
-                ax_text_fallback(pid, window_id, BrowserJs::supports(&bundle_id))
-                    .await
-                    .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"))
-            }
-        }
+        read_page(
+            self,
+            &bundle_id,
+            pid,
+            window_id,
+            "document.body.innerText",
+            || ax_text_fallback(pid, window_id, BrowserJs::supports(&bundle_id)),
+        )
+        .await
     }
 
     async fn query_dom(
@@ -86,37 +71,18 @@ impl PageBackend for MacOsPageBackend {
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
-
-        let use_ax_fallback = !BrowserJs::supports(&bundle_id)
-            && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
-                .await
-                .unwrap_or(false);
-
-        if use_ax_fallback {
-            let results = ax_query_fallback(pid, window_id, css_selector, false).await?;
-            return Ok(format_ax_elements(&results));
-        }
-
         let js = build_query_selector_js(css_selector, attributes);
-        match execute_js(&js, &bundle_id, pid, window_id).await {
-            Ok(result) => Ok(result),
-            Err(error) => {
-                if let Some(result) = self.attached_cdp_evaluate(pid, &js).await {
-                    return Ok(result);
-                }
-                let results = ax_query_fallback(
-                    pid,
-                    window_id,
-                    css_selector,
-                    BrowserJs::supports(&bundle_id),
-                )
-                .await
-                .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"))?;
-                Ok(format_ax_elements(&results))
-            }
-        }
+        read_page(self, &bundle_id, pid, window_id, &js, || {
+            ax_query_fallback(
+                pid,
+                window_id,
+                css_selector,
+                BrowserJs::supports(&bundle_id),
+            )
+        })
+        .await
     }
 
     async fn execute_javascript(
@@ -354,29 +320,102 @@ fn page_rows(tree_markdown: String, require_web_area: bool) -> anyhow::Result<St
     }
 }
 
-/// Extract page text via the AX tree.
+async fn read_page<F, A>(
+    backend: &MacOsPageBackend,
+    bundle_id: &str,
+    pid: i32,
+    window_id: u64,
+    javascript: &str,
+    ax_fallback: F,
+) -> anyhow::Result<PageReadResult>
+where
+    F: FnOnce() -> A,
+    A: Future<Output = anyhow::Result<(String, bool)>>,
+{
+    let use_ax = !BrowserJs::supports(bundle_id)
+        && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
+            .await
+            .unwrap_or(false);
+    let mut source = if BrowserJs::supports(bundle_id) {
+        "javascript"
+    } else {
+        "cdp"
+    };
+    let primary = if use_ax {
+        None
+    } else {
+        Some(execute_js(javascript, bundle_id, pid, window_id).await)
+    };
+    let mut error = None;
+    let content = match primary {
+        Some(Ok(content)) => Some(content),
+        Some(Err(failure)) => {
+            error = Some(failure.to_string());
+            source = "cdp";
+            backend.attached_cdp_evaluate(pid, javascript).await
+        }
+        None => None,
+    };
+    let fallback = if content.is_none() {
+        ax_fallback().await
+    } else {
+        Ok((String::new(), false))
+    };
+    finish_page_read(source, content, error, fallback)
+}
+
+fn finish_page_read(
+    mut source: &str,
+    content: Option<String>,
+    error: Option<String>,
+    fallback: anyhow::Result<(String, bool)>,
+) -> anyhow::Result<PageReadResult> {
+    let (content, truncated) = match content {
+        Some(content) => (content, None),
+        None => {
+            let (content, truncated) = fallback.map_err(|ax| match error.as_ref() {
+                Some(error) => anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"),
+                None => ax,
+            })?;
+            source = "ax_fallback";
+            (content, Some(truncated))
+        }
+    };
+    let mut metadata = serde_json::json!({"source": source});
+    if let Some(truncated) = truncated {
+        if let Some(error) = error {
+            metadata["fallback_error"] = serde_json::json!(error);
+        }
+        metadata["truncated"] = serde_json::json!(truncated);
+    }
+    Ok(PageReadResult::text(content).with_structured(metadata))
+}
+
+/// Extract page text via the bounded AX tree.
 async fn ax_text_fallback(
     pid: i32,
     window_id: u64,
     require_web_area: bool,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, bool)> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let result =
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
             .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    let rows = page_rows(result.tree_markdown, require_web_area)?;
-    Ok(AXPageReader::extract_text(&rows))
+    Ok((
+        AXPageReader::extract_text(&page_rows(result.tree_markdown, require_web_area)?),
+        result.truncated || result.depth_truncated,
+    ))
 }
 
-/// Query AX tree by CSS selector.
+/// Query the bounded AX tree by CSS selector.
 async fn ax_query_fallback(
     pid: i32,
     window_id: u64,
     selector: &str,
     require_web_area: bool,
-) -> anyhow::Result<Vec<crate::browser::ax_page_reader::AXElement>> {
+) -> anyhow::Result<(String, bool)> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let sel = selector.to_owned();
@@ -384,8 +423,13 @@ async fn ax_query_fallback(
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
             .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    let rows = page_rows(result.tree_markdown, require_web_area)?;
-    Ok(AXPageReader::query(&sel, &rows))
+    Ok((
+        format_ax_elements(&AXPageReader::query(
+            &sel,
+            &page_rows(result.tree_markdown, require_web_area)?,
+        )),
+        result.truncated || result.depth_truncated,
+    ))
 }
 
 fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) -> String {
@@ -478,7 +522,7 @@ fn required_finite(value: &serde_json::Value, key: &str, raw: &str) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
-    use super::page_rows;
+    use super::*;
 
     const MENU_ONLY: &str = "- [0] AXMenuBar\n  - [1] AXMenuBarItem \"Apple\"\n";
 
@@ -501,5 +545,46 @@ mod tests {
     #[test]
     fn web_view_apps_keep_the_whole_tree_without_a_web_area() {
         assert_eq!(page_rows(MENU_ONLY.to_owned(), false).unwrap(), MENU_ONLY);
+    }
+
+    #[test]
+    fn page_read_decisions_preserve_provenance() {
+        for source in ["javascript", "cdp"] {
+            let page = finish_page_read(
+                source,
+                Some("page".into()),
+                Some("JS failed".into()),
+                Ok(("ax".into(), true)),
+            )
+            .unwrap();
+            assert_eq!(
+                page.structured_content.unwrap(),
+                serde_json::json!({"source": source})
+            );
+        }
+        for error in [None, Some("JS failed".to_owned())] {
+            let page =
+                finish_page_read("cdp", None, error.clone(), Ok(("ax".into(), true))).unwrap();
+            let mut expected = serde_json::json!({"source": "ax_fallback", "truncated": true});
+            if let Some(error) = error.as_ref() {
+                expected["fallback_error"] = serde_json::json!(error);
+            }
+            assert_eq!(page.structured_content.unwrap(), expected);
+            let failure = finish_page_read(
+                "cdp",
+                None,
+                error.clone(),
+                Err(anyhow::anyhow!("AX failed")),
+            )
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                failure,
+                match error {
+                    Some(error) => format!("AX failed (JavaScript read failed first: {error})"),
+                    None => "AX failed".to_owned(),
+                }
+            );
+        }
     }
 }

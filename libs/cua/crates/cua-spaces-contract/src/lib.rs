@@ -834,6 +834,18 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceOnly>(),
         Spec {
             category: Category::Lifecycle,
+            result: "JSON array, most recent first: `reason` (`platform:metadata`, `default:host-loopback`, `default:lan`, `user:deny`, `default:none`, ...), `dst`, `proto`, `count`, `last_unix`.",
+            errors: &["wrong_provider", "not_found", "sandbox"],
+            instructions: "Lists what a Space on this computer tried to reach and its network blocked. When a connection from a Space fails or hangs, call this: if the destination is here, it is blocked on purpose (this computer, the local network, cloud metadata or another tree), and retrying won't help. Tell the user what was blocked in plain words; changing it is theirs to do.",
+            capabilities: &["space.network.read"],
+            annotations: Annotations::reading(),
+            sdk_symbol: "Spaces.network_log(space)",
+            rust_symbol: "Spaces::network_events",
+            ..Spec::new("network_log", "List what a Space tried to reach and its network blocked.")
+        }
+        .with::<i::SpaceOnly>(),
+        Spec {
+            category: Category::Lifecycle,
             result: "JSON: `applied` (`now` or `next_start`) and `network` (as network_show).",
             errors: &["invalid_argument", "wrong_provider", "not_found", "sandbox"],
             instructions: "Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `custom:none` with `allow` and `deny` (addresses or CIDRs). It can only tighten: anything that opens more than the Space has now (this computer's localhost, the local network, No protection, an allow beyond its preset) is refused; the user does that with `cua network set` or the app. A child stays within its parent's. tree=true gives its children the same settings. Applies at once where the runtime can, else at the Space's next start (`applied`).",
@@ -1603,7 +1615,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Hotspot,
             result: "JSON: the hotspot (`space`, `state`, `hotspot_id`, `socks_address`, `active_connections`, `bytes_out`, `bytes_in`, `served_here`).",
-            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.",
+            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. With Secure Spaces on, only after the user says yes: pass confirm=true, and without it the call is refused; the Space's own network rules apply first (the internet only unless they allow more), and its system proxy is left alone unless set_system_proxy is true (apps use the hotspot through the returned socks_address). Runs until hotspot_stop, delete_space, or this server exiting.",
             capabilities: &["hotspot.control"],
             requires: &["hotspot"],
             annotations: Annotations::mutating(),
@@ -2291,6 +2303,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn persistent_agent_create_carries_brief_and_standby() {
+        let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
+            "agent": "claude-code", "name": "ada", "space": "s",
+            "brief": "standing", "standby": true
+        }))
+        .unwrap();
+        assert_eq!(m.brief.as_deref(), Some("standing"));
+        assert_eq!(m.standby, Some(true));
+        let manifest = manifest_json();
+        let tool = manifest
+            .find("\"standby\"")
+            .expect("standby is in the manifest");
+        assert!(manifest[tool..].contains("\"brief\"") || manifest.contains("\"brief\""));
+    }
+
+    #[test]
     fn former_tool_names_resolve_but_are_not_published() {
         for (old, new) in TOOL_ALIASES {
             assert_eq!(tool(old).map(|t| t.name), Some(*new), "{old}");
@@ -2338,7 +2366,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 118);
+        assert_eq!(tools().len(), 119);
     }
 
     #[test]

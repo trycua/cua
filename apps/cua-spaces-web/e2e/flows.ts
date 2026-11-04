@@ -113,6 +113,18 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
     status: "skip",
     reason: "The Pro banner and account menu are not drawn yet; bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
   },
+  "github-connection": {
+    status: "skip",
+    reason: "The Connections, GitHub rows and pages draw githubConnection.view as is (components/settings/connections/github-group.tsx); src/__tests__/github-connection.test.tsx drives them on the wasm core and the core's parity flow replays the view",
+  },
+  "thread-cards": {
+    status: "skip",
+    reason: "The push card and the author tag draw threadCards.exportCard and threadCards.author as is (components/space-thread/export-card.tsx); src/__tests__/cards-toolcalls.test.tsx drives them and the core's parity flow replays the views",
+  },
+  "ci-runners": {
+    status: "skip",
+    reason: "The CI Runners page draws ciRunners.view as is (components/ci); bridge/__tests__/ci-runners.test.ts replays this flow through bridge/ci-runners.ts on the wasm core and src/__tests__/ci-runners-page.test.tsx drives the page",
+  },
   checklist: {
     status: "skip",
     reason: "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",

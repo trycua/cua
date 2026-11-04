@@ -109,6 +109,13 @@ service SpaceService {
   // Replaces a Space's network settings (a child's stay within its
   // parent's unless `widen`).
   rpc SetSpaceNetwork(SetSpaceNetworkRequest) returns (SetSpaceNetworkResponse);
+  // What a Space tried to reach and its network refused, most recent first.
+  rpc GetSpaceNetworkLog(GetSpaceNetworkLogRequest) returns (GetSpaceNetworkLogResponse);
+  // Sets when the Space's viewers may move the clipboard between this
+  // computer and the Space ("viewing", "ask" or "off").
+  rpc SetSpaceClipboard(SetSpaceClipboardRequest) returns (SetSpaceClipboardResponse);
+  // Sets what the Space sees of the Cua Volume ("own" or "off"), now.
+  rpc SetSpaceVolume(SetSpaceVolumeRequest) returns (SetSpaceVolumeResponse);
   // Lets a Space make child Spaces of its own, or stops it. Turning it off
   // ends the Space's spawn capability at once; children it already made
   // keep running until they are deleted or their lifetime ends.
@@ -316,11 +323,44 @@ message Space {
   uint32 depth = 39;
   // How it was made: "user", "child" or "fork-batch:<id>".
   string origin = 40;
+  // When viewers may move the clipboard between this computer and the
+  // Space: "viewing" (only while you're viewing, the default), "ask" or
+  // "off". Empty from a daemon that predates the setting, which means
+  // "viewing".
+  string clipboard = 41;
+  // What the Space sees of the Cua Volume: "own" (its own folder, the
+  // default) or "off". Empty means "own".
+  string volume = 42;
   // The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`,
   // the SDKs and the agent's tools in it create, list and delete Spaces
   // that belong to it, on a channel only it can reach.
   bool children = 43;
+  // A VM's address in its tree (198.19.0.0/16), where the other members of
+  // its tree reach it; empty otherwise.
+  string tree_address = 44;
 }
+
+// Request for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardRequest {
+  // Space.
+  string space = 1;
+  // "viewing", "ask" or "off".
+  string clipboard = 2;
+}
+
+// Response for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardResponse {}
+
+// Request for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeRequest {
+  // Space.
+  string space = 1;
+  // "own" (its own folder) or "off".
+  string volume = 2;
+}
+
+// Response for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeResponse {}
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
 message SpaceSharing {

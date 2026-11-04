@@ -78,6 +78,7 @@ only "localhost" opens).
 | `deny` | 5 | repeated `string` | Destinations that are blocked (addresses, CIDRs or "all"). |
 | `custom_base` | 6 | `string` | "custom": what it starts from, "internet" (empty) or "none". |
 | `widened_by` | 7 | `string` | Set when the Space was allowed more than its parent: who and when. |
+| `via` | 8 | `string` | Where its internet traffic leaves ("Exit through"): empty or "internet" for its own network, "this-machine" (the hotspot), "space:&lt;id&gt;" (a Space of its tree) or `socks5://host:port`. With an exit the Space's own internet is closed, and the exit applies its rules first. A child keeps its parent's exit. |
 
 ### SpaceNetworkInfo
 
@@ -92,9 +93,11 @@ A Space's network as `cua network show` says it.
 | `point` | 5 | `string` | Where the rules are enforced, or why its network is cut, for people. |
 | `note` | 6 | `string` | Why its network is not what was asked, in plain words. |
 | `parent` | 7 | `string` | Its parent and its tree's top-level Space (ids); empty for a top-level Space. |
-| `root` | 8 | `string` | Its tree's top-level Space. |
+| `root` | 8 | `string` | Its tree's top-level Space (id); empty for a top-level Space. |
 | `always_blocked` | 9 | repeated `string` | What no setting opens, in plain words. |
 | `notice_pending` | 10 | `bool` | An update changed its settings; say so once. |
+| `tree_address` | 11 | `string` | A VM's address in its tree (198.19.0.0/16): what the other members of its tree connect to. Empty for a container (its tree's members reach it on their tree's own network) and for a Space another machine runs. |
+| `topology_json` | 12 | `string` | What `cua network show --json` prints as `topology`, as JSON text: the hint written into the guest (`/etc/cua/network.json`: its name and address, its tree's members, the host and the ports it may reach there, its policy and its exit) plus the exit's and the host ports' state and the path its traffic takes to other machines. Empty when unknown (an older daemon). |
 
 ### GetSpaceNetworkRequest
 
@@ -112,6 +115,34 @@ Response for `SpaceService.GetSpaceNetwork`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `network` | 1 | [`SpaceNetworkInfo`](#spacenetworkinfo) | The Space's network. |
+
+### NetworkEvent
+
+One kind of connection a Space tried and its network refused.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `reason` | 1 | `string` | Why: "platform:metadata", "default:lan", "default:host-loopback", "user:deny", "default:none", ... |
+| `dst` | 2 | `string` | Where to: "169.254.169.254:80", or the rule's network ("10.0.0.0/8") where only the host's firewall counted it. |
+| `proto` | 3 | `string` | "tcp" or "udp" when known. |
+| `count` | 4 | `uint64` | How many times. |
+| `last_unix` | 5 | `uint64` | When the last one was refused (Unix seconds); 0 when unknown. |
+
+### GetSpaceNetworkLogRequest
+
+Request for `SpaceService.GetSpaceNetworkLog`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Space. |
+
+### GetSpaceNetworkLogResponse
+
+Response for `SpaceService.GetSpaceNetworkLog`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `events` | 1 | repeated [`NetworkEvent`](#networkevent) | Most recent first. |
 
 ### SetSpaceNetworkRequest
 
@@ -179,3 +210,4 @@ creates the Space and enforces them.
 | `deny` | 5 | repeated `string` | Destinations that are blocked. |
 | `custom_base` | 6 | `string` | "custom": "internet" (empty) or "none". |
 | `widened_by` | 7 | `string` | Set when the Space was allowed more than its parent. |
+| `via` | 8 | `string` | Where its internet traffic leaves (see the daemon's NetworkSettings.via). |

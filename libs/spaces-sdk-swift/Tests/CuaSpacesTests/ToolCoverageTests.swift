@@ -41,7 +41,7 @@ import Testing
     ]
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 114)
+        XCTAssertEqual(Self.advertisedTools.count, 119)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))
@@ -96,6 +96,20 @@ import Testing
         _ = try await space.services.tools()                    // list_tools
         _ = try await space.services.call("screenshot")         // call_tool
         _ = try await space.keepRunning.service("list")         // space_service
+        let job = try await space.jobs.start("make test", name: "unit tests") // space_job
+        let jobID = job.objectValue?["job"]?.stringValue ?? ""
+        XCTAssertEqual(jobID, "j-1")
+        _ = try await space.jobs.status(jobID)
+        _ = try await space.jobs.list()
+        _ = try await space.jobs.cancel(jobID)
+
+        // --- The Space's network ---------------------------------------------
+        let net = try await space.network()                     // network_show
+        XCTAssertEqual(net["settings"]?.objectValue?["preset"]?.stringValue, "internet")
+        let blocked = try await space.networkLog()              // network_log
+        XCTAssertEqual(blocked.first?["reason"]?.stringValue, "platform:metadata")
+        let tightened = try await space.setNetwork("none")      // network_set
+        XCTAssertEqual(tightened["applied"]?.stringValue, "now")
 
         // --- Agents ----------------------------------------------------------
         let run = try await space.startAgent(prompt: "x")       // agent_start

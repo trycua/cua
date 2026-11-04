@@ -65,6 +65,16 @@ public final class OnboardingModel {
         completed = false
     }
 
+    /// Settings, About, "Reset & Show": the saved first run is forgotten, so it
+    /// is due from its first step. The state file is removed, as the app core's
+    /// reset plan says (`onboarding_reset.rs`: `onboarding.json`). Safe to run
+    /// twice; a `.damaged` copy kept earlier is left alone.
+    public func reset() {
+        completed = false
+        mode = .client
+        if let statePath { try? FileManager.default.removeItem(atPath: statePath) }
+    }
+
     static func readCompleted(_ path: String) -> Bool? { read(path)?.completed }
 
     private static func read(_ path: String) -> (completed: Bool, mode: AppOnboardingMode)? {

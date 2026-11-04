@@ -139,7 +139,7 @@ pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
 
 /// Whether `name` is one of [`APP_METHODS`].
 pub fn is_app_method(name: &str) -> bool {
-    APP_METHODS.contains(&name)
+    APP_METHODS.contains(&name) || super::github_auth::is_app_method(name)
 }
 
 /// A provider with its own row in Settings: the registry's visible providers.
@@ -540,6 +540,21 @@ impl AgentKeys {
     /// Whether keys can be saved.
     pub fn available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// A small item kept beside the keys (what a person chose, not a secret).
+    pub(crate) fn aux_load(&self, name: &str) -> Option<Vec<u8>> {
+        self.store.as_ref()?.load_secret(name).ok().flatten()
+    }
+
+    pub(crate) fn aux_save(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        let store = self.store.as_ref().ok_or_else(|| self.refusal())?;
+        store.save_secret(name, bytes).map_err(store_err)
+    }
+
+    pub(crate) fn aux_clear(&self, name: &str) -> Result<()> {
+        let store = self.store.as_ref().ok_or_else(|| self.refusal())?;
+        store.clear_secret(name).map(|_| ()).map_err(store_err)
     }
 
     fn read(&self, guard: &mut Option<(Instant, Vec<Stored>)>, fresh: bool) -> Result<Vec<Stored>> {
@@ -1641,6 +1656,12 @@ pub fn app_call(
     let report = |r: Result<KeysReport>| {
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
+    if super::github_auth::is_app_method(name) {
+        if !super::github_auth::enabled() {
+            return Some(Err(super::github_auth::off_error()));
+        }
+        return super::github_auth::app_call(super::github_auth::global(), name, args);
+    }
     Some(match name {
         // The check needs the network: `app_tool_async` does it; a synchronous caller gets the list.
         "agent_keys.list" | "agent_keys.check" => {
@@ -1755,6 +1776,19 @@ pub async fn app_tool_async(
     name: &str,
     args: serde_json::Value,
 ) -> Option<crate::mcp::ToolOutcome> {
+    if super::github_auth::is_app_method(name) {
+        if !super::github_auth::enabled() {
+            return Some(crate::mcp::ToolOutcome::error(
+                &super::github_auth::off_error(),
+            ));
+        }
+        return super::github_auth::app_call_async(name, args)
+            .await
+            .map(|r| match r {
+                Ok(v) => crate::mcp::ToolOutcome::json(&v),
+                Err(e) => crate::mcp::ToolOutcome::error(&e),
+            });
+    }
     if name != "agent_keys.check" {
         return app_tool(name, args);
     }

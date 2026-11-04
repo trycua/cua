@@ -1810,6 +1810,59 @@ mod tests {
         }
     }
 
+    /// A sign-in that failed sends the step it stopped at, from its reason
+    /// only (CUA-3144): a session this computer couldn't save is
+    /// `save_session`, a browser that never came back `confirm_in_browser`.
+    /// Through the usage-data switch: nothing while it is off.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn a_failed_sign_in_sends_the_step_it_stopped_at() {
+        use crate::sign_in::SignInFailure;
+        let build = |on: bool| {
+            let home = tempfile::tempdir().unwrap();
+            let sink = std::sync::Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "CUA_TELEMETRY" if !on => Some("0".into()),
+                    _ => None,
+                })
+                .home(home.path())
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (home, sink, t)
+        };
+        let (_home, sink, t) = build(true);
+        for (reason, step) in [
+            (Some(SignInFailure::CouldNotSave), "save_session"),
+            (Some(SignInFailure::NotConfirmed), "confirm_in_browser"),
+            (Some(SignInFailure::Offline), "reach_service"),
+            (Some(SignInFailure::CodeRejected), "exchange_code"),
+            (Some(SignInFailure::Unknown), "unknown"),
+            (None, "cancelled"),
+        ] {
+            assert_eq!(record(&t, &sign_in_failure(reason)), 1, "{reason:?}");
+            t.flush(std::time::Duration::from_secs(2));
+            let events = sink.events();
+            let last = events
+                .iter()
+                .rev()
+                .find(|e| e["event"] == "cua_onboarding_step")
+                .expect("cua_onboarding_step was sent");
+            assert_eq!(last["properties"]["step"], "signed_in");
+            assert_eq!(last["properties"]["outcome"], "error");
+            assert_eq!(last["properties"]["failed_step"], step, "{reason:?}");
+        }
+        // Usage data off: nothing leaves.
+        let (_home, sink, t) = build(false);
+        record(&t, &sign_in_failure(Some(SignInFailure::CouldNotSave)));
+        t.flush(std::time::Duration::from_secs(1));
+        assert!(sink.events().is_empty());
+    }
+
     /// A Mac that can't run virtual machines is refused by the daemon's
     /// preflight with a plain sentence (`MAC_UNSUPPORTED`, or the built-in
     /// runtime's identical one). That ends a create like any failure, so it
@@ -2195,7 +2248,11 @@ mod tests {
                     "sharing".into(),
                     "web_ui".into(),
                     "secure_spaces".into(),
-                    "child_spaces".into()
+                    "child_spaces".into(),
+                    "ask_first".into(),
+                    "ci_runners".into(),
+                    "tcp_shares".into(),
+                    "mobile".into()
                 ]
             }]
         );

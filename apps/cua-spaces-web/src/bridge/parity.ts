@@ -55,6 +55,8 @@ import {
   telemetryShare,
   telemetryStorage,
 } from "./telemetry";
+import { githubView } from "./github";
+import { ciReduce, ciView } from "./ci-runners";
 import { prepareHidden, prepareListed, prepareMetrics, prepareReduce, prepareView } from "./prepare-core";
 import { hostFormInitial, hostFormReduce, hostFormView, type HostFormView } from "./this-machine";
 import type { AccountMenuInput, ProBannerInput } from "./contracts/spaces-page";
@@ -225,6 +227,11 @@ function spacesPageMethods(core: CoreClient): Record<string, (a: Args) => unknow
     "settings.choose": (a) => chooseSettings(core, a.settings, a.row, a.option),
     "upsell.proBanner": (a) => proBanner(core, a as ProBannerInput),
     "account.menu": (a) => accountMenu(core, a as AccountMenuInput),
+    // Connections, GitHub (github.ts).
+    "githubConnection.view": (a) => githubView(core, (a.input ?? null) as never, (a.input as { error?: string } | undefined)?.error ?? null),
+    // CI Runners (ci-runners.ts).
+    "ciRunners.reduce": (a) => ciReduce(core, a.state, a.action),
+    "ciRunners.view": (a) => ciView(core, a.overview, a.state),
     // Preparing the ask-first Space (prepare-core.ts).
     "prepare.reduce": (a) => prepareReduce(core, a.state, a.action),
     "prepare.view": (a) => prepareView(core, a.state),

@@ -5,25 +5,17 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ArrowUpIcon, CheckIcon, ChevronDownIcon, LaptopIcon, MonitorIcon } from "lucide-react";
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 
-import { firstMessage, useBridge, type Space, type SpaceOs } from "@/bridge";
+import { firstMessage, useBridge, useSession, type Space, type SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
 import { cn } from "@/lib/utils";
 
+import { agentName, CLAUDE_CODE_URL, offeredAgents } from "./task-agents";
+
 export type { TaskWhere } from "@/lib/ask-first";
 
-/** The coding apps a task can run with (`agent_start`'s harnesses), in the picker's order. */
-export const TASK_AGENTS: { id: string; name: string; setupId: string }[] = [
-  { id: "claude-code", name: "Claude Code", setupId: "claude-code" },
-  { id: "openai-codex", name: "Codex", setupId: "codex" },
-  { id: "gemini-cli", name: "Gemini CLI", setupId: "gemini-cli" },
-  { id: "opencode", name: "OpenCode", setupId: "opencode" },
-  { id: "goose", name: "Goose", setupId: "goose" },
-  { id: "hermes", name: "Hermes", setupId: "hermes" },
-];
-
-export const agentName = (id: string) => TASK_AGENTS.find((a) => a.id === id)?.name ?? id;
+export { agentName, TASK_AGENTS } from "./task-agents";
 
 const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows: "Windows", unknown: "" };
 
@@ -117,9 +109,10 @@ export function AskBox({
 }: {
   text: string;
   onText: (t: string) => void;
-  agent: string;
+  /** Who does it; null when no agent is on this computer (the picker offers to install Claude Code). */
+  agent: string | null;
   onAgent: (a: string) => void;
-  /** Harness ids found on this computer. */
+  /** Harness ids found on this computer: the only ones offered. */
   installed: ReadonlySet<string>;
   mostUsed: string | null;
   where: TaskWhere;
@@ -140,11 +133,13 @@ export function AskBox({
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
-  const ready = text.trim().length > 0 && !busy;
+  const ready = text.trim().length > 0 && !busy && agent !== null;
+  const session = useSession();
   // The agent reads as the @mention the thread will show, and where as a Space.
   const { core } = useBridge();
-  const handle = firstMessage(core, { members: [], people: [], canAdd: true, connectors: { apps: [], keys: { keys: [] }, shellKeys: [], auto: false, off: [], busy: [], failures: [] } }, agent, "")?.handle ?? null;
-  const agentNote = (id: string) => (id === mostUsed ? "You use it most" : installed.has(id) ? "On this Mac" : "Runs on the new computer with your saved key");
+  const handle = agent ? (firstMessage(core, { members: [], people: [], canAdd: true, connectors: { apps: [], keys: { keys: [] }, shellKeys: [], auto: false, off: [], busy: [], failures: [] } }, agent, "")?.handle ?? null) : null;
+  const agentNote = (id: string) => (id === mostUsed ? "You use it most" : "On this computer");
+  const offered = offeredAgents(installed);
   return (
     <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
       <textarea
@@ -167,8 +162,10 @@ export function AskBox({
           title="Who does it"
           trigger={
             <button type="button" className={pickerButton} data-picker="who">
-              <AppMark agent={agent} size={24} />
-              {handle ? (
+              <AppMark agent={agent ?? "claude-code"} size={24} />
+              {agent === null ? (
+                <span data-ask-install="">Install Claude Code</span>
+              ) : handle ? (
                 <span data-ask-mention={handle} className="font-medium text-brand-strong">
                   @{handle}
                 </span>
@@ -178,11 +175,19 @@ export function AskBox({
               <ChevronDownIcon className="size-4 text-muted-foreground" />
             </button>
           }
-          footer="It works on the new computer, signed in with the key you saved in Settings → Connections."
+          footer={offered.length ? "It works on the new computer, signed in the way it is on this one." : "Cua finds Claude Code once it's installed. Then pick it here."}
         >
-          {TASK_AGENTS.map((a) => (
-            <PickerRow key={a.id} icon={<AppMark agent={a.id} size={28} />} title={a.name} note={agentNote(a.id)} selected={a.id === agent} onSelect={() => onAgent(a.id)} />
-          ))}
+          {offered.length ? (
+            offered.map((a) => <PickerRow key={a.id} icon={<AppMark agent={a.id} size={28} />} title={a.name} note={agentNote(a.id)} selected={a.id === agent} onSelect={() => onAgent(a.id)} />)
+          ) : (
+            <PickerRow
+              icon={<AppMark agent="claude-code" size={28} />}
+              title="Install Claude Code"
+              note="No coding agent is on this computer yet"
+              selected={false}
+              onSelect={() => void session.openExternal(CLAUDE_CODE_URL).catch(() => {})}
+            />
+          )}
         </Picker>
         <span className="px-1 text-[14px] text-muted-foreground">in</span>
         <WherePicker

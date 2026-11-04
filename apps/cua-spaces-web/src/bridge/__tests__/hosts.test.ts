@@ -84,6 +84,7 @@ describe("tauri adapter", () => {
     await a.call("session.signIn", {});
     await a.call("session.signOut", {});
     await a.call("session.completeOnboarding", { mode: "client" });
+    await a.call("session.resetOnboarding", {});
     expect(calls).toEqual([
       ["list_spaces", undefined],
       ["create_space", { config: { image: "ubuntu" }, pendingId: "pending:1" }],
@@ -101,6 +102,7 @@ describe("tauri adapter", () => {
       ["begin_sign_in", undefined],
       ["sign_out", undefined],
       ["complete_onboarding", { mode: "client" }],
+      ["reset_onboarding", undefined],
     ]);
   });
 
@@ -311,6 +313,8 @@ describe("electron adapter", () => {
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "host", launchAtLogin: false }]);
     await a.call("session.completeOnboarding", { mode: "client" });
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "client" }]);
+    await a.call("session.resetOnboarding", {});
+    expect(sent.at(-1)).toEqual(["onboarding.reset", {}]);
   });
 
   it("names this machine for the shell's platform", async () => {

@@ -25,6 +25,7 @@ import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
 import { PreparePanel } from "@/components/prepare/prepare-panel";
 import { usePrepare } from "@/lib/prepare/store";
+import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,9 @@ import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
+import { NetworkSheet } from "@/components/network/network-sheet";
+import { BlockedNotice, ExitDownNotice, NetworkNotice, NetworkRow, ParentLine, RunsOnMachinesRow, SecurityRows, WithClipboardPrompt } from "@/components/network/space-security";
+import { VolumeGrantDialog } from "@/components/network/volume-grant-dialog";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
   component: SpaceDetailPage,
@@ -114,6 +118,7 @@ function SpaceDetailPage() {
   const tasks = useAskTasks();
   // The first Space being prepared while the person was in onboarding: its page shows what is happening.
   const prep = usePrepare();
+  const onPrepareAction = usePrepareAction();
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -317,6 +322,7 @@ function SpaceDetailPage() {
       ) : (
         <StateLabel state={state} space={space} />
       )}
+      <ParentLine spaceId={space.id} />
     </p>
   );
   const osMark = (
@@ -325,7 +331,7 @@ function SpaceDetailPage() {
     </div>
   );
   const preparing = askFirstOn && space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
-  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={() => prep.driver?.retry()} /> : null;
+  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={onPrepareAction} /> : null;
   const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
       interactive={interactive}
@@ -347,11 +353,13 @@ function SpaceDetailPage() {
   // The classic page's sections under the desktop. With the thread they open from Details, More.
   const sections = (
     <>
+      <ExitDownNotice spaceId={space.id} />
       <SpaceResources space={space} spaces={spaces ?? []} snapshot={resources} machines={machines} />
 
       <div className="mt-8 grid items-start gap-x-6 first:mt-0 md:grid-cols-2">
         <div>
-          <FactList title="Details" facts={detail.facts} />
+          <FactList title="Details" facts={detail.facts} extra={<RunsOnMachinesRow spaceId={space.id} />} />
+          <SecurityRows spaceId={space.id} className="mt-6" />
           {volumeError ? (
             <p className="mt-3 px-1 text-[13px] text-muted-foreground" data-volume-note="" title={volumeError}>
               {volumeUnavailableNote(volumeError)}
@@ -422,6 +430,8 @@ function SpaceDetailPage() {
         onConfirm={() => remove()}
         alternative={detail.confirm.removeLabel ? { label: detail.confirm.removeLabel, onClick: () => remove(true) } : null}
       />
+      <NetworkSheet spaceName={(id) => spaces?.find((s) => s.id === id)?.name ?? id} />
+      <VolumeGrantDialog spaceId={space.id} spaceName={space.name} />
       <DiagnosticReportDialog
         open={reportOpen}
         onOpenChange={setReportOpen}
@@ -503,10 +513,16 @@ function SpaceDetailPage() {
           notice={
             <>
               {callTip}
+              <NetworkNotice spaceId={space.id} />
+              <BlockedNotice spaceId={space.id} />
               {detail.powerError ? <p className="px-5 pb-2 text-[13px] text-destructive">{detail.powerError}</p> : null}
             </>
           }
-          stage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+          stage={
+            <WithClipboardPrompt spaceId={space.id} spaceName={space.name}>
+              {surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+            </WithClipboardPrompt>
+          }
           layout={layout}
           onLayout={setLayout}
           smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
@@ -515,6 +531,7 @@ function SpaceDetailPage() {
           thread={callThread}
           creating={creating}
           facts={detail.facts}
+          detailsExtra={<NetworkRow spaceId={space.id} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
           desktop={creating ? null : (desktopRow ?? null)}

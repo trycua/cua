@@ -1203,6 +1203,11 @@ export class BridgeStore {
     await this.refresh("session");
   }
 
+  async resetOnboarding(): Promise<void> {
+    await this.adapter.call("session.resetOnboarding", {});
+    await this.refresh("session");
+  }
+
   async openExternal(url: string): Promise<void> {
     await this.adapter.call("session.openExternal", { url });
   }

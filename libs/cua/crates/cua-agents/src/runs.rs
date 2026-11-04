@@ -1337,6 +1337,18 @@ impl Agents {
     /// Sends a follow-up. A running turn finishes first (the prompt is
     /// queued); a runner that exited is restarted and resumes the session.
     pub async fn send(&self, run_id: &str, text: &str, files: Vec<Attachment>) -> Result<RunInfo> {
+        self.send_with_model(run_id, text, files, None).await
+    }
+
+    /// [`Self::send`] with the model the turn should use: an open session
+    /// switches to it before the turn when the agent offers it (no restart).
+    pub async fn send_with_model(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        model: Option<&str>,
+    ) -> Result<RunInfo> {
         let before = self.status(run_id).await?;
         if matches!(before.status, RunStatus::Unknown) {
             return Err(Error::Guest(before.reason));
@@ -1354,7 +1366,10 @@ impl Agents {
         }
         self.post(
             run_id,
-            json!({"op": "prompt", "text": text, "files": paths}),
+            match model {
+                Some(m) => json!({"op": "prompt", "text": text, "files": paths, "model": m}),
+                None => json!({"op": "prompt", "text": text, "files": paths}),
+            },
         )
         .await?;
         if before.alive == Some(false) {

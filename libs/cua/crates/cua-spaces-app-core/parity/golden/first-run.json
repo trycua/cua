@@ -147,7 +147,58 @@
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
-        "status": "[checking] Signing in — Finish signing in to Cua in your browser.",
+        "status": "[checking] Signing in — Finish signing in to Cua in your browser. (sign-in-code:Use a code instead)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09b connect your other devices, signing in with a code",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Sign in",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[checking] Signing in — Enter the code 4F2-91K on the sign-in page. (reopen-sign-in:Open the page)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09c connect your other devices, the browser never confirmed",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Try again",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[fix] Sign-in didn't finish — The browser didn't confirm in time. (sign-in-code:Use a code instead)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09d connect your other devices, the sign-in couldn't be saved",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Try again",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[fix] Sign-in didn't finish — This computer couldn't save the sign-in. Unlock your keychain, then try again.",
         "title": "Add your other computers."
       },
       "step": "devices"

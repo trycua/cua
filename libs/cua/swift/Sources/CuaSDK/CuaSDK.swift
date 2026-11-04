@@ -2670,10 +2670,33 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func spacesd(url: String, token: String?) async throws  -> SpacesdClient
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+    func approveShare(id: String, always: Bool) async throws  -> Share
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
     func checkShare(id: String, path: String?) async throws  -> ShareCheck
+
+    /**
+     * Turns down a waiting share.
+     */
+    func denyShare(id: String) async throws
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+    func removeShareEdge() async throws  -> [String]
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+    func setShareSettings(settings: ShareSettings) async throws  -> ShareSettings
 
     /**
      * Shares `target` and returns a link that opens on the owner's other
@@ -2685,6 +2708,32 @@ public protocol CuaProtocol: AnyObject, Sendable {
      * share, so it keeps working after this process exits.
      */
     func share(target: String, access: ShareAccess?, ttlSeconds: UInt32?, name: String?) async throws  -> Share
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+    func shareSettings() async throws  -> ShareSettings
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+    func shareTcp(target: String, service: String?, ttlSeconds: UInt32?, name: String?, route: String?, allow: [String]?, checkHost: Bool, consent: Bool) async throws  -> Share
 
     /**
      * The active shares, newest first.
@@ -2947,6 +2996,28 @@ open func spacesd(url: String, token: String?)async throws  -> SpacesdClient  {
 }
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+open func approveShare(id: String, always: Bool = false)async throws  -> Share  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_approve_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id),FfiConverterBool.lower(always)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShare_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
@@ -2968,6 +3039,67 @@ open func checkShare(id: String, path: String? = nil)async throws  -> ShareCheck
 }
 
     /**
+     * Turns down a waiting share.
+     */
+open func denyShare(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_deny_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+open func removeShareEdge()async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_remove_share_edge(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+open func setShareSettings(settings: ShareSettings)async throws  -> ShareSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_set_share_settings(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeShareSettings_lower(settings)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShareSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Shares `target` and returns a link that opens on the owner's other
      * signed-in devices, never a localhost link: a port (`"3000"`), a port in
      * a Space (`"space:dev:3000"`), or a file or folder (`"./report.html"`,
@@ -2983,6 +3115,62 @@ open func share(target: String, access: ShareAccess? = nil, ttlSeconds: UInt32? 
                 uniffi_cua_sdk_fn_method_cua_share(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(target),FfiConverterOptionTypeShareAccess.lower(access),FfiConverterOptionUInt32.lower(ttlSeconds),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShare_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+open func shareSettings()async throws  -> ShareSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_share_settings(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShareSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+open func shareTcp(target: String, service: String? = nil, ttlSeconds: UInt32? = nil, name: String? = nil, route: String? = nil, allow: [String]? = nil, checkHost: Bool = false, consent: Bool = false)async throws  -> Share  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_share_tcp(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(target),FfiConverterOptionString.lower(service),FfiConverterOptionUInt32.lower(ttlSeconds),FfiConverterOptionString.lower(name),FfiConverterOptionString.lower(route),FfiConverterOptionSequenceString.lower(allow),FfiConverterBool.lower(checkHost),FfiConverterBool.lower(consent)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -11677,6 +11865,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func network(space: String) async throws  -> SpaceNetworkInfo
 
     /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+    func networkLog(space: String) async throws  -> [NetworkEvent]
+
+    /**
      * Child Spaces whose parent is gone or out of reach. The cua daemon
      * ends a child only on proof its parent is gone (after a grace period);
      * the rest are listed here and never ended by it.
@@ -11753,6 +11947,8 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      */
     func setChildren(space: String, enabled: Bool) async throws
 
+    func setClipboard(space: String, clipboard: String) async throws
+
     /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
@@ -11785,6 +11981,18 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * that does not fit is refused with what is left. All `None` removes it.
      */
     func setTreeBudget(space: String, limits: TreeBudgetLimits) async throws  -> TreeBudget
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+    func setVolume(space: String, volume: String) async throws
 
     /**
      * A connected handle to a registered Space.
@@ -13279,6 +13487,27 @@ open func network(space: String)async throws  -> SpaceNetworkInfo  {
 }
 
     /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+open func networkLog(space: String)async throws  -> [NetworkEvent]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_network_log(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeNetworkEvent.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Child Spaces whose parent is gone or out of reach. The cua daemon
      * ends a child only on proof its parent is gone (after a grace period);
      * the rest are listed here and never ended by it.
@@ -13490,6 +13719,23 @@ open func setChildren(space: String, enabled: Bool)async throws   {
         )
 }
 
+open func setClipboard(space: String, clipboard: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_clipboard(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(clipboard)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
     /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
@@ -13579,6 +13825,33 @@ open func setTreeBudget(space: String, limits: TreeBudgetLimits)async throws  ->
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeTreeBudget_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+open func setVolume(space: String, volume: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_volume(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(volume)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -31136,6 +31409,110 @@ public func FfiConverterTypeNamedVolume_lower(_ value: NamedVolume) -> RustBuffe
 
 
 /**
+ * One kind of connection a Space tried and its network refused
+ * ([`Spaces::network_log`]).
+ */
+public struct NetworkEvent: Equatable, Hashable {
+    /**
+     * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+     * `user:deny`, `default:none`, ...
+     */
+    public var reason: String
+    /**
+     * Where to (`169.254.169.254:80`, or the rule's network where only the
+     * host's firewall counted it).
+     */
+    public var dst: String
+    /**
+     * `tcp` or `udp` when known.
+     */
+    public var proto: String?
+    /**
+     * How many times.
+     */
+    public var count: UInt64
+    /**
+     * When the last one was refused (Unix seconds), when known.
+     */
+    public var lastUnix: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+         * `user:deny`, `default:none`, ...
+         */reason: String,
+        /**
+         * Where to (`169.254.169.254:80`, or the rule's network where only the
+         * host's firewall counted it).
+         */dst: String,
+        /**
+         * `tcp` or `udp` when known.
+         */proto: String?,
+        /**
+         * How many times.
+         */count: UInt64,
+        /**
+         * When the last one was refused (Unix seconds), when known.
+         */lastUnix: UInt64?) {
+        self.reason = reason
+        self.dst = dst
+        self.proto = proto
+        self.count = count
+        self.lastUnix = lastUnix
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NetworkEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkEvent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkEvent {
+        return
+            try NetworkEvent(
+                reason: FfiConverterString.read(from: &buf),
+                dst: FfiConverterString.read(from: &buf),
+                proto: FfiConverterOptionString.read(from: &buf),
+                count: FfiConverterUInt64.read(from: &buf),
+                lastUnix: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NetworkEvent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterString.write(value.dst, into: &buf)
+        FfiConverterOptionString.write(value.proto, into: &buf)
+        FfiConverterUInt64.write(value.count, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastUnix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkEvent_lift(_ buf: RustBuffer) throws -> NetworkEvent {
+    return try FfiConverterTypeNetworkEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuffer {
+    return FfiConverterTypeNetworkEvent.lower(value)
+}
+
+
+/**
  * A Space's network settings: a preset and the user's own lists. The host
  * the Space runs on compiles them to rules it enforces outside the guest.
  *
@@ -31185,6 +31562,13 @@ public struct NetworkSettings: Equatable, Hashable {
      * Set when the Space was allowed more than its parent: who and when.
      */
     public var widenedBy: String?
+    /**
+     * Where its internet traffic leaves ("Exit through"): `None` or
+     * `internet` for its own network, `this-computer` (the hotspot),
+     * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+     * child keeps its parent's.
+     */
+    public var via: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31211,7 +31595,13 @@ public struct NetworkSettings: Equatable, Hashable {
          */customBase: String = "",
         /**
          * Set when the Space was allowed more than its parent: who and when.
-         */widenedBy: String? = nil) {
+         */widenedBy: String? = nil,
+        /**
+         * Where its internet traffic leaves ("Exit through"): `None` or
+         * `internet` for its own network, `this-computer` (the hotspot),
+         * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+         * child keeps its parent's.
+         */via: String? = nil) {
         self.preset = preset
         self.localhostPorts = localhostPorts
         self.allLocalhostPorts = allLocalhostPorts
@@ -31219,6 +31609,7 @@ public struct NetworkSettings: Equatable, Hashable {
         self.deny = deny
         self.customBase = customBase
         self.widenedBy = widenedBy
+        self.via = via
     }
 
 
@@ -31243,7 +31634,8 @@ public struct FfiConverterTypeNetworkSettings: FfiConverterRustBuffer {
                 allow: FfiConverterSequenceString.read(from: &buf),
                 deny: FfiConverterSequenceString.read(from: &buf),
                 customBase: FfiConverterString.read(from: &buf),
-                widenedBy: FfiConverterOptionString.read(from: &buf)
+                widenedBy: FfiConverterOptionString.read(from: &buf),
+                via: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -31255,6 +31647,7 @@ public struct FfiConverterTypeNetworkSettings: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.deny, into: &buf)
         FfiConverterString.write(value.customBase, into: &buf)
         FfiConverterOptionString.write(value.widenedBy, into: &buf)
+        FfiConverterOptionString.write(value.via, into: &buf)
     }
 }
 
@@ -36778,6 +37171,37 @@ public struct Share: Equatable, Hashable {
      * browsers cannot open it yet).
      */
     public var notices: [String]
+    /**
+     * A public TCP share: what people connect to (a name they can type,
+     * or `host:port`). `None`: an HTTP link.
+     */
+    public var tcpConnectWith: String?
+    /**
+     * A public TCP share: its `host:port`.
+     */
+    public var tcpAddress: String?
+    /**
+     * A public TCP share: how people reach it, `host` (the Space's own
+     * host in your cloud), `edge` (a share edge in your cloud) or
+     * `relay` (Cua).
+     */
+    public var route: String?
+    /**
+     * The plain line for that route ("Through your AWS account").
+     */
+    public var routeLine: String?
+    /**
+     * Who may connect (CIDRs); empty: anyone.
+     */
+    public var allow: [String]
+    /**
+     * Set while the share waits for its owner: `approval` or `consent`.
+     */
+    public var waiting: String?
+    /**
+     * What to show the owner while it waits.
+     */
+    public var waitingText: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36812,7 +37236,31 @@ public struct Share: Equatable, Hashable {
         /**
          * Limits of this link worth showing next to it (for example that
          * browsers cannot open it yet).
-         */notices: [String]) {
+         */notices: [String],
+        /**
+         * A public TCP share: what people connect to (a name they can type,
+         * or `host:port`). `None`: an HTTP link.
+         */tcpConnectWith: String?,
+        /**
+         * A public TCP share: its `host:port`.
+         */tcpAddress: String?,
+        /**
+         * A public TCP share: how people reach it, `host` (the Space's own
+         * host in your cloud), `edge` (a share edge in your cloud) or
+         * `relay` (Cua).
+         */route: String?,
+        /**
+         * The plain line for that route ("Through your AWS account").
+         */routeLine: String?,
+        /**
+         * Who may connect (CIDRs); empty: anyone.
+         */allow: [String],
+        /**
+         * Set while the share waits for its owner: `approval` or `consent`.
+         */waiting: String?,
+        /**
+         * What to show the owner while it waits.
+         */waitingText: String?) {
         self.id = id
         self.url = url
         self.name = name
@@ -36823,6 +37271,13 @@ public struct Share: Equatable, Hashable {
         self.createdAtUnix = createdAtUnix
         self.expiresAtUnix = expiresAtUnix
         self.notices = notices
+        self.tcpConnectWith = tcpConnectWith
+        self.tcpAddress = tcpAddress
+        self.route = route
+        self.routeLine = routeLine
+        self.allow = allow
+        self.waiting = waiting
+        self.waitingText = waitingText
     }
 
 
@@ -36850,7 +37305,14 @@ public struct FfiConverterTypeShare: FfiConverterRustBuffer {
                 owner: FfiConverterString.read(from: &buf),
                 createdAtUnix: FfiConverterOptionInt64.read(from: &buf),
                 expiresAtUnix: FfiConverterOptionInt64.read(from: &buf),
-                notices: FfiConverterSequenceString.read(from: &buf)
+                notices: FfiConverterSequenceString.read(from: &buf),
+                tcpConnectWith: FfiConverterOptionString.read(from: &buf),
+                tcpAddress: FfiConverterOptionString.read(from: &buf),
+                route: FfiConverterOptionString.read(from: &buf),
+                routeLine: FfiConverterOptionString.read(from: &buf),
+                allow: FfiConverterSequenceString.read(from: &buf),
+                waiting: FfiConverterOptionString.read(from: &buf),
+                waitingText: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -36865,6 +37327,13 @@ public struct FfiConverterTypeShare: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.createdAtUnix, into: &buf)
         FfiConverterOptionInt64.write(value.expiresAtUnix, into: &buf)
         FfiConverterSequenceString.write(value.notices, into: &buf)
+        FfiConverterOptionString.write(value.tcpConnectWith, into: &buf)
+        FfiConverterOptionString.write(value.tcpAddress, into: &buf)
+        FfiConverterOptionString.write(value.route, into: &buf)
+        FfiConverterOptionString.write(value.routeLine, into: &buf)
+        FfiConverterSequenceString.write(value.allow, into: &buf)
+        FfiConverterOptionString.write(value.waiting, into: &buf)
+        FfiConverterOptionString.write(value.waitingText, into: &buf)
     }
 }
 
@@ -36970,6 +37439,165 @@ public func FfiConverterTypeShareCheck_lift(_ buf: RustBuffer) throws -> ShareCh
 #endif
 public func FfiConverterTypeShareCheck_lower(_ value: ShareCheck) -> RustBuffer {
     return FfiConverterTypeShareCheck.lower(value)
+}
+
+
+/**
+ * The share settings.
+ */
+public struct ShareSettings: Equatable, Hashable {
+    /**
+     * Where public TCP shares land.
+     */
+    public var landing: ShareLanding
+    /**
+     * Whether Cua's relay may carry public TCP shares at all.
+     */
+    public var relayFallback: Bool
+    /**
+     * The most data public TCP shares move in a day, in MiB (0: no cap).
+     */
+    public var dailyCapMib: UInt64
+    /**
+     * The allowlist new shares start with (CIDRs; empty: anyone).
+     */
+    public var defaultAllow: [String]
+    /**
+     * Ask before an agent's share goes public.
+     */
+    public var approveAgentShares: Bool
+    /**
+     * Spaces whose agents may share without asking.
+     */
+    public var alwaysAllowSpaces: [String]
+    /**
+     * Clouds you agreed may hold a share edge.
+     */
+    public var edgeConsent: [String]
+    /**
+     * Bytes public TCP shares moved today (read only).
+     */
+    public var usedToday: UInt64
+    /**
+     * The share edge's cloud and host, when there is one (read only).
+     */
+    public var edgeCloud: String?
+    /**
+     * The share edge's address (read only).
+     */
+    public var edgeHost: String?
+    /**
+     * About what the edge costs a month, in US dollars (read only).
+     */
+    public var edgeMonthlyUsd: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Where public TCP shares land.
+         */landing: ShareLanding,
+        /**
+         * Whether Cua's relay may carry public TCP shares at all.
+         */relayFallback: Bool,
+        /**
+         * The most data public TCP shares move in a day, in MiB (0: no cap).
+         */dailyCapMib: UInt64,
+        /**
+         * The allowlist new shares start with (CIDRs; empty: anyone).
+         */defaultAllow: [String],
+        /**
+         * Ask before an agent's share goes public.
+         */approveAgentShares: Bool,
+        /**
+         * Spaces whose agents may share without asking.
+         */alwaysAllowSpaces: [String],
+        /**
+         * Clouds you agreed may hold a share edge.
+         */edgeConsent: [String],
+        /**
+         * Bytes public TCP shares moved today (read only).
+         */usedToday: UInt64,
+        /**
+         * The share edge's cloud and host, when there is one (read only).
+         */edgeCloud: String?,
+        /**
+         * The share edge's address (read only).
+         */edgeHost: String?,
+        /**
+         * About what the edge costs a month, in US dollars (read only).
+         */edgeMonthlyUsd: Double?) {
+        self.landing = landing
+        self.relayFallback = relayFallback
+        self.dailyCapMib = dailyCapMib
+        self.defaultAllow = defaultAllow
+        self.approveAgentShares = approveAgentShares
+        self.alwaysAllowSpaces = alwaysAllowSpaces
+        self.edgeConsent = edgeConsent
+        self.usedToday = usedToday
+        self.edgeCloud = edgeCloud
+        self.edgeHost = edgeHost
+        self.edgeMonthlyUsd = edgeMonthlyUsd
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareSettings {
+        return
+            try ShareSettings(
+                landing: FfiConverterTypeShareLanding.read(from: &buf),
+                relayFallback: FfiConverterBool.read(from: &buf),
+                dailyCapMib: FfiConverterUInt64.read(from: &buf),
+                defaultAllow: FfiConverterSequenceString.read(from: &buf),
+                approveAgentShares: FfiConverterBool.read(from: &buf),
+                alwaysAllowSpaces: FfiConverterSequenceString.read(from: &buf),
+                edgeConsent: FfiConverterSequenceString.read(from: &buf),
+                usedToday: FfiConverterUInt64.read(from: &buf),
+                edgeCloud: FfiConverterOptionString.read(from: &buf),
+                edgeHost: FfiConverterOptionString.read(from: &buf),
+                edgeMonthlyUsd: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ShareSettings, into buf: inout [UInt8]) {
+        FfiConverterTypeShareLanding.write(value.landing, into: &buf)
+        FfiConverterBool.write(value.relayFallback, into: &buf)
+        FfiConverterUInt64.write(value.dailyCapMib, into: &buf)
+        FfiConverterSequenceString.write(value.defaultAllow, into: &buf)
+        FfiConverterBool.write(value.approveAgentShares, into: &buf)
+        FfiConverterSequenceString.write(value.alwaysAllowSpaces, into: &buf)
+        FfiConverterSequenceString.write(value.edgeConsent, into: &buf)
+        FfiConverterUInt64.write(value.usedToday, into: &buf)
+        FfiConverterOptionString.write(value.edgeCloud, into: &buf)
+        FfiConverterOptionString.write(value.edgeHost, into: &buf)
+        FfiConverterOptionDouble.write(value.edgeMonthlyUsd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareSettings_lift(_ buf: RustBuffer) throws -> ShareSettings {
+    return try FfiConverterTypeShareSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareSettings_lower(_ value: ShareSettings) -> RustBuffer {
+    return FfiConverterTypeShareSettings.lower(value)
 }
 
 
@@ -39272,6 +39900,26 @@ public struct SpaceInfo: Equatable, Hashable {
      */
     public var depth: UInt32
     /**
+     * It may make child Spaces of its own ([`Spaces::set_children`]).
+     */
+    public var children: Bool
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` otherwise.
+     */
+    public var treeAddress: String?
+    /**
+     * When viewers may move the clipboard between this computer and the
+     * Space: `viewing` (only while you're viewing, the default), `ask` or
+     * `off`. See [`Spaces::set_clipboard`].
+     */
+    public var clipboard: String
+    /**
+     * What it sees of the Cua Volume: `own` (its own folder, the default)
+     * or `off`. See [`Spaces::set_volume`].
+     */
+    public var volume: String
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -39427,6 +40075,22 @@ public struct SpaceInfo: Equatable, Hashable {
          * How far below its tree's top-level Space it is (0: top-level).
          */depth: UInt32,
         /**
+         * It may make child Spaces of its own ([`Spaces::set_children`]).
+         */children: Bool = false,
+        /**
+         * A VM's address in its tree (`198.19.0.0/16`), where the other
+         * members of its tree reach it; `None` otherwise.
+         */treeAddress: String? = nil,
+        /**
+         * When viewers may move the clipboard between this computer and the
+         * Space: `viewing` (only while you're viewing, the default), `ask` or
+         * `off`. See [`Spaces::set_clipboard`].
+         */clipboard: String,
+        /**
+         * What it sees of the Cua Volume: `own` (its own folder, the default)
+         * or `off`. See [`Spaces::set_volume`].
+         */volume: String,
+        /**
          * Named volumes mounted in the Space (see
          * [`SpaceCreateOptions::volumes`]).
          */volumes: [VolumeMount],
@@ -39470,6 +40134,10 @@ public struct SpaceInfo: Equatable, Hashable {
         self.parent = parent
         self.root = root
         self.depth = depth
+        self.children = children
+        self.treeAddress = treeAddress
+        self.clipboard = clipboard
+        self.volume = volume
         self.volumes = volumes
         self.sharing = sharing
     }
@@ -39526,6 +40194,10 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 parent: FfiConverterOptionString.read(from: &buf),
                 root: FfiConverterOptionString.read(from: &buf),
                 depth: FfiConverterUInt32.read(from: &buf),
+                children: FfiConverterBool.read(from: &buf),
+                treeAddress: FfiConverterOptionString.read(from: &buf),
+                clipboard: FfiConverterString.read(from: &buf),
+                volume: FfiConverterString.read(from: &buf),
                 volumes: FfiConverterSequenceTypeVolumeMount.read(from: &buf),
                 sharing: FfiConverterOptionTypeSpaceSharing.read(from: &buf)
         )
@@ -39568,6 +40240,10 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.parent, into: &buf)
         FfiConverterOptionString.write(value.root, into: &buf)
         FfiConverterUInt32.write(value.depth, into: &buf)
+        FfiConverterBool.write(value.children, into: &buf)
+        FfiConverterOptionString.write(value.treeAddress, into: &buf)
+        FfiConverterString.write(value.clipboard, into: &buf)
+        FfiConverterString.write(value.volume, into: &buf)
         FfiConverterSequenceTypeVolumeMount.write(value.volumes, into: &buf)
         FfiConverterOptionTypeSpaceSharing.write(value.sharing, into: &buf)
     }
@@ -39752,6 +40428,19 @@ public struct SpaceNetworkInfo: Equatable, Hashable {
      * An update changed its settings: say so once.
      */
     public var noticePending: Bool
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` for a container or a Space
+     * another computer runs.
+     */
+    public var treeAddress: String?
+    /**
+     * Its topology as JSON text (`cua network show --json`'s `topology`):
+     * its name and address, its tree's members, the host and the ports it
+     * may reach there, its policy, its exit and the exit's state, and the
+     * path to the other computers of its tree. Empty from an older daemon.
+     */
+    public var topologyJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -39785,7 +40474,18 @@ public struct SpaceNetworkInfo: Equatable, Hashable {
          */alwaysBlocked: [String],
         /**
          * An update changed its settings: say so once.
-         */noticePending: Bool) {
+         */noticePending: Bool,
+        /**
+         * A VM's address in its tree (`198.19.0.0/16`), where the other
+         * members of its tree reach it; `None` for a container or a Space
+         * another computer runs.
+         */treeAddress: String? = nil,
+        /**
+         * Its topology as JSON text (`cua network show --json`'s `topology`):
+         * its name and address, its tree's members, the host and the ports it
+         * may reach there, its policy, its exit and the exit's state, and the
+         * path to the other computers of its tree. Empty from an older daemon.
+         */topologyJson: String = "") {
         self.settings = settings
         self.summary = summary
         self.widenings = widenings
@@ -39796,6 +40496,8 @@ public struct SpaceNetworkInfo: Equatable, Hashable {
         self.root = root
         self.alwaysBlocked = alwaysBlocked
         self.noticePending = noticePending
+        self.treeAddress = treeAddress
+        self.topologyJson = topologyJson
     }
 
 
@@ -39823,7 +40525,9 @@ public struct FfiConverterTypeSpaceNetworkInfo: FfiConverterRustBuffer {
                 parent: FfiConverterOptionString.read(from: &buf),
                 root: FfiConverterOptionString.read(from: &buf),
                 alwaysBlocked: FfiConverterSequenceString.read(from: &buf),
-                noticePending: FfiConverterBool.read(from: &buf)
+                noticePending: FfiConverterBool.read(from: &buf),
+                treeAddress: FfiConverterOptionString.read(from: &buf),
+                topologyJson: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -39838,6 +40542,8 @@ public struct FfiConverterTypeSpaceNetworkInfo: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.root, into: &buf)
         FfiConverterSequenceString.write(value.alwaysBlocked, into: &buf)
         FfiConverterBool.write(value.noticePending, into: &buf)
+        FfiConverterOptionString.write(value.treeAddress, into: &buf)
+        FfiConverterString.write(value.topologyJson, into: &buf)
     }
 }
 
@@ -48167,6 +48873,92 @@ public func FfiConverterTypeShareAccess_lower(_ value: ShareAccess) -> RustBuffe
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where public TCP shares land.
+ */
+
+public enum ShareLanding: Equatable, Hashable {
+
+    /**
+     * The Space's own cloud host, else a share edge, else Cua's relay.
+     */
+    case auto
+    /**
+     * Only through your own clouds.
+     */
+    case onlyMyCloud
+    /**
+     * Cua's relay unless the Space runs on its own cloud host.
+     */
+    case allowRelay
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareLanding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareLanding: FfiConverterRustBuffer {
+    typealias SwiftType = ShareLanding
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareLanding {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .auto
+
+        case 2: return .onlyMyCloud
+
+        case 3: return .allowRelay
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ShareLanding, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .auto:
+            writeInt(&buf, Int32(1))
+
+
+        case .onlyMyCloud:
+            writeInt(&buf, Int32(2))
+
+
+        case .allowRelay:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareLanding_lift(_ buf: RustBuffer) throws -> ShareLanding {
+    return try FfiConverterTypeShareLanding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareLanding_lower(_ value: ShareLanding) -> RustBuffer {
+    return FfiConverterTypeShareLanding.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -51132,6 +51924,31 @@ fileprivate struct FfiConverterSequenceTypeNamedVolume: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNetworkEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [NetworkEvent]
+
+    public static func write(_ value: [NetworkEvent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNetworkEvent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NetworkEvent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NetworkEvent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNetworkEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeNotificationInfo: FfiConverterRustBuffer {
     typealias SwiftType = [NotificationInfo]
 
@@ -53420,10 +54237,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_cua_approve_share() != 32419) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_cua_check_share() != 37820) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_cua_deny_share() != 53987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_remove_share_edge() != 8456) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_set_share_settings() != 40470) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_cua_share() != 50100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_share_settings() != 39281) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_share_tcp() != 49424) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_shares() != 39646) {
@@ -54251,6 +55086,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_network() != 41208) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_network_log() != 25916) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_orphans() != 23539) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -54278,6 +55116,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_clipboard() != 38931) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -54288,6 +55129,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_volume() != 17976) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_space() != 26355) {

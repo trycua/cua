@@ -242,6 +242,17 @@
     "license-check.yml"
    ]
   },
+  "spaces-mobile": {
+   "paths": [
+    "apps/cua-spaces-mobile/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ]
+  },
   "spaces-macos": {
    "paths": [
     "apps/cua-spaces-macos/**",

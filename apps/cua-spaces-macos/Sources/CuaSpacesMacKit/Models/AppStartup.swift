@@ -626,6 +626,15 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func deleteMany(ids: [String]) async -> [SpaceBulkResult] { await b().deleteMany(ids: ids) }
     public func leave(ids: [String]) async -> [SpaceBulkResult] { await b().leave(ids: ids) }
     public func rename(id: String, name: String) async throws { try await b().rename(id: id, name: name) }
+    public func network(id: String) async throws -> [String: Any] { try await b().network(id: id) }
+    public func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+        try await b().setNetwork(id: id, word: word, allow: allow, deny: deny, widen: widen, tree: tree, via: via)
+    }
+    public func networkLog(id: String) async throws -> [[String: Any]] { try await b().networkLog(id: id) }
+    public func ackNetworkNotice(id: String) async throws { try await b().ackNetworkNotice(id: id) }
+    public func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+        try await b().setAccess(id: id, clipboard: clipboard, volume: volume)
+    }
     public func setPower(id: String, on: Bool) async throws { try await b().setPower(id: id, on: on) }
     public func streamProvider(id: String) async throws -> SpaceStreamSourceProviding {
         try await b().streamProvider(id: id)
@@ -688,6 +697,14 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
         try await b().createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
     }
     public func stopLink(id: String) async throws -> [String] { try await b().stopLink(id: id) }
+    public func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink {
+        try await b().createTcpLink(target: target, service: service, ttlSeconds: ttlSeconds, name: name, options: options)
+    }
+    public func approveLink(id: String, always: Bool) async throws -> ShareLink { try await b().approveLink(id: id, always: always) }
+    public func denyLink(id: String) async throws { try await b().denyLink(id: id) }
+    public func shareSettings() async throws -> ShareSettingsRow { try await b().shareSettings() }
+    public func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow { try await b().setShareSettings(settings) }
+    public func removeShareEdge() async throws -> [String] { try await b().removeShareEdge() }
     public func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
         try await b().share(id: id, who: who, role: role)
     }

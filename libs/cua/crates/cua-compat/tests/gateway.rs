@@ -12,6 +12,7 @@ struct Gw {
     gw: Gateway,
     http: reqwest::Client,
     base: String,
+    mock: Arc<MockBackend>,
     _dir: tempfile::TempDir,
 }
 
@@ -26,12 +27,13 @@ async fn start(ports: &[(u16, String)]) -> Gw {
     o.host_port = 0;
     o.dir = Some(dir.path().to_path_buf());
     o.create_default_user = false;
-    let gw = Gateway::start(o, Some(backend)).await.unwrap();
+    let gw = Gateway::start(o, Some(backend.clone())).await.unwrap();
     let base = format!("http://{}", gw.api_addr);
     Gw {
         gw,
         http: reqwest::Client::new(),
         base,
+        mock: backend,
         _dir: dir,
     }
 }
@@ -230,6 +232,39 @@ async fn process_start_streams_connect_envelopes() {
 }
 
 #[tokio::test]
+async fn a_root_command_names_root_to_an_agent_that_switches_users() {
+    // The mock agent is not root and switches users by capability (as the
+    // Linux image's `cua` agent does): a command sent without a user runs
+    // as the agent, so `root` must be named.
+    use base64::Engine;
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let body = envelope(&json!({
+        "process": {"cmd": "/bin/bash", "args": ["-l", "-c", "echo hi"], "envs": {}},
+        "stdin": false
+    }));
+    let basic = base64::engine::general_purpose::STANDARD.encode("root:");
+    let r = g
+        .envd(&sb, "process.Process/Start")
+        .header("content-type", "application/connect+json")
+        .header("authorization", format!("Basic {basic}"))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let _ = r.bytes().await.unwrap();
+    let name = g.mock.created.lock().await[0].name.clone();
+    let started = g.mock.state(&name).await.unwrap().started_processes();
+    let run = started
+        .iter()
+        .filter_map(|p| p.config.as_ref())
+        .find(|c| c.args.iter().any(|a| a == "echo hi"))
+        .expect("the command reached the agent");
+    assert_eq!(run.user, "root");
+}
+
+#[tokio::test]
 async fn unary_errors_are_connect_json() {
     let g = start(&[]).await;
     let sb = g.sandbox(json!({"templateID": "base"})).await;
@@ -279,6 +314,10 @@ async fn files_round_trip_and_signed_urls() {
         w,
         json!([{"name": "x.txt", "type": "file", "path": "/tmp/x.txt"}])
     );
+    // Written as root, not as the agent's own user.
+    let name = g.mock.created.lock().await[0].name.clone();
+    let owner = g.mock.state(&name).await.unwrap().file_owner("/tmp/x.txt");
+    assert_eq!(owner.as_deref(), Some("root"));
     // A signed URL carries neither the sandbox id nor the token.
     let token = sb["envdAccessToken"].as_str().unwrap();
     let sig = format!(

@@ -225,7 +225,11 @@ async fn e2e_hotspot_egress_through_this_host() {
     // Every destination is answered by the loopback server above; nothing
     // else on this host or network is dialed.
     let dialer: Dialer = Arc::new(move |_host: String, _port: u16| {
-        Box::pin(async move { tokio::net::TcpStream::connect(("127.0.0.1", web_port)).await })
+        Box::pin(async move {
+            tokio::net::TcpStream::connect(("127.0.0.1", web_port))
+                .await
+                .map(|s| Box::new(s) as cua_spaces::hotspot::ExitStream)
+        })
     });
     let hotspot = space
         .start_hotspot(HotspotOptions {

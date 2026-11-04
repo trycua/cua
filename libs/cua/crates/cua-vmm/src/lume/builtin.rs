@@ -103,6 +103,43 @@ impl LumeSource {
     }
 }
 
+/// The setting that turns off the VNC server of macOS VMs:
+/// `[runtime] lume_vnc = "disabled"` in `$CUA_HOME/config.toml`, overridden
+/// by `CUA_RUNTIME_LUME_VNC`. Apple's VNC server, which Lume runs for each
+/// macOS VM, listens on every network interface (it takes no bind
+/// address), so a Mac reachable from other networks (a hosted server, a CI
+/// runner) should turn it off; Cua's own viewer and agents use cua-spacesd,
+/// not VNC.
+pub const VNC_SETTING_ENV: &str = "CUA_RUNTIME_LUME_VNC";
+
+/// Whether macOS VMs start with a VNC server (default yes).
+pub fn vnc_enabled() -> bool {
+    if let Ok(v) = std::env::var(VNC_SETTING_ENV) {
+        return vnc_word_enabled(&v);
+    }
+    vnc_enabled_in(&host::cua_home().join("config.toml"))
+}
+
+/// [`vnc_enabled`] from the config file at `path` only.
+pub fn vnc_enabled_in(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|d| {
+            Some(vnc_word_enabled(
+                d.get("runtime")?.get("lume_vnc")?.as_str()?,
+            ))
+        })
+        .unwrap_or(true)
+}
+
+fn vnc_word_enabled(word: &str) -> bool {
+    !matches!(
+        word.trim().to_ascii_lowercase().as_str(),
+        "disabled" | "off" | "false" | "no" | "0"
+    )
+}
+
 /// Where the built-in Lume lives.
 pub fn dir() -> PathBuf {
     root().join(VERSION)
@@ -760,6 +797,22 @@ fn team_matches(codesign_display: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_vnc_setting_defaults_to_enabled_and_turns_off() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("config.toml");
+        assert!(vnc_enabled_in(&p));
+        std::fs::write(&p, "[runtime]\nlume = \"system\"\n").unwrap();
+        assert!(vnc_enabled_in(&p));
+        std::fs::write(&p, "[runtime]\nlume_vnc = \"disabled\"\n").unwrap();
+        assert!(!vnc_enabled_in(&p));
+        std::fs::write(&p, "[runtime]\nlume_vnc = \"enabled\"\n").unwrap();
+        assert!(vnc_enabled_in(&p));
+        for w in ["off", "Disabled", "false", "0", "no"] {
+            assert!(!vnc_word_enabled(w), "{w}");
+        }
+    }
 
     #[test]
     fn the_setting_parses_and_defaults_to_auto() {

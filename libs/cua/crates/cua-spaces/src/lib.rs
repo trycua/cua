@@ -64,6 +64,7 @@ pub mod build;
 pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
+pub mod clipboard;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
 /// shown as its relay machine.
 pub mod cloud;
@@ -91,6 +92,7 @@ pub mod network;
 pub mod operator;
 pub mod pool_checkpoints;
 pub mod prewarm;
+pub mod quarantine;
 pub mod registry;
 pub mod relay;
 pub mod rename;
@@ -108,12 +110,18 @@ pub mod tree;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;
+/// Exits: where a Space's internet traffic leaves ("Exit through").
+#[cfg(feature = "spaces-hotspot")]
+pub mod exit;
 /// Extension points for the capabilities that ship with Cua Spaces
 /// (teleport, the Cua Volume, persistent agents).
 #[cfg(feature = "mcp")]
 pub mod extension;
 #[cfg(feature = "spaces-files")]
 pub mod files;
+/// The host's ports at `localhost` inside a Space.
+#[cfg(feature = "spaces-hotspot")]
+pub mod host_ports;
 #[cfg(feature = "spaces-hotspot")]
 pub mod hotspot;
 #[cfg(feature = "spaces-agents")]
@@ -123,6 +131,13 @@ pub mod install_cache;
 pub mod job_services;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+/// The tree overlay: the members of one tree reach each other across your
+/// machines, over the mesh.
+#[cfg(feature = "spaces-hotspot")]
+pub mod overlay;
+/// How a Space's traffic reaches the account's other computers (the mesh's
+/// chosen path, and a pin).
+pub mod paths;
 #[cfg(feature = "spaces-presence")]
 pub mod presence;
 pub mod reattach;
@@ -143,6 +158,15 @@ pub mod stream;
 pub mod teleport_broker;
 #[cfg(feature = "mcp")]
 pub mod thread_route;
+/// What a Space's network looks like: tree names, the host, the exit.
+pub mod topology;
+/// Containers in a VM's tree (the tree hub).
+#[cfg(feature = "spaces-hotspot")]
+pub mod tree_hub;
+/// How a container reaches the members of its tree that are not containers
+/// on this computer.
+#[cfg(feature = "spaces-hotspot")]
+pub mod tree_proxy;
 #[cfg(feature = "spaces-volume")]
 pub mod volume;
 #[cfg(feature = "spaces-files")]

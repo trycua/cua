@@ -254,6 +254,12 @@ pub struct NetworkSet {
     /// Its child Spaces take the same settings (each within its parent's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<bool>,
+    /// Where its internet traffic leaves: `internet` (its own network) or
+    /// `space:<name>` (a Space of its tree). This computer and a SOCKS5
+    /// proxy are the user's to choose (`cua network set --via`). Unset:
+    /// the exit it has. A child keeps its parent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 /// A tool whose only argument is the Space.
@@ -691,6 +697,10 @@ pub struct AgentMessage {
     /// Interrupt a running turn first instead of queueing. Default false.
     #[serde(default)]
     pub force: Option<bool>,
+    /// A key of the caller's for this message: sending it again (after a
+    /// lost connection) returns the first answer and delivers nothing twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `agent_status`: one run's status, result and recent output.
@@ -780,6 +790,10 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Standing instructions: the first message each run takes carries them
+    /// in front of its text (the thread shows only the message).
+    #[serde(default)]
+    pub brief: Option<String>,
     /// A custom model endpoint base URL.
     #[serde(default)]
     pub base_url: Option<String>,
@@ -803,6 +817,11 @@ pub struct PersistentAgentCreate {
     /// Parallel sessions. Default 1.
     #[serde(default)]
     pub sessions: Option<u32>,
+    /// Keep a run open with its session ready, so a message starts its turn
+    /// at once (the agent is started in the background, and again if it
+    /// ends). Default false.
+    #[serde(default)]
+    pub standby: Option<bool>,
     /// A schedule: every N minutes (with `prompt`).
     #[serde(default)]
     pub every_minutes: Option<i64>,
@@ -1011,6 +1030,20 @@ pub struct ThreadAnswerArg {
     /// A note for the agent.
     #[serde(default)]
     pub note: Option<String>,
+    /// `once` (default): this approval only. `space`: allow this kind of
+    /// request from this agent in this Space from now on; the daemon
+    /// answers the same request itself, and the grant can be taken back.
+    /// Only for an approval whose `scope_choices` lists it (an agent's own
+    /// request; never a push, a sign-in, a join or an ability request),
+    /// and never with `approve: false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// A key of the caller's for this answer. Sending the same answer
+    /// again after a lost connection returns the first one
+    /// (`replayed: true`) and never writes a second; a different decision
+    /// for an approval already answered is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `thread_post`: post to a Space's thread.
@@ -1046,6 +1079,12 @@ pub struct ThreadPost {
     /// message is about.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ThreadViewArg>,
+    /// A key of the caller's for this post: the same key from the same
+    /// author again (a retry after a lost connection) returns the first
+    /// entry (`replayed: true`) and writes nothing. Kept on the entry as
+    /// `client_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `thread_post`'s `view`: the Space's desktop or one of its windows.
@@ -1412,9 +1451,16 @@ pub struct HotspotStart {
     #[serde(default)]
     pub bypass: Option<Vec<String>>,
     /// Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)
-    /// at the hotspot. Default true.
+    /// at the hotspot. Default true; with Secure Spaces on, false: apps in the
+    /// Space use the hotspot only when they are told to (SOCKS5 at the
+    /// returned `socks_address`).
     #[serde(default)]
     pub set_system_proxy: Option<bool>,
+    /// The user said yes to sharing this computer's network with the Space.
+    /// With Secure Spaces on, required: without `true` the call is refused.
+    /// Ask the user first; never set it on your own.
+    #[serde(default)]
+    pub confirm: Option<bool>,
 }
 
 /// `hotspot_stop` / `hotspot_status`.

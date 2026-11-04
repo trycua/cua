@@ -29,7 +29,23 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /** What the page's fix button does (`spaces.fixRuntime {action}`). */
-export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app";
+export const RUNTIME_FIX_ACTIONS = ["install-docker", "start-docker", "restart-app", "open-windows-features"] as const;
+export type RuntimeFixAction = (typeof RUNTIME_FIX_ACTIONS)[number];
+
+type ContractAction = import("../../../cua-spaces-web/src/bridge/contracts/new-space").RuntimeFixAction;
+type Assert<T extends true> = T;
+export type RuntimeFixActionsMatch = Assert<
+  [Exclude<RuntimeFixAction, ContractAction> | Exclude<ContractAction, RuntimeFixAction>] extends [never] ? true : false
+>;
+
+export type FeatureState = "enabled" | "disabled" | "unknown";
+
+export interface WindowsFeatures {
+  editionId: string | null;
+  virtualMachinePlatform: FeatureState;
+  hypervisorPlatform: FeatureState;
+  subsystemLinux: FeatureState;
+}
 
 /** A step the page can offer next to the "no local runtime" reason. */
 export interface RuntimeFix {
@@ -55,6 +71,7 @@ export interface WindowsRuntimeFacts {
   virtualization: "on" | "off" | "unknown";
   /** Windows waits for a restart to finish turning on WSL 2 / the install. */
   restartPending: boolean;
+  features: WindowsFeatures;
 }
 
 /** Where a fix the app started is now. */
@@ -122,6 +139,22 @@ export function windowsRuntimeAdvice(facts: WindowsRuntimeFacts, phase: FixPhase
     return {
       reason: "Local Spaces on Windows run in Docker Desktop, which isn't installed yet.",
       fix: installFix(),
+    };
+  }
+  const disabled = [
+    facts.features.virtualMachinePlatform === "disabled" ? "Virtual Machine Platform" : null,
+    facts.features.subsystemLinux === "disabled" ? "Windows Subsystem for Linux" : null,
+  ].filter(Boolean);
+  if (disabled.length) {
+    return {
+      reason: `Windows features are turned off: ${disabled.join(", ")}.`,
+      fix: {
+        action: "open-windows-features",
+        label: "Open Windows Features",
+        note: "Turn on the listed features, then restart this PC and open Cua Spaces again.",
+        busy: false,
+        termsUrl: null,
+      },
     };
   }
   if (facts.dockerRunning || phase.kind === "starting") {
@@ -235,13 +268,14 @@ export class WindowsRuntime {
 
   async facts(): Promise<WindowsRuntimeFacts> {
     const exe = dockerDesktopExe();
-    const [dockerInstalled, dockerRunning, virtualization, restartPending] = await Promise.all([
+    const [dockerInstalled, dockerRunning, virtualization, restartPending, features] = await Promise.all([
       this.sys.exists(exe),
       this.sys.running("Docker Desktop.exe"),
       this.readVirtualization(),
       this.restartAsked ? Promise.resolve(true) : this.readRestartPending(),
+      this.phase.kind === "downloading" || this.phase.kind === "installing" ? Promise.resolve(parseFeatures("")) : this.readFeatures(),
     ]);
-    return { dockerInstalled, dockerRunning, virtualization, restartPending };
+    return { dockerInstalled, dockerRunning, virtualization, restartPending, features };
   }
 
   /** The advice now; a finished start (the engine answered) is the caller's to see. */
@@ -260,14 +294,25 @@ export class WindowsRuntime {
   /** Runs `action` in the background; the page sees its progress in the options. */
   run(action: RuntimeFixAction): void {
     if (this.phase.kind === "downloading" || this.phase.kind === "installing") return;
-    if (action === "restart-app") return;
-    if (action === "start-docker") {
-      this.start();
-      return;
+    switch (action) {
+      case "restart-app":
+        return;
+      case "start-docker":
+        this.start();
+        return;
+      case "open-windows-features":
+        this.sys.launch("optionalfeatures.exe");
+        return;
+      case "install-docker":
+        void this.install().catch((e: unknown) => {
+          this.phase = { kind: "failed", message: installFailedText(e) };
+        });
+        return;
+      default: {
+        const exhaustive: never = action;
+        throw new Error(`Unknown runtime fix: ${exhaustive}`);
+      }
     }
-    void this.install().catch((e: unknown) => {
-      this.phase = { kind: "failed", message: installFailedText(e) };
-    });
   }
 
   private start(): void {
@@ -316,6 +361,27 @@ export class WindowsRuntime {
     this.start();
   }
 
+  private async readFeatures(): Promise<WindowsFeatures> {
+    const r = await this.sys
+      .powershell(
+        `$result = @{}
+try { $result.editionId = (Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' -Name EditionID -ErrorAction Stop).EditionID } catch {}
+try {
+  Get-CimInstance Win32_OptionalFeature -Filter "Name='VirtualMachinePlatform' OR Name='HypervisorPlatform' OR Name='Microsoft-Windows-Subsystem-Linux'" -ErrorAction Stop | ForEach-Object {
+    switch ($_.Name) {
+      'VirtualMachinePlatform' { $result.virtualMachinePlatform = $_.InstallState }
+      'HypervisorPlatform' { $result.hypervisorPlatform = $_.InstallState }
+      'Microsoft-Windows-Subsystem-Linux' { $result.subsystemLinux = $_.InstallState }
+    }
+  }
+} catch {}
+ConvertTo-Json -InputObject $result -Compress`,
+        15_000,
+      )
+      .catch(() => null);
+    return parseFeatures(r?.code === 0 ? r.stdout : "");
+  }
+
   private async readVirtualization(): Promise<WindowsRuntimeFacts["virtualization"]> {
     if (this.virtualization) return this.virtualization;
     const r = await this.sys
@@ -347,6 +413,21 @@ export function parseVirtualization(stdout: string): WindowsRuntimeFacts["virtua
   if (hypervisor === "true" || firmware === "true") return "on";
   if (firmware === "false") return "off";
   return "unknown";
+}
+
+export function parseFeatures(stdout: string): WindowsFeatures {
+  let raw: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(stdout);
+    if (value && typeof value === "object" && !Array.isArray(value)) raw = value as Record<string, unknown>;
+  } catch {}
+  const state = (value: unknown): FeatureState => (value === 1 ? "enabled" : value === 2 ? "disabled" : "unknown");
+  return {
+    editionId: typeof raw.editionId === "string" ? raw.editionId : null,
+    virtualMachinePlatform: state(raw.virtualMachinePlatform),
+    hypervisorPlatform: state(raw.hypervisorPlatform),
+    subsystemLinux: state(raw.subsystemLinux),
+  };
 }
 
 export function signedByDocker(stdout: string): boolean {

@@ -2128,6 +2128,7 @@ dependencies = [
  "cua-home",
  "cua-host",
  "cua-sandbox-core",
+ "cua-share",
  "cua-spacesd-client",
  "cua-vmm",
  "humantime",
@@ -2319,6 +2320,7 @@ dependencies = [
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "image",
+ "indexmap",
  "jsonschema",
  "keyring 4.2.0",
  "libc",
@@ -2573,6 +2575,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-push"
+version = "0.10.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cua-relay"
 version = "0.10.1"
 dependencies = [
@@ -2581,6 +2599,8 @@ dependencies = [
  "bytes",
  "clap",
  "cua-mesh",
+ "cua-push",
+ "cua-spacesd-html5",
  "futures-util",
  "hex",
  "http",
@@ -2599,6 +2619,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2716,6 +2737,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tracing",
  "url",
@@ -2858,6 +2880,7 @@ dependencies = [
  "cua-media-protocol",
  "cua-media-transport",
  "cua-mesh",
+ "cua-push",
  "cua-sandbox-core",
  "cua-spaces",
  "cua-spaces-contract",
@@ -2871,6 +2894,7 @@ dependencies = [
  "http",
  "quinn",
  "rand 0.9.5",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6996,6 +7020,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

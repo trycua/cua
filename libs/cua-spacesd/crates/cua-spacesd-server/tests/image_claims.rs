@@ -52,6 +52,8 @@ fn everywhere() -> Vec<&'static str> {
         "tunnel.forward",
         "hotspot",
         services::tunnel::SPAWN_FEATURE,
+        services::tunnel::EXIT_FEATURE,
+        services::tunnel::HOST_PORTS_FEATURE,
         process::services::FEATURE,
         runas::MULTIPART_FEATURE,
         process::EXEC_LEDGER_FEATURE,

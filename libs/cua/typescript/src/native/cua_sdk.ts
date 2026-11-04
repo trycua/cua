@@ -13906,6 +13906,82 @@ const FfiConverterTypeNamedVolume = (() => {
 })();
 
 /**
+ * One kind of connection a Space tried and its network refused
+ * ([`Spaces::network_log`]).
+ */
+export type NetworkEvent = {
+    /**
+     * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+     * `user:deny`, `default:none`, ...
+     */
+    reason: string,
+    /**
+     * Where to (`169.254.169.254:80`, or the rule's network where only the
+     * host's firewall counted it).
+     */
+    dst: string,
+    /**
+     * `tcp` or `udp` when known.
+     */
+    proto?: string,
+    /**
+     * How many times.
+     */
+    count: bigint,
+    /**
+     * When the last one was refused (Unix seconds), when known.
+     */
+    lastUnix?: bigint
+}
+
+/**
+ * Generated factory for {@link NetworkEvent} record objects.
+ */
+export const NetworkEvent = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<NetworkEvent, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<NetworkEvent>,
+    });
+})();
+
+const FfiConverterTypeNetworkEvent = (() => {
+    type TypeName = NetworkEvent;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                reason: FfiConverterString.read(from),
+                dst: FfiConverterString.read(from),
+                proto: FfiConverterOptionalString.read(from),
+                count: FfiConverterUInt64.read(from),
+                lastUnix: FfiConverterOptionalUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.reason, into);
+            FfiConverterString.write(value.dst, into);
+            FfiConverterOptionalString.write(value.proto, into);
+            FfiConverterUInt64.write(value.count, into);
+            FfiConverterOptionalUInt64.write(value.lastUnix, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.reason) +
+             FfiConverterString.allocationSize(value.dst) +
+             FfiConverterOptionalString.allocationSize(value.proto) +
+             FfiConverterUInt64.allocationSize(value.count) +
+             FfiConverterOptionalUInt64.allocationSize(value.lastUnix);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A Space's network settings: a preset and the user's own lists. The host
  * the Space runs on compiles them to rules it enforces outside the guest.
  *
@@ -13954,7 +14030,14 @@ export type NetworkSettings = {
     /**
      * Set when the Space was allowed more than its parent: who and when.
      */
-    widenedBy?: string
+    widenedBy?: string,
+    /**
+     * Where its internet traffic leaves ("Exit through"): `None` or
+     * `internet` for its own network, `this-computer` (the hotspot),
+     * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+     * child keeps its parent's.
+     */
+    via?: string
 }
 
 /**
@@ -13968,7 +14051,8 @@ export const NetworkSettings = (() => {
         allow: [],
         deny: [],
         customBase: "",
-        widenedBy: undefined
+        widenedBy: undefined,
+        via: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<NetworkSettings, ReturnType<typeof defaults>>(defaults);
@@ -13991,7 +14075,8 @@ const FfiConverterTypeNetworkSettings = (() => {
                 allow: FfiConverterSequenceString.read(from),
                 deny: FfiConverterSequenceString.read(from),
                 customBase: FfiConverterString.read(from),
-                widenedBy: FfiConverterOptionalString.read(from)
+                widenedBy: FfiConverterOptionalString.read(from),
+                via: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14002,6 +14087,7 @@ const FfiConverterTypeNetworkSettings = (() => {
             FfiConverterSequenceString.write(value.deny, into);
             FfiConverterString.write(value.customBase, into);
             FfiConverterOptionalString.write(value.widenedBy, into);
+            FfiConverterOptionalString.write(value.via, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.preset) +
@@ -14010,7 +14096,8 @@ const FfiConverterTypeNetworkSettings = (() => {
              FfiConverterSequenceString.allocationSize(value.allow) +
              FfiConverterSequenceString.allocationSize(value.deny) +
              FfiConverterString.allocationSize(value.customBase) +
-             FfiConverterOptionalString.allocationSize(value.widenedBy);
+             FfiConverterOptionalString.allocationSize(value.widenedBy) +
+             FfiConverterOptionalString.allocationSize(value.via);
 
         }
     };
@@ -18155,7 +18242,20 @@ export type SpaceNetworkInfo = {
     /**
      * An update changed its settings: say so once.
      */
-    noticePending: boolean
+    noticePending: boolean,
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` for a container or a Space
+     * another computer runs.
+     */
+    treeAddress?: string,
+    /**
+     * Its topology as JSON text (`cua network show --json`'s `topology`):
+     * its name and address, its tree's members, the host and the ports it
+     * may reach there, its policy, its exit and the exit's state, and the
+     * path to the other computers of its tree. Empty from an older daemon.
+     */
+    topologyJson: string
 }
 
 /**
@@ -18163,6 +18263,8 @@ export type SpaceNetworkInfo = {
  */
 export const SpaceNetworkInfo = (() => {
     const defaults = () => ({
+        treeAddress: undefined,
+        topologyJson: ""
     });
     const create = (() => {
         return uniffiCreateRecord<SpaceNetworkInfo, ReturnType<typeof defaults>>(defaults);
@@ -18188,7 +18290,9 @@ const FfiConverterTypeSpaceNetworkInfo = (() => {
                 parent: FfiConverterOptionalString.read(from),
                 root: FfiConverterOptionalString.read(from),
                 alwaysBlocked: FfiConverterSequenceString.read(from),
-                noticePending: FfiConverterBool.read(from)
+                noticePending: FfiConverterBool.read(from),
+                treeAddress: FfiConverterOptionalString.read(from),
+                topologyJson: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -18202,6 +18306,8 @@ const FfiConverterTypeSpaceNetworkInfo = (() => {
             FfiConverterOptionalString.write(value.root, into);
             FfiConverterSequenceString.write(value.alwaysBlocked, into);
             FfiConverterBool.write(value.noticePending, into);
+            FfiConverterOptionalString.write(value.treeAddress, into);
+            FfiConverterString.write(value.topologyJson, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeNetworkSettings.allocationSize(value.settings) +
@@ -18213,7 +18319,9 @@ const FfiConverterTypeSpaceNetworkInfo = (() => {
              FfiConverterOptionalString.allocationSize(value.parent) +
              FfiConverterOptionalString.allocationSize(value.root) +
              FfiConverterSequenceString.allocationSize(value.alwaysBlocked) +
-             FfiConverterBool.allocationSize(value.noticePending);
+             FfiConverterBool.allocationSize(value.noticePending) +
+             FfiConverterOptionalString.allocationSize(value.treeAddress) +
+             FfiConverterString.allocationSize(value.topologyJson);
 
         }
     };
@@ -18419,7 +18527,38 @@ export type Share = {
      * Limits of this link worth showing next to it (for example that
      * browsers cannot open it yet).
      */
-    notices: Array<string>
+    notices: Array<string>,
+    /**
+     * A public TCP share: what people connect to (a name they can type,
+     * or `host:port`). `None`: an HTTP link.
+     */
+    tcpConnectWith?: string,
+    /**
+     * A public TCP share: its `host:port`.
+     */
+    tcpAddress?: string,
+    /**
+     * A public TCP share: how people reach it, `host` (the Space's own
+     * host in your cloud), `edge` (a share edge in your cloud) or
+     * `relay` (Cua).
+     */
+    route?: string,
+    /**
+     * The plain line for that route ("Through your AWS account").
+     */
+    routeLine?: string,
+    /**
+     * Who may connect (CIDRs); empty: anyone.
+     */
+    allow: Array<string>,
+    /**
+     * Set while the share waits for its owner: `approval` or `consent`.
+     */
+    waiting?: string,
+    /**
+     * What to show the owner while it waits.
+     */
+    waitingText?: string
 }
 
 /**
@@ -18452,7 +18591,14 @@ const FfiConverterTypeShare = (() => {
                 owner: FfiConverterString.read(from),
                 createdAtUnix: FfiConverterOptionalInt64.read(from),
                 expiresAtUnix: FfiConverterOptionalInt64.read(from),
-                notices: FfiConverterSequenceString.read(from)
+                notices: FfiConverterSequenceString.read(from),
+                tcpConnectWith: FfiConverterOptionalString.read(from),
+                tcpAddress: FfiConverterOptionalString.read(from),
+                route: FfiConverterOptionalString.read(from),
+                routeLine: FfiConverterOptionalString.read(from),
+                allow: FfiConverterSequenceString.read(from),
+                waiting: FfiConverterOptionalString.read(from),
+                waitingText: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -18466,6 +18612,13 @@ const FfiConverterTypeShare = (() => {
             FfiConverterOptionalInt64.write(value.createdAtUnix, into);
             FfiConverterOptionalInt64.write(value.expiresAtUnix, into);
             FfiConverterSequenceString.write(value.notices, into);
+            FfiConverterOptionalString.write(value.tcpConnectWith, into);
+            FfiConverterOptionalString.write(value.tcpAddress, into);
+            FfiConverterOptionalString.write(value.route, into);
+            FfiConverterOptionalString.write(value.routeLine, into);
+            FfiConverterSequenceString.write(value.allow, into);
+            FfiConverterOptionalString.write(value.waiting, into);
+            FfiConverterOptionalString.write(value.waitingText, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -18477,7 +18630,14 @@ const FfiConverterTypeShare = (() => {
              FfiConverterString.allocationSize(value.owner) +
              FfiConverterOptionalInt64.allocationSize(value.createdAtUnix) +
              FfiConverterOptionalInt64.allocationSize(value.expiresAtUnix) +
-             FfiConverterSequenceString.allocationSize(value.notices);
+             FfiConverterSequenceString.allocationSize(value.notices) +
+             FfiConverterOptionalString.allocationSize(value.tcpConnectWith) +
+             FfiConverterOptionalString.allocationSize(value.tcpAddress) +
+             FfiConverterOptionalString.allocationSize(value.route) +
+             FfiConverterOptionalString.allocationSize(value.routeLine) +
+             FfiConverterSequenceString.allocationSize(value.allow) +
+             FfiConverterOptionalString.allocationSize(value.waiting) +
+             FfiConverterOptionalString.allocationSize(value.waitingText);
 
         }
     };
@@ -18544,6 +18704,165 @@ const FfiConverterTypeShareCheck = (() => {
              FfiConverterUInt32.allocationSize(value.status) +
              FfiConverterString.allocationSize(value.via) +
              FfiConverterString.allocationSize(value.detail);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Where public TCP shares land.
+ */
+export enum ShareLanding {
+    /**
+     * The Space's own cloud host, else a share edge, else Cua's relay.
+     */
+    Auto,
+    /**
+     * Only through your own clouds.
+     */
+    OnlyMyCloud,
+    /**
+     * Cua's relay unless the Space runs on its own cloud host.
+     */
+    AllowRelay
+}
+
+const FfiConverterTypeShareLanding = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ShareLanding;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ShareLanding.Auto;
+                case 2: return ShareLanding.OnlyMyCloud;
+                case 3: return ShareLanding.AllowRelay;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ShareLanding.Auto: return ordinalConverter.write(1, into);
+                case ShareLanding.OnlyMyCloud: return ordinalConverter.write(2, into);
+                case ShareLanding.AllowRelay: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * The share settings.
+ */
+export type ShareSettings = {
+    /**
+     * Where public TCP shares land.
+     */
+    landing: ShareLanding,
+    /**
+     * Whether Cua's relay may carry public TCP shares at all.
+     */
+    relayFallback: boolean,
+    /**
+     * The most data public TCP shares move in a day, in MiB (0: no cap).
+     */
+    dailyCapMib: bigint,
+    /**
+     * The allowlist new shares start with (CIDRs; empty: anyone).
+     */
+    defaultAllow: Array<string>,
+    /**
+     * Ask before an agent's share goes public.
+     */
+    approveAgentShares: boolean,
+    /**
+     * Spaces whose agents may share without asking.
+     */
+    alwaysAllowSpaces: Array<string>,
+    /**
+     * Clouds you agreed may hold a share edge.
+     */
+    edgeConsent: Array<string>,
+    /**
+     * Bytes public TCP shares moved today (read only).
+     */
+    usedToday: bigint,
+    /**
+     * The share edge's cloud and host, when there is one (read only).
+     */
+    edgeCloud?: string,
+    /**
+     * The share edge's address (read only).
+     */
+    edgeHost?: string,
+    /**
+     * About what the edge costs a month, in US dollars (read only).
+     */
+    edgeMonthlyUsd?: number
+}
+
+/**
+ * Generated factory for {@link ShareSettings} record objects.
+ */
+export const ShareSettings = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ShareSettings, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ShareSettings>,
+    });
+})();
+
+const FfiConverterTypeShareSettings = (() => {
+    type TypeName = ShareSettings;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                landing: FfiConverterTypeShareLanding.read(from),
+                relayFallback: FfiConverterBool.read(from),
+                dailyCapMib: FfiConverterUInt64.read(from),
+                defaultAllow: FfiConverterSequenceString.read(from),
+                approveAgentShares: FfiConverterBool.read(from),
+                alwaysAllowSpaces: FfiConverterSequenceString.read(from),
+                edgeConsent: FfiConverterSequenceString.read(from),
+                usedToday: FfiConverterUInt64.read(from),
+                edgeCloud: FfiConverterOptionalString.read(from),
+                edgeHost: FfiConverterOptionalString.read(from),
+                edgeMonthlyUsd: FfiConverterOptionalFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeShareLanding.write(value.landing, into);
+            FfiConverterBool.write(value.relayFallback, into);
+            FfiConverterUInt64.write(value.dailyCapMib, into);
+            FfiConverterSequenceString.write(value.defaultAllow, into);
+            FfiConverterBool.write(value.approveAgentShares, into);
+            FfiConverterSequenceString.write(value.alwaysAllowSpaces, into);
+            FfiConverterSequenceString.write(value.edgeConsent, into);
+            FfiConverterUInt64.write(value.usedToday, into);
+            FfiConverterOptionalString.write(value.edgeCloud, into);
+            FfiConverterOptionalString.write(value.edgeHost, into);
+            FfiConverterOptionalFloat64.write(value.edgeMonthlyUsd, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeShareLanding.allocationSize(value.landing) +
+             FfiConverterBool.allocationSize(value.relayFallback) +
+             FfiConverterUInt64.allocationSize(value.dailyCapMib) +
+             FfiConverterSequenceString.allocationSize(value.defaultAllow) +
+             FfiConverterBool.allocationSize(value.approveAgentShares) +
+             FfiConverterSequenceString.allocationSize(value.alwaysAllowSpaces) +
+             FfiConverterSequenceString.allocationSize(value.edgeConsent) +
+             FfiConverterUInt64.allocationSize(value.usedToday) +
+             FfiConverterOptionalString.allocationSize(value.edgeCloud) +
+             FfiConverterOptionalString.allocationSize(value.edgeHost) +
+             FfiConverterOptionalFloat64.allocationSize(value.edgeMonthlyUsd);
 
         }
     };
@@ -20119,6 +20438,26 @@ export type SpaceInfo = {
      */
     depth: number,
     /**
+     * It may make child Spaces of its own ([`Spaces::set_children`]).
+     */
+    children: boolean,
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` otherwise.
+     */
+    treeAddress?: string,
+    /**
+     * When viewers may move the clipboard between this computer and the
+     * Space: `viewing` (only while you're viewing, the default), `ask` or
+     * `off`. See [`Spaces::set_clipboard`].
+     */
+    clipboard: string,
+    /**
+     * What it sees of the Cua Volume: `own` (its own folder, the default)
+     * or `off`. See [`Spaces::set_volume`].
+     */
+    volume: string,
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -20138,6 +20477,8 @@ export const SpaceInfo = (() => {
         displayName: "",
         durable: "",
         stopReason: "",
+        children: false,
+        treeAddress: undefined,
         sharing: undefined
     });
     const create = (() => {
@@ -20191,6 +20532,10 @@ const FfiConverterTypeSpaceInfo = (() => {
                 parent: FfiConverterOptionalString.read(from),
                 root: FfiConverterOptionalString.read(from),
                 depth: FfiConverterUInt32.read(from),
+                children: FfiConverterBool.read(from),
+                treeAddress: FfiConverterOptionalString.read(from),
+                clipboard: FfiConverterString.read(from),
+                volume: FfiConverterString.read(from),
                 volumes: FfiConverterSequenceTypeVolumeMount.read(from),
                 sharing: FfiConverterOptionalTypeSpaceSharing.read(from)
             };
@@ -20232,6 +20577,10 @@ const FfiConverterTypeSpaceInfo = (() => {
             FfiConverterOptionalString.write(value.parent, into);
             FfiConverterOptionalString.write(value.root, into);
             FfiConverterUInt32.write(value.depth, into);
+            FfiConverterBool.write(value.children, into);
+            FfiConverterOptionalString.write(value.treeAddress, into);
+            FfiConverterString.write(value.clipboard, into);
+            FfiConverterString.write(value.volume, into);
             FfiConverterSequenceTypeVolumeMount.write(value.volumes, into);
             FfiConverterOptionalTypeSpaceSharing.write(value.sharing, into);
         }
@@ -20272,6 +20621,10 @@ const FfiConverterTypeSpaceInfo = (() => {
              FfiConverterOptionalString.allocationSize(value.parent) +
              FfiConverterOptionalString.allocationSize(value.root) +
              FfiConverterUInt32.allocationSize(value.depth) +
+             FfiConverterBool.allocationSize(value.children) +
+             FfiConverterOptionalString.allocationSize(value.treeAddress) +
+             FfiConverterString.allocationSize(value.clipboard) +
+             FfiConverterString.allocationSize(value.volume) +
              FfiConverterSequenceTypeVolumeMount.allocationSize(value.volumes) +
              FfiConverterOptionalTypeSpaceSharing.allocationSize(value.sharing);
 
@@ -41959,6 +42312,11 @@ export interface SpacesLike {
  */
     network(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceNetworkInfo>;
 /**
+ * What a Space on the daemon's computer tried to reach and its network
+ * refused, most recent first (`cua network log`).
+ */
+    networkLog(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<NetworkEvent>>;
+/**
  * The notifications feed, newest first.
  */
     notifications(unreadOnly: boolean, sinceMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<NotificationInfo>>;
@@ -42092,6 +42450,7 @@ export interface SpacesLike {
  * this runtime runs itself.
  */
     setChildren(space: string, enabled: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    setClipboard(space: string, clipboard: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Replaces a Space's egress policy; an empty one removes it (see
  * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
@@ -42121,6 +42480,17 @@ export interface SpacesLike {
  * that does not fit is refused with what is left. All `None` removes it.
  */
     setTreeBudget(space: string, limits: TreeBudgetLimits, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<TreeBudget>;
+/**
+ * Sets when a Space's viewers may move the clipboard between this
+ * computer and the Space: `viewing` (only while you're viewing, the
+ * default), `ask` or `off`. It applies to viewers opened afterwards.
+ * The agent tools `computer_clipboard_*` act inside the Space and are
+ * not affected. Another word is `InvalidArgument`.
+ * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+ * `off`. Applies now: `off` unmounts the Volume (named volumes it
+ * mounted stay).
+ */
+    setVolume(space: string, volume: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * A connected handle to a registered Space.
  */
@@ -43973,6 +44343,42 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * What a Space on the daemon's computer tried to reach and its network
+ * refused, most recent first (`cua network log`).
+ */
+    async networkLog(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<NetworkEvent>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_network_log(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeNetworkEvent.lift.bind(FfiConverterSequenceTypeNetworkEvent),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * The notifications feed, newest first.
  */
     async notifications(unreadOnly: boolean, sinceMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Array<NotificationInfo>> /*throws*/ {
@@ -44835,6 +45241,33 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+    async setClipboard(space: string, clipboard: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_set_clipboard(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterString.lower(clipboard, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 /**
  * Replaces a Space's egress policy; an empty one removes it (see
  * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
@@ -44971,6 +45404,43 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeTreeBudget.lift.bind(FfiConverterTypeTreeBudget),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Sets when a Space's viewers may move the clipboard between this
+ * computer and the Space: `viewing` (only while you're viewing, the
+ * default), `ask` or `off`. It applies to viewers opened afterwards.
+ * The agent tools `computer_clipboard_*` act inside the Space and are
+ * not affected. Another word is `InvalidArgument`.
+ * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+ * `off`. Applies now: `off` unmounts the Volume (named volumes it
+ * mounted stay).
+ */
+    async setVolume(space: string, volume: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_set_volume(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterString.lower(volume, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -46203,6 +46673,12 @@ export interface CuaLike {
  */
     agentSetup(): AgentSetupLike;
 /**
+ * Lets a waiting share go live (an agent's public share, or the first
+ * through a share edge). `always`: its Space may share without asking
+ * from now on.
+ */
+    approveShare(id: string, always: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Share>;
+/**
  * Sign-in and the shared session (`CUA_OIDC_ISSUER`,
  * `CUA_CREDENTIAL_STORE`, `CUA_HOME` apply).
  */
@@ -46212,6 +46688,10 @@ export interface CuaLike {
  * before it is handed to anyone. `path` is below the link.
  */
     checkShare(id: string, path: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ShareCheck>;
+/**
+ * Turns down a waiting share.
+ */
+    denyShare(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * SDK (and daemon) identity. In daemon mode this is the connectivity
  * check.
@@ -46226,9 +46706,18 @@ export interface CuaLike {
  */
     mode(): CuaMode;
 /**
+ * Removes the share edge from your cloud now. Returns the ids of the
+ * shares that ended with it.
+ */
+    removeShareEdge(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<string>>;
+/**
  * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike;
+/**
+ * Saves the share settings (the read-only fields are ignored).
+ */
+    setShareSettings(settings: ShareSettings, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ShareSettings>;
 /**
  * Shares `target` and returns a link that opens on the owner's other
  * signed-in devices, never a localhost link: a port (`"3000"`), a port in
@@ -46239,6 +46728,30 @@ export interface CuaLike {
  * share, so it keeps working after this process exits.
  */
     share(target: string, access: ShareAccess | undefined, ttlSeconds: number | undefined, name: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Share>;
+/**
+ * The share settings, with today's data and the share edge.
+ */
+    shareSettings(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ShareSettings>;
+/**
+ * Shares a raw TCP service in a Space (a game server, for example) at a
+ * public address anyone can connect to, and returns it
+ * (`tcp_connect_with`). `target` is a port in a Space
+ * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+ * own. `service` (`"minecraft"`) adds a name people can type instead of
+ * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+ * less. It reaches only that one port of that Space; admin and
+ * remote-access ports are refused. An experiment (Public TCP shares),
+ * off unless turned on.
+ *
+ * `route` is `auto` (default: the Space's own host in your cloud,
+ * else a share edge in your linked cloud, else Cua's relay), `host`,
+ * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+ * `check_host` (Minecraft) drops connections that did not dial this
+ * address. `consent` agrees to a share edge's cost now; without it the
+ * first share through a new edge comes back `waiting` until
+ * `approve_share`.
+ */
+    shareTcp(target: string, service: string | undefined, ttlSeconds: number | undefined, name: string | undefined, route: string | undefined, allow: Array<string> | undefined, checkHost: boolean, consent: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Share>;
 /**
  * The active shares, newest first.
  */
@@ -46375,6 +46888,43 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Lets a waiting share go live (an agent's public share, or the first
+ * through a share edge). `always`: its Space may share without asking
+ * from now on.
+ */
+    async approveShare(id: string, always: boolean = false, asyncOpts_?: { signal: AbortSignal }): Promise<Share> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_approve_share(
+                    uniffiTypeCuaObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(always, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeShare.lift.bind(FfiConverterTypeShare),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Sign-in and the shared session (`CUA_OIDC_ISSUER`,
  * `CUA_CREDENTIAL_STORE`, `CUA_HOME` apply).
  */
@@ -46413,6 +46963,36 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeShareCheck.lift.bind(FfiConverterTypeShareCheck),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Turns down a waiting share.
+ */
+    async denyShare(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_deny_share(
+                    uniffiTypeCuaObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -46496,6 +47076,42 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Removes the share edge from your cloud now. Returns the ids of the
+ * shares that ended with it.
+ */
+    async removeShareEdge(asyncOpts_?: { signal: AbortSignal }): Promise<Array<string>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_remove_share_edge(
+                    uniffiTypeCuaObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceString.lift.bind(FfiConverterSequenceString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Sandboxes (local, direct, your own cloud).
  */
     sandboxes(): SandboxesLike {
@@ -46507,6 +47123,41 @@ private constructor(pointer: UniffiHandle) {
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+/**
+ * Saves the share settings (the read-only fields are ignored).
+ */
+    async setShareSettings(settings: ShareSettings, asyncOpts_?: { signal: AbortSignal }): Promise<ShareSettings> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_set_share_settings(
+                    uniffiTypeCuaObjectFactory.clonePointer(this),FfiConverterTypeShareSettings.lower(settings, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeShareSettings.lift.bind(FfiConverterTypeShareSettings),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
 /**
@@ -46526,6 +47177,92 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_cua_share(
                     uniffiTypeCuaObjectFactory.clonePointer(this),FfiConverterString.lower(target, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeShareAccess.lower(access, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(ttlSeconds, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeShare.lift.bind(FfiConverterTypeShare),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * The share settings, with today's data and the share edge.
+ */
+    async shareSettings(asyncOpts_?: { signal: AbortSignal }): Promise<ShareSettings> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_share_settings(
+                    uniffiTypeCuaObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeShareSettings.lift.bind(FfiConverterTypeShareSettings),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Shares a raw TCP service in a Space (a game server, for example) at a
+ * public address anyone can connect to, and returns it
+ * (`tcp_connect_with`). `target` is a port in a Space
+ * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+ * own. `service` (`"minecraft"`) adds a name people can type instead of
+ * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+ * less. It reaches only that one port of that Space; admin and
+ * remote-access ports are refused. An experiment (Public TCP shares),
+ * off unless turned on.
+ *
+ * `route` is `auto` (default: the Space's own host in your cloud,
+ * else a share edge in your linked cloud, else Cua's relay), `host`,
+ * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+ * `check_host` (Minecraft) drops connections that did not dial this
+ * address. `consent` agrees to a share edge's cost now; without it the
+ * first share through a new edge comes back `waiting` until
+ * `approve_share`.
+ */
+    async shareTcp(target: string, service: string | undefined = undefined, ttlSeconds: number | undefined = undefined, name: string | undefined = undefined, route: string | undefined = undefined, allow: Array<string> | undefined = undefined, checkHost: boolean = false, consent: boolean = false, asyncOpts_?: { signal: AbortSignal }): Promise<Share> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_cua_share_tcp(
+                    uniffiTypeCuaObjectFactory.clonePointer(this),FfiConverterString.lower(target, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(service, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(ttlSeconds, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(route, nativeModule().rustbuffer_alloc),FfiConverterOptionalSequenceString.lower(allow, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(checkHost, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(consent, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -48115,6 +48852,9 @@ const FfiConverterSequenceTypeGpuSupport = new FfiConverterArray(FfiConverterTyp
 // FfiConverter for Array<SpacesHost>
 const FfiConverterSequenceTypeSpacesHost = new FfiConverterArray(FfiConverterTypeSpacesHost);
 
+// FfiConverter for Array<NetworkEvent>
+const FfiConverterSequenceTypeNetworkEvent = new FfiConverterArray(FfiConverterTypeNetworkEvent);
+
 // FfiConverter for Array<NotificationInfo>
 const FfiConverterSequenceTypeNotificationInfo = new FfiConverterArray(FfiConverterTypeNotificationInfo);
 
@@ -48506,11 +49246,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_agent_setup() !== 50422) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_agent_setup");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_approve_share() !== 32419) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_approve_share");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_auth() !== 19106) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_auth");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_check_share() !== 37820) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_check_share");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_deny_share() !== 53987) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_deny_share");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_info() !== 11159) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_info");
@@ -48521,11 +49267,23 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_mode() !== 63626) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_mode");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_remove_share_edge() !== 8456) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_remove_share_edge");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 892) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_sandboxes");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_set_share_settings() !== 40470) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_set_share_settings");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_share() !== 50100) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_share");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_share_settings() !== 39281) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_share_settings");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_share_tcp() !== 49424) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_share_tcp");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_shares() !== 39646) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_shares");
@@ -49349,6 +50107,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_network() !== 41208) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_network");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_network_log() !== 25916) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_network_log");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications() !== 10964) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications");
     }
@@ -49421,6 +50182,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_children() !== 63927) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_children");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_clipboard() !== 38931) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_clipboard");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_egress() !== 12366) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_egress");
     }
@@ -49432,6 +50196,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() !== 8418) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_tree_budget");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_volume() !== 17976) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_volume");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_space() !== 26355) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_space");
@@ -49901,6 +50668,7 @@ export default Object.freeze({
     FfiConverterTypeMediaSession,
     FfiConverterTypeMediaStats,
     FfiConverterTypeNamedVolume,
+    FfiConverterTypeNetworkEvent,
     FfiConverterTypeNetworkSettings,
     FfiConverterTypeNotificationInfo,
     FfiConverterTypeOverlay,
@@ -49966,6 +50734,8 @@ export default Object.freeze({
     FfiConverterTypeShare,
     FfiConverterTypeShareAccess,
     FfiConverterTypeShareCheck,
+    FfiConverterTypeShareLanding,
+    FfiConverterTypeShareSettings,
     FfiConverterTypeSharedBase,
     FfiConverterTypeSiteLoginOptions,
     FfiConverterTypeSiteLoginReport,

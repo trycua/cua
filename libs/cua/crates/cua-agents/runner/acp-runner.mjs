@@ -649,8 +649,10 @@ function onUpdate(update) {
   }
   flush();
   if (durable) ledgerUpdate(update);
+  if (Array.isArray(update.configOptions)) onConfigOptions?.(update.configOptions);
   emit("update", { update });
 }
+let onConfigOptions = null;
 
 // ---- the agent -------------------------------------------------------------
 
@@ -1125,6 +1127,11 @@ async function drive(a) {
     let sessionId = null;
     let resumed = false;
     let modes = null;
+    // The agent's session options (the model among them), kept current from its responses and updates.
+    let configOptions = null;
+    onConfigOptions = (o) => {
+      configOptions = o;
+    };
     let degraded = false;
     if (wantSession && loadSession) {
       try {
@@ -1140,6 +1147,7 @@ async function drive(a) {
         // The agent's mode comes back to its default on a resume (measured on codex-acp: "Approve for me",
         // whatever the first drive selected), so the runner picks the mode again from this response.
         modes = res?.modes ?? null;
+        configOptions = res?.configOptions ?? null;
       } catch (e) {
         if (fatal(e)) throw e;
         emit("notice", { message: `could not resume session ${wantSession}: ${e?.message ?? e}; starting a new one` });
@@ -1159,6 +1167,7 @@ async function drive(a) {
       const res = await openNewSession();
       sessionId = res.sessionId;
       modes = res.modes ?? null;
+      configOptions = res.configOptions ?? null;
     }
     if (stale()) return;
     save({ sessionId, status: "idle", ...(durable ? { degraded: state.degraded || degraded } : {}) });
@@ -1202,6 +1211,34 @@ async function drive(a) {
     // Set once the agent has answered a prompt of this session with anything but a refusal.
     let sessionProven = false;
 
+    // The model a message asks for, applied to the open session just before its turn (no restart):
+    // the agent's own `model` option, set through ACP's `session/set_config_option`. A harness with
+    // no such option, or one that does not list the model, keeps the one it has (said once).
+    const modelOption = () => (configOptions ?? []).find((o) => o?.category === "model" || o?.id === "model");
+    const optionValues = (o) => (o?.options ?? []).flatMap((v) => (Array.isArray(v?.options) ? v.options : [v])).map((v) => v?.value ?? v?.id);
+    let modelNoticed = false;
+    async function applyModel(want) {
+      if (!want) return;
+      const opt = modelOption();
+      if (!opt) {
+        if (!modelNoticed) emit("notice", { message: `this agent has no model option; keeping its model (asked for ${want})` });
+        modelNoticed = true;
+        return;
+      }
+      if (opt.currentValue === want) return;
+      if (!optionValues(opt).includes(want)) {
+        emit("notice", { message: `this agent does not offer the model ${want}; keeping ${opt.currentValue}` });
+        return;
+      }
+      try {
+        const res = await ctx.request(acp.methods.agent.session.setConfigOption, { sessionId, configId: opt.id, value: want });
+        configOptions = res?.configOptions ?? configOptions.map((o) => (o === opt ? { ...o, currentValue: want } : o));
+        emit("model", { modelId: want });
+      } catch (e) {
+        emit("notice", { message: `could not switch to the model ${want}: ${e?.message ?? e}` });
+      }
+    }
+
     const promptTurn = async (msg) => {
       state.turn += 1;
       let text = msg.text;
@@ -1221,6 +1258,8 @@ async function drive(a) {
       }
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: text, files: msg.files ?? [], ...(msg.msgId ? { msgId: msg.msgId } : {}), ...extra });
+      await applyModel(msg.model);
+      if (stale()) return;
       const rejected = await keyCheck;
       if (stale()) return;
       if (rejected) {

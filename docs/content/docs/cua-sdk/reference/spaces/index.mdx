@@ -36,9 +36,12 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`list`](#spaceslist) | Registered Spaces. |
 | [`list_known`](#spaceslist_known) | The Spaces known now: this machine's at once, and the account's other computers as far as they answered within a moment (`SpaceList` says how far the read got). |
 | [`list_tools_json`](#spaceslist_tools_json) | The Spaces MCP `tools/list` result as JSON (the contract). |
+| [`network_log`](#spacesnetwork_log) | What a Space on the daemon's computer tried to reach and its network refused, most recent first (`cua network log`). |
 | [`remove`](#spacesremove) | Unregisters a Space (the sandbox is not touched). |
 | [`rename`](#spacesrename) | Gives a Space a new name; its id stays the same. |
 | [`resolve`](#spacesresolve) | Resolves an id, legacy id, URL or display name. |
+| [`set_clipboard`](#spacesset_clipboard) |  |
+| [`set_volume`](#spacesset_volume) | Sets when a Space's viewers may move the clipboard between this computer and the Space: `viewing` (only while you're viewing, the default), `ask` or `off`. |
 | [`space`](#spacesspace) | A connected handle to a registered Space. |
 | [`start`](#spacesstart) | Turns a Space on again: resumes a suspended one, boots a stopped one (a Space one of your machines provides joins the relay again), and leaves a running one as it is. |
 | [`stop`](#spacesstop) | Turns a Space off the way its provider can (`SpaceInfo.power`): stops it, keeping its disk and freeing its memory (a local VM; a Space one of your machines provides, which that machine stops), or suspends it, keeping its memory (a local container that cannot stop). `Spaces.suspend` suspends a local container or QEMU VM on purpose. |
@@ -794,6 +797,56 @@ pub async fn list_tools_json(&self) -> Result<String, CuaError>
 
 **Returns** `String` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
+### `Spaces.network_log`
+
+What a Space on the daemon's computer tried to reach and its network
+refused, most recent first (`cua network log`).
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def network_log(self, space: str) -> List[NetworkEvent]
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+networkLog(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<NetworkEvent>>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func networkLog(space: String) async throws -> [NetworkEvent]
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun networkLog(space: String): List<NetworkEvent>
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn network_log(&self, space: String) -> Result<Vec<NetworkEvent>, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | `String` | required |
+
+**Returns** [`Vec<NetworkEvent>`](/cua-sdk/reference/spaces/space#networkevent-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
 ### `Spaces.remove`
 
 Unregisters a Space (the sandbox is not touched).
@@ -951,6 +1004,111 @@ pub async fn resolve(&self, space: String) -> Result<SpaceInfo, CuaError>
 | `space` | `String` | required |
 
 **Returns** [`SpaceInfo`](/cua-sdk/reference/spaces/info#spaceinfo-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Spaces.set_clipboard`
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def set_clipboard(self, space: str, clipboard: str) -> None
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+setClipboard(space: string, clipboard: string, asyncOpts_?: { signal: AbortSignal }): Promise<void>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func setClipboard(space: String, clipboard: String) async throws
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun setClipboard(space: String, clipboard: String)
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn set_clipboard(&self, space: String, clipboard: String) -> Result<(), CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | `String` | required |
+| `clipboard` | `String` | required |
+
+**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Spaces.set_volume`
+
+Sets when a Space's viewers may move the clipboard between this
+computer and the Space: `viewing` (only while you're viewing, the
+default), `ask` or `off`. It applies to viewers opened afterwards.
+The agent tools `computer_clipboard_*` act inside the Space and are
+not affected. Another word is `InvalidArgument`.
+Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+`off`. Applies now: `off` unmounts the Volume (named volumes it
+mounted stay).
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def set_volume(self, space: str, volume: str) -> None
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+setVolume(space: string, volume: string, asyncOpts_?: { signal: AbortSignal }): Promise<void>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func setVolume(space: String, volume: String) async throws
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun setVolume(space: String, volume: String)
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn set_volume(&self, space: String, volume: String) -> Result<(), CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | `String` | required |
+| `volume` | `String` | required |
+
+**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`InvalidArgument`](/cua-sdk/reference/errors#invalidargument))
 
 ### `Spaces.space`
 

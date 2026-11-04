@@ -1214,6 +1214,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_cua_approve_share": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_cua_auth": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -1221,6 +1226,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_cua_check_share": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_cua_deny_share": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -1239,13 +1249,33 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_cua_remove_share_edge": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_cua_sandboxes": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_method_cua_set_share_settings": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_cua_share": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_cua_share_settings": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_cua_share_tcp": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2619,6 +2649,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_network_log": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_notifications": {
       args: [FfiType.Handle, FfiType.Int8, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2739,6 +2774,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_set_clipboard": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_set_egress": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2755,6 +2795,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spaces_set_tree_budget": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_set_volume": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -3794,12 +3839,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_cua_approve_share": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_cua_auth": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_cua_check_share": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_cua_deny_share": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3819,12 +3874,32 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_cua_remove_share_edge": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_cua_sandboxes": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_cua_set_share_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_cua_share": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_cua_share_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_cua_share_tcp": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5199,6 +5274,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_network_log": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_notifications": {
       args: [],
       ret: FfiType.UInt16,
@@ -5319,6 +5399,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_set_clipboard": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_set_egress": {
       args: [],
       ret: FfiType.UInt16,
@@ -5335,6 +5420,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_set_tree_budget": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_set_volume": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -6242,13 +6332,19 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_constructor_cua_connect(address: Uint8Array, token: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_constructor_cua_embedded(config: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_agent_setup(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_method_cua_approve_share(uniffiSelf: bigint, id: Uint8Array, always: number): bigint;
     uniffi_cua_sdk_fn_method_cua_auth(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_check_share(uniffiSelf: bigint, id: Uint8Array, path: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_cua_deny_share(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_cua_info(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_cua_local(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_cua_mode(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_method_cua_remove_share_edge(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_cua_sandboxes(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_method_cua_set_share_settings(uniffiSelf: bigint, settings: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_cua_share(uniffiSelf: bigint, target: Uint8Array, access: Uint8Array, ttlSeconds: Uint8Array, name: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_cua_share_settings(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_cua_share_tcp(uniffiSelf: bigint, target: Uint8Array, service: Uint8Array, ttlSeconds: Uint8Array, name: Uint8Array, route: Uint8Array, allow: Uint8Array, checkHost: number, consent: number): bigint;
     uniffi_cua_sdk_fn_method_cua_shares(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_cua_shutdown_daemon(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_cua_spaces(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -6523,6 +6619,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_machine_health(uniffiSelf: bigint, machine: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_network(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_network_log(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
@@ -6547,10 +6644,12 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(uniffiSelf: bigint, id: Uint8Array, enabled: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_routines(uniffiSelf: bigint, agent: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_children(uniffiSelf: bigint, space: Uint8Array, enabled: number): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_clipboard(uniffiSelf: bigint, space: Uint8Array, clipboard: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_egress(uniffiSelf: bigint, space: Uint8Array, policy: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_lifetime(uniffiSelf: bigint, space: Uint8Array, seconds: bigint, onExpire: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_network(uniffiSelf: bigint, space: Uint8Array, settings: Uint8Array, widen: number, tree: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_tree_budget(uniffiSelf: bigint, space: Uint8Array, limits: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_volume(uniffiSelf: bigint, space: Uint8Array, volume: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_start(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_stop(uniffiSelf: bigint, space: Uint8Array): bigint;
@@ -6758,13 +6857,19 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_constructor_cua_connect(): number;
     uniffi_cua_sdk_checksum_constructor_cua_embedded(): number;
     uniffi_cua_sdk_checksum_method_cua_agent_setup(): number;
+    uniffi_cua_sdk_checksum_method_cua_approve_share(): number;
     uniffi_cua_sdk_checksum_method_cua_auth(): number;
     uniffi_cua_sdk_checksum_method_cua_check_share(): number;
+    uniffi_cua_sdk_checksum_method_cua_deny_share(): number;
     uniffi_cua_sdk_checksum_method_cua_info(): number;
     uniffi_cua_sdk_checksum_method_cua_local(): number;
     uniffi_cua_sdk_checksum_method_cua_mode(): number;
+    uniffi_cua_sdk_checksum_method_cua_remove_share_edge(): number;
     uniffi_cua_sdk_checksum_method_cua_sandboxes(): number;
+    uniffi_cua_sdk_checksum_method_cua_set_share_settings(): number;
     uniffi_cua_sdk_checksum_method_cua_share(): number;
+    uniffi_cua_sdk_checksum_method_cua_share_settings(): number;
+    uniffi_cua_sdk_checksum_method_cua_share_tcp(): number;
     uniffi_cua_sdk_checksum_method_cua_shares(): number;
     uniffi_cua_sdk_checksum_method_cua_shutdown_daemon(): number;
     uniffi_cua_sdk_checksum_method_cua_spaces(): number;
@@ -7039,6 +7144,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
     uniffi_cua_sdk_checksum_method_spaces_machine_health(): number;
     uniffi_cua_sdk_checksum_method_spaces_network(): number;
+    uniffi_cua_sdk_checksum_method_spaces_network_log(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;
@@ -7063,10 +7169,12 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled(): number;
     uniffi_cua_sdk_checksum_method_spaces_routines(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_children(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_clipboard(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_egress(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_lifetime(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_network(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_volume(): number;
     uniffi_cua_sdk_checksum_method_spaces_space(): number;
     uniffi_cua_sdk_checksum_method_spaces_start(): number;
     uniffi_cua_sdk_checksum_method_spaces_stop(): number;

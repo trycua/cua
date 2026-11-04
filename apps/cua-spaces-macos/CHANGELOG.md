@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/trycua/cua/compare/cua-spaces-v0.19.4...cua-spaces-v0.20.0) (2026-11-03)
+
+
+### Features
+
+* **spaces:** Secure Spaces, child Spaces, conformance, space jobs and the macOS developer-tools image, behind experiments ([#6306](https://github.com/trycua/cua/issues/6306)) ([4715a72](https://github.com/trycua/cua/commit/4715a723a450610cdf77f688776c1fdd40660149))
+
 ## [0.19.4](https://github.com/trycua/cua/compare/cua-spaces-v0.19.3...cua-spaces-v0.19.4) (2026-11-03)
 
 

@@ -32,7 +32,9 @@ use crate::services::diagnose::{DiagnoseState, Diagnoser};
 use crate::services::driver::{DriverServiceImpl, NO_REGISTRY};
 use crate::services::system::SystemServiceImpl;
 use crate::services::teleport::TeleportServiceImpl;
-use crate::services::tunnel::{hotspot_ws, spawn_ws, tunnel_ws, TunnelServiceImpl, TunnelState};
+use crate::services::tunnel::{
+    host_ports_ws, hotspot_ws, spawn_ws, tunnel_ws, TunnelServiceImpl, TunnelState,
+};
 use crate::services::volume::{volume_ws, VolumeServiceImpl, VolumeShared};
 
 /// gRPC services implemented by this crate.
@@ -197,6 +199,8 @@ impl ServerBuilder {
             feature("hotspot", true, ""),
             // `TunnelService.StartSpawn`: the guest end of child Spaces.
             feature(crate::services::tunnel::SPAWN_FEATURE, true, ""),
+            feature(crate::services::tunnel::EXIT_FEATURE, true, ""),
+            feature(crate::services::tunnel::HOST_PORTS_FEATURE, true, ""),
             match crate::services::volume::backend() {
                 Ok(backend) => {
                     let mut f = feature(crate::services::volume::FEATURE, true, "");
@@ -365,6 +369,7 @@ impl ServerBuilder {
                 .route(cua_proto::metadata::TUNNEL_WS_PATH, get(tunnel_ws))
                 .route(cua_proto::metadata::HOTSPOT_WS_PATH, get(hotspot_ws))
                 .route(cua_proto::metadata::SPAWN_WS_PATH, get(spawn_ws))
+                .route(cua_proto::metadata::HOST_PORTS_WS_PATH, get(host_ports_ws))
                 .with_state(tunnel),
         );
         manifest
@@ -376,6 +381,9 @@ impl ServerBuilder {
         manifest
             .http_paths
             .insert(cua_proto::metadata::SPAWN_WS_PATH.into());
+        manifest
+            .http_paths
+            .insert(cua_proto::metadata::HOST_PORTS_WS_PATH.into());
         http = http.merge(
             Router::new()
                 .route(cua_proto::metadata::VOLUME_WS_PATH, get(volume_ws))

@@ -24,6 +24,9 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod driver_service_http;
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod duplicate_copies;
+mod env_vars;
 mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
@@ -556,8 +559,8 @@ fn main() {
             let tools = inspect_tools_without_runtime();
             cli::run_describe(&tools, &name);
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -580,6 +583,7 @@ fn main() {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -595,6 +599,7 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -608,9 +613,11 @@ fn main() {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
+            platform_macos::apple_events::refuse_ungranted_automation(no_automation_prompts);
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
@@ -651,8 +658,8 @@ fn main() {
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to, so without this the proxy path always served
-            // the full screenshot tool regardless of the client's request.
+            // the proxy talks to. The flag is currently surface-neutral but
+            // remains forwarded for compatibility with existing launch configs.
             let driver = match build_driver(
                 cursor_cfg.clone(),
                 claude_code_compat,
@@ -674,9 +681,9 @@ fn main() {
             // is ungranted. Fresh helper processes poll TCC until the user
             // grants or the deadline elapses. If serve ran after the gate,
             // the daemon's socket wouldn't appear for minutes on first
-            // launch, so `permissions grant` / MCP clients launched via
-            // `open -n -g -a CuaDriver --args serve` (the correct-TCC-
-            // attribution path) couldn't reach the daemon to even report
+            // launch, so `permissions grant` / MCP clients launching the
+            // installed app bundle by path (the correct-TCC-attribution
+            // path) couldn't reach the daemon to even report
             // "pending". Binding the socket first makes the daemon
             // reachable within ~1s while the gate works toward the grant.
             //
@@ -822,7 +829,7 @@ fn main() {
         } => {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background "new version available?" check so the banner
             // can land on stderr if the user is on an outdated install.
@@ -830,7 +837,7 @@ fn main() {
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
         }
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
@@ -976,8 +983,8 @@ fn main() -> anyhow::Result<()> {
             cli::run_describe(&tools, &name);
             Ok(())
         }
-        cli::Command::McpConfig { client } => {
-            cli::run_mcp_config(client.as_deref());
+        cli::Command::McpConfig { client, no_skills } => {
+            cli::run_mcp_config(client.as_deref(), no_skills);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {
@@ -1003,6 +1010,7 @@ fn main() -> anyhow::Result<()> {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -1015,6 +1023,7 @@ fn main() -> anyhow::Result<()> {
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
+            responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
                 history_runtime::preview_admitted_preference(),
@@ -1025,6 +1034,7 @@ fn main() -> anyhow::Result<()> {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
@@ -1036,10 +1046,10 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is accepted on every platform for CLI uniformity.
-            let _ = no_permissions_gate;
+            // On Windows / Linux the flag is accepted for CLI uniformity and
+            // ignored. The legacy Claude Code compatibility flag is accepted on
+            // every platform and has no current tool-surface effect.
+            let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(
@@ -1128,14 +1138,14 @@ fn main() -> anyhow::Result<()> {
             cli::run_channel_cmd(&subcommand, value.as_deref(), json);
             Ok(())
         }
-        cli::Command::Doctor { json } => {
+        cli::Command::Doctor { json, fix } => {
             // Long-running interactive entry point — kick off the
             // background update check so the banner can land on stderr.
             // Skip the banner in --json mode so output stays parseable.
             if !json {
                 version_check::maybe_announce_update();
             }
-            cli::run_doctor_cmd(json);
+            cli::run_doctor_cmd(json, fix);
             Ok(())
         }
         cli::Command::Diagnose => {

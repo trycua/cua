@@ -43,7 +43,6 @@ fn main() {
         "press_key",
         "hotkey",
         "scroll",
-        "screenshot",
         "list_apps",
         "list_windows",
         "get_cursor_position",

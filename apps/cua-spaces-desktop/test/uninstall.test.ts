@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ app: { isPackaged: true }, shell: {} }));
 
 const { appImageCua, appImageDaemonRoot } = await import("../src/model/appimage-cua");
-const { WINDOWS_APP_KEY, cliRecordArgs, installCliSilently } = await import("../src/model/environment");
+const { WINDOWS_APP_KEY, cliRecordArgs, recordCliInstall } = await import("../src/model/environment");
 const { WINDOWS_RUN_NAME } = await import("../src/login-item");
 
 const require = createRequire(import.meta.url);
@@ -73,7 +73,7 @@ describe("the Windows installer and uninstaller", () => {
     // Of the user's files, only the host service's own folder goes.
     const code = nsh.split("\n").filter((l) => !l.trim().startsWith(";")).join("\n");
     const home = code.split("\n").filter((l) => /[\\/]\.cua\b|\$APPDATA|\$PROFILE|RMDir \/r/.test(l)).map((l) => l.trim());
-    expect(home).toEqual(['RMDir /r "$PROFILE\\.cua\\host"']);
+    expect(home).toEqual(['RMDir /r "$PROFILE\\.cua\\host"', '${IfNot} ${FileExists} "$PROFILE\\.cua\\host\\*.*"']);
   });
 
   it("turn off unattended access on uninstall, not on upgrade (CUA-1740)", () => {
@@ -96,7 +96,41 @@ describe("the Windows installer and uninstaller", () => {
     expect(host).toContain('/Delete /TN "${CUA_HOST_TASK}" /F');
     expect(host).toContain('DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "${CUA_HOST_RUN_NAME}"');
     expect(host).toContain("\\host\\bin\\cua-spacesd.exe");
-    expect(host.trim().split("\n").at(-1)!.trim()).toBe('RMDir /r "$PROFILE\\.cua\\host"');
+    expect(host.trim().split("\n").at(-1)!.trim()).toBe("!insertmacro removeHostFolder");
+  });
+
+  it("leave no driver.log behind: stop the process tree that holds it, then remove ~/.cua/host until it is gone (CUA-1749)", () => {
+    // cua-host runs the driver as `conhost --headless cmd.exe /d /c … cua-spacesd.exe … >> driver.log`:
+    // cmd.exe holds the log open, so it and its children are killed by command line, not only the driver.
+    const service = readFileSync(path.join(root, "../../libs/cua/crates/cua-host/src/service.rs"), "utf8");
+    expect(service).toContain(`format!("{system_root}\\\\System32\\\\cmd.exe")`);
+    const host = macro("removeHostService");
+    const kill = host.split("\n").find((l) => l.includes("Win32_Process"))!;
+    expect(kill).toContain("$$_.CommandLine -like '*\\host\\driver.log*'");
+    expect(kill).toContain("$$_.CommandLine -like '*\\host\\bin\\cua-spacesd.exe*'");
+    expect(kill).toContain("taskkill.exe /T /F /PID");
+    expect(kill).toContain("$$_.ProcessId -ne $$PID");
+    // Stopped and waited for (bounded) until none is left, before the folder goes.
+    expect(kill).toMatch(/for \(\$\$i = 0; \$\$i -lt \d+;/);
+    expect(kill).toContain("if (-not $$h) { break }");
+    expect(kill).toContain("Start-Sleep");
+    // Killed after the task is ended and deleted (so it cannot restart), before the folder goes.
+    expect(host.indexOf("/Delete /TN")).toBeLessThan(host.indexOf(kill));
+    expect(host.indexOf(kill)).toBeLessThan(host.indexOf("!insertmacro removeHostFolder"));
+
+    // The folder is removed again until it is gone, bounded (Windows frees a killed process's files late).
+    const folder = macro("removeHostFolder").trim().split("\n").map((l) => l.trim());
+    expect(folder).toEqual([
+      "StrCpy $1 0",
+      "${Do}",
+      "Sleep 500",
+      'RMDir /r "$PROFILE\\.cua\\host"',
+      '${IfNot} ${FileExists} "$PROFILE\\.cua\\host\\*.*"',
+      "${Break}",
+      "${EndIf}",
+      "IntOp $1 $1 + 1",
+      "${LoopUntil} $1 >= 20",
+    ]);
   });
 
   it("name the task and logon entry cua-host creates", () => {
@@ -109,16 +143,10 @@ describe("the Windows installer and uninstaller", () => {
 });
 
 describe("the CLI the app puts on PATH", () => {
-  const plan = { upToDate: false, source: "C:\\app\\resources\\native\\cua.exe", onPath: false };
-  const fakeNative = (installed: { target: string }) =>
-    ({
-      AppCliInstaller: { forExecutable: () => ({ plan: async () => plan, install: async () => installed }) },
-    }) as never;
-
   it("is recorded on Windows, with the PATH entry only when the app added it", async () => {
     const target = "C:\\Users\\me\\AppData\\Local\\Programs\\cua\\bin\\cua.exe";
     const calls: string[][] = [];
-    await installCliSilently(fakeNative({ target }), "C:\\app\\resources\\native\\cua.exe", "win32", async (args) => void calls.push(args));
+    await recordCliInstall(target, true, "win32", async (args) => void calls.push(args));
     expect(calls).toEqual([
       ["add", WINDOWS_APP_KEY, "/v", "CliInstalled", "/t", "REG_SZ", "/d", target, "/f"],
       ["add", WINDOWS_APP_KEY, "/v", "CliPathAdded", "/t", "REG_SZ", "/d", "C:\\Users\\me\\AppData\\Local\\Programs\\cua\\bin", "/f"],
@@ -128,7 +156,7 @@ describe("the CLI the app puts on PATH", () => {
 
   it("is not recorded elsewhere (the .deb's is a link into the app)", async () => {
     const calls: string[][] = [];
-    await installCliSilently(fakeNative({ target: "/home/me/.local/bin/cua" }), "/opt/Cua Spaces/resources/native/cua", "linux", async (args) => void calls.push(args));
+    await recordCliInstall("/home/me/.local/bin/cua", true, "linux", async (args) => void calls.push(args));
     expect(calls).toEqual([]);
   });
 });

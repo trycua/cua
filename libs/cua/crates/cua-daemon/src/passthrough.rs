@@ -2,7 +2,7 @@
 //!
 //! - `/v1/sandboxes/<name>/env/<grpc path>`: forwards any `cua.env.v1` call
 //!   through the sandbox's env channel (which attaches the env token, the
-//!   Fleet bearer and claim, and the gateway path prefix). The caller's
+//!   gateway bearer and the path prefix). The caller's
 //!   daemon token never leaves the daemon. `/v1/sandboxes/<name>/env/media`
 //!   WebSocket upgrades are relayed to the spacesd's `/media` socket.
 //! - `/v1/sandboxes/<name>/svc/<service>/<path>` and
@@ -57,7 +57,7 @@ pub(crate) fn encode_segment(s: &str) -> String {
         .replace("%3A", ":")
 }
 
-fn error_response(e: Error, grpc: bool) -> Response {
+pub(crate) fn error_response(e: Error, grpc: bool) -> Response {
     if grpc {
         let mut r: Response<AxumBody> = e.to_status().into_http();
         r.headers_mut().insert(
@@ -83,7 +83,7 @@ pub fn space_key(id: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(id.as_bytes())
 }
 
-fn space_from_key(key: &str) -> Result<String, Error> {
+pub(crate) fn space_from_key(key: &str) -> Result<String, Error> {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(key.as_bytes())
@@ -100,14 +100,14 @@ const WS_ROUTES: [&str; 4] = [
     cua_proto::metadata::VOLUME_WS_PATH,
 ];
 
-fn is_grpc(req: &Request<AxumBody>) -> bool {
+pub(crate) fn is_grpc(req: &Request<AxumBody>) -> bool {
     req.headers()
         .get(http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|c| c.starts_with("application/grpc"))
 }
 
-async fn split_upgrade(
+pub(crate) async fn split_upgrade(
     req: Request<AxumBody>,
 ) -> Result<(Request<AxumBody>, Option<WebSocketUpgrade>), Box<Response>> {
     let is_upgrade = req
@@ -127,7 +127,7 @@ async fn split_upgrade(
 }
 
 /// Forwards one request (or WebSocket) to a spacesd connection.
-async fn forward(
+pub(crate) async fn forward(
     client: &cua_spacesd_client::SpacesdClient,
     ws_headers: Vec<(String, String)>,
     rest: &str,
@@ -160,7 +160,6 @@ async fn forward(
     for h in [
         http::header::AUTHORIZATION.as_str(),
         cua_proto::metadata::ENV_AUTHORIZATION,
-        cua_spacesd_client::transport::FLEET_CLAIM_HEADER,
         "host",
     ] {
         parts.headers.remove(h);
@@ -196,8 +195,8 @@ pub(crate) async fn env_passthrough(
 }
 
 /// `/v1/spaces/<key>/env/<rest>`: the same passthrough for a registered
-/// Space, with the Space's own credentials (env token, Fleet bearer and
-/// claim) attached here.
+/// Space, with the Space's own credentials (env token, gateway bearer)
+/// attached here.
 pub(crate) async fn space_env_passthrough(
     State(shared): State<Arc<Shared>>,
     Path((key, rest)): Path<(String, String)>,
@@ -299,8 +298,8 @@ async fn proxy(
 }
 
 /// `/v1/sandboxes/<name>/svc/<service>/<rest>`: a request to a named service
-/// of a sandbox, with its route and credentials (loopback, the Fleet
-/// gateway bearer and claim) attached here (see [`proxy`]).
+/// of a sandbox, with its route and credentials (loopback, a provider's
+/// access headers) attached here (see [`proxy`]).
 pub(crate) async fn service_passthrough(
     State(shared): State<Arc<Shared>>,
     Path((name, service, rest)): Path<(String, String, String)>,

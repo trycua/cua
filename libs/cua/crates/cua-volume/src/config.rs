@@ -9,11 +9,11 @@
 //! |---|---|---|
 //! | `fs` (default) | `$CUA_HOME/volume/data` | none |
 //! | `s3` | a versioned bucket (AWS S3, R2, MinIO, BYO) | the credential store's `drive-keys` secret, else `CUA_DRIVE_S3_ACCESS_KEY_ID` / `CUA_DRIVE_S3_SECRET_ACCESS_KEY` |
-//! | `cloud` | the Cua cloud bucket | short-lived keys vended by `POST /api/drive/credentials` for the signed-in account |
 //!
-//! `cloud` is off by default and needs both this setting and the server
-//! side's flag; the server answers `drive_disabled` until then. `s3` and
-//! `cloud` need a build with the `s3` feature (the `cua` CLI and daemon).
+//! `s3` needs a build with the `s3` feature (the `cua` CLI and daemon). The
+//! Cua cloud backend (`cloud`) has ended: a config or environment that names
+//! it fails with [`CLOUD_BACKEND_ENDED`], and the drive is served as
+//! unavailable until it names `fs` or `s3`.
 //!
 //! ```json
 //! {"backend": "s3", "s3": {"endpoint": "http://127.0.0.1:9000", "region": "us-east-1",
@@ -26,11 +26,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-/// Environment variable naming the backend (`fs`, `s3`, `cloud`).
+/// Environment variable naming the backend (`fs`, `s3`).
 pub const BACKEND_ENV: &str = "CUA_DRIVE_BACKEND";
 /// The credential-store secret holding static S3 keys
 /// (`{"access_key_id": "...", "secret_access_key": "..."}`).
 pub const S3_SECRET_NAME: &str = "drive-keys";
+
+/// What a config or environment that names the removed `cloud` backend gets.
+pub const CLOUD_BACKEND_ENDED: &str = "the Cua cloud drive backend has ended; use fs or s3";
 
 /// The backend kinds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +42,6 @@ pub enum BackendKind {
     #[default]
     Fs,
     S3,
-    Cloud,
 }
 
 impl BackendKind {
@@ -47,9 +49,9 @@ impl BackendKind {
         match s.trim() {
             "fs" | "local" => Ok(BackendKind::Fs),
             "s3" => Ok(BackendKind::S3),
-            "cloud" => Ok(BackendKind::Cloud),
+            "cloud" => Err(Error::Invalid(CLOUD_BACKEND_ENDED.into())),
             other => Err(Error::Invalid(format!(
-                "drive backend {other:?}: use fs, s3 or cloud"
+                "drive backend {other:?}: use fs or s3"
             ))),
         }
     }
@@ -58,7 +60,6 @@ impl BackendKind {
         match self {
             BackendKind::Fs => "fs",
             BackendKind::S3 => "s3",
-            BackendKind::Cloud => "cloud",
         }
     }
 }
@@ -89,9 +90,6 @@ pub struct DriveConfig {
     pub backend: BackendKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3: Option<S3Settings>,
-    /// Seconds a vended cloud key lives (15 to 60 minutes; default 900).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloud_ttl_secs: Option<u64>,
 }
 
 impl DriveConfig {
@@ -103,13 +101,23 @@ impl DriveConfig {
     /// Reads the file (default when absent), then applies the environment.
     pub fn load(cua_home: &Path) -> Result<DriveConfig> {
         let mut c = match std::fs::read(Self::path(cua_home)) {
-            Ok(b) => serde_json::from_slice(&b)
-                .map_err(|e| Error::Invalid(format!("drive/config.json: {e}")))?,
+            Ok(b) => Self::parse(&b)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => DriveConfig::default(),
             Err(e) => return Err(e.into()),
         };
         c.apply_env(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
         Ok(c)
+    }
+
+    /// Parses the file's bytes. A file that names the removed `cloud`
+    /// backend fails with [`CLOUD_BACKEND_ENDED`].
+    fn parse(bytes: &[u8]) -> Result<DriveConfig> {
+        let bad = |e: serde_json::Error| Error::Invalid(format!("drive/config.json: {e}"));
+        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(bad)?;
+        if value.get("backend").and_then(|b| b.as_str()) == Some("cloud") {
+            return Err(Error::Invalid(CLOUD_BACKEND_ENDED.into()));
+        }
+        serde_json::from_value(value).map_err(bad)
     }
 
     /// Applies `CUA_DRIVE_*` overrides read through `get`.
@@ -146,11 +154,6 @@ impl DriveConfig {
             self.s3 = Some(s3);
         }
         Ok(())
-    }
-
-    /// The vended key lifetime, clamped to 15-60 minutes.
-    pub fn cloud_ttl_secs(&self) -> u64 {
-        self.cloud_ttl_secs.unwrap_or(900).clamp(900, 3600)
     }
 
     /// Writes the file.
@@ -197,13 +200,28 @@ mod tests {
             c.apply_env(|k| (k == BACKEND_ENV).then(|| "ftp".into()))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn the_ended_cloud_backend_is_refused_with_its_own_message() {
+        let ended = Error::Invalid(CLOUD_BACKEND_ENDED.into());
+        assert_eq!(BackendKind::parse("cloud").unwrap_err(), ended);
+        let mut c = DriveConfig::default();
         assert_eq!(
-            DriveConfig {
-                cloud_ttl_secs: Some(10),
-                ..c.clone()
-            }
-            .cloud_ttl_secs(),
-            900
+            c.apply_env(|k| (k == BACKEND_ENV).then(|| "cloud".into()))
+                .unwrap_err(),
+            ended
+        );
+        assert_eq!(
+            DriveConfig::parse(br#"{"backend":"cloud","cloud_ttl_secs":900}"#).unwrap_err(),
+            ended
+        );
+        // An old file's unrelated keys do not matter.
+        assert_eq!(
+            DriveConfig::parse(br#"{"backend":"fs","cloud_ttl_secs":900}"#)
+                .unwrap()
+                .backend,
+            BackendKind::Fs
         );
     }
 }

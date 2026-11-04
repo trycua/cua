@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
+import { initCrashReporting } from "./crash-reporting-main";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
@@ -26,8 +27,9 @@ import { connectNotch, type NotchCore } from "./notch";
 import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
-import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
+import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
+import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
 import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
@@ -59,6 +61,9 @@ if (process.platform === "linux") {
   app.setDesktopName(`${LINUX_ID}.desktop`);
 }
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
+// Crash reporting as early as the app's name and data folder are settled (Sentry keeps its queue
+// and the Crashpad reports there) and before the native library loads, which reads CUA_CRASH_*.
+initCrashReporting();
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
 // macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).
@@ -126,6 +131,8 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   // start (Edge's first run) must not find the port closed while the app
   // still offers its link.
   process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
+  // The browser's sign-in page says where to go back to.
+  process.env.CUA_AUTH_RETURN_TO ??= "Cua Spaces";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {
@@ -171,7 +178,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute, globalShortcut }),
+    system: makeSystem({ native, showRoute, webRoot: resolveWebRoot(), globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -193,6 +200,11 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
           process.platform === "darwin" ? ["openFile", "openDirectory", "multiSelections"] : ["openFile", "multiSelections"];
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, { properties }) : await dialog.showOpenDialog({ properties });
         return r.canceled ? null : r.filePaths;
+      },
+      chooseProgram: async (win) => {
+        const options = { properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[], defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin", buttonLabel: "Use" };
+        const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+        return r.canceled ? null : (r.filePaths[0] ?? null);
       },
       pip,
       ...prompts,
@@ -306,7 +318,33 @@ if (!app.requestSingleInstanceLock()) {
   const openSettings = () => tellMain("settings.openRequested");
   const gettingStarted = () => tellMain("checklist.openRequested");
 
-  app.on("second-instance", showMain);
+  // A `cua://add/<code>` link: the app on Machines, Join with a code filled in. Links that
+  // arrive before the app is ready wait for it.
+  let ready = false;
+  const pendingLinks: string[] = [];
+  const openLink = (link: string) => {
+    if (!ready) {
+      pendingLinks.push(link);
+      return;
+    }
+    const route = routeForDeepLink(link);
+    if (route) {
+      app.focus({ steal: true });
+      showRoute(route);
+    }
+  };
+  // Windows and Linux start a second copy with the link as an argument; macOS sends open-url.
+  app.on("second-instance", (_event, argv) => {
+    const link = deepLinkInArgv(argv);
+    if (link) openLink(link);
+    else showMain();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    openLink(url);
+  });
+  const firstLink = deepLinkInArgv(process.argv);
+  if (firstLink) pendingLinks.push(firstLink);
 
   app.whenReady().then(async () => {
     // Docker was installed and the user added to its group after this session began: start again with the group, so no logout or reboot is needed.
@@ -322,10 +360,14 @@ if (!app.requestSingleInstanceLock()) {
     // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
     const shortcut = E2E_DEMO
       ? null
-      : installGlobalShortcut(process.platform, () => {
-          app.focus({ steal: true });
-          showMain();
-        });
+      : installGlobalShortcut(
+          process.platform,
+          () => {
+            app.focus({ steal: true });
+            showMain();
+          },
+          { read: () => readSettings().globalShortcut, write: (accelerator) => writeSettings({ globalShortcut: accelerator }) },
+        );
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
@@ -382,6 +424,12 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     app.on("activate", showMain);
+
+    // Make this app the one `cua://` links open (the installer registers it on macOS and in the Linux
+    // package; Windows only learns it here). A development run is not an installed app: leave links alone.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+    ready = true;
+    for (const link of pendingLinks.splice(0)) openLink(link);
   });
 
   app.on("window-all-closed", () => {

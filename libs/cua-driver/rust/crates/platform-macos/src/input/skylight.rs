@@ -257,8 +257,9 @@ pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) ->
     if !get_process_psn_for_window(target, pid, &mut psn) {
         return false;
     }
-    let send =
-        |record: &[u8; 0xF8]| unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) == 0 };
+    let send = |record: &[u8; 0xF8]| {
+        note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) })
+    };
     let mut ok = true;
     if let Some(current) = current {
         let mut defocus = focus_record(current);
@@ -332,6 +333,38 @@ type GetWindowOwnerFn = unsafe extern "C" fn(u32, u32, *mut u32) -> i32;
 
 /// `OSStatus SLSGetConnectionPSN(uint32_t cid, void *psn)`
 type GetConnectionPSNFn = unsafe extern "C" fn(u32, *mut c_void) -> i32;
+
+// ── WindowServer connection health (CUA-1777) ───────────────────────────────
+
+/// `SLPSPostEventRecordTo` result for "invalid connection". The daemon gets it
+/// when it runs as its own responsible process (a bare binary outside
+/// CuaDriver.app, which relaunches itself disclaimed): the process has no
+/// usable WindowServer connection for the target, so every no-raise focus
+/// record is dropped.
+pub const WINDOWSERVER_INVALID_CONNECTION: i32 = 1002;
+
+static WINDOWSERVER_CONNECTION_INVALID: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record the status of one `SLPSPostEventRecordTo` and report success. A
+/// 1002 is remembered for the life of the process so tools and `health_report`
+/// can fail loudly instead of continuing without the focus step.
+pub(crate) fn note_post_status(status: i32) -> bool {
+    if status == WINDOWSERVER_INVALID_CONNECTION {
+        WINDOWSERVER_CONNECTION_INVALID.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    status == 0
+}
+
+/// True once any focus-record post returned the invalid-connection status.
+pub fn windowserver_connection_invalid() -> bool {
+    WINDOWSERVER_CONNECTION_INVALID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_windowserver_connection_invalid_for_test() {
+    WINDOWSERVER_CONNECTION_INVALID.store(false, std::sync::atomic::Ordering::Relaxed);
+}
 
 // ── Focus-without-raise SPIs ──────────────────────────────────────────────────
 
@@ -620,10 +653,9 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp the event's screen-space `(x, y)` point via
-/// `CGEventSetWindowLocation`. Both the SkyLight and public PID routes receive
-/// this screen-space value; WindowServer derives the receiving window's local
-/// point during routing. Returns `true` when the SPI resolved.
+/// Stamp `(x, y)` via `CGEventSetWindowLocation`. Background clicks use the
+/// window-local point on macOS 27+, or the screen point on earlier releases,
+/// for both SkyLight and public PID routes. Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
@@ -649,15 +681,6 @@ pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) 
 /// Return the Skylight main connection ID for the current process.
 pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
-}
-
-/// Return the current active macOS Space (desktop) ID.
-///
-/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
-/// when the symbol is unavailable (future macOS version that removes it).
-pub fn get_active_space() -> Option<u64> {
-    let cid = main_connection_id()?;
-    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
 }
 
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
@@ -992,12 +1015,13 @@ pub fn activate_without_raise_with(
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok =
-        !defocus_front || unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok = !defocus_front
+        || note_post_status(unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let focus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     defocus_ok && focus_ok
 }
@@ -1032,11 +1056,13 @@ pub fn restore_focus_after_without_raise(
 
     let mut buf = focus_record(target_wid);
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     let mut buf = focus_record(previous_wid);
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let focus_ok =
+        note_post_status(unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     defocus_ok && focus_ok
 }
@@ -1184,7 +1210,8 @@ pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
     }
     for event_kind in [0x01, 0x02] {
         let record = make_key_window_record(target_wid, event_kind);
-        if unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) } != 0 {
+        if !note_post_status(unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) })
+        {
             return false;
         }
     }
@@ -1249,20 +1276,14 @@ fn foreground_turn() -> ForegroundTurn {
 /// seen the background rungs fail (clicks) or the field is unverifiable +
 /// focus-sensitive (Catalyst typing).
 ///
-/// ## Why this does not delegate to [`with_menu_shortcut_activation`]
+/// ## Why the body waits for the activation
 ///
-/// It used to. That helper posts `set_front` and calls `action` immediately,
-/// which is correct for its own purpose: NSMenu key dispatch only needs the key
-/// event *enqueued* in the target's run-loop queue, so first-responder identity
-/// is irrelevant and the sub-millisecond front → act → restore is a feature.
-///
-/// Input delivery has the opposite requirement. `set_front` is asynchronous, so
-/// running the body straight away means the body's `AXFocused` write races
-/// AppKit's own activation. AppKit wins: when activation completes it installs
-/// the window's remembered first responder and clobbers the write. The
-/// keystrokes then land wherever the app chose — for a Catalyst app such as
-/// WhatsApp, the message list rather than the composer, which silently scrolls
-/// the transcript instead of typing.
+/// `set_front` is asynchronous, so running the body straight away means the
+/// body's `AXFocused` write races AppKit's own activation. AppKit wins: when
+/// activation completes it installs the window's remembered first responder
+/// and clobbers the write. The keystrokes then land wherever the app chose —
+/// for a Catalyst app such as WhatsApp, the message list rather than the
+/// composer, which silently scrolls the transcript instead of typing.
 ///
 /// So this waits for the activation to be observable before running `body`, the
 /// same ordering [`with_foreground_hid_activation`] already relies on. The wait
@@ -1398,12 +1419,11 @@ fn focus_failure_hint_from(
 
 /// Activate an exact target window for a global HID keyboard action.
 ///
-/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
-/// when the private foreground SPI is unavailable: a global HID event has no
-/// pid addressing and would otherwise land in whichever application is
-/// currently frontmost. The short settles keep the target frontmost until
-/// WindowServer has routed both sides of the key chord, then restore the prior
-/// process even when the action fails.
+/// This helper must not run `action` when the private foreground SPI is
+/// unavailable: a global HID event has no pid addressing and would otherwise
+/// land in whichever application is currently frontmost. The short settles
+/// keep the target frontmost until WindowServer has routed both sides of the
+/// key chord, then restore the prior process even when the action fails.
 pub fn with_foreground_hid_activation(
     target_pid: libc::pid_t,
     target_wid: u32,
@@ -1439,11 +1459,13 @@ pub fn with_foreground_hid_activation(
     }
 
     make_exact_window_key(target_pid, target_wid);
+    crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
     // A slow app (LibreOffice) can take longer than one wait to install its
     // key window: ask once more before giving up.
     if !await_window_focused(target_pid, target_wid) {
         unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
         make_exact_window_key(target_pid, target_wid);
+        crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
     }
     if !await_window_focused(target_pid, target_wid) {
         if prev_ok {
@@ -1477,64 +1499,24 @@ fn preserves_exact_existing_focus(
         && focused_window_id == Some(target_window_id)
 }
 
-/// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
-/// then immediately restore the prior frontmost process.
-///
-/// The entire activate → action → restore sequence is < 1 ms — a 5 ms UX monitor
-/// never observes the intermediate frontmost state. NSMenu still fires because the
-/// key event is already enqueued in the target's run-loop queue before we restore.
-///
-/// Returns `Ok(true)` when activation succeeded, `Ok(false)` when SPIs unavailable.
-pub fn with_menu_shortcut_activation(
-    target_pid: libc::pid_t,
-    target_wid: u32,
-    action: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
-    let _turn = foreground_turn();
-    let set_front = match set_front_process_fn() {
-        Some(f) => f,
-        None => {
-            // SPIs unavailable — run action anyway without activation.
-            action()?;
-            return Ok(false);
-        }
-    };
-
-    // Capture prior frontmost PSN.
-    let mut prev_psn = [0u8; 8];
-    let prev_ok = get_front_process_fn()
-        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
-        .unwrap_or(false);
-
-    // Resolve target PSN.
-    let mut target_psn = [0u8; 8];
-    let target_ok = get_process_psn_for_window(target_wid, target_pid, &mut target_psn);
-    if !target_ok {
-        action()?;
-        return Ok(false);
-    }
-
-    // Make target WindowServer-frontmost (kCPSNoWindows = 0x400).
-    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
-
-    // Run action then restore — even if action fails.
-    let result = action();
-
-    // Restore prior frontmost (windowID=0, options=0x400).
-    if prev_ok {
-        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
-    }
-
-    result?;
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        focus_failure_hint_from, foreground_turn, make_key_window_record,
-        preserves_exact_existing_focus,
+        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
+        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
+        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
+
+    #[test]
+    fn a_1002_post_status_is_remembered_and_other_failures_are_not() {
+        reset_windowserver_connection_invalid_for_test();
+        assert!(note_post_status(0));
+        assert!(!note_post_status(-1));
+        assert!(!windowserver_connection_invalid());
+        assert!(!note_post_status(WINDOWSERVER_INVALID_CONNECTION));
+        assert!(windowserver_connection_invalid());
+        reset_windowserver_connection_invalid_for_test();
+    }
 
     #[test]
     fn focus_failure_names_the_dialog_that_holds_focus() {

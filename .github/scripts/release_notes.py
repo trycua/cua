@@ -53,7 +53,6 @@ DISPLAY_NAMES = {
     "bench-ui": "Cua Bench UI",
     "som": "Cua SOM",
     "sandbox-apps": "Cua Sandbox Apps",
-    "train": "Cua Train",
     "npm-core": "@trycua/core",
     "npm-playground": "@trycua/playground",
     "cuabot": "CuaBot",
@@ -68,7 +67,6 @@ INSTALL = {
     "bench-ui": (("pypi", "cua-bench-ui"),),
     "som": (("pypi", "cua-som"),),
     "sandbox-apps": (("pypi", "cua-sandbox-apps"),),
-    "train": (("pypi", "cua-train"),),
     "npm-core": (("npm", "@trycua/core"),),
     "npm-playground": (("npm", "@trycua/playground"),),
     "cuabot": (("npm", "cuabot"),),
@@ -88,7 +86,6 @@ LEGACY_BASELINE_TAGS = frozenset({
     "bench-ui-v0.7.1",
     "som-v0.1.4",
     "sandbox-apps-v0.1.2",
-    "train-v0.1.2",
     "npm-core-v0.1.6",
     "npm-playground-v0.3.0",
     "cuabot-v1.0.16",
@@ -173,6 +170,13 @@ def render(
         manifest = _build(plan, repo_root, repository, tag, previous, sha, attribution, client, ref)
     finally:
         release_attribution.changelog_references_change = cites_every_change
+    unresolved = manifest.get("unresolvedIdentities") or []
+    if unresolved:
+        print(f"::warning::{len(unresolved)} contributor identities are credited by display name")
+    # Also refreshes the rolling issue when nothing is unresolved, so resolved entries drop off.
+    release_attribution.report_unresolved_identities(
+        client, repository, unresolved, attribution, tag
+    )
     body = release_attribution.render_body(manifest, install_footer(plan["component"], plan["version"]))
     if len(body.encode()) > 125_000:
         raise ReleaseError("rendered GitHub release body exceeds 125,000 bytes")

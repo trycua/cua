@@ -33,6 +33,7 @@ pub(crate) struct MockEvent {
 /// The scripted reaction to one command.
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
+    pub suppress_response: bool,
     pub result: Result<Value, (i64, String)>,
 }
 
@@ -41,6 +42,16 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            suppress_response: false,
+        }
+    }
+
+    /// A command whose reply never comes; any attached events still go out.
+    pub fn hang() -> Self {
+        Self {
+            events: Vec::new(),
+            result: Ok(json!({})),
+            suppress_response: true,
         }
     }
 
@@ -48,6 +59,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            suppress_response: false,
         }
     }
 
@@ -123,6 +135,9 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if reply.suppress_response {
+                            continue;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

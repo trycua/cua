@@ -465,7 +465,6 @@ public final class TeleportModel {
                 listener: RunEvents { [weak self] event in
                     Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
                 })
-            onTeleported?()
             send(.finished(report: AppTeleportRunReport(
                 appId: report.appId, installed: report.installed, sent: report.sent,
                 imported: report.imported, skipped: report.skipped, launched: report.launched)))
@@ -498,9 +497,9 @@ extension AppTeleportMove {
 
     public var label: String {
         switch self {
-        case .appOnly: return "Just the app"
-        case .appWithFiles: return "The app with files or folders"
-        case .appWithState: return "The app with its signed-in state"
+        case .appOnly: return CoreMessages.text(code: "teleport.move.app_only")
+        case .appWithFiles: return CoreMessages.text(code: "teleport.move.app_with_files")
+        case .appWithState: return CoreMessages.text(code: "teleport.move.app_with_state")
         }
     }
 }

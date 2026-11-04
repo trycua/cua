@@ -145,7 +145,7 @@ impl Tool for ScrollTool {
                 ScrollDirection::Right => (0, -step),
                 ScrollDirection::Left => (0, step),
             };
-            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let (x, y) = super::desktop_screenshot_point(x, y);
             if let Some(refusal) =
                 super::desktop_pointer_guard::check("scroll", &args, vec![(x, y)]).await
             {

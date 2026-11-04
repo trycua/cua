@@ -54,7 +54,7 @@ function mount(core: CoreClient, options: Parameters<typeof createDemoAdapter>[0
 
 const loaded = (h: Hooks) =>
   waitFor(() => {
-    expect(h.spaces.data).toHaveLength(6);
+    expect(h.spaces.data).toHaveLength(9);
     expect(h.machines.data).toHaveLength(4);
     expect(h.settings.data).toBeDefined();
     expect(h.keyvault.data).toBeDefined();
@@ -164,7 +164,7 @@ describe("with the wasm core", () => {
     const { hooks } = mount(core);
     await loaded(hooks);
     await expect(hooks.spaces.createSpace({ image: "not an image!" })).rejects.toThrow(/image reference/i);
-    expect(hooks.spaces.data).toHaveLength(6);
+    expect(hooks.spaces.data).toHaveLength(9);
   });
 });
 

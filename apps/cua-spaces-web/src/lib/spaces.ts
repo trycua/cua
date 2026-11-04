@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { CoreClient, Machine, Space } from "@/bridge";
+import type { CoreClient, CreatingElsewhere, Machine, Space, SpaceOs } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
 import { thisComputerLabel } from "@/lib/host-labels";
+import { messageText } from "@/lib/messages";
+import type { Msg } from "../bridge/contracts/teleport";
 
 /** The states the Spaces screens draw. The bridge's `SpaceStatus` maps onto these. */
 export type SpaceState = "running" | "stopped" | "creating" | "deleting" | "failed";
@@ -48,9 +50,47 @@ export function realSpaces<T extends Pick<Space, "id" | "status" | "provider" | 
   return spaces.filter((s) => !isMachineDesktop(s));
 }
 
+/** This Mac's own desktop (`this-mac`): a row of the Spaces list that reads "Not sharing" while its switch is off. */
+export const isThisMacDesktop = (space: Pick<Space, "id">): boolean => space.id === "this-mac";
+
+/**
+ * This Mac's desktop while it is not shared: the host lists it `local` (the list rows read it as running)
+ * only while the desktop is shared, and suspended otherwise.
+ */
+export const isUnsharedDesktop = (space: Pick<Space, "id" | "status">): boolean => space.id === "this-mac" && space.status !== "local" && space.status !== "running";
+
+/**
+ * The rows of the Spaces list: your Spaces and the machines' desktops that are shared. This Mac's desktop
+ * shows even while it is not shared ("Not sharing"), but only once something else is listed, so a person
+ * with no Space still sees the empty state. `hidden` (Hide on a row) leaves a desktop out; another
+ * machine's desktop shows only while it shares it (`shares`).
+ */
+export function listedSpaces<T extends Pick<Space, "id" | "status" | "provider" | "host">>(
+  all: readonly T[],
+  hidden: ReadonlySet<string> = new Set(),
+  shares: (space: T) => boolean = () => true,
+): T[] {
+  const real = realSpaces(all);
+  const shared = all.filter((s) => isMachineDesktop(s) && !isUnsharedDesktop(s) && !hidden.has(s.id) && (isThisMacDesktop(s) || shares(s)));
+  const base = [...real, ...shared];
+  const own = all.find((s) => isUnsharedDesktop(s) && !hidden.has(s.id));
+  return own && base.length > 0 ? [...base, own] : base;
+}
+
+/** The listed rows that count as Spaces ("N Spaces", "N running", the sidebar): never this Mac's unshared desktop. */
+export const countedSpaces = <T extends Pick<Space, "id" | "status">>(listed: readonly T[]): T[] => listed.filter((s) => !isUnsharedDesktop(s));
+
+/** Running Spaces first, then the most recently used (Home, the Spaces page, the switcher and ⌘K). */
+export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(spaces: readonly T[]): T[] {
+  // A machine's desktop follows the Spaces in its state (its "last used" is always now), and This Mac's unshared one is last.
+  const rank = (s: T) => (isUnsharedDesktop(s) ? 9 : ORDER[spaceState(s)] + (isMachineDesktop(s) ? 0.5 : 0));
+  return spaces.toSorted((a, b) => rank(a) - rank(b) || b.lastUsedAt - a.lastUsedAt);
+}
+
 export type SpaceFilter = "all" | "running" | "stopped" | "creating";
 
-const ORDER: Record<SpaceState, number> = { failed: 0, creating: 0, running: 1, stopped: 2, deleting: 3 };
+/** Running first, then the Space being created, then the rest (each by most recent use). */
+const ORDER: Record<SpaceState, number> = { running: 0, creating: 1, failed: 2, stopped: 3, deleting: 4 };
 
 /**
  * Whether the filter box's `query` keeps `space`: the core's rule
@@ -91,13 +131,33 @@ export function spacePlace(space: Pick<Space, "os" | "osPrettyName">, machine: s
   return os ? `${os} on ${machine}` : machine;
 }
 
+/** A Space another computer is creating: its OS as an icon takes (`unknown` when it did not say). */
+export function elsewhereOs(c: Pick<CreatingElsewhere, "os">): SpaceOs {
+  return c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
+}
+
+/** "Creating macOS on Mac mini…" (CUA-2349): what another computer is making, from its own report. */
+export function creatingElsewherePlace(c: Pick<CreatingElsewhere, "os" | "machineName">): string {
+  const os = elsewhereOs(c);
+  const what = os === "unknown" ? "a Space" : OS_NAME[os];
+  return `Creating ${what} on ${c.machineName.trim() || "another machine"}…`;
+}
+
+/** How far it got: "40%". */
+export const creatingElsewherePercent = (c: Pick<CreatingElsewhere, "percent">): string => `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
+
+/** "Creating macOS on Mac mini… 40%". */
+export function creatingElsewhereLine(c: Pick<CreatingElsewhere, "os" | "machineName" | "percent">): string {
+  return `${creatingElsewherePlace(c)} ${creatingElsewherePercent(c)}`;
+}
+
 /** The machine a Space runs on, by the machines' `spaceIds`. */
 export function machineName(machines: readonly Machine[], space: Pick<Space, "id" | "provider" | "hostName">): string {
   const machine = machines.find((m) => m.spaceIds.includes(space.id));
   if (machine) return machine.name;
   if (space.hostName) return space.hostName;
-  if (space.provider === "direct") return "a machine added by address";
-  return space.provider === "cloud" || space.provider === undefined ? "Cua Cloud" : "Unknown machine";
+  if (space.provider === "direct" || space.provider === undefined) return "a computer added by address";
+  return "Unknown computer";
 }
 
 /** What a Space's ⌘K entries also match: its OS, state, detail and the machine it runs on. */
@@ -153,8 +213,8 @@ export function canPower(space: Pick<Space, "status" | "power">): boolean {
  * where the Space suspends. Without the core, the same words.
  */
 export function powerLabel(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space, on: boolean): string {
-  const button = core.tryCall<{ help: string; turnOn: boolean; busy: boolean }>("sidebar.powerButton", { space });
-  if (button && !button.busy && button.turnOn === on) return button.help;
+  const button = core.tryCall<{ help: Msg; turnOn: boolean; busy: boolean }>("sidebar.powerButton", { space });
+  if (button && !button.busy && button.turnOn === on) return messageText(button.help);
   const suspends = space.power?.control === "suspend";
   return on ? (suspends ? "Resume" : "Turn on") : suspends ? "Suspend" : "Turn off";
 }
@@ -182,8 +242,8 @@ export interface PowerButton {
  * core, the same rule and words.
  */
 export function powerButton(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space): PowerButton | null {
-  const fromCore = core.tryCall<PowerButton | null>("sidebar.powerButton", { space });
-  if (fromCore !== undefined) return fromCore ? { help: fromCore.help, turnOn: fromCore.turnOn, busy: fromCore.busy } : null;
+  const fromCore = core.tryCall<(Omit<PowerButton, "help"> & { help: Msg }) | null>("sidebar.powerButton", { space });
+  if (fromCore !== undefined) return fromCore ? { help: messageText(fromCore.help), turnOn: fromCore.turnOn, busy: fromCore.busy } : null;
   const power = space.power;
   if (!power || space.id === "this-mac" || space.progress || space.status === "deleting") return null;
   const busy = power.turningOn !== undefined && power.turningOn !== null;
@@ -207,16 +267,15 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 }
 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
-  relay: "Your machine, through the Cua relay",
+  relay: "Your computer, through the Cua relay",
   direct: "A machine added by address",
-  cloud: "Cua Cloud",
 };
 
 /** Where it runs, in words. */
 export function locationLabel(space: Pick<Space, "provider" | "cloudPlace">): string {
   if (space.cloudPlace) return space.cloudPlace;
-  const provider = space.provider ?? "cloud";
+  const provider = space.provider ?? "direct";
   return provider === "local" ? thisComputerLabel() : PROVIDER[provider];
 }
 
-export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container" };
+export const KIND_LABEL: Record<NonNullable<Space["kind"]>, string> = { vm: "Virtual machine", container: "Container", microvm: "MicroVM" };

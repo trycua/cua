@@ -1,0 +1,54 @@
+[package]
+name = "cua-cluster"
+description = "Batch work on all of your machines, the MIT parts: the host's job runner (durable ledger, attempt fencing, per-account job ids), placement scoring and node links (direct, relay, mesh). The coordinator is cua-spaces-cluster."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cua-cluster"
+homepage = "https://cua.ai/docs/cua-sdk"
+keywords = ["cua","computer-use","scheduler","jobs","mesh"]
+categories = ["network-programming","asynchronous"]
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+cua-host.workspace = true
+# Node links over the relay's WireGuard®-based mesh (`Target::Mesh`).
+cua-mesh.workspace = true
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+cua-spacesd-client.workspace = true
+# The host's open-file table (`cua_home::filetable`): jobs are refused when it is nearly full.
+cua-home.workspace = true
+# Native jobs' bundles (a gzip tar).
+flate2 = "1"
+futures-util.workspace = true
+hex.workspace = true
+# The elastic solver's exact integer program (pure Rust, Apache-2.0).
+microlp = "0.6"
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar = "0.4"
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = "0.7"
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tracing.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+# The in-process mock spacesd, for `member::run` against a lost stream.
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-mesh = { workspace = true, features = ["testing"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
+tokio = { workspace = true, features = ["test-util"] }

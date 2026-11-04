@@ -30,6 +30,7 @@ function bridge() {
     status: vi.fn(),
     setEnabled: vi.fn(),
     acknowledgeNotice: vi.fn(),
+    setUiLocale: vi.fn(),
     recordFeature: vi.fn(),
     recordStep: vi.fn(),
     recordStream,

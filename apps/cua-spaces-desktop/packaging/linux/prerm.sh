@@ -75,7 +75,7 @@ turn_off() {
   if [ -f "$ch/host/config.json" ]; then
     say "turning off unattended access ($ch)"
     if ! as_user 150 "$u" "$id" "$h" env CUA_HOME="$ch" "$CUA" host remove --force --uninstalling; then
-      say "could not tell the relay this machine is gone; remove it from Machines in the app or at cua.ai"
+      say "could not tell the relay this computer is gone; remove it from Computers in the app or at cua.ai"
     fi
   fi
   if [ -d "$ch" ]; then

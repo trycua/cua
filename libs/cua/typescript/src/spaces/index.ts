@@ -80,8 +80,8 @@ export type {
   VideoFrame,
 } from "../native/index.js"
 
-export { SpacesError, isSpacesError, excerpt, toSpacesError, wrapErrors } from "./errors.js"
-export type { SpacesErrorCode, SpacesErrorOptions } from "./errors.js"
+export { SpacesError, PlanLimitError, isSpacesError, excerpt, parsePlanLimit, toSpacesError, wrapErrors } from "./errors.js"
+export type { PlanLimitKind, SpacesErrorCode, SpacesErrorOptions } from "./errors.js"
 export { TranscriptAdapter, detectApproval } from "./events.js"
 export type {
   AgentStatus,

@@ -94,6 +94,6 @@ provenance. Test both an instrumented candidate and an uninstrumented package.
 Keep unproven and refused cells explicit.
 
 Review and merge the implementation chain, then publish and verify Driver and
-compatible plugin artifacts before building the final Fleet image. Source
-candidates can be tested in disposable Fleet instances before release; that is
+compatible plugin artifacts before building the final VM image. Source
+candidates can be tested in disposable VM instances before release; that is
 pre-release validation, not a final supported image.

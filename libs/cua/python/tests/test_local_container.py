@@ -28,7 +28,7 @@ def test_gvisor_container_forward_and_probe(tmp_path):
     name = f"cua-e2e-py-local-{secrets.token_hex(3)}"
 
     async def body():
-        c = cua.embedded(state_dir=str(tmp_path), fleet_from_env=False)
+        c = cua.embedded(state_dir=str(tmp_path))
         report = await c.local().doctor()
         container = next(ch for ch in report.checks if ch.name == "container")
         assert container.status == cua.RuntimeCheckStatus.OK, container

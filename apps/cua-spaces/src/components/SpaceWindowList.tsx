@@ -9,6 +9,7 @@ import { pipClick, pipReduce, streamSection, type PipEvent, type StreamRow } fro
 import type { TeleportBridge } from "../native/teleport";
 import { Sym } from "./desktop/Sym";
 import { OsIconMark } from "./OsIcon";
+import { useT } from "../i18n";
 
 interface SpaceWindowListProps {
   space: Pick<Space, "id" | "os" | "osName">;
@@ -43,6 +44,7 @@ export function SpaceWindowList({
   onPipWindow,
   query = "",
 }: SpaceWindowListProps) {
+  const t = useT("spaces");
   const spaceId = space.id;
   const [windows, setWindows] = useState<RemoteWindow[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -172,7 +174,7 @@ export function SpaceWindowList({
 
   return (
     <div className="ssr">
-      <ul className="ssr-rows" aria-label="Stream">
+      <ul className="ssr-rows" aria-label={t("spaces.windows.stream_label")}>
         {section.rows.map((row) => (
           <li className="ssr-row" key={row.id} data-kind={row.kind}>
             <span className="ssr-icon" aria-hidden="true">
@@ -181,6 +183,7 @@ export function SpaceWindowList({
             <span className="ssr-label" title={row.help}>
               {row.label}
             </span>
+            {row.resolution ? <span className="ssr-resolution">{row.resolution}</span> : null}
             {row.actions.map((action) => (
               <button
                 key={action.id}

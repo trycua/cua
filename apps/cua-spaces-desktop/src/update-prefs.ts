@@ -4,28 +4,33 @@
 // What the updater (updater.ts) does when the user hasn't chosen in this
 // app. Kept free of Electron so it can be tested on its own.
 //
-// Someone who moved over from the Swift app (migrate-swift.ts) keeps what
-// Sparkle did for them there: automatic checks stay on unless they had turned
-// them off (the Swift app's Info.plist sets SUEnableAutomaticChecks, so the
-// defaults domain only holds the key when the user changed it), and
-// automatic installs stay as they had them. Everyone else stays opt-in.
+// Automatic checks are on unless the user turned them off in this app, or in
+// the Swift app they moved over from (migrate-swift.ts: the Swift app's
+// Info.plist sets SUEnableAutomaticChecks, so the defaults domain only holds
+// the key when the user changed it). An update found by a check downloads in
+// the background; the in-app indicator then offers "Restart to update", and
+// nothing restarts without that click.
 import type { Settings } from "./settings";
 
 export type UpdateChannel = "stable" | "beta";
 
 const movedFromSwift = (s: Settings) => s.swiftMigration?.found === true;
 
-/** Automatic checks: the choice made in this app, else the one carried over from Sparkle, else off. */
+/** Automatic checks: the choice made in this app, else the one carried over from Sparkle, else on. */
 export function autoCheckPref(s: Settings, env: NodeJS.ProcessEnv = {}): boolean {
   if (env.CUA_SPACES_AUTO_UPDATE === "1") return true;
   if (typeof s.autoUpdate === "boolean") return s.autoUpdate;
-  return movedFromSwift(s) && s.swiftMigration?.sparkleAutomaticChecks !== false;
+  return !movedFromSwift(s) || s.swiftMigration?.sparkleAutomaticChecks !== false;
 }
 
-/** Automatic installs: the choice made in this app, else the one carried over from Sparkle (off by default there too). */
+/**
+ * Install a downloaded update when the app next quits (never a restart on
+ * its own): the choice made in this app, else on. Sparkle's "download
+ * automatically" was a different question (it is what the update waits for,
+ * and now every update downloads in the background), so it is not carried over.
+ */
 export function autoInstallPref(s: Settings): boolean {
-  if (typeof s.autoInstall === "boolean") return s.autoInstall;
-  return movedFromSwift(s) && s.swiftMigration?.sparkleAutomaticDownloads === true;
+  return typeof s.autoInstall === "boolean" ? s.autoInstall : true;
 }
 
 /**

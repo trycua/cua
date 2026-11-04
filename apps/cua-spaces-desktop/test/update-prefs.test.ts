@@ -29,20 +29,25 @@ describe("autoCheckPref", () => {
     expect(autoCheckPref({ ...moved({ sparkleAutomaticChecks: false }), autoUpdate: true })).toBe(true);
   });
 
-  it("stays opt-in everywhere else", () => {
-    expect(autoCheckPref({})).toBe(false);
-    expect(autoCheckPref(fresh)).toBe(false);
+  it("is on by default for everyone else, and only an explicit off stops it", () => {
+    expect(autoCheckPref({})).toBe(true);
+    expect(autoCheckPref(fresh)).toBe(true);
     expect(autoCheckPref({}, { CUA_SPACES_AUTO_UPDATE: "1" })).toBe(true);
     expect(autoCheckPref({ autoUpdate: true })).toBe(true);
+    // The 0.9.0 default was off and the box was never touched: that stays off only if it was written.
+    expect(autoCheckPref({ autoUpdate: false })).toBe(false);
+    expect(autoCheckPref({ ...fresh, autoUpdate: false })).toBe(false);
   });
 });
 
 describe("autoInstallPref", () => {
-  it("follows Sparkle's automatic downloads, off by default", () => {
-    expect(autoInstallPref(moved())).toBe(false);
-    expect(autoInstallPref(moved({ sparkleAutomaticDownloads: true }))).toBe(true);
-    expect(autoInstallPref({ ...moved({ sparkleAutomaticDownloads: true }), autoInstall: false })).toBe(false);
-    expect(autoInstallPref(fresh)).toBe(false);
+  it("applies a downloaded update when the app quits, unless the user turned that off", () => {
+    expect(autoInstallPref({})).toBe(true);
+    expect(autoInstallPref(fresh)).toBe(true);
+    // Sparkle's "download automatically" was a different question; it is not carried over.
+    expect(autoInstallPref(moved())).toBe(true);
+    expect(autoInstallPref(moved({ sparkleAutomaticDownloads: false }))).toBe(true);
+    expect(autoInstallPref({ autoInstall: false })).toBe(false);
     expect(autoInstallPref({ autoInstall: true })).toBe(true);
   });
 });

@@ -25,7 +25,6 @@ ENROLLED = {
     "libs/python/bench-ui": "bench-ui",
     "libs/python/som": "som",
     "libs/python/cua-sandbox-apps": "sandbox-apps",
-    "libs/python/cua-train": "train",
     "libs/typescript/core": "npm-core",
     "libs/typescript/playground": "npm-playground",
     "libs/cuabot": "cuabot",
@@ -111,7 +110,7 @@ def test_enrolled_packages_keep_their_legacy_tag_and_current_version():
 
 def test_legacy_bump_workflows_no_longer_release_enrolled_packages():
     services = ["pypi/agent", "pypi/bench", "pypi/bench-ui", "pypi/core", "pypi/sandbox-apps",
-                "pypi/som", "pypi/train", "npm/core", "npm/playground", "npm/cuabot"]
+                "pypi/som", "npm/core", "npm/playground", "npm/cuabot"]
     for workflow in ("release-bump-version.yml", "release-on-merge.yml",
                      "ci-release-reminder.yml", "release-unreleased-digest.yml"):
         text = (WORKFLOWS / workflow).read_text()
@@ -199,8 +198,19 @@ def test_version_check_catches_a_package_file_that_drifted(tmp_path):
 
 
 def test_legacy_baselines_are_exactly_the_enrolled_packages_last_legacy_tags():
-    expected = {f"{component}-v{MANIFEST[path]}" for path, component in ENROLLED.items()}
-    assert release_notes.LEGACY_BASELINE_TAGS == expected
+    # One baseline per enrolled package, named for its last legacy tag. Until the
+    # package's first Release Please release that is the manifest version; the
+    # release PR then moves the manifest ahead of it (the baseline must stay for
+    # the notes of that release), so the baseline may be older, never newer.
+    by_component = {}
+    for tag in release_notes.LEGACY_BASELINE_TAGS:
+        component, version = tag.rsplit("-v", 1)
+        assert component not in by_component, f"two legacy baselines for {component}"
+        by_component[component] = tuple(int(part) for part in version.split("."))
+    assert set(by_component) == set(ENROLLED.values())
+    for path, component in ENROLLED.items():
+        released = tuple(int(part) for part in MANIFEST[path].split("."))
+        assert by_component[component] <= released, f"{component} baseline is newer than its manifest version"
 
 
 def test_only_a_legacy_baseline_relaxes_the_changelog_citation_check(monkeypatch, tmp_path):

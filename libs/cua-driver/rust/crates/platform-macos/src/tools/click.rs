@@ -5,7 +5,8 @@
 //! * **AX path** (`element_token`): performs AXAction on the cached
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
-//!   - AXTextField / AXTextArea: 800 ms post-click delay for WebKit DOM focus settle.
+//!   - AXTextField / AXTextArea inside web content (AXWebArea): 800 ms post-click delay
+//!     for DOM focus settle. Native text inputs return without it.
 //!   - AXPopUpButton: appends the list of available options and redirects to set_value.
 //!   - Advertised-action warning if the element didn't list the requested action.
 //!
@@ -147,10 +148,9 @@ fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
     use crate::ax::bindings::{
         kAXErrorActionUnsupported, kAXErrorAttributeUnsupported, kAXErrorFailure,
     };
-    matches!(
-        err,
-        kAXErrorFailure | kAXErrorAttributeUnsupported | kAXErrorActionUnsupported
-    )
+    err == kAXErrorFailure
+        || err == kAXErrorAttributeUnsupported
+        || err == kAXErrorActionUnsupported
 }
 
 /// Whether a toggle's value moving from `before` to `now` is what pressing it
@@ -259,9 +259,18 @@ pub(super) async fn restore_user_focus_after_background_pixel(
     // The prologue leaves the user's window key, but the input can still make
     // the target self-activate, and re-activating the prior app does not by
     // itself make its window key again. Post the focus record to the user's
-    // window in both cases so their typing keeps landing there.
+    // window only then, or when WindowServer's key focus left the user's app.
+    // Posting it while their window is still key re-activates their app
+    // (AppKit sends it didBecomeActive), which Bench v2 counted as a
+    // disturbance after every background pixel click.
     if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-        if (focus_without_raise || reactivated) && apps::frontmost_pid() == Some(previous_pid) {
+        let key_moved = user_focus_needs_restore(
+            reactivated,
+            focus_without_raise,
+            crate::input::skylight::key_focus_pid(),
+            previous_pid,
+        );
+        if key_moved && apps::frontmost_pid() == Some(previous_pid) {
             let _ = tokio::task::spawn_blocking(move || {
                 crate::input::skylight::restore_focus_after_without_raise(
                     previous_pid,
@@ -273,6 +282,19 @@ pub(super) async fn restore_user_focus_after_background_pixel(
             .await;
         }
     }
+}
+
+/// Whether the user's window needs the focus record back after a background
+/// pixel action: their app was re-activated, or WindowServer's key focus
+/// (`key_focus`) left it. Not when it never moved, since the record then makes
+/// their app become active again.
+fn user_focus_needs_restore(
+    reactivated: bool,
+    focus_without_raise: bool,
+    key_focus: Option<i32>,
+    previous_pid: i32,
+) -> bool {
+    reactivated || (focus_without_raise && key_focus.is_some_and(|pid| pid != previous_pid))
 }
 
 /// Poll until `pid` is the frontmost application or `budget` runs out.
@@ -297,7 +319,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -361,6 +383,17 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Fast path (CUA-3102): the guards below leave their check summary
+        // here; it lands in the result under `fast_path`. Off by default.
+        let mut fast_path = None;
+        let mut result = self.invoke_guarded(args, &mut fast_path).await;
+        crate::fast_path_guard::annotate(&mut result, fast_path);
+        result
+    }
+}
+
+impl ClickTool {
+    async fn invoke_guarded(&self, args: Value, fast_path: &mut Option<Value>) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
         // ── Window-less screen-absolute branch (scope="desktop") ──────
@@ -413,11 +446,6 @@ impl Tool for ClickTool {
             // x,y arrive in desktop-SCREENSHOT space (what the agent reads off the
             // PNG) and must be divided by the screenshot↔logical ratio, or a
             // center-pixel pick warps to the corner (off by the backing scale).
-            //
-            // Derive the ratio the same way `get_desktop_state` reports it: native
-            // screenshot width / logical screen width. This is robust even when
-            // CGDisplayPixelsWide under-reports the backing scale (it returns the
-            // scaled-mode point width on some Retina configs → a bogus 1.0).
             let (sx, sy) = if let Some(ref capture_id) = capture_id {
                 match self
                     .state
@@ -428,21 +456,7 @@ impl Tool for ClickTool {
                     Err(refusal) => return refusal,
                 }
             } else {
-                let desktop_ratio = tokio::task::spawn_blocking(|| {
-                    let logical_w =
-                        super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-                    let shot_w = crate::capture::screenshot_display_bytes()
-                        .ok()
-                        .and_then(|png| crate::capture::png_dimensions(&png).ok())
-                        .map(|(w, _)| w as f64);
-                    match (shot_w, logical_w) {
-                        (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-                        _ => 1.0,
-                    }
-                })
-                .await
-                .unwrap_or(1.0);
-                (sx_shot / desktop_ratio, sy_shot / desktop_ratio)
+                super::desktop_screenshot_point(sx_shot, sy_shot)
             };
             let button = match input.button.unwrap_or(ClickButton::Left) {
                 ClickButton::Left => "left",
@@ -611,6 +625,21 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Fast path: check the cached element against what the agent saw.
+            match crate::fast_path_guard::guard_element(
+                "click",
+                pid,
+                wid,
+                &args,
+                element_ptr,
+                button_str == "middle",
+            )
+            .await
+            {
+                crate::fast_path_guard::Outcome::Refuse(refusal) => return refusal,
+                crate::fast_path_guard::Outcome::Proceed { summary, .. } => *fast_path = summary,
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.
@@ -619,6 +648,27 @@ impl Tool for ClickTool {
             } else {
                 action.clone()
             };
+
+            // A background press or show-menu on a Chromium <select> would
+            // open its menu and raise the browser window (CUA-1795): steer to
+            // set_value before anything is sent.
+            if !delivery_mode.is_foreground()
+                && matches!(effective_action.as_str(), "press" | "show_menu")
+            {
+                let select_guard = element_guard.clone();
+                let refusal = tokio::task::spawn_blocking(move || {
+                    let element = select_guard.as_ptr() as AXUIElementRef;
+                    super::set_value::is_chromium_web_select(pid, wid, element).then(|| {
+                        super::set_value::chromium_select_open_refusal(pid, wid, Some(idx), element)
+                    })
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(refusal) = refusal {
+                    return refusal;
+                }
+            }
 
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
@@ -1084,6 +1134,37 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Fast path: window guards, then the AX or pixel check at the
+            // point, before the cursor moves (so hover cannot change the crop).
+            let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
+                match crate::fast_path_guard::guard_pixel(
+                    "click",
+                    pid,
+                    wid,
+                    (win_local_x, win_local_y),
+                    (screen_x, screen_y),
+                    delivery_mode.is_foreground(),
+                )
+                .await
+                {
+                    crate::fast_path_guard::Outcome::Refuse(refusal) => return refusal,
+                    crate::fast_path_guard::Outcome::Proceed { summary, relocate } => {
+                        *fast_path = summary;
+                        match relocate {
+                            Some((dx, dy)) => (
+                                screen_x + dx,
+                                screen_y + dy,
+                                win_local_x + dx,
+                                win_local_y + dy,
+                            ),
+                            None => (screen_x, screen_y, win_local_x, win_local_y),
+                        }
+                    }
+                }
+            } else {
+                (screen_x, screen_y, win_local_x, win_local_y)
+            };
+
             // Pin the overlay above the target window BEFORE animating so
             // the cursor is already sandwiched correctly while it glides in.
             // Both PX deliveries below (AX hit-test and routed events) share
@@ -1096,6 +1177,29 @@ impl Tool for ClickTool {
             }
             // Animate the visual cursor to the click point and wait for it to
             // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
+            // A background pixel click on a Chromium <select> would open its
+            // menu and raise the browser window (CUA-1795).
+            if let Some(select_wid) = window_id.filter(|_| !delivery_mode.is_foreground()) {
+                let refusal = tokio::task::spawn_blocking(move || unsafe {
+                    let element = element_at_screen_position(pid, screen_x, screen_y)?;
+                    let refusal = (crate::ax::exact_target::element_window_id(element)
+                        == Some(select_wid)
+                        && super::set_value::is_chromium_web_select(pid, select_wid, element))
+                    .then(|| {
+                        super::set_value::chromium_select_open_refusal(
+                            pid, select_wid, None, element,
+                        )
+                    });
+                    CFRelease(element as _);
+                    refusal
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(refusal) = refusal {
+                    return refusal;
+                }
+            }
             crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
             // Keep the registry in sync with the overlay (see AX path above).
             self.state
@@ -1255,30 +1359,34 @@ impl Tool for ClickTool {
             // is required by Chromium gates and remote-HID proxies such as
             // iPhone Mirroring. Re-pin after the focus record because changing
             // AppKit active state can disturb overlay ordering.
-            let focus_without_raise =
-                if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
-                    let wid = window_id.expect("activation policy requires window_id");
-                    match tokio::task::spawn_blocking(move || {
-                        crate::input::mouse::prepare_background_pixel_click(pid, wid)
-                    })
-                    .await
-                    {
-                        Ok(activated) => {
-                            crate::cursor::overlay::send_command(
-                                cursor_key.clone(),
-                                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                            );
-                            activated
+            let focus_without_raise = if activation_policy
+                == PixelActivationPolicy::AllowTargetWithoutRaise
+            {
+                let wid = window_id.expect("activation policy requires window_id");
+                match tokio::task::spawn_blocking(move || {
+                    crate::input::mouse::prepare_background_pixel_click(pid, wid)
+                })
+                .await
+                {
+                    Ok(activated) => {
+                        if !activated && crate::input::skylight::windowserver_connection_invalid() {
+                            return super::windowserver_connection_refusal(pid, Some(wid));
                         }
-                        Err(error) => {
-                            return ToolResult::error(format!(
-                                "Background click activation task failed: {error}"
-                            ));
-                        }
+                        crate::cursor::overlay::send_command(
+                            cursor_key.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                        );
+                        activated
                     }
-                } else {
-                    false
-                };
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "Background click activation task failed: {error}"
+                        ));
+                    }
+                }
+            } else {
+                false
+            };
 
             // Pulse only after the activation settle so it visually coincides
             // with the real target click rather than the private focus prelude.
@@ -1465,6 +1573,52 @@ fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str)
     {
         std::thread::sleep(std::time::Duration::from_millis(80));
     }
+}
+
+/// Whether an AX press on a text input must wait for the page to move DOM
+/// focus (800 ms). Only text inputs inside web content (an `AXWebArea`
+/// ancestor) have a DOM focus to settle; waiting on a native field only
+/// delays the result. `ancestor_roles` is read only for a text input pressed
+/// with `AXPress`.
+fn needs_web_focus_settle(
+    ax_action: &str,
+    role: &str,
+    ancestor_roles: impl FnOnce() -> Vec<String>,
+) -> bool {
+    ax_action == "AXPress"
+        && matches!(role, "AXTextField" | "AXTextArea")
+        && ancestor_roles().iter().any(|role| role == "AXWebArea")
+}
+
+/// Roles of `element`'s ancestors, nearest first, up to the window. Bounded so
+/// a cyclic or very deep tree cannot stall the click.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef`.
+unsafe fn ancestor_roles(element: AXUIElementRef) -> Vec<String> {
+    const MAX_DEPTH: usize = 40;
+    let mut roles = Vec::new();
+    let mut current = copy_element_attr(element, "AXParent");
+    while let Some(parent) = current {
+        if roles.len() >= MAX_DEPTH {
+            CFRelease(parent as CFTypeRef);
+            break;
+        }
+        let role = copy_string_attr(parent, "AXRole").unwrap_or_default();
+        let next = copy_element_attr(parent, "AXParent");
+        CFRelease(parent as CFTypeRef);
+        let is_window = role == "AXWindow";
+        roles.push(role);
+        if is_window {
+            if let Some(next) = next {
+                CFRelease(next as CFTypeRef);
+            }
+            break;
+        }
+        current = next;
+    }
+    roles
 }
 
 fn perform_ax_click(
@@ -1723,12 +1877,14 @@ fn perform_ax_click(
         ));
     }
 
-    // WebKit DOM focus settle: 800 ms for text inputs (returned to async caller).
+    // DOM focus settle: 800 ms for text inputs in web content (returned to the
+    // async caller). A native text field has no DOM focus to wait for.
     let needs_webkit_delay =
-        ax_action == "AXPress" && (role == "AXTextField" || role == "AXTextArea");
+        needs_web_focus_settle(ax_action, &role, || unsafe { ancestor_roles(element) });
 
-    // Show focus-rect highlight around the element (matches Swift showFocusRect).
-    // Also move the cursor to the element center so the glide animation plays.
+    // Offer the focus-rect highlight around the element (matches Swift
+    // showFocusRect); the overlay paints it only with `cursor.marks` on. Also
+    // move the cursor to the element center so the glide animation plays.
     if let Some(rect) = unsafe { element_screen_rect(element) } {
         // Drive THIS session's cursor (threaded in via `cursor_key`), matching
         // the keyed glide already played in the invoke body above. The keyed
@@ -1749,6 +1905,53 @@ fn perform_ax_click(
     let _ = window_id; // used by caller context
 
     Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+}
+
+#[cfg(test)]
+mod web_focus_settle_tests {
+    use super::needs_web_focus_settle;
+
+    fn roles(list: &[&str]) -> impl FnOnce() -> Vec<String> {
+        let list: Vec<String> = list.iter().map(|role| (*role).to_owned()).collect();
+        move || list
+    }
+
+    #[test]
+    fn a_text_input_in_web_content_waits_for_dom_focus() {
+        assert!(needs_web_focus_settle(
+            "AXPress",
+            "AXTextField",
+            roles(&["AXGroup", "AXWebArea", "AXScrollArea", "AXWindow"])
+        ));
+        assert!(needs_web_focus_settle(
+            "AXPress",
+            "AXTextArea",
+            roles(&["AXWebArea", "AXWindow"])
+        ));
+    }
+
+    #[test]
+    fn a_native_text_input_does_not_wait() {
+        assert!(!needs_web_focus_settle(
+            "AXPress",
+            "AXTextField",
+            roles(&["AXGroup", "AXScrollArea", "AXWindow"])
+        ));
+        assert!(!needs_web_focus_settle("AXPress", "AXTextArea", roles(&[])));
+    }
+
+    #[test]
+    fn only_a_press_on_a_text_input_is_considered() {
+        for (action, role) in [
+            ("AXShowMenu", "AXTextField"),
+            ("AXPress", "AXButton"),
+            ("AXPress", "AXCheckBox"),
+        ] {
+            assert!(!needs_web_focus_settle(action, role, || {
+                panic!("ancestors are not read for {action} on {role}")
+            }));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1956,6 +2159,17 @@ mod tests {
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
         );
+    }
+
+    /// Bench v2: re-posting the focus record to a user window that stayed key
+    /// re-activated the user's app after every background pixel click.
+    #[test]
+    fn user_focus_record_only_when_focus_moved() {
+        assert!(!user_focus_needs_restore(false, true, Some(7), 7));
+        assert!(!user_focus_needs_restore(false, true, None, 7));
+        assert!(!user_focus_needs_restore(false, false, Some(42), 7));
+        assert!(user_focus_needs_restore(false, true, Some(42), 7));
+        assert!(user_focus_needs_restore(true, false, Some(7), 7));
     }
 
     /// The no-foreground contract must not depend on the private activation

@@ -241,6 +241,23 @@ export class HostModel {
     }
   }
 
+  /** Changes the limits on the Spaces other machines create here (0: no limit); a missing field keeps its value. */
+  async setLimits(limits: { maxSpaces?: number; maxMemoryGb?: number; maxDiskGb?: number; maxRunMinutes?: number }): Promise<void> {
+    const host = this.host;
+    if (!host || this.busy) return;
+    this.busy = true;
+    this.error = null;
+    try {
+      this.apply(await host.configure({ shareDesktop: undefined, provideSpaces: undefined, maxMacosVms: undefined, maxSpaces: limits.maxSpaces, maxMemoryGb: limits.maxMemoryGb, maxDiskGb: limits.maxDiskGb, maxRunMinutes: limits.maxRunMinutes }));
+      this.actionFailure = null;
+    } catch (error) {
+      this.actionFailure = presentHostFailure(words(error), this.platform);
+      await this.refresh();
+    } finally {
+      this.busy = false;
+    }
+  }
+
   /** Runs the failed button again. */
   async retryFailedAction(): Promise<void> {
     if (this.failedAction !== null) await this.run(this.failedAction);
@@ -258,7 +275,7 @@ export class HostModel {
     // The two settings: the core says what each switch changes.
     const change = this.native.appHostSettingChange(id);
     if (change) {
-      this.apply(await host.configure({ shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces, maxSpaces: undefined, maxMacosVms: undefined }));
+      this.apply(await host.configure({ shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces, maxSpaces: undefined, maxMacosVms: undefined, maxMemoryGb: undefined, maxDiskGb: undefined, maxRunMinutes: undefined }));
       return;
     }
     switch (id) {
@@ -337,6 +354,10 @@ export class HostModel {
         this.error = words(error);
         this.actionFailure = presentHostFailure(words(error), this.platform);
         this.failedAction = this.native.AppHostActionId.ResumeSharing;
+        // What the failure left behind: a switch of account pauses the old
+        // registration first, so Retry goes through the sign-in check again,
+        // never straight to starting the old one.
+        await this.refresh();
       }
     } finally {
       this.reconciling = false;

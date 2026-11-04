@@ -9,12 +9,13 @@
  * shows that a request is running.
  */
 
+import { noteTeammates } from "./first-run";
 import { useContext, useSyncExternalStore } from "react";
 import type { DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import { checklistDone } from "./checklist";
 import type { CoreClient } from "./core";
-import type { ShareEntry, ShareInput, ShareSheetAction, ShareSheetState, ShareSheetView } from "./contracts/share";
+import type { ShareEntry, ShareGate, ShareInput, ShareSheetAction, ShareSheetState, ShareSheetView } from "./contracts/share";
 import type { Space } from "./contracts/spaces";
 import type { BridgeStore } from "./store";
 import { telemetryShare, type TelemetrySignal } from "./telemetry";
@@ -34,12 +35,16 @@ export interface ShareSession {
   input: ShareInput;
   state: ShareSheetState;
   view: ShareSheetView;
+  /** Closed because the account is in no team (null: open, or not known). */
+  gate: ShareGate | null;
 }
 
 const words = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export class ShareStore {
   private session: { input: ShareInput; state: ShareSheetState } | null = null;
+  /** In a team that can share; null until the host says. */
+  private hasTeam: boolean | null = null;
   private view: ShareSession | null = null;
   private listeners = new Set<() => void>();
 
@@ -61,7 +66,8 @@ export class ShareStore {
 
   private publish(): void {
     const s = this.session;
-    this.view = s ? { ...s, view: shareView(this.core, s.input, s.state) } : null;
+    const gate = this.core.tryCall<ShareGate | null>("share.gate", { hasTeam: this.hasTeam }) ?? null;
+    this.view = s ? { ...s, view: shareView(this.core, s.input, s.state), gate } : null;
     for (const l of [...this.listeners]) l();
   }
 
@@ -84,6 +90,13 @@ export class ShareStore {
       },
       () => {},
     );
+  }
+
+  /** Whether the account is in a team that can share (null: not known). */
+  setHasTeam(hasTeam: boolean | null): void {
+    if (this.hasTeam === hasTeam) return;
+    this.hasTeam = hasTeam;
+    if (this.session) this.publish();
   }
 
   close(): void {
@@ -113,9 +126,15 @@ export class ShareStore {
           : await this.adapter.call("sharing.unshare", { spaceId: request.space, who: request.who });
       this.setShares(spaceId, shares);
       outcome = { type: "done" };
-      if (request.kind === "share") this.onShared();
+      if (request.kind === "share") {
+        this.onShared();
+        // Teammates' emails entered: the first run's plan card offers Teams, not Pro.
+        if (request.who.includes("@")) noteTeammates();
+      }
     } catch (e) {
-      outcome = { type: "failed", error: words(e) };
+      // A refusal for who is not in the team (or no team) reads in plain words.
+      const plain = this.core.tryCall<string | null>("share.errorWords", { error: words(e), who: request.who });
+      outcome = { type: "failed", error: plain ?? words(e) };
     }
     this.track(telemetryShare(this.core, before, state, outcome));
     const now = this.session;

@@ -70,11 +70,21 @@ pub fn all_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
+    all_layer0(true)
+}
+
+/// [`all_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn all_windows_without_spaces() -> Vec<WindowInfo> {
+    all_layer0(false).windows
+}
+
+fn all_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        true,
+        spaces,
     )
 }
 
@@ -84,11 +94,21 @@ pub fn visible_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
+    visible_layer0(true)
+}
+
+/// [`visible_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn visible_windows_without_spaces() -> Vec<WindowInfo> {
+    visible_layer0(false).windows
+}
+
+fn visible_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        true,
+        spaces,
     )
 }
 
@@ -114,6 +134,21 @@ pub(crate) fn pid_on_screen_windows_any_layer(pid: i32) -> Vec<WindowInfo> {
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::AnyLayer,
         Some(pid),
+        false,
+    )
+    .windows
+}
+
+/// On-screen windows of every app on every layer, front to back, without the
+/// Space snapshot. Use this, not [`all_windows_any_layer`], to compare two
+/// apps' window order: the all-windows list (off-screen windows included) did
+/// not follow a raise in Bench v2 (a Chromium window raised over the user's
+/// window still read as behind it), while the on-screen list does.
+pub(crate) fn on_screen_windows_any_layer() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
         false,
     )
     .windows

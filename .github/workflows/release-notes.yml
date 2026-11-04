@@ -25,7 +25,6 @@ on:
       - "bench-ui-v*"
       - "som-v*"
       - "sandbox-apps-v*"
-      - "train-v*"
       - "npm-core-v*"
       - "npm-playground-v*"
       - "cuabot-v*"
@@ -38,7 +37,7 @@ on:
 
 permissions:
   contents: write
-  issues: read
+  issues: write # the rolling unresolved-attribution issue
   pull-requests: read
 
 concurrency:

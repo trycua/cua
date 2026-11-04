@@ -5,7 +5,7 @@ import type { TelemetrySignal } from "../model/telemetry";
 import { hasTauri } from "./bridge";
 
 /**
- * Anonymous usage telemetry (the shell's `telemetry_*` commands in
+ * Usage telemetry (the shell's `telemetry_*` commands in
  * `src-tauri/src/telemetry.rs`, on the SDK's cua-telemetry core). The switch
  * is the same `$CUA_HOME/config.toml` setting as `cua telemetry off`.
  */
@@ -34,6 +34,11 @@ export interface TelemetryBridge {
    * shown. Nothing is sent before; with it off, nothing after either.
    */
   welcomeLeft(on: boolean): Promise<TelemetryView>;
+  /**
+   * The interface language (`en`, `zh-Hans`, `ko`, `pt-BR`, `ja`, `es`); the
+   * shell maps anything else to `other`. Kept for the day's `cua_app_active`.
+   */
+  setUiLocale(locale: string): void;
   /** A fixed feature name (see the docs); anything else is dropped. */
   recordFeature(feature: string): void;
   /** A fixed funnel step name; anything else is dropped. */
@@ -62,6 +67,9 @@ export function createTauriTelemetryBridge(): TelemetryBridge {
     setEnabled: (enabled) => invoke<TelemetryView>("telemetry_set_enabled", { enabled }),
     acknowledgeNotice: () => invoke<TelemetryView>("telemetry_acknowledge_notice"),
     welcomeLeft: (on) => invoke<TelemetryView>("telemetry_welcome_left", { on }),
+    setUiLocale: (locale) => {
+      void invoke<void>("telemetry_set_ui_locale", { locale }).catch(() => {});
+    },
     recordFeature: (feature) => {
       void invoke<void>("telemetry_record_feature", { featureName: feature }).catch(() => {});
     },
@@ -99,6 +107,7 @@ export function createFallbackTelemetryBridge(): TelemetryBridge {
     setEnabled: async () => off(),
     acknowledgeNotice: async () => off(),
     welcomeLeft: async () => off(),
+    setUiLocale: () => {},
     recordFeature: () => {},
     recordStep: () => {},
     recordStream: () => {},

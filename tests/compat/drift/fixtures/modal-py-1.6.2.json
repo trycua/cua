@@ -1,0 +1,1909 @@
+{
+ "package": "modal",
+ "symbols": {
+  "modal.App": {
+   "bases": [],
+   "fields": {},
+   "init": "(name: str | None = None, *, tags: dict[str, str] | None = None, image: modal._image._Image | None = None, secrets: collections.abc.Sequence[modal.secret._Secret] = [], volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume] = {}, include_source: bool = True) -> None",
+   "kind": "class",
+   "methods": {
+    "app_id": {
+     "property": true
+    },
+    "cls": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, image: modal._image._Image | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | list[str] | None = None, serialized: bool = False, network_file_systems: dict[str | pathlib.PurePosixPath, modal.network_file_system._NetworkFileSystem] = {}, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, cpu: float | tuple[float, float] | None = None, memory: int | tuple[int, int] | None = None, ephemeral_disk: int | None = None, min_containers: int | None = None, max_containers: int | None = None, buffer_containers: int | None = None, scaledown_window: int | None = None, proxy: modal.proxy._Proxy | None = None, retries: int | modal.retries.Retries | None = None, timeout: int = 300, startup_timeout: int | None = None, cloud: str | None = None, region: str | collections.abc.Sequence[str] | None = None, routing_region: str | None = None, nonpreemptible: bool = False, enable_memory_snapshot: bool = False, block_network: bool = False, restrict_modal_access: bool = False, single_use_containers: bool = False, i6pn: bool | None = None, include_source: bool | None = None, experimental_options: dict[str, typing.Any] | None = None, _experimental_restrict_output: bool = False, max_inputs: int | None = None) -> collections.abc.Callable[[typing.Union[~CLS_T, modal._partial_function._PartialFunction[..., typing.Any, typing.Any]]], ~CLS_T]"
+    },
+    "deploy": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "description": {
+     "property": true
+    },
+    "function": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, image: modal._image._Image | None = None, schedule: modal.schedule.Schedule | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | list[str] | None = None, serialized: bool = False, network_file_systems: dict[str | pathlib.PurePosixPath, modal.network_file_system._NetworkFileSystem] = {}, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, cpu: float | tuple[float, float] | None = None, memory: int | tuple[int, int] | None = None, ephemeral_disk: int | None = None, min_containers: int | None = None, max_containers: int | None = None, buffer_containers: int | None = None, scaledown_window: int | None = None, proxy: modal.proxy._Proxy | None = None, retries: int | modal.retries.Retries | None = None, timeout: int = 300, startup_timeout: int | None = None, name: str | None = None, is_generator: None | bool = None, cloud: str | None = None, region: str | collections.abc.Sequence[str] | None = None, routing_region: str | None = None, nonpreemptible: bool = False, enable_memory_snapshot: bool = False, block_network: bool = False, restrict_modal_access: bool = False, single_use_containers: bool = False, i6pn: bool | None = None, include_source: bool | None = None, experimental_options: dict[str, typing.Any] | None = None, _experimental_restrict_output: bool = False, max_inputs: int | None = None) -> modal.app._FunctionDecoratorType"
+    },
+    "get_dashboard_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_tags": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "include": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, /, other_app: '_App', inherit_tags: bool = True) -> Self"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "local_entrypoint": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, name: str | None = None) -> collections.abc.Callable[[collections.abc.Callable[..., typing.Any]], modal.app._LocalEntrypoint]"
+    },
+    "logs": {
+     "property": true
+    },
+    "name": {
+     "property": true
+    },
+    "registered_classes": {
+     "property": true
+    },
+    "registered_entrypoints": {
+     "property": true
+    },
+    "registered_functions": {
+     "property": true
+    },
+    "registered_web_endpoints": {
+     "property": true
+    },
+    "run": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "server": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, image: modal._image._Image | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | list[str] | None = None, serialized: bool = False, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, cpu: float | tuple[float, float] | None = None, memory: int | tuple[int, int] | None = None, ephemeral_disk: int | None = None, target_concurrency: float | None = None, max_concurrency: int | None = None, min_containers: int | None = None, max_containers: int | None = None, buffer_containers: int | None = None, scaleup_window: int | None = None, scaledown_window: int | None = None, startup_timeout: int = 30, name: str | None = None, port: int = 8000, unauthenticated: bool = False, h2_enabled: bool = False, exit_grace_period: int = 0, routing_region: str = 'us-east', compute_region: str | collections.abc.Sequence[str] | None = None, cloud: str | None = None, nonpreemptible: bool = False, proxy: modal.proxy._Proxy | None = None, i6pn: bool | None = None, enable_memory_snapshot: bool = False, include_source: bool | None = None, experimental_options: dict[str, typing.Any] | None = None) -> collections.abc.Callable[[typing.Union[type[typing.Any], modal._partial_function._PartialFunction[..., typing.Any, typing.Any]]], modal._server._Server]"
+    },
+    "set_tags": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Client": {
+   "bases": [],
+   "fields": {
+    "client_type": "api_pb2.ClientType.ValueType",
+    "server_url": "str"
+   },
+   "init": "(server_url: str, client_type: 'api_pb2.ClientType.ValueType', credentials: tuple[str, str] | None, version: str = '1.6.2', *, oauth_credentials: modal.client._OAuthCredentials | None = None)",
+   "kind": "class",
+   "methods": {
+    "anonymous": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_credentials": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_env": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_oauth_credentials": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_input_plane_metadata": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_stub": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "hello": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "is_closed": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> bool"
+    },
+    "set_env_client": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, client: '_Client | None')"
+    },
+    "stub": {
+     "property": true
+    },
+    "verify": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.CloudBucketMount": {
+   "bases": [],
+   "fields": {
+    "bucket_endpoint_url": "str | None",
+    "bucket_name": "str",
+    "force_path_style": "bool",
+    "key_prefix": "str | None",
+    "oidc_auth_role_arn": "str | None",
+    "read_only": "bool",
+    "requester_pays": "bool",
+    "secret": "modal.secret._Secret | None"
+   },
+   "init": "(bucket_name: str, bucket_endpoint_url: str | None = None, key_prefix: str | None = None, secret: modal.secret._Secret | None = None, oidc_auth_role_arn: str | None = None, read_only: bool = False, requester_pays: bool = False, force_path_style: bool = False) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.Cls": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "from_name": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls: type['_Cls'], app_name: str, name: str, *, version: int | None = None, environment_name: str | None = None, client: '_Client | None' = None) -> '_Cls'"
+    },
+    "with_batching": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: '_Cls', *, max_batch_size: int, wait_ms: int) -> '_Cls'"
+    },
+    "with_concurrency": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: '_Cls', *, max_inputs: int, target_inputs: int | None = None) -> '_Cls'"
+    },
+    "with_options": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: '_Cls', *, cpu: float | tuple[float, float] | None = None, memory: int | tuple[int, int] | None = None, gpu: str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, retries: int | modal.retries.Retries | None = None, max_containers: int | None = None, buffer_containers: int | None = None, scaledown_window: int | None = None, timeout: int | None = None, region: str | collections.abc.Sequence[str] | None = None, cloud: str | None = None, routing_region: str | None = None) -> '_Cls'"
+    }
+   }
+  },
+  "modal.Cluster": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "container_ids": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "container_ips": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "container_rank": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_context": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "() -> '_Cluster'"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(cluster_id: str, *, client: modal.client._Client | None = None) -> '_Cluster'"
+    },
+    "object_id": {
+     "property": true
+    }
+   }
+  },
+  "modal.Cron": {
+   "bases": [
+    "Schedule"
+   ],
+   "fields": {},
+   "init": "(cron_string: str, timezone: str = 'UTC') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.Dict": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "()",
+   "kind": "class",
+   "methods": {
+    "clear": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "contains": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "ephemeral": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(dict_id: str, client: modal.client._Client | None = None) -> '_Dict'"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, create_if_missing: bool = False, client: modal.client._Client | None = None) -> '_Dict'"
+    },
+    "get": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "items": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "keys": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "len": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "name": {
+     "property": true
+    },
+    "objects": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "pop": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "put": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "update": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "values": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Environment": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "()",
+   "kind": "class",
+   "methods": {
+    "apps": {
+     "property": true
+    },
+    "billing": {
+     "property": true
+    },
+    "from_context": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(*, client: modal.client._Client | None = None) -> '_Environment'"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, create_if_missing: bool = False, client: modal.client._Client | None = None) -> '_Environment'"
+    },
+    "members": {
+     "property": true
+    },
+    "name": {
+     "property": true
+    },
+    "objects": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "roles": {
+     "property": true
+    }
+   }
+  },
+  "modal.Error": {
+   "bases": [
+    "Exception"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.FilePatternMatcher": {
+   "bases": [
+    "_AbstractPatternMatcher"
+   ],
+   "fields": {},
+   "init": "(*pattern: str) -> None",
+   "kind": "class",
+   "methods": {
+    "can_prune_directories": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> bool"
+    },
+    "from_file": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, file_path: str | pathlib.Path) -> 'FilePatternMatcher'"
+    },
+    "patterns": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Function": {
+   "bases": [
+    "Generic",
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "app": {
+     "property": true
+    },
+    "autoscaler": {
+     "property": true
+    },
+    "experimental_spawn_map": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "for_each": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls: type['_Function'], function_id: str, *, client: modal.client._Client | None = None)"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls: type['_Function'], app_name: str, name: str, *, version: int | None = None, environment_name: str | None = None, client: modal.client._Client | None = None) -> '_Function'"
+    },
+    "get_current_stats": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_web_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "local": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *args: P.args, **kwargs: P.kwargs) -> +OriginalReturnType"
+    },
+    "logs": {
+     "property": true
+    },
+    "map": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "metrics": {
+     "property": true
+    },
+    "remote": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "remote_gen": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "spawn": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "spawn_map": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "starmap": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "stats": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "update_autoscaler": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "with_batching": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, max_batch_size: int, wait_ms: int) -> '_Function[P, ReturnType, OriginalReturnType]'"
+    },
+    "with_concurrency": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, max_inputs: int, target_inputs: int | None = None) -> '_Function[P, ReturnType, OriginalReturnType]'"
+    },
+    "with_options": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, cpu: float | tuple[float, float] | None = None, memory: int | tuple[int, int] | None = None, gpu: str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, retries: int | modal.retries.Retries | None = None, max_containers: int | None = None, buffer_containers: int | None = None, scaledown_window: int | None = None, timeout: int | None = None, region: str | collections.abc.Sequence[str] | None = None, cloud: str | None = None, routing_region: str | None = None) -> '_Function[P, ReturnType, OriginalReturnType]'"
+    }
+   }
+  },
+  "modal.FunctionCall": {
+   "bases": [
+    "Generic",
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "cancel": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_call_graph": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "iter": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "logs": {
+     "property": true
+    },
+    "num_inputs": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Image": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {
+    "force_build": "bool",
+    "inside_exceptions": "list"
+   },
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "add_local_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, local_path: str | pathlib.Path, remote_path: str, *, copy: bool = False, ignore: collections.abc.Sequence[str] | collections.abc.Callable[[pathlib.Path], bool] = []) -> '_Image'"
+    },
+    "add_local_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, local_path: str | pathlib.Path, remote_path: str, *, copy: bool = False) -> '_Image'"
+    },
+    "add_local_python_source": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *modules: str, copy: bool = False, ignore: collections.abc.Sequence[str] | collections.abc.Callable[[pathlib.Path], bool] = modal.file_pattern_matcher.NON_PYTHON_FILES) -> '_Image'"
+    },
+    "apt_install": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *packages: str | list[str], force_build: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "build": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "cmd": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, cmd: list[str]) -> '_Image'"
+    },
+    "debian_slim": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(python_version: str | None = None, force_build: bool = False) -> '_Image'"
+    },
+    "dockerfile_commands": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *dockerfile_commands: str | list[str], context_files: dict[str, str] = {}, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None, context_dir: pathlib.Path | str | None = None, force_build: bool = False, ignore: collections.abc.Sequence[str] | collections.abc.Callable[[pathlib.Path], bool] = modal._image.AUTO_DOCKERIGNORE, build_args: dict[str, str] = {}) -> '_Image'"
+    },
+    "entrypoint": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, entrypoint_commands: list[str]) -> '_Image'"
+    },
+    "env": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, vars: dict[str, str]) -> '_Image'"
+    },
+    "from_aws_ecr": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(tag: str, secret: modal.secret._Secret | None = None, *, setup_dockerfile_commands: list[str] = [], force_build: bool = False, add_python: str | None = None, **kwargs) -> '_Image'"
+    },
+    "from_dockerfile": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(path: str | pathlib.Path, *, force_build: bool = False, context_dir: pathlib.Path | str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None, add_python: str | None = None, build_args: dict[str, str] = {}, ignore: collections.abc.Sequence[str] | collections.abc.Callable[[pathlib.Path], bool] = modal._image.AUTO_DOCKERIGNORE) -> '_Image'"
+    },
+    "from_gcp_artifact_registry": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(tag: str, secret: modal.secret._Secret | None = None, *, setup_dockerfile_commands: list[str] = [], force_build: bool = False, add_python: str | None = None, **kwargs) -> '_Image'"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, client: modal.client._Client | None = None) -> '_Image'"
+    },
+    "from_registry": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(tag: str, secret: modal.secret._Secret | None = None, *, setup_dockerfile_commands: list[str] = [], force_build: bool = False, add_python: str | None = None, **kwargs) -> '_Image'"
+    },
+    "from_scratch": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(force_build: bool = False) -> '_Image'"
+    },
+    "hydrate": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "imports": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self)"
+    },
+    "logs": {
+     "property": true
+    },
+    "micromamba": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(python_version: str | None = None, force_build: bool = False) -> '_Image'"
+    },
+    "micromamba_install": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *packages: str | list[str], spec_file: str | None = None, channels: list[str] = [], force_build: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "pip_install": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *packages: str | list[str], find_links: str | None = None, index_url: str | None = None, extra_index_url: str | None = None, pre: bool = False, extra_options: str = '', force_build: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "pip_install_from_pyproject": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, pyproject_toml: str, optional_dependencies: list[str] = [], *, find_links: str | None = None, index_url: str | None = None, extra_index_url: str | None = None, pre: bool = False, extra_options: str = '', force_build: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "pip_install_from_requirements": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, requirements_txt: str, find_links: str | None = None, *, index_url: str | None = None, extra_index_url: str | None = None, pre: bool = False, extra_options: str = '', force_build: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "pip_install_private_repos": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *repositories: str, git_user: str, find_links: str | None = None, index_url: str | None = None, extra_index_url: str | None = None, pre: bool = False, extra_options: str = '', gpu: str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, force_build: bool = False) -> '_Image'"
+    },
+    "pipe": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, func: collections.abc.Callable[typing.Concatenate[ForwardRef('modal.Image'), ~P], 'modal.Image'], *args: P.args, **kwargs: P.kwargs) -> '_Image'"
+    },
+    "poetry_install_from_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, poetry_pyproject_toml: str, poetry_lockfile: str | None = None, *, ignore_lockfile: bool = False, force_build: bool = False, with_: list[str] = [], without: list[str] = [], only: list[str] = [], poetry_version: str | None = 'latest', old_installer: bool = False, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "publish": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "run_commands": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *commands: str | list[str], env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume] | None = None, gpu: str | None = None, force_build: bool = False) -> '_Image'"
+    },
+    "run_function": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, raw_f: collections.abc.Callable[..., typing.Any], *, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, volumes: dict[str | pathlib.PurePosixPath, modal.volume._Volume | modal.cloud_bucket_mount._CloudBucketMount] = {}, network_file_systems: dict[str | pathlib.PurePosixPath, modal.network_file_system._NetworkFileSystem] = {}, gpu: str | list[str] | None = None, cpu: float | None = None, memory: int | None = None, timeout: int = 3600, cloud: str | None = None, region: str | collections.abc.Sequence[str] | None = None, force_build: bool = False, args: collections.abc.Sequence[typing.Any] = (), kwargs: dict[str, typing.Any] = {}, include_source: bool = True) -> '_Image'"
+    },
+    "shell": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, shell_commands: list[str]) -> '_Image'"
+    },
+    "uv_pip_install": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *packages: str | list[str], requirements: list[str] | None = None, find_links: str | None = None, index_url: str | None = None, extra_index_url: str | None = None, pre: bool = False, extra_options: str = '', force_build: bool = False, uv_version: str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "uv_sync": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, uv_project_dir: str = './', *, force_build: bool = False, groups: list[str] | None = None, extras: list[str] | None = None, frozen: bool = True, extra_options: str = '', uv_version: str | None = None, env: dict[str, str | None] | None = None, secrets: collections.abc.Collection[modal.secret._Secret] | None = None, gpu: str | None = None) -> '_Image'"
+    },
+    "workdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, path: str | pathlib.PurePosixPath) -> '_Image'"
+    }
+   }
+  },
+  "modal.NetworkFileSystem": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "add_local_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "add_local_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "ephemeral": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, create_if_missing: bool = False, client: modal.client._Client | None = None) -> '_NetworkFileSystem'"
+    },
+    "iterdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "listdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "read_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "remove_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "write_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Period": {
+   "bases": [
+    "Schedule"
+   ],
+   "fields": {},
+   "init": "(*, years: int = 0, months: int = 0, weeks: int = 0, days: int = 0, hours: int = 0, minutes: int = 0, seconds: float = 0) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.Probe": {
+   "bases": [],
+   "fields": {
+    "exec_argv": "tuple[str, ...] | None",
+    "interval_ms": "int",
+    "tcp_port": "int | None"
+   },
+   "init": "(tcp_port: int | None = None, exec_argv: tuple[str, ...] | None = None, interval_ms: int = 100) -> None",
+   "kind": "class",
+   "methods": {
+    "with_exec": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, *argv: str, interval_ms: int = 100) -> 'Probe'"
+    },
+    "with_tcp": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, port: int, *, interval_ms: int = 100) -> 'Probe'"
+    }
+   }
+  },
+  "modal.Proxy": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, client: modal.client._Client | None = None) -> '_Proxy'"
+    }
+   }
+  },
+  "modal.Queue": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "()",
+   "kind": "class",
+   "methods": {
+    "clear": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "ephemeral": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(queue_id: str, client: modal.client._Client | None = None) -> '_Queue'"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, create_if_missing: bool = False, client: modal.client._Client | None = None) -> '_Queue'"
+    },
+    "get": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "get_many": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "iterate": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "len": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "name": {
+     "property": true
+    },
+    "objects": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "put": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "put_many": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "validate_partition_key": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(partition: str | None) -> bytes"
+    }
+   }
+  },
+  "modal.Retries": {
+   "bases": [],
+   "fields": {},
+   "init": "(*, max_retries: int, backoff_coefficient: float = 2.0, initial_delay: float = 1.0, max_delay: float = 60.0)",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.Sandbox": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "create_connect_token": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "detach": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "exec": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "filesystem": {
+     "property": true
+    },
+    "get_tags": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "logs": {
+     "property": true
+    },
+    "mount_image": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "poll": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "reload_volumes": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "returncode": {
+     "property": true
+    },
+    "set_tags": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "snapshot_directory": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "snapshot_filesystem": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "stderr": {
+     "property": true
+    },
+    "stdin": {
+     "property": true
+    },
+    "stdout": {
+     "property": true
+    },
+    "terminate": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "tunnels": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "unmount_image": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "wait": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "wait_until_ready": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.SandboxSnapshot": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "from_id": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.SchedulerPlacement": {
+   "bases": [],
+   "fields": {
+    "proto": "SchedulerPlacement"
+   },
+   "init": "(region: str | collections.abc.Sequence[str] | None = None, zone: str | None = None, spot: bool | None = None, instance_type: str | collections.abc.Sequence[str] | None = None)",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.Secret": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "from_dict": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(env_dict: dict[str, str | None] = {}) -> '_Secret'"
+    },
+    "from_dotenv": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(path: str | pathlib.Path | None = None, *, filename: str = '.env', client: modal.client._Client | None = None) -> '_Secret'"
+    },
+    "from_local_environ": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(env_keys: list[str]) -> '_Secret'"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, required_keys: list[str] = [], client: modal.client._Client | None = None) -> '_Secret'"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "name": {
+     "property": true
+    },
+    "objects": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "update": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Server": {
+   "bases": [],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "autoscaler": {
+     "property": true
+    },
+    "from_id": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls: type['_Server'], server_id: str, *, client: modal.client._Client | None = None)"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls: type['_Server'], app_name: str, name: str, *, environment_name: str | None = None, client: modal.client._Client | None = None) -> '_Server'"
+    },
+    "get_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "hydrate": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "logs": {
+     "property": true
+    },
+    "metrics": {
+     "property": true
+    },
+    "object_id": {
+     "property": true
+    },
+    "sessions": {
+     "property": true
+    },
+    "stats": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "update_autoscaler": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    }
+   }
+  },
+  "modal.Tunnel": {
+   "bases": [],
+   "fields": {
+    "host": "str",
+    "port": "int",
+    "unencrypted_host": "str",
+    "unencrypted_port": "int"
+   },
+   "init": "(host: str, port: int, unencrypted_host: str, unencrypted_port: int) -> None",
+   "kind": "class",
+   "methods": {
+    "tcp_socket": {
+     "property": true
+    },
+    "tls_socket": {
+     "property": true
+    },
+    "url": {
+     "property": true
+    }
+   }
+  },
+  "modal.Volume": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "batch_upload": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "commit": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "copy_files": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "ephemeral": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "from_id": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(volume_id: str, client: modal.client._Client | None = None) -> '_Volume'"
+    },
+    "from_name": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(name: str, *, environment_name: str | None = None, create_if_missing: bool = False, version: 'modal_proto.api_pb2.VolumeFsVersion.ValueType | None' = None, create_options: 'VolumeCreateOptions | None' = None, client: modal.client._Client | None = None) -> '_Volume'"
+    },
+    "info": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "iterdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "listdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "name": {
+     "property": true
+    },
+    "objects": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "read_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "read_file_into_fileobj": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "read_only": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> '_Volume'"
+    },
+    "reload": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "remove_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(?)"
+    },
+    "with_mount_options": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, read_only: bool | None = None, sub_path: str | pathlib.PurePosixPath | None = None) -> '_Volume'"
+    }
+   }
+  },
+  "modal.Workspace": {
+   "bases": [
+    "Object"
+   ],
+   "fields": {},
+   "init": "()",
+   "kind": "class",
+   "methods": {
+    "billing": {
+     "property": true
+    },
+    "from_context": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(*, client: Optional[modal.client._Client] = None) -> '_Workspace'"
+    },
+    "members": {
+     "property": true
+    },
+    "name": {
+     "property": true
+    },
+    "proxy_tokens": {
+     "property": true
+    },
+    "service_users": {
+     "property": true
+    },
+    "settings": {
+     "property": true
+    }
+   }
+  },
+  "modal.__version__": {
+   "kind": "value",
+   "type": "str"
+  },
+  "modal.asgi_app": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, label: str | None = None, custom_domains: collections.abc.Iterable[str] | None = None, requires_proxy_auth: bool = False) -> collections.abc.Callable[[modal._partial_function._PartialFunction | collections.abc.Callable[[], typing.Any] | collections.abc.Callable[[typing.Any], typing.Any]], modal._partial_function._PartialFunction]"
+  },
+  "modal.batched": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, max_batch_size: int, wait_ms: int) -> collections.abc.Callable[[typing.Union[modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType], collections.abc.Callable[~P, +ReturnType]]], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]"
+  },
+  "modal.billing": {
+   "kind": "module"
+  },
+  "modal.clustered": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, size: int, rdma: bool = False) -> modal._partial_function._ClusteredDecorator"
+  },
+  "modal.concurrent": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, max_inputs: int | None = None, target_inputs: int | None = None) -> collections.abc.Callable[[typing.Union[collections.abc.Callable[~P, +ReturnType], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]"
+  },
+  "modal.current_function_call_id": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> str | None"
+  },
+  "modal.current_input_id": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> str | None"
+  },
+  "modal.enable_output": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> collections.abc.Generator[None, None, None]"
+  },
+  "modal.enter": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, snap: bool = False) -> collections.abc.Callable[[modal._partial_function._PartialFunction | collections.abc.Callable[[typing.Any], typing.Any]], modal._partial_function._PartialFunction]"
+  },
+  "modal.exception.AlreadyExistsError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.Any": {
+   "bases": [],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {}
+  },
+  "modal.exception.AsyncUsageWarning": {
+   "bases": [
+    "UserWarning"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.AuthError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ClientClosed": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ConflictError": {
+   "bases": [
+    "InvalidError",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ConnectionError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.DataLossError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.DeprecationError": {
+   "bases": [
+    "UserWarning"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.DeserializationError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.Error": {
+   "bases": [
+    "Exception"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ExecTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ExecutionError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.FunctionTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ImageBuildError": {
+   "bases": [
+    "RemoteError"
+   ],
+   "fields": {},
+   "init": "(message: str, image_id: str)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InputCancellation": {
+   "bases": [
+    "BaseException"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InteractiveTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InternalAPIWarning": {
+   "bases": [
+    "UserWarning"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InternalError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InternalFailure": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.InvalidError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.LogsFetchError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ModuleNotMountable": {
+   "bases": [
+    "Exception"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.MountUploadTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.NotFoundError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.OutputExpiredError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.PermissionDeniedError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.RemoteError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.RequestSizeError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ResourceExhaustedError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemDirectoryNotEmptyError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemFileTooLargeError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemIsADirectoryError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemNotADirectoryError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemNotFoundError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemPathAlreadyExistsError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxFilesystemPermissionError": {
+   "bases": [
+    "SandboxFilesystemError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxTerminatedError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SandboxTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SerializationError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ServerWarning": {
+   "bases": [
+    "UserWarning"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.ServiceError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.SnapshotCreationError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.TimeoutError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.UnimplementedError": {
+   "bases": [
+    "Error",
+    "_GRPCErrorWrapper"
+   ],
+   "fields": {},
+   "init": "(message: str | None = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.UserCodeException": {
+   "bases": [
+    "Exception"
+   ],
+   "fields": {},
+   "init": "(exc)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.VersionError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.VolumeUploadTimeoutError": {
+   "bases": [
+    "TimeoutError"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.WorkspaceManagementError": {
+   "bases": [
+    "Error"
+   ],
+   "fields": {},
+   "init": "(?)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "modal.exception.grpclib": {
+   "kind": "module"
+  },
+  "modal.exception.random": {
+   "kind": "module"
+  },
+  "modal.exception.signal": {
+   "kind": "module"
+  },
+  "modal.exception.simulate_preemption": {
+   "async": false,
+   "kind": "function",
+   "sig": "(wait_seconds: int, jitter_seconds: int = 0)"
+  },
+  "modal.exception.synchronicity": {
+   "kind": "module"
+  },
+  "modal.exit": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> collections.abc.Callable[[collections.abc.Callable[[typing.Any], typing.Any]], modal._partial_function._PartialFunction]"
+  },
+  "modal.experimental": {
+   "kind": "module"
+  },
+  "modal.fastapi_endpoint": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, method: str = 'GET', label: str | None = None, custom_domains: collections.abc.Iterable[str] | None = None, docs: bool = False, requires_proxy_auth: bool = False) -> collections.abc.Callable[[typing.Union[modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType], collections.abc.Callable[~P, +ReturnType]]], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]"
+  },
+  "modal.forward": {
+   "kind": "value",
+   "type": "FunctionWithAio"
+  },
+  "modal.interact": {
+   "kind": "value",
+   "type": "FunctionWithAio"
+  },
+  "modal.is_local": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> bool"
+  },
+  "modal.method": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, is_generator: bool | None = None) -> modal._partial_function._MethodDecoratorType"
+  },
+  "modal.parameter": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, default: Any = modal.cls._NO_DEFAULT(), init: bool = True) -> Any"
+  },
+  "modal.sessioned": {
+   "async": false,
+   "kind": "function",
+   "sig": "() -> collections.abc.Callable[[typing.Union[collections.abc.Callable[~P, +ReturnType], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]], modal._partial_function._PartialFunction[~P, +ReturnType, +ReturnType]]"
+  },
+  "modal.types": {
+   "kind": "module"
+  },
+  "modal.web_endpoint": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*args, **kwargs) -> None"
+  },
+  "modal.web_server": {
+   "async": false,
+   "kind": "function",
+   "sig": "(port: int, *, startup_timeout: float = 5.0, label: str | None = None, custom_domains: collections.abc.Iterable[str] | None = None, requires_proxy_auth: bool = False) -> collections.abc.Callable[[modal._partial_function._PartialFunction | collections.abc.Callable[[], typing.Any] | collections.abc.Callable[[typing.Any], typing.Any]], modal._partial_function._PartialFunction]"
+  },
+  "modal.wsgi_app": {
+   "async": false,
+   "kind": "function",
+   "sig": "(*, label: str | None = None, custom_domains: collections.abc.Iterable[str] | None = None, requires_proxy_auth: bool = False) -> collections.abc.Callable[[modal._partial_function._PartialFunction | collections.abc.Callable[[], typing.Any] | collections.abc.Callable[[typing.Any], typing.Any]], modal._partial_function._PartialFunction]"
+  }
+ },
+ "version": "1.6.2"
+}

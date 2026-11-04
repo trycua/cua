@@ -86,7 +86,6 @@ jobs:
 
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
-            ["libs/typescript/fleet/"]="npm/fleet"
             ["libs/xfce-cua/"]="docker/xfce-cua"
             ["libs/xfce/"]="docker/xfce"
             ["libs/kasm/"]="docker/kasm"

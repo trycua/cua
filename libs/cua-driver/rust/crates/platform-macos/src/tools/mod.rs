@@ -264,6 +264,8 @@ pub use check_permissions::{
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
+pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
@@ -300,6 +302,35 @@ pub(crate) fn background_refusal_result(
         refusal.code, refusal.reason
     ))
     .with_structured(structured)
+}
+
+/// Hint shown with every `windowserver_connection_invalid` refusal.
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
+
+/// Structured refusal for a background action whose no-raise focus step got
+/// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
+/// to the target.
+pub(crate) fn windowserver_connection_refusal(
+    pid: i32,
+    window_id: Option<u32>,
+) -> cua_driver_core::protocol::ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background input is not available for pid {pid}: the WindowServer connection is \
+             invalid (SLPSPostEventRecordTo returned 1002). {WINDOWSERVER_INVALID_HINT}"
+        ),
+        "background_unavailable",
+        "the daemon has no valid WindowServer connection, so no-raise focus cannot work; \
+         run the app-bundle daemon, or retry with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "reason": "windowserver_connection_invalid",
+            "status": crate::input::skylight::WINDOWSERVER_INVALID_CONNECTION,
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "hint": WINDOWSERVER_INVALID_HINT,
+        }),
+    )
 }
 
 /// Exclusive per-process ownership of one background mutation. Callers must
@@ -433,6 +464,9 @@ pub(crate) async fn acquire_key_scope(
     };
     match tokio::task::spawn_blocking(move || key_scope(pid, Some(wid))).await {
         Ok(Ok(scope)) => Ok(scope),
+        Ok(Err(_)) if crate::input::skylight::windowserver_connection_invalid() => {
+            Err(windowserver_connection_refusal(pid, Some(wid)))
+        }
         Ok(Err(reason)) => Err(background_refusal_result(
             pid,
             wid,
@@ -718,23 +752,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Convert native pixels from `get_desktop_state` into the logical point space
-/// used by CoreGraphics input APIs. Retina scaled modes cannot rely on the
-/// nominal backing factor alone, so derive the ratio from the actual PNG.
-pub async fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
-    let ratio = tokio::task::spawn_blocking(|| {
-        let logical_w = get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-        let shot_w = crate::capture::screenshot_display_bytes()
-            .ok()
-            .and_then(|png| crate::capture::png_dimensions(&png).ok())
-            .map(|(w, _)| w as f64);
-        match (shot_w, logical_w) {
-            (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-            _ => 1.0,
-        }
-    })
-    .await
-    .unwrap_or(1.0);
+/// Convert native pixels from `get_desktop_state` into logical points.
+pub fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
+    let ratio = get_screen_size::main_screen_size().map_or(1.0, |(_, _, s)| s);
     (x / ratio, y / ratio)
 }
 
@@ -920,7 +940,11 @@ pub(super) fn target_pid(
         .get("element_token")
         .is_some_and(|token| !token.is_null())
     {
-        return Err(cua_driver_core::element_token::stale_token_without_pid());
+        // The token is gone, but a recently retired snapshot still says whose
+        // it was, so the refusal can name what is current for that process.
+        return Err(cua_driver_core::element_token::stale_token_without_pid(
+            state.snapshots.token_owner(args),
+        ));
     }
     Err(cua_driver_core::protocol::ToolResult::error(
         "Missing required integer field: pid. Pass pid, or pass an element_token from the \
@@ -966,10 +990,8 @@ pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolRes
     }))
 }
 
-/// Register all macOS tools into the registry. `compat=true` swaps the
-/// regular `screenshot` tool for the Claude Code computer-use compat
-/// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
-/// note telling the caller to use pixel-addressed tools.
+/// Register all macOS tools into the registry. `compat` is retained for
+/// launch compatibility but currently has no effect on the tool surface.
 pub fn register_all(
     registry: &mut ToolRegistry,
     compat: bool,
@@ -1037,7 +1059,7 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_snapshots(state.snapshots.clone());
+    cua_driver_core::snapshot_store::register_runtime_store(&state.snapshots);
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
@@ -1131,14 +1153,10 @@ pub fn register_all(
         registry,
         Arc::new(clipboard::MacosClipboard::new()),
     );
-    // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
-    // screenshot the Claude Code computer-use compat loop relies on now comes
-    // from `get_window_state` (which always returns BOTH the tree AND a
-    // screenshot — perception is mode-agnostic; `capture_mode` is deprecated/
-    // ignored) for a window, or `get_desktop_state` for the whole screen.
-    // `compat` no longer gates a tool swap here — the flag's live purpose is to
-    // register the MCP server under the `cua-computer-use` name, which is what
-    // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
+    // The standalone `screenshot` tool was removed in #1692. Window capture
+    // now comes from `get_window_state` (tree plus screenshot by default), while
+    // `get_desktop_state` handles explicit full-display capture. `capture_mode`
+    // is deprecated and ignored. `compat` no longer gates a tool swap here.
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(
@@ -1203,6 +1221,29 @@ pub fn register_all(
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();
+}
+
+#[cfg(test)]
+mod registry_surface_tests {
+    use super::*;
+
+    fn names(compat: bool) -> Vec<String> {
+        let mut registry = ToolRegistry::new();
+        register_all(&mut registry, compat, false, false, None);
+        registry.tool_names().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn default_and_legacy_compat_surfaces_have_no_screenshot_tool() {
+        let default = names(false);
+        let compat = names(true);
+        assert!(!default.iter().any(|name| name == "screenshot"));
+        assert!(!compat.iter().any(|name| name == "screenshot"));
+        assert_eq!(
+            default, compat,
+            "legacy compat flag must remain surface-neutral"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1368,5 +1409,25 @@ mod recording_start_guard_tests {
         assert!(ok.is_ok(), "anonymous start must never be gated");
         assert!(rec.current_state().enabled);
         let _ = rec.stop_owner(None);
+    }
+}
+
+#[cfg(test)]
+mod windowserver_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn refusal_names_the_reason_and_the_app_bundle_daemon() {
+        let result = windowserver_connection_refusal(42, Some(7));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["reason"], "windowserver_connection_invalid");
+        assert_eq!(structured["status"], 1002);
+        assert_eq!(structured["window_id"], 7);
+        assert!(structured["hint"]
+            .as_str()
+            .unwrap()
+            .contains("cua-driver permissions grant"));
     }
 }

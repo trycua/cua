@@ -2,7 +2,6 @@
 
     cb run .                  # local gVisor container, oracle solution
     cb run . --kind vm        # the same task in a local QEMU VM
-    cb run . --on cloud       # a Fleet sandbox
     cb interact .             # open the sandbox and try it yourself
 
 Each variant asks for one word in a file. Replace the setup, the oracle and

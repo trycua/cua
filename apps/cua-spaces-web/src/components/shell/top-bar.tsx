@@ -11,6 +11,7 @@ import { bindingFor } from "@/lib/keybindings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
 import { useNavItems } from "./nav";
+import { TopBarUpdateIndicator } from "./update-indicator";
 
 export function TopBar() {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
@@ -40,12 +41,13 @@ export function TopBar() {
       <button
         type="button"
         onClick={() => setPaletteOpen(true)}
-        className="flex h-7 w-60 items-center gap-2 rounded-md border bg-card/60 px-2 text-xs text-muted-foreground shadow-xs outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring/60 dark:bg-white/[0.04]"
+        className="flex h-7 w-60 items-center gap-2 rounded-lg border bg-card/60 px-2 text-xs text-muted-foreground shadow-xs outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring/60 dark:bg-white/[0.04]"
       >
         <SearchIcon className="size-3.5" />
         <span className="flex-1 truncate text-left">Search or run a command</span>
         <Shortcut spec={bindingFor("commandPalette.toggle") ?? ""} />
       </button>
+      {sidebarOpen ? null : <TopBarUpdateIndicator />}
       <Tooltip content={resolved === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}>
         <Button
           variant="ghost"

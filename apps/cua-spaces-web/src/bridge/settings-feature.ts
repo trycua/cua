@@ -21,6 +21,7 @@ import type {
   EnrollMethod,
   EnrollState,
   EnrollView,
+  MachinesAccountView,
 } from "./contracts/devices";
 import type { SettingsPage, SettingsRow, SettingsSection } from "./contracts/host";
 import type { NotificationInput, NotificationsView, SystemNote } from "./contracts/notifications";
@@ -35,6 +36,7 @@ import type {
   StorageInput,
   StorageRequest,
   StorageState,
+  UpdateState,
 } from "./contracts/settings";
 import type { HostEvent, SettingsValues } from "./protocol";
 import {
@@ -45,6 +47,7 @@ import {
   chooseExperiment,
   cleanDeviceName,
   devicesView,
+  machinesAccount,
   enrollInitial,
   enrollReduce,
   enrollView,
@@ -60,7 +63,7 @@ import {
   storageSection,
 } from "./settings-derive";
 
-export type FeatureName = "about" | "experiments" | "loginItem" | "devices" | "storage" | "notifications";
+export type FeatureName = "about" | "update" | "experiments" | "loginItem" | "devices" | "storage" | "notifications";
 
 export interface FeatureResource<T> {
   data: T | undefined;
@@ -78,6 +81,12 @@ export interface AboutData {
   canChange: boolean;
 }
 
+export interface UpdateData {
+  state: UpdateState;
+  /** "Restart to update" is running. */
+  installing: boolean;
+}
+
 export interface ExperimentsData {
   experiments: Experiments;
   /** The core's Experiments tab; null without the core. */
@@ -93,10 +102,14 @@ export interface LoginItemData {
 export interface DevicesData {
   input: DevicesInput;
   view: DevicesView | null;
+  /** The Machines page's account part: waiting machines, this machine's trust, recent access. */
+  account: MachinesAccountView | null;
   /** The enroll sheet, while open. */
   enroll: { state: EnrollState; view: EnrollView | null } | null;
   /** The approval sheet, while open. */
   approve: { state: ApproveSheetState; view: ApproveSheetView | null } | null;
+  /** Sign-ins whose "Not now" was chosen this session: they wait quietly. */
+  dismissed: string[];
   /** A row action is running. */
   busy: boolean;
   /** The last row action's failure. */
@@ -130,6 +143,10 @@ export interface FeatureOptions {
 }
 
 const NOTIFICATIONS_POLL_MS = 5_000;
+/** The host also tells the page when its updater moves on (`update.changed`);
+ * this is the slow safety net, and the pace while a download runs. */
+const UPDATE_POLL_MS = 60_000;
+const UPDATE_DOWNLOAD_POLL_MS = 2_000;
 const STORAGE_POLL_MS = 2_000;
 const ENROLL_POLL_MS = 3_000;
 const ENROLL_POLL_LIMIT = 200;
@@ -164,6 +181,7 @@ export class SettingsFeature {
   private readonly options: FeatureOptions;
   private resources: { [K in FeatureName]: FeatureResource<unknown> } = {
     about: idle(),
+    update: idle(),
     experiments: idle(),
     loginItem: idle(),
     devices: idle(),
@@ -182,6 +200,8 @@ export class SettingsFeature {
 
   private about: AboutInput | undefined;
   private aboutCanChange = true;
+  private update: UpdateState | undefined;
+  private updateInstalling = false;
   private experiments: Experiments = {};
   private loginItem: LoginItemInput | undefined;
   private devices: DevicesInput | undefined;
@@ -236,6 +256,7 @@ export class SettingsFeature {
     this.ensured.add(name);
     // The launch-at-login line and Storage's place follow the experiments.
     if (name === "loginItem" || name === "storage") this.ensure("experiments");
+    if (name === "update") this.every("update-slow", UPDATE_POLL_MS, () => this.refresh("update"));
     if (name === "notifications") this.every("notifications", NOTIFICATIONS_POLL_MS, () => this.refresh("notifications"));
     void this.refresh(name);
   }
@@ -259,6 +280,15 @@ export class SettingsFeature {
           const about = await this.adapter.call("about.get", {});
           if (pinned()) return;
           this.about = about;
+          break;
+        }
+        case "update": {
+          const state = await this.adapter.call("update.get", {});
+          if (pinned()) return;
+          this.update = state;
+          // A running download is followed closely; the host's event covers the rest.
+          if (state.status === "downloading") this.every("update", UPDATE_DOWNLOAD_POLL_MS, () => this.refresh("update"));
+          else this.stop("update");
           break;
         }
         case "experiments": {
@@ -297,6 +327,10 @@ export class SettingsFeature {
       this.publish(name);
     } catch (e) {
       if (this.disposed) return;
+      if (name === "update" && isUnsupported(e)) {
+        this.stop("update");
+        this.stop("update-slow");
+      }
       this.set(name, { isLoading: false, error: isUnsupported(e) ? null : toError(e), unsupported: isUnsupported(e) });
     }
   }
@@ -319,6 +353,9 @@ export class SettingsFeature {
       case "about":
         if (this.about) done({ input: this.about, view: aboutView(this.core, this.about), canChange: this.aboutCanChange } satisfies AboutData);
         break;
+      case "update":
+        if (this.update) done({ state: this.update, installing: this.updateInstalling } satisfies UpdateData);
+        break;
       case "experiments":
         done({ experiments: this.experiments, page: experimentsPage(this.core, this.experiments) } satisfies ExperimentsData);
         // What follows the switches.
@@ -334,8 +371,10 @@ export class SettingsFeature {
         done({
           input: this.devices,
           view: devicesView(this.core, this.devices, now),
+          account: machinesAccount(this.core, this.devices, now),
           enroll: this.enroll ? { state: this.enroll, view: enrollView(this.core, this.enroll) } : null,
           approve: this.approve ? { state: this.approve, view: approveView(this.core, this.approve, list) } : null,
+          dismissed: [...this.dismissed],
           busy: this.devicesBusy,
           actionError: this.devicesError,
           now,
@@ -367,6 +406,23 @@ export class SettingsFeature {
     const t = this.timers.get(key);
     if (t) clearInterval(t);
     this.timers.delete(key);
+  }
+
+  /* ---- In-app update ---- */
+
+  /** "Restart to update". The host relaunches the app when it accepts. */
+  async installUpdate(): Promise<void> {
+    if (this.updateInstalling) return;
+    this.updateInstalling = true;
+    this.publish("update");
+    try {
+      this.update = await this.adapter.call("update.install", {});
+    } catch (e) {
+      throw toError(e);
+    } finally {
+      this.updateInstalling = false;
+      this.publish("update");
+    }
   }
 
   /* ---- About ---- */
@@ -543,6 +599,26 @@ export class SettingsFeature {
   closeApproval(): void {
     this.approve = null;
     this.publish("devices");
+  }
+
+  /**
+   * "Add machine" on a machine waiting in the list: the machine is approved by its id (the
+   * person is signed in and sees it by name and system), with no code to type. The host still asks
+   * for presence first. A failure is thrown for the caller to show.
+   */
+  async addMachine(deviceId: string): Promise<void> {
+    const prompt = this.currentDevicesView()?.approvals.find((p) => p.deviceId === deviceId);
+    if (!prompt) return;
+    // The by-id request is what the core makes of an approval that needs no code.
+    this.approve = approveOpen(this.core, { ...prompt, expired: true });
+    this.publish("devices");
+    await this.approveDevice();
+    const failed = this.approve ? approveView(this.core, this.approve, this.devicesList())?.error : null;
+    if (failed) {
+      this.approve = null;
+      this.publish("devices");
+      throw new Error(failed);
+    }
   }
 
   setApprovalCode(code: string): void {
@@ -811,6 +887,10 @@ export class SettingsFeature {
     switch (e.type) {
       case "settings.changed":
         reload("about", "experiments", "loginItem");
+        break;
+      case "update.changed":
+        // Settings, About follows the same updater (Last checked, Checking...).
+        reload("update", "about");
         break;
       case "session.signedIn":
       case "session.signedOut":

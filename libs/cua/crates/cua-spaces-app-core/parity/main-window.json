@@ -16,9 +16,9 @@
       "error": null
     },
     {
-      "id": "cloud:builder",
+      "id": "direct:builder",
       "name": "builder",
-      "provider": "cloud",
+      "provider": "direct",
       "spacesdVersion": "0.4.0",
       "features": ["desktop_stream"],
       "addedAt": "2026-09-24T08:00:00Z",
@@ -177,7 +177,6 @@
     {
       "signIn": { "kind": "idle" },
       "menuBar": false,
-      "defaultLocation": "local",
       "telemetry": null,
       "agents": null
     },
@@ -185,15 +184,12 @@
       "apiKeyClient": "client-123",
       "signIn": { "kind": "failed", "message": "The code expired" },
       "menuBar": true,
-      "defaultLocation": "cloud",
-      "locationLockedBy": "CUA_DEFAULT_ON",
       "telemetry": { "enabled": false, "lockedBy": "DO_NOT_TRACK" },
       "agents": [],
       "agentsBusy": false
     },
     {
       "signIn": { "kind": "waiting", "userCode": "WXYZ-1234" },
-      "defaultLocation": "local",
       "telemetry": { "enabled": true },
       "agentsBusy": false,
       "agentsPending": ["cursor"]
@@ -201,7 +197,6 @@
     {
       "identity": "ada@example.com",
       "canSignOut": true,
-      "defaultLocation": "local",
       "telemetry": { "enabled": true },
       "agentsBusy": true
     }

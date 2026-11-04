@@ -8,7 +8,6 @@ on:
         required: true
         type: choice
         options:
-          - npm/fleet
           - docker/cuabot
           - docker/kasm
           - docker/xfce-cua
@@ -63,10 +62,6 @@ jobs:
         id: package
         run: |
           case "${{ inputs.service }}" in
-            "npm/fleet")
-              echo "directory=libs/typescript/fleet" >> $GITHUB_OUTPUT
-              echo "type=npm" >> $GITHUB_OUTPUT
-              ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT

@@ -80,6 +80,7 @@ struct DomMeta {
     attrs: HashMap<String, String>,
     order: usize,
     css_hidden: bool,
+    transparent: bool,
     parent_backend_node_id: Option<i64>,
     frame_id: Option<String>,
 }
@@ -149,6 +150,7 @@ pub(crate) struct OmissionCounts {
     pub(crate) unknown: usize,
     pub(crate) budget: usize,
     pub(crate) unprovable_frame: usize,
+    pub(crate) not_rendered: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +168,7 @@ pub(crate) struct SemanticDocument {
     pub(crate) nodes: Vec<SemanticNode>,
     pub(crate) css_hidden_dom_count: usize,
     pub(crate) unprovable_frame_count: usize,
+    pub(crate) not_rendered_count: usize,
     pub(crate) complete: bool,
 }
 
@@ -186,6 +189,7 @@ impl SemanticDocument {
         self.nodes.extend(other.nodes);
         self.css_hidden_dom_count += other.css_hidden_dom_count;
         self.unprovable_frame_count += other.unprovable_frame_count;
+        self.not_rendered_count += other.not_rendered_count;
         self.complete = if was_empty {
             other.complete
         } else {
@@ -232,6 +236,7 @@ impl SemanticDocument {
         let mut omissions = OmissionCounts {
             css_hidden: self.css_hidden_dom_count.max(semantic_css_hidden),
             unprovable_frame: self.unprovable_frame_count,
+            not_rendered: self.not_rendered_count,
             ..Default::default()
         };
         for node in &self.nodes {
@@ -293,6 +298,10 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
         let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
         let attrs = attributes(node);
         let hidden = inherited_hidden || statically_hidden(&attrs);
+        let transparent = statically_transparent(&attrs)
+            || parent_backend_node_id
+                .and_then(|parent| index.nodes.get(&parent))
+                .is_some_and(|parent| parent.transparent);
         let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
         let frame_id = if node_type == 9 {
             node.get("frameId").and_then(Value::as_str)
@@ -315,6 +324,7 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
                     attrs,
                     order: *order,
                     css_hidden: hidden,
+                    transparent,
                     parent_backend_node_id,
                     frame_id: frame_id.map(str::to_owned),
                 },
@@ -568,6 +578,7 @@ pub(crate) fn compose_accessibility_tree(
         nodes,
         css_hidden_dom_count: dom.css_hidden_count,
         unprovable_frame_count: 0,
+        not_rendered_count: 0,
         complete: true,
     }
 }
@@ -725,32 +736,38 @@ fn statically_hidden(attrs: &HashMap<String, String>) -> bool {
     if attrs.contains_key("hidden") || attrs.get("aria-hidden").is_some_and(|v| v == "true") {
         return true;
     }
-    let style = attrs
+    inline_style(attrs).any(|(property, value)| hiding_style(property, value))
+}
+
+fn statically_transparent(attrs: &HashMap<String, String>) -> bool {
+    inline_style(attrs).any(|(property, value)| {
+        property.trim().eq_ignore_ascii_case("opacity") && hiding_style(property, value)
+    })
+}
+
+fn inline_style(attrs: &HashMap<String, String>) -> impl Iterator<Item = (&str, &str)> {
+    attrs
         .get("style")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_default();
-    style.contains("display:none")
-        || style.contains("display: none")
-        || style.contains("visibility:hidden")
-        || style.contains("visibility: hidden")
-        || style.contains("opacity:0")
-        || style.contains("opacity: 0")
+        .into_iter()
+        .flat_map(|style| style.split(';'))
+        .filter_map(|declaration| declaration.split_once(':'))
+}
+
+fn hiding_style(property: &str, value: &str) -> bool {
+    let value = value.trim().trim_end_matches("!important").trim_end();
+    match property.trim().to_ascii_lowercase().as_str() {
+        "display" => value.eq_ignore_ascii_case("none"),
+        "visibility" => value.eq_ignore_ascii_case("hidden"),
+        "opacity" => value.parse::<f64>().is_ok_and(|opacity| opacity <= 0.0),
+        _ => false,
+    }
 }
 
 fn layout_hidden(layout: &LayoutMeta) -> bool {
     layout
         .styles
-        .get("display")
-        .is_some_and(|value| value.eq_ignore_ascii_case("none"))
-        || layout
-            .styles
-            .get("visibility")
-            .is_some_and(|value| value.eq_ignore_ascii_case("hidden"))
-        || layout
-            .styles
-            .get("opacity")
-            .and_then(|value| value.parse::<f64>().ok())
-            .is_some_and(|opacity| opacity <= 0.0)
+        .iter()
+        .any(|(property, value)| hiding_style(property, value))
 }
 
 fn classify_visibility(
@@ -758,7 +775,10 @@ fn classify_visibility(
     layout: Option<&LayoutMeta>,
     viewport: &Viewport,
 ) -> BrowserVisibility {
-    if dom.is_some_and(|meta| meta.css_hidden) || layout.is_some_and(layout_hidden) {
+    let rendered = layout.is_some_and(|layout| layout.bounds.is_some_and(Rect::has_area));
+    if dom.is_some_and(|meta| meta.transparent || (meta.css_hidden && !rendered))
+        || layout.is_some_and(layout_hidden)
+    {
         return BrowserVisibility::CssHidden;
     }
     let Some(layout) = layout else {
@@ -1173,6 +1193,7 @@ mod tests {
             attrs: HashMap::from([("type".into(), "file".into())]),
             order: 0,
             css_hidden: false,
+            transparent: false,
             parent_backend_node_id: None,
             frame_id: None,
         };
@@ -1185,6 +1206,19 @@ mod tests {
 
     fn frame() -> FrameRef {
         FrameRef::main_unproven()
+    }
+
+    #[test]
+    fn not_rendered_count_propagates_through_extend_and_page() {
+        let mut document = SemanticDocument {
+            not_rendered_count: 1,
+            ..Default::default()
+        };
+        document.extend(SemanticDocument {
+            complete: true,
+            ..Default::default()
+        });
+        assert_eq!(document.page(0, 300, None, None).omissions.not_rendered, 1);
     }
 
     #[test]
@@ -1224,6 +1258,90 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(actionable.len(), 1);
         assert_eq!(actionable[0].name.as_deref(), Some("Reply"));
+    }
+
+    #[test]
+    fn inline_style_hides_only_on_exact_hiding_declarations() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "children": [
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 1,
+                 "attributes": ["style", "opacity: 0.98; transition: opacity 0.2s"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 2,
+                 "attributes": ["style", "--overlay-display:none;opacity:0.5"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 3,
+                 "attributes": ["style", "color: red; display: none !important"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "OPACITY:0"]}
+            ]
+        }));
+        let hidden = |backend| dom.nodes[&backend].css_hidden;
+        assert!(!hidden(1));
+        assert!(!hidden(2));
+        assert!(hidden(3));
+        assert!(hidden(4));
+        assert_eq!(dom.css_hidden_count, 2);
+    }
+
+    #[test]
+    fn rendered_layout_overrides_inherited_static_hiding() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "FORM", "backendNodeId": 1,
+                 "attributes": ["style", "visibility: hidden"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 2,
+                     "attributes": ["aria-label", "Business name",
+                                    "style", "visibility: visible"]},
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 3,
+                     "attributes": ["aria-label", "Unrendered"]}
+                 ]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "opacity: 0"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "SPAN", "children": [
+                        {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 5,
+                         "attributes": ["aria-label", "Transparent"]}
+                    ]}
+                 ]}
+            ]
+        }));
+        let layout = build_layout_index(&json!({
+            "strings": ["block", "visible", "1", "auto"],
+            "documents": [{
+                "nodes": {"backendNodeId": [2, 5]},
+                "layout": {
+                    "nodeIndex": [0, 1],
+                    "bounds": [[10, 10, 200, 30], [10, 50, 200, 30]],
+                    "styles": [[0, 1, 2, 3, 3, 3, 3], [0, 1, 2, 3, 3, 3, 3]],
+                    "paintOrders": [1, 2]
+                }
+            }]
+        }));
+        let viewport = parse_viewport(&json!({
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0,
+                                  "clientWidth": 800.0, "clientHeight": 600.0}
+        }));
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{"nodeId": "root", "ignored": false,
+                "role": {"value": "RootWebArea"}, "childIds": []}]}),
+            &dom,
+            &layout,
+            &viewport,
+            frame(),
+        );
+        let page = document.page(0, 300, None, None);
+        let names = page
+            .selected
+            .iter()
+            .filter_map(|node| Some((node.name.as_deref()?, node.visibility)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![("Business name", BrowserVisibility::InViewport)]
+        );
     }
 
     #[test]

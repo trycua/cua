@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 
 import type { KvAccessCommand, KvListView, KvPage } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { GroupedSection } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,7 +38,7 @@ export function CategoryPane({
   onRun: (command: KvAccessCommand) => void;
   onDismiss: (imports: string[]) => void;
 }) {
-  const focused = useRef<HTMLLIElement | null>(null);
+  const focused = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (focus) focused.current?.scrollIntoView?.({ block: "center" });
   }, [focus, list.access.length]);
@@ -47,10 +48,14 @@ export function CategoryPane({
         <Section>
           {list.pending.map((p) => (
             <Row key={p.id} data-waiting={p.id} title={p.claims.join("\n")}>
-              <span className="min-w-0 flex-1 truncate">
-                {p.caller} ({p.badge.text}) · {p.summary} · {p.wants}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">
+                  {p.caller} ({p.badge.text})
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">{p.summary}</span>
+                <span className="block truncate text-xs text-muted-foreground">{p.wants}</span>
               </span>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => onDeny(p.id)}>
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => onDeny(p.id)}>
                 {page.labels.deny}
               </Button>
               <Button size="sm" disabled={page.disabled || busy} onClick={() => onReview(p.id)}>
@@ -63,24 +68,27 @@ export function CategoryPane({
       {list.access.length ? (
         <Section>
           {page.revokeAll ? (
-            <li className="flex justify-end px-4 py-2">
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => onRun({ type: "revoke-grant", id: "*" })}>
+            <div className="flex justify-end px-4 py-2">
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => onRun({ type: "revoke-grant", id: "*" })}>
                 {page.labels.revokeAll}
               </Button>
-            </li>
+            </div>
           ) : null}
           {list.access.map((a) => {
             const hidden = a.imports.length > 0 && a.imports.every((i) => dismissed.includes(i));
             return (
               <Row key={a.key} data-access={a.key} focused={focus === a.key} ref={focus === a.key ? focused : undefined} title={a.detail}>
-                <span className="min-w-0 flex-1 truncate">{a.detail ? `${a.text} · ${a.detail}` : a.text}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{a.text}</span>
+                  {a.detail ? <span className="block truncate text-xs text-muted-foreground">{a.detail}</span> : null}
+                </span>
                 {/* Hides the notch's indicator only; Wipe removes the access. */}
                 {a.imports.length > 0 && !hidden ? (
                   <Button size="sm" variant="ghost" title="Hide from the notch. Access stays until you wipe it." onClick={() => onDismiss(a.imports)}>
                     Dismiss
                   </Button>
                 ) : null}
-                <Button size="sm" variant="outline" disabled={busy} onClick={() => onRun(a.command as KvAccessCommand)}>
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => onRun(a.command as KvAccessCommand)}>
                   {a.actionLabel}
                 </Button>
               </Row>
@@ -109,13 +117,17 @@ export function CategoryPane({
 }
 
 function Section({ children }: { children: React.ReactNode }) {
-  return <ul className="divide-y overflow-hidden rounded-lg border bg-card">{children}</ul>;
+  return <GroupedSection>{children}</GroupedSection>;
 }
 
-function Row({ children, focused, ...rest }: React.ComponentProps<"li"> & { focused?: boolean }) {
+function Row({ children, focused, ...rest }: React.ComponentProps<"div"> & { focused?: boolean }) {
   return (
-    <li {...rest} data-focused={focused || undefined} className={cn("flex items-center gap-2 px-4 py-2.5 text-[13px] transition-colors", focused && "bg-brand-surface")}>
+    <div
+      {...rest}
+      data-focused={focused || undefined}
+      className={cn("flex min-h-11 items-center gap-2 px-4 py-2.5 text-[13px] transition-colors", focused && "bg-brand-surface")}
+    >
       {children}
-    </li>
+    </div>
   );
 }

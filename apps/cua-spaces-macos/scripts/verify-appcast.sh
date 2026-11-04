@@ -5,8 +5,9 @@
 # Checks one release's item in a Sparkle appcast the way the installed app
 # will read it: the feed parses; the item for the disk image names its
 # bundle version (sparkle:version is the app's CFBundleVersion, which
-# Sparkle compares), the full version, the beta channel exactly for an
-# X.Y.Z-suffix version, the app's minimum macOS and the image's exact
+# Sparkle compares), the full version, the nightly channel for a nightly
+# (X.Y.Z-nightly...) and the beta channel for any other X.Y.Z-suffix
+# version, the app's minimum macOS and the image's exact
 # length; and its EdDSA signature verifies with the public key the app
 # ships (SUPublicEDKey, read from the app inside the image, and the one
 # committed in Support/Info.plist). With CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
@@ -14,7 +15,10 @@
 # The image must hold the Swift app, or with --electron the Electron app
 # (the Sparkle cutover): either way "Cua Spaces.app", bundle id
 # com.trycua.spaces.macos and CFBundleVersion X.Y.Z.N for the version's
-# X.Y.Z, which is what lets Sparkle replace one with the other.
+# X.Y.Z, which is what lets Sparkle replace one with the other. A nightly
+# names its own CFBundleVersion (build-release.sh --bundle-version: four or
+# five numbers, sorting between the release it was built from and the
+# next one).
 #
 #   scripts/verify-appcast.sh --appcast cua-spaces-appcast.xml --dmg cua-spaces-0.2.0-darwin-universal.dmg \
 #       --url https://.../cua-spaces-0.2.0-darwin-universal.dmg --version 0.2.0 [--sparkle-bin DIR] [--electron]
@@ -85,7 +89,10 @@ item_min="$(sed -n 4p <<<"$fields")"
 item_length="$(sed -n 5p <<<"$fields")"
 signature="$(sed -n 6p <<<"$fields")"
 want_channel=""
-[[ "$version" == *-* ]] && want_channel="beta"
+nightly=false
+if [[ "${version%%+*}" == *-nightly* ]]; then want_channel="nightly"; nightly=true
+elif [[ "${version%%+*}" == *-* ]]; then want_channel="beta"
+fi
 fail=0
 expect() { # expect WHAT GOT WANT
   if [ "$2" = "$3" ]; then echo "PASS $1 ($2)"; else echo "FAIL $1: got '$2', want '$3'"; fail=1; fi
@@ -96,7 +103,11 @@ expect "channel" "$item_channel" "$want_channel"
 expect "minimum macOS" "$item_min" "$min_os"
 expect "length" "$item_length" "$(stat -f %z "$dmg")"
 expect "bundle id" "$(read_key CFBundleIdentifier "$plist")" "com.trycua.spaces.macos"
-expect "CFBundleVersion is X.Y.Z.N" "$(sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/' <<<"$bundle_version")" "${version%%-*}"
+if [ "$nightly" = true ]; then
+  expect "CFBundleVersion is numbers (a nightly's)" "$([[ "$bundle_version" =~ ^[0-9]+(\.[0-9]+){3,4}$ ]] && echo yes || echo "$bundle_version")" yes
+else
+  expect "CFBundleVersion is X.Y.Z.N" "$(sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/' <<<"$bundle_version")" "${version%%-*}"
+fi
 is_electron=false
 [ -d "$app/Contents/Frameworks/Electron Framework.framework" ] && is_electron=true
 expect "Electron app (--electron)" "$is_electron" "$electron"

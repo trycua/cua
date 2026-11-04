@@ -30,8 +30,6 @@ const PACKAGES = {
   'libs/python/cua-sandbox-apps': ['sandbox-apps-v', 'cua_sandbox_apps/__init__.py',
     ['libs/python/cua-sandbox-apps/CHANGELOG.md', 'libs/python/cua-sandbox-apps/pyproject.toml',
       'libs/python/cua-sandbox-apps/uv.lock']],
-  'libs/python/cua-train': ['train-v', 'src/cua_train/__init__.py',
-    ['libs/python/cua-train/CHANGELOG.md', 'libs/python/cua-train/pyproject.toml']],
   'libs/typescript/core': ['npm-core-v', 'src/index.ts',
     ['libs/typescript/core/CHANGELOG.md', 'libs/typescript/core/package.json']],
   'libs/typescript/playground': ['npm-playground-v', 'src/index.ts',

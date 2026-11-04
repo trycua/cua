@@ -1,7 +1,7 @@
 # Licence notices for the Cua Spaces UI
 
 `notices.mjs` regenerates the npm dependency section of the repository's
-[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) for
+[`THIRD_PARTY_NOTICES.md`](../../legal/THIRD_PARTY_NOTICES.md) for
 `apps/cua-spaces-web` and `apps/cua-spaces-desktop`, and checks every
 licence against an allow-list.
 
@@ -33,7 +33,7 @@ resources with electron-builder's `extraResources`:
 
 ```yaml
 extraResources:
-  - from: ../../THIRD_PARTY_NOTICES.md
+  - from: ../../legal/THIRD_PARTY_NOTICES.md
     to: THIRD_PARTY_NOTICES.md
 ```
 
@@ -44,7 +44,7 @@ credits, or the app's own About view) that opens it with
 
 **SwiftUI (`apps/cua-spaces-macos`).** Add the file to the app target's bundle
 resources (in `project.yml`, a `resources` entry pointing at
-`../../THIRD_PARTY_NOTICES.md`), next to the app's own
+`../../legal/THIRD_PARTY_NOTICES.md`), next to the app's own
 `apps/cua-spaces-macos/THIRD_PARTY_NOTICES.md`. In the About panel, add a
 "Third-party notices" link that opens
 `Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md")`

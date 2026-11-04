@@ -62,7 +62,7 @@ const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
-enum UiaDeadlineError {
+pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
     Unavailable,
@@ -161,6 +161,22 @@ where
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
+}
+
+pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+    run_uia_single_flight(
+        GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
+        "focused document typing",
+        FOCUSED_DOCUMENT_PROBE_TIMEOUT,
+        "native typing if no write started; otherwise an unknown-effect result without retry",
+        f,
+    )
 }
 
 struct ComInit {

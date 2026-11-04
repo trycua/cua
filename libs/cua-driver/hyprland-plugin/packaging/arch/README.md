@@ -41,17 +41,17 @@ loading it again. An exact dependency conflict is intentional protection
 against carrying a stale compositor ABI module forward.
 
 This is deliberately a monorepo-local development recipe, not an AUR or clean
-chroot source package. Fleet must make the recorded candidate source available
+chroot source package. The image build must make the recorded candidate source available
 at `CUA_SOURCE_ROOT` and record its Git SHA. Build with the same compiler family
 and version used for Hyprland; matching the package, headers, full Hyprland ABI
 fingerprint, and C++26 language mode does not make different C++ toolchains
 interchangeable.
 
-Fleet images should consume this same monorepo recipe or a derived reviewed
+VM images should consume this same monorepo recipe or a derived reviewed
 recipe, pin the image's exact Hyprland package, and keep the plugin unloaded by
 default. The initial acceptance image must match Omarchy `4.0.2-1`, Hyprland
 `0.56.2`, xdg-desktop-portal-hyprland `1.4.1`, Cua Driver `0.23.2`, and a
 UWSM/SDDM session. This packages a discovery-only plugin; isolated background
 input is not available in stable `0.23.2` or nightly. See
-`../../tests/README.md` for the required Fleet and subsequent bare-metal
+`../../tests/README.md` for the required VM and subsequent bare-metal
 promotion evidence.

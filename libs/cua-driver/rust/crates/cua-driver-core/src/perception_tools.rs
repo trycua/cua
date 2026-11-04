@@ -77,7 +77,7 @@ impl Tool for ParseVisualRegionsTool {
         &self,
         _adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         let binding = (self.resolve_binding)(args).map_err(|error| error.message)?;
         let capture_id = args
             .get("capture_id")

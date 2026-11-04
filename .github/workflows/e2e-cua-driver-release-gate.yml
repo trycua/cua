@@ -9,8 +9,9 @@ name: "E2E: Cua Driver release gate"
 #             through the GitHub Slack app workflow-run subscription.
 #   PR        runs when the `e2e-gate` label is present, when the PR touches the
 #             gated paths (.github/scripts/cua_driver_e2e_gate_paths.py: cursor
-#             overlay, focus, background input, browser routing, the harness),
-#             or when it is the release-please PR for cua-driver-rs.
+#             overlay, focus, background input, browser routing, the harness).
+#             release-please PRs skip the lanes unless labelled: the tag run
+#             in cd-rust-cua-driver.yml runs every lane on the release commit.
 #   macOS    hosted macOS seeds TCC state, so e2e-rust-macos.yml refuses
 #             pull_request events. On gated PRs (same-repo only) the `macos-pr`
 #             job instead dispatches that workflow on the PR head branch with
@@ -88,9 +89,12 @@ jobs:
             emit false pr "draft PR without the e2e-gate label"; exit 0
           fi
           files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
-          if [[ "$PR_HEAD_REPO" == "$REPO" && "$PR_HEAD_REF" == release-please--branches--* ]] \
-              && grep -qx 'libs/cua-driver/rust/VERSION' <<< "$files"; then
-            emit true release-pr "release-please PR for cua-driver-rs"; exit 0
+          if [[ "$PR_HEAD_REPO" == "$REPO" && "$PR_HEAD_REF" == release-please--branches--* ]]; then
+            # Release PRs only change versions, changelogs and lockfiles. The
+            # tag run in cd-rust-cua-driver.yml runs every lane on the exact
+            # release commit and blocks publishing, so the PR skips them.
+            # Add the e2e-gate label to run the lanes on a release PR anyway.
+            emit false pr "release-please PR (the tag release gate runs the lanes)"; exit 0
           fi
           if [[ ! -f .github/scripts/cua_driver_e2e_gate_paths.py ]]; then
             # Bootstrap: the base branch does not carry the path script until

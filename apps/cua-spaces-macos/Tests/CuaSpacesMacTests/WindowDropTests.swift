@@ -22,9 +22,9 @@ struct WindowDropTests {
 
     @Test func onlyDropTargetRowsHitAndARowReleaseCommits() {
         let targets = SidebarDropTargets()
-        targets.isDropTarget = { $0 != "cloud:builder" }
+        targets.isDropTarget = { $0 != "direct:builder" }
         targets.setFrame("local:aurora", CGRect(x: 10, y: 60, width: 200, height: 24))
-        targets.setFrame("cloud:builder", CGRect(x: 10, y: 90, width: 200, height: 24))
+        targets.setFrame("direct:builder", CGRect(x: 10, y: 90, width: 200, height: 24))
         #expect(targets.row(atContent: CGPoint(x: 50, y: 70)) == "local:aurora")
         #expect(targets.row(atContent: CGPoint(x: 50, y: 100)) == nil, "not a drop target")
         #expect(targets.row(atContent: CGPoint(x: 400, y: 70)) == nil)
@@ -44,7 +44,7 @@ struct WindowDropTests {
         let model = ViewModelTests().makeModel()
         await model.refresh()
         #expect(model.dropTargets.isDropTarget("local:aurora"))
-        #expect(!model.dropTargets.isDropTarget("cloud:builder"), "unreachable")
+        #expect(!model.dropTargets.isDropTarget("direct:builder"), "unreachable")
         #expect(!model.dropTargets.isDropTarget("no-such-space"))
         // The same answer as the notch tiles while they show.
         model.notch.send(.click)

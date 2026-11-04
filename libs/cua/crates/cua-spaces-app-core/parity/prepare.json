@@ -1,0 +1,353 @@
+{
+  "name": "prepare",
+  "about": "Preparing the ask-first Space while the person is in onboarding: the Linux runtime, the agent image, the home Space and the coding agent start at first launch, say honestly where they are, carry on after a lost connection or a quit, queue the message the person sends meanwhile and deliver it exactly once when the agent is ready. Times are made up (milliseconds). Each step also shows what a list (Spaces, sidebar, machines, palette) shows of a roster of five Spaces: the home that warms for Home's prompt box is left out until a person has written into it, and comes back when one did.",
+  "steps": [
+    {
+      "step": "nothing started",
+      "actions": []
+    },
+    {
+      "step": "first launch starts preparing",
+      "actions": [
+        {
+          "type": "start",
+          "nowMs": 1000000,
+          "harness": "claude-code",
+          "pendingId": "home-pending"
+        }
+      ]
+    },
+    {
+      "step": "the Linux runtime downloads",
+      "actions": [
+        {
+          "type": "phase",
+          "nowMs": 1004000,
+          "phase": "preparing",
+          "detail": "Setting up the Linux runtime",
+          "done": 125829120,
+          "total": 461373440,
+          "perSecond": 5242880
+        }
+      ]
+    },
+    {
+      "step": "onboarding ends while it is still downloading",
+      "actions": [
+        {
+          "type": "onboardingDone",
+          "nowMs": 1030000
+        }
+      ]
+    },
+    {
+      "step": "a message is typed and kept",
+      "actions": [
+        {
+          "type": "send",
+          "nowMs": 1031000,
+          "id": "m1",
+          "text": "Fix the failing tests in my repo",
+          "agent": "claude-code",
+          "model": "claude-sonnet-5"
+        }
+      ]
+    },
+    {
+      "step": "the same message sent twice is one",
+      "actions": [
+        {
+          "type": "send",
+          "nowMs": 1031500,
+          "id": "m1",
+          "text": "Fix the failing tests in my repo",
+          "agent": "claude-code"
+        }
+      ]
+    },
+    {
+      "step": "the connection drops",
+      "actions": [
+        {
+          "type": "failed",
+          "nowMs": 1040000,
+          "message": "connection reset by peer",
+          "network": true
+        }
+      ]
+    },
+    {
+      "step": "a tick before the retry time does nothing",
+      "actions": [
+        {
+          "type": "tick",
+          "nowMs": 1041000
+        }
+      ]
+    },
+    {
+      "step": "the retry time comes and it carries on",
+      "actions": [
+        {
+          "type": "tick",
+          "nowMs": 1042000
+        }
+      ]
+    },
+    {
+      "step": "the machine goes offline",
+      "actions": [
+        {
+          "type": "online",
+          "nowMs": 1050000,
+          "online": false
+        }
+      ]
+    },
+    {
+      "step": "back online resumes at once",
+      "actions": [
+        {
+          "type": "online",
+          "nowMs": 1090000,
+          "online": true
+        }
+      ]
+    },
+    {
+      "step": "the runtime is done and the image downloads",
+      "actions": [
+        {
+          "type": "phase",
+          "nowMs": 1100000,
+          "phase": "pulling",
+          "detail": "ghcr.io/trycua/linux:24.04-slim",
+          "done": 100663296,
+          "total": 383778816,
+          "perSecond": 4194304
+        }
+      ]
+    },
+    {
+      "step": "the app quits and starts again",
+      "actions": [
+        {
+          "type": "resume",
+          "nowMs": 1500000
+        }
+      ]
+    },
+    {
+      "step": "the home Space boots",
+      "actions": [
+        {
+          "type": "phase",
+          "nowMs": 1510000,
+          "phase": "booting"
+        }
+      ]
+    },
+    {
+      "step": "the home is running and the agent is added",
+      "actions": [
+        {
+          "type": "homeReady",
+          "nowMs": 1520000,
+          "spaceId": "local:home-fix-the-failing-tests"
+        }
+      ]
+    },
+    {
+      "step": "the agent is ready and the message is sent",
+      "actions": [
+        {
+          "type": "agentReady",
+          "nowMs": 1523000
+        }
+      ]
+    },
+    {
+      "step": "the post reached the thread",
+      "actions": [
+        {
+          "type": "delivered",
+          "nowMs": 1523100,
+          "id": "m1"
+        }
+      ]
+    },
+    {
+      "step": "the agent's first words arrive",
+      "actions": [
+        {
+          "type": "firstToken",
+          "nowMs": 1525500,
+          "id": "m1"
+        }
+      ]
+    },
+    {
+      "step": "a quit during delivery asks the thread first",
+      "actions": [
+        {
+          "type": "send",
+          "nowMs": 1600000,
+          "id": "m2",
+          "text": "And the lint errors",
+          "agent": "claude-code"
+        },
+        {
+          "type": "resume",
+          "nowMs": 1700000
+        },
+        {
+          "type": "threadHas",
+          "nowMs": 1700100,
+          "id": "m2",
+          "found": true
+        }
+      ]
+    },
+    {
+      "step": "the home Space was removed and is made again",
+      "actions": [
+        {
+          "type": "homeGone",
+          "nowMs": 1800000
+        }
+      ]
+    },
+    {
+      "step": "a failure that will not clear offers Try again",
+      "actions": [
+        {
+          "type": "failed",
+          "nowMs": 1810000,
+          "message": "the disk is full"
+        },
+        {
+          "type": "tick",
+          "nowMs": 1820000
+        },
+        {
+          "type": "failed",
+          "nowMs": 1821000,
+          "message": "the disk is full"
+        }
+      ]
+    },
+    {
+      "step": "Try again runs it again",
+      "actions": [
+        {
+          "type": "retry",
+          "nowMs": 1830000
+        }
+      ]
+    },
+    {
+      "step": "a new install: the home is warm and nothing was asked",
+      "fresh": true,
+      "actions": [
+        {
+          "type": "start",
+          "nowMs": 2000000,
+          "harness": "claude-code",
+          "pendingId": "pending:home-pending"
+        },
+        {
+          "type": "homeReady",
+          "nowMs": 2005000,
+          "spaceId": "local:home-claude-code"
+        },
+        {
+          "type": "agentReady",
+          "nowMs": 2006000
+        }
+      ]
+    },
+    {
+      "step": "the app quits and opens again: still hidden",
+      "actions": [
+        {
+          "type": "resume",
+          "nowMs": 2100000
+        }
+      ]
+    },
+    {
+      "step": "preparing fails on another new install: the error is on Home, the list shows nothing of it",
+      "fresh": true,
+      "actions": [
+        {
+          "type": "start",
+          "nowMs": 3000000,
+          "harness": "claude-code",
+          "pendingId": "pending:home-pending"
+        },
+        {
+          "type": "failed",
+          "nowMs": 3001000,
+          "message": "the disk is full"
+        },
+        {
+          "type": "tick",
+          "nowMs": 3010000
+        },
+        {
+          "type": "failed",
+          "nowMs": 3011000,
+          "message": "the disk is full"
+        }
+      ]
+    },
+    {
+      "step": "a message is queued while the home is still being made: the Space shows at once",
+      "fresh": true,
+      "actions": [
+        {
+          "type": "start",
+          "nowMs": 4000000,
+          "harness": "claude-code",
+          "pendingId": "pending:home-pending"
+        },
+        {
+          "type": "send",
+          "nowMs": 4001000,
+          "id": "q1",
+          "text": "Run my tests",
+          "agent": "claude-code"
+        }
+      ]
+    },
+    {
+      "step": "a person wrote in the home's own thread: it shows",
+      "fresh": true,
+      "actions": [
+        {
+          "type": "start",
+          "nowMs": 5000000,
+          "harness": "claude-code",
+          "pendingId": "pending:home-pending"
+        },
+        {
+          "type": "homeReady",
+          "nowMs": 5005000,
+          "spaceId": "local:home-claude-code"
+        },
+        {
+          "type": "asked",
+          "nowMs": 5010000
+        }
+      ]
+    }
+  ],
+  "roster": [
+    "local:build-box",
+    "home-pending",
+    "pending:home-pending",
+    "local:home-fix-the-failing-tests",
+    "local:home-claude-code",
+    "local:notes"
+  ]
+}

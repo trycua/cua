@@ -236,6 +236,12 @@
     },
     {
      "default_value": false,
+     "help": "Refuse scripting actions without granted macOS Automation consent.",
+     "name": "no-automation-prompts",
+     "short_name": null
+    },
+    {
+     "default_value": false,
      "help": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.",
      "name": "embedded",
      "short_name": null
@@ -1020,7 +1026,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",

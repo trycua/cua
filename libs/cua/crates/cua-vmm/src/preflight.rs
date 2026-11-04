@@ -8,11 +8,20 @@
 use std::collections::BTreeMap;
 
 use cua_create_failure::preflight::{
-    self as pf, Engine, Facts, Guest, Host, Issue, Request, Runs, VirtGap,
+    self as pf, Engine, Facts, FixAction, Guest, Host, Issue, IssueKind, Request, Runs, VirtGap,
 };
 
 use crate::disk::{CONTAINER_PULL_ESTIMATE, GIB, LUME_PULL_ESTIMATE, VM_CREATE_ESTIMATE};
 use crate::types::GuestOs;
+
+/// What a Windows PC without QEMU is told. Cua never installs QEMU on
+/// Windows, so a virtual computer cannot start until the person does.
+pub const QEMU_MISSING_WINDOWS: &str = "Virtual computers on Windows need a free program called \
+    QEMU, and it isn't installed on this PC. Install it from qemu.org (the Windows download), \
+    then try again.";
+
+/// Where the QEMU download for Windows is.
+pub const QEMU_WINDOWS_URL: &str = "https://www.qemu.org/download/#windows";
 
 /// A Windows VM image and its disk: bigger than a Linux VM's.
 pub const WINDOWS_VM_ESTIMATE: u64 = 20 * GIB;
@@ -58,15 +67,26 @@ pub fn request(guest: Guest, runs: Runs, needed_bytes: Option<u64>) -> Request {
 
 /// Finds what `req` needs to know about this machine.
 pub async fn gather(req: &Request) -> Facts {
+    gather_waiting(req, std::time::Duration::ZERO).await
+}
+
+/// [`gather`] for a create that is about to start: a Mac that cannot reach
+/// its local network gets `patience` for someone to answer macOS's prompt
+/// (the probe's own connect raises it) before it counts as blocked.
+pub async fn gather_waiting(req: &Request, patience: std::time::Duration) -> Facts {
     let gap = if req.runs == Runs::Vm {
         virtualization(req.host).await
     } else {
         None
     };
-    gather_with_virtualization(req, gap).await
+    gather_with_virtualization(req, gap, patience).await
 }
 
-async fn gather_with_virtualization(req: &Request, gap: Option<VirtGap>) -> Facts {
+async fn gather_with_virtualization(
+    req: &Request,
+    gap: Option<VirtGap>,
+    patience: std::time::Duration,
+) -> Facts {
     let mut facts = Facts {
         free_bytes: crate::disk::space(&crate::host::cua_home())
             .ok()
@@ -78,9 +98,12 @@ async fn gather_with_virtualization(req: &Request, gap: Option<VirtGap>) -> Fact
     }
     if req.runs == Runs::Vm {
         facts.virtualization = gap;
+    } else if req.host == Host::Macos && mac_unsupported() && linux_needs_builtin_runtime().await {
+        // A Linux container here runs in the built-in runtime's VM.
+        facts.virtualization = Some(VirtGap::MacUnsupported);
     }
     if req.host == Host::Macos && req.guest == Guest::Macos {
-        facts.local_network_blocked = local_network_blocked().await;
+        facts.local_network_blocked = local_network_blocked(patience).await;
     }
     facts
 }
@@ -88,7 +111,39 @@ async fn gather_with_virtualization(req: &Request, gap: Option<VirtGap>) -> Fact
 /// The failed checks for creating `req` here, most important first. Empty:
 /// go ahead.
 pub async fn check(req: &Request) -> Vec<Issue> {
-    pf::evaluate(req, &gather(req).await)
+    evaluate(req, &gather(req).await)
+}
+
+/// [`pf::evaluate`] plus the checks that need the host's own tools: on a
+/// Windows PC, whether QEMU is there to run a virtual computer.
+pub fn evaluate(req: &Request, facts: &Facts) -> Vec<Issue> {
+    let mut out = pf::evaluate(req, facts);
+    if let Some(issue) = qemu_issue(req, qemu_installed) {
+        out.insert(0, issue);
+    }
+    out
+}
+
+fn qemu_installed() -> bool {
+    let arch = crate::types::Arch::host();
+    crate::host::which(&format!("qemu-system-{}", arch.qemu())).is_some()
+        && crate::host::which("qemu-img").is_some()
+}
+
+/// Windows is the one host Cua never sets QEMU up on, so a VM there needs
+/// it installed first. `installed` is only asked when it matters.
+fn qemu_issue(req: &Request, installed: impl FnOnce() -> bool) -> Option<Issue> {
+    if req.host != Host::Windows || req.runs != Runs::Vm || installed() {
+        return None;
+    }
+    Some(Issue {
+        kind: IssueKind::VirtualizationUnavailable,
+        message: QEMU_MISSING_WINDOWS.to_string(),
+        fix: Some(pf::Fix {
+            label: "Get QEMU".into(),
+            action: FixAction::OpenUrl(QEMU_WINDOWS_URL.into()),
+        }),
+    })
 }
 
 /// [`check`] for the Spaces a shell can offer, by name (`linux_container`,
@@ -112,9 +167,9 @@ pub async fn report() -> BTreeMap<String, Vec<Issue>> {
         // The image's real size is unknown here and it may already be on
         // disk, so a guess must not block a create that would work: the
         // create's own disk guards decide.
-        let mut facts = gather_with_virtualization(&req, gap).await;
+        let mut facts = gather_with_virtualization(&req, gap, std::time::Duration::ZERO).await;
         facts.free_bytes = None;
-        out.insert(name.to_string(), pf::evaluate(&req, &facts));
+        out.insert(name.to_string(), evaluate(&req, &facts));
     }
     out
 }
@@ -152,7 +207,24 @@ async fn virtualization(host: Host) -> Option<VirtGap> {
             }
             Err(_) => Some(VirtGap::KvmMissing),
         },
-        Host::Macos => None,
+        Host::Macos => mac_unsupported().then_some(VirtGap::MacUnsupported),
+    }
+}
+
+/// This Mac cannot run virtual machines (it is one itself, or an Intel Mac
+/// without hardware virtualization). A Mac that cannot tell counts as able.
+fn mac_unsupported() -> bool {
+    crate::host::mac_virtualization_supported() == Some(false)
+}
+
+/// Whether a Linux container create here would use the built-in runtime
+/// (a VM) rather than a container engine already answering on this Mac.
+async fn linux_needs_builtin_runtime() -> bool {
+    use crate::managed::LinuxSource;
+    match LinuxSource::current() {
+        LinuxSource::System => false,
+        LinuxSource::Builtin => true,
+        LinuxSource::Auto => crate::managed::exists() || engine().await != Engine::Ready,
     }
 }
 
@@ -182,18 +254,23 @@ fn parse_hypervisor_platform(stdout: &str) -> Option<VirtGap> {
         .then_some(VirtGap::HypervisorPlatformOff)
 }
 
-async fn local_network_blocked() -> bool {
+/// Whether this process is blocked from the local network the macOS VMs
+/// are on. A running VM is the best test; with none (a first create), a
+/// connect to the router from this process says the same, and is what makes
+/// macOS ask, in the daemon's name, before anything is pulled.
+async fn local_network_blocked(patience: std::time::Duration) -> bool {
+    use cua_create_failure::local_network::Access;
     #[cfg(feature = "lume")]
     {
-        matches!(
+        use crate::local_network::Probe;
+        if matches!(
             crate::local_network::probe(&crate::local_network::lume_base()).await,
-            crate::local_network::Probe::Blocked { .. }
-        )
+            Probe::Reached { .. }
+        ) {
+            return false;
+        }
     }
-    #[cfg(not(feature = "lume"))]
-    {
-        false
-    }
+    crate::local_network::wait_for_lan_access(patience).await == Access::Blocked
 }
 
 #[cfg(test)]
@@ -243,6 +320,42 @@ mod tests {
         assert_eq!(
             request(Guest::Linux, Runs::Container, None).needed_bytes,
             CONTAINER_PULL_ESTIMATE
+        );
+    }
+
+    #[test]
+    fn a_windows_pc_without_qemu_is_told_before_a_vm_create() {
+        let vm = request(Guest::Windows, Runs::Vm, None);
+        let on_windows = Request {
+            host: Host::Windows,
+            ..vm
+        };
+        let issue = qemu_issue(&on_windows, || false).expect("QEMU is missing");
+        assert_eq!(issue.message, QEMU_MISSING_WINDOWS);
+        assert_eq!(
+            issue.fix.unwrap().action,
+            FixAction::OpenUrl(QEMU_WINDOWS_URL.into())
+        );
+        // QEMU there, a container, or another host: nothing to say, and the
+        // lookup is not even made.
+        assert!(qemu_issue(&on_windows, || true).is_none());
+        let container = Request {
+            runs: Runs::Container,
+            ..on_windows
+        };
+        assert!(qemu_issue(&container, || unreachable!()).is_none());
+        let on_linux = Request {
+            host: Host::Linux,
+            ..on_windows
+        };
+        assert!(qemu_issue(&on_linux, || unreachable!()).is_none());
+    }
+
+    #[test]
+    fn the_qemu_sentence_is_plain() {
+        let text = QEMU_MISSING_WINDOWS.to_lowercase();
+        assert!(
+            !text.contains('\u{2014}') && !text.contains("hypervisor") && !text.contains("path")
         );
     }
 

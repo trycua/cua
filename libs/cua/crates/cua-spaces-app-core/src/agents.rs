@@ -276,10 +276,10 @@ pub fn agent_settings_row(a: &AgentSetupStatus, total: u32) -> AgentSettingsRow 
     let skills_ok = a.skills_dir.is_none()
         || (a.skills_installed.len() as u32 >= total && a.skills_outdated.is_empty());
     let mcp_ok = a.mcp_config.is_none() || a.cua_configured;
-    let configured = a.installed && skills_ok && mcp_ok;
+    let configured = (a.installed || a.cua_configured) && skills_ok && mcp_ok;
     let detail = if let Some(e) = a.error.as_ref().filter(|e| !e.is_empty()) {
         e.clone()
-    } else if !a.installed {
+    } else if !a.installed && !a.cua_configured {
         "not installed".into()
     } else if configured {
         match (a.skills_dir.is_some(), a.mcp_config.is_some()) {
@@ -318,7 +318,7 @@ pub fn agent_settings_rows(statuses: &[AgentSetupStatus], total: u32) -> Vec<Age
         .iter()
         .map(|a| agent_settings_row(a, total))
         .collect();
-    rows.sort_by_key(|r| !r.installed);
+    rows.sort_by_key(|r| !(r.installed || r.configured));
     rows
 }
 
@@ -424,6 +424,41 @@ pub fn agent_setup_summary(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn configured_mcp_does_not_require_a_discoverable_binary() {
+        let mut status = AgentSetupStatus {
+            id: "claude-code".into(),
+            name: "Claude Code".into(),
+            mcp_config: Some(".claude.json".into()),
+            skills_dir: Some(".claude/skills".into()),
+            cua_configured: true,
+            skills_installed: vec!["cua".into()],
+            ..Default::default()
+        };
+        let row = agent_settings_row(&status, 1);
+        assert!(row.configured);
+        assert!(!row.installed);
+        assert_eq!(row.detail, "skills and MCP configured");
+        let absent = AgentSetupStatus {
+            id: "absent".into(),
+            ..Default::default()
+        };
+        let rows = agent_settings_rows(&[absent, status.clone()], 1);
+        assert_eq!(rows[0].agent, "claude-code");
+        status.skills_outdated = vec!["cua".into()];
+        let row = agent_settings_row(&status, 1);
+        assert!(!row.configured);
+        assert_eq!(row.detail, "skills 1/1");
+        status.skills_outdated.clear();
+        status.skills_installed.clear();
+        assert_eq!(agent_settings_row(&status, 1).detail, "skills 0/1");
+        status.skills_installed = vec!["cua".into()];
+        status.cua_configured = false;
+        let row = agent_settings_row(&status, 1);
+        assert!(!row.configured);
+        assert_eq!(row.detail, "not installed");
+    }
 
     #[test]
     fn summaries_are_one_bounded_line() {

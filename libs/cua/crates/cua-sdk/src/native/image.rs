@@ -56,7 +56,7 @@ impl From<cua_image::ResolvedImage> for ResolvedImage {
     }
 }
 
-fn image_error(e: cua_image::ImageError) -> CuaError {
+pub(crate) fn image_error(e: cua_image::ImageError) -> CuaError {
     use cua_image::ImageError as E;
     match e {
         E::NotFound(m) => CuaError::NotFound(m),
@@ -138,13 +138,14 @@ pub fn canonical_image(os: String, version: Option<String>) -> Result<String> {
 
 /// The canonical image for `os`, `version` and `tier`: `slim` (the minimum
 /// that passes `cua-spacesd doctor --strict`; CI and benchmarks use it),
-/// `full` or `None` (the default, with dev tooling) or, on macOS, `xcode`
-/// / `xcode-<X.Y>` (full plus one pinned Xcode). The tag is
+/// `full` or `None` (the default, with dev tooling), on macOS `xcode`
+/// / `xcode-<X.Y>` (full plus one pinned Xcode) or, on Linux, `docker`
+/// (slim plus the Docker engine, a VM: `-docker-disk`). The tag is
 /// `<os-version>[-<tier>]` (`ghcr.io/trycua/linux:24.04-slim`); the
 /// resolver finds its `-disk` sibling. `CUA_IMAGE_<OS>` overrides only the
 /// default full image. Raises `ImageNotPublished` for a tier CI has not
-/// published yet, `InvalidArgument` for an unknown tier or `xcode`
-/// outside macOS.
+/// published yet, `InvalidArgument` for an unknown tier, `xcode` outside
+/// macOS or `docker` outside Linux.
 #[uniffi::export]
 pub fn canonical_image_tier(
     os: String,
@@ -242,7 +243,10 @@ mod tests {
             canonical_image_tier("windows".into(), None, Some("xcode".into())),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |r: &str| cua_image::catalog::find(r).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |r: &str| {
+            cua_image::catalog::find(r).is_none_or(|e| e.published || e.derived_from.is_some())
+        };
         for (got, want) in [
             (
                 canonical_image_tier("linux".into(), None, Some("slim".into())),

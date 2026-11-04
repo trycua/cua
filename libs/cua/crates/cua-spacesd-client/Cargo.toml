@@ -29,6 +29,8 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
+# Classifies an HTTP/2 flood GOAWAY (`error::is_h2_flood_goaway`).
+h2 = "0.4"
 hyper-util = { workspace = true, features = ["client-proxy"] }
 hyper-rustls.workspace = true
 rustls-native-certs = "0.8"
@@ -50,6 +52,11 @@ tokio-tungstenite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# SHA-256 with the CPU's SHA instructions on arm64 (Apple silicon, Graviton):
+# every transferred byte is hashed, and the portable code is about 5x slower.
+[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
@@ -60,3 +67,4 @@ tempfile.workspace = true
 rustls-webpki = { version = "0.103.16", default-features = false, features = ["std", "ring"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 webpki-roots-026 = { package = "webpki-roots", version = "0.26.11" }
+proptest = "1"

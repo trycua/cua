@@ -323,7 +323,8 @@ function flagDescription(opt: OptionDoc | FlagDoc): string {
 
 /**
  * `Flag | Short | Type | Default | Env var | Description`; the Short and
- * Env var columns are dropped when no row uses them. `path` (the command
+ * Env var columns are dropped when no row uses them. A boolean flag with a
+ * `--no-<name>` boolean sibling has an empty Default. `path` (the command
  * path) gives every flag its own anchor; omit it for tables that are not
  * under a command (global options).
  */
@@ -347,7 +348,10 @@ export function flagsTable(options: Array<OptionDoc | FlagDoc>, path?: string[])
           : '';
     } else {
       type = 'boolean';
-      def = codeCell('false');
+      // `--x` beside `--no-x`: its default depends on something else (its help
+      // says what), so `false` would be wrong. `--no-x` is off unless given.
+      const hasInverse = visible.some((o) => o.name === `no-${opt.name}` && !takesValue(o));
+      def = hasInverse ? '' : codeCell('false');
     }
     const row = [
       flag,

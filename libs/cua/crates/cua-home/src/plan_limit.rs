@@ -26,6 +26,53 @@ pub enum Kind {
     Hours,
 }
 
+impl Kind {
+    /// `sessions` or `hours` (the usage-data word, `cua_plan_limit_shown`'s
+    /// `kind`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Sessions => "sessions",
+            Kind::Hours => "hours",
+        }
+    }
+}
+
+/// Whether `from` is a word the account app reads as `?from=`: 1 to 32 of
+/// `a-z`, `0-9` and `_`.
+pub fn valid_from(from: &str) -> bool {
+    (1..=32).contains(&from.len())
+        && from
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `url` with `from=<from>` in its query, so the account app's purchase
+/// funnel knows which surface the person came from. Every other query
+/// parameter and the fragment stay as they are; an earlier `from` is
+/// replaced. A `from` that is not a [`valid_from`] word leaves `url` alone.
+pub fn with_from(url: &str, from: &str) -> String {
+    if !valid_from(from) || url.is_empty() {
+        return url.to_owned();
+    }
+    let (rest, fragment) = match url.split_once('#') {
+        Some((r, f)) => (r, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut params: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.is_empty() && p.split('=').next() != Some("from"))
+        .collect();
+    let from = format!("from={from}");
+    params.push(&from);
+    let mut out = format!("{base}?{}", params.join("&"));
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
 /// A refused new session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanLimit {
@@ -169,11 +216,56 @@ impl PlanLimit {
             _ => format!("{base}/billing"),
         }
     }
+
+    /// [`PlanLimit::upgrade_url`] saying which surface showed the limit
+    /// (`?from=cli_limit`, `?from=app_create`, ...), billing page included.
+    pub fn upgrade_url_from(&self, account_app: &str, from: &str) -> String {
+        with_from(&self.upgrade_url(account_app), from)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_is_added_replaced_and_keeps_the_rest() {
+        assert_eq!(
+            with_from("https://app.cua.ai/buy/pro", "app_meter"),
+            "https://app.cua.ai/buy/pro?from=app_meter"
+        );
+        assert_eq!(
+            with_from("https://app.cua.ai/buy/pro?from=plan_limit", "cli_limit"),
+            "https://app.cua.ai/buy/pro?from=cli_limit"
+        );
+        assert_eq!(
+            with_from(
+                "https://app.cua.ai/billing?team=t1&from=x&a=b#seats",
+                "app_team"
+            ),
+            "https://app.cua.ai/billing?team=t1&a=b&from=app_team#seats"
+        );
+        // A `from`-like key is not `from`.
+        assert_eq!(
+            with_from("https://app.cua.ai/b?fromage=1", "cli_usage"),
+            "https://app.cua.ai/b?fromage=1&from=cli_usage"
+        );
+        // Not a word the account app reads: the link is left alone.
+        for bad in ["", "App", "a-b", "x".repeat(33).as_str(), "a@b"] {
+            assert_eq!(
+                with_from("https://app.cua.ai/b", bad),
+                "https://app.cua.ai/b"
+            );
+        }
+        let l =
+            PlanLimit::parse("You're using 5 of 5 live sessions on Teams. Close one or add seats.")
+                .unwrap();
+        assert_eq!(
+            l.upgrade_url_from("https://app.cua.ai", "app_connect"),
+            "https://app.cua.ai/billing?from=app_connect"
+        );
+        assert_eq!(l.kind.word(), "sessions");
+    }
 
     fn h(e: &str, plan: &str, used: &str, limit: &str) -> Option<PlanLimit> {
         PlanLimit::from_headers(Some(e), Some(plan), Some(used), Some(limit))

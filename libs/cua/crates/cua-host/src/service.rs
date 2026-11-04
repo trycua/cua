@@ -24,6 +24,7 @@
 //!   input, so the task (not a service) runs the driver in the user session.
 
 use crate::{Error, Result};
+use cua_home::channel::CuaChannel;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,21 +32,102 @@ use std::sync::Mutex;
 
 /// Service name / label used everywhere.
 pub const SERVICE_NAME: &str = "cua-spacesd-host";
-/// launchd label.
-pub const LAUNCHD_LABEL: &str = "com.trycua.spacesd.host";
 /// Windows task name.
 pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
 
-/// launchd label of the Cua Spaces app's login item ([`AppHelper`]).
-pub const APP_HELPER_LABEL: &str = "com.trycua.spaces.helper";
-/// What macOS shows for it (System Settings: Privacy & Security, Login
-/// Items): the app's own name, since the app's executable runs it.
-pub const APP_HELPER_NAME: &str = "Cua Spaces";
+/// Keeps the services of a separate Cua home apart: with `CUA_HOME` set to
+/// anything but `~/.cua`, the unit and launchd label carry `-<8 hex>` of
+/// that path, so a second install (a cluster host beside a personal one, a
+/// test home) never replaces the first one's service.
+pub fn instance_suffix() -> String {
+    suffix_for(
+        CuaChannel::Stable,
+        std::env::var_os("CUA_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
+/// [`instance_suffix`] for `channel`: a home is "separate" when it is not
+/// that channel's own (`~/.cua`, or `~/.cua-local` for Local), so Local's
+/// own home adds nothing to its label.
+fn suffix_for(
+    channel: CuaChannel,
+    cua_home: Option<&std::ffi::OsStr>,
+    user_home: Option<&std::ffi::OsStr>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let Some(home) = cua_home.filter(|h| !h.is_empty()).map(PathBuf::from) else {
+        return String::new();
+    };
+    let default = user_home.map(|h| channel_home_in(channel, Path::new(h)));
+    if Some(&home) == default.as_ref() {
+        return String::new();
+    }
+    let digest = Sha256::digest(home.to_string_lossy().as_bytes());
+    format!("-{}", &hex::encode(digest)[..8])
+}
+
+/// `channel`'s cua home below `user_home`: `<user_home>/.cua`, or
+/// `<user_home>/.cua-local`. The directory name is [`CuaChannel::home_dir`]'s
+/// (the one place that owns it); only the user home is the caller's.
+fn channel_home_in(channel: CuaChannel, user_home: &Path) -> PathBuf {
+    match channel.home_dir().file_name() {
+        Some(name) => user_home.join(name),
+        None => channel.home_dir(),
+    }
+}
+
+/// The systemd unit name of this home's host service.
+pub fn service_name() -> String {
+    format!("{SERVICE_NAME}{}", instance_suffix())
+}
+
+/// The launchd label of this home's host service: the channel's
+/// [`CuaChannel::host_label`] (`com.trycua.spacesd.host`, or
+/// `com.trycua.spacesd.host.local` for Local) plus [`suffix_for`].
+pub fn launchd_label() -> String {
+    launchd_label_for(
+        CuaChannel::current(),
+        std::env::var_os("CUA_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
+fn launchd_label_for(
+    channel: CuaChannel,
+    cua_home: Option<&std::ffi::OsStr>,
+    user_home: Option<&std::ffi::OsStr>,
+) -> String {
+    format!(
+        "{}{}",
+        channel.host_label(),
+        suffix_for(channel, cua_home, user_home)
+    )
+}
+
+/// What macOS shows for the app's login item (System Settings: Privacy &
+/// Security, Login Items): the app's own name, since the app's executable
+/// runs it. "Cua Spaces", or "Cua Spaces Local" for the Local build.
+pub fn app_helper_name() -> &'static str {
+    CuaChannel::current().app_name()
+}
 /// The cua-spacesd the app ships, inside the app (the service runs only
-/// this one).
-pub const APP_HELPER_DAEMON: &str = "Contents/MacOS/cua-spacesd";
-/// The `SMAppService.agent` plist, inside the app.
-pub const APP_HELPER_PLIST: &str = "Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist";
+/// this one). In `Contents/Helpers`, not `Contents/MacOS`: from there, AppKit
+/// (its cursor overlay) registered it with LaunchServices as the app itself,
+/// and opening the app activated the windowless daemon instead of launching
+/// it.
+pub const APP_HELPER_DAEMON: &str = "Contents/Helpers/cua-spacesd";
+/// Where apps before 0.15 kept it (they run it from there).
+pub const APP_HELPER_DAEMON_BEFORE_0_15: &str = "Contents/MacOS/cua-spacesd";
+/// The `SMAppService.agent` plist of `channel`'s app, inside the app:
+/// `Contents/Library/LaunchAgents/<helper label>.plist` (the label is
+/// [`CuaChannel::helper_label`]; `build-app.sh` stamps it per channel).
+pub fn app_helper_plist(channel: CuaChannel) -> String {
+    format!(
+        "Contents/Library/LaunchAgents/{}.plist",
+        channel.helper_label()
+    )
+}
 /// The app's own executable (which registers the helper), inside the app.
 pub const APP_EXECUTABLE: &str = "Contents/MacOS/CuaSpacesMac";
 
@@ -107,10 +189,8 @@ impl RunnerKind {
             }
         } else if cfg!(windows) {
             RunnerKind::WindowsTask
-        } else if Path::new("/run/systemd/system").is_dir() {
-            RunnerKind::Systemd
         } else {
-            RunnerKind::Process
+            linux_runner(Path::new("/run/systemd/system"))
         }
     }
 
@@ -177,6 +257,10 @@ pub trait ServiceManager: Send + Sync {
     fn uninstall(&self) -> Result<()>;
     /// Current state.
     fn state(&self) -> ServiceState;
+    /// Whether the service this runs could bind `addr` for `transport`
+    /// now (setup asks before it chooses the service's ports). The real
+    /// runners ask the operating system ([`crate::ports::os_port_free`]).
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool;
 }
 
 // ------------------------------------------------------------- generators
@@ -242,6 +326,7 @@ pub fn systemd_unit(spec: &ServiceSpec, system: bool) -> String {
          {env}\
          Restart=always\n\
          RestartSec=2\n\
+         OOMPolicy=continue\n\
          {oom}\
          KillMode=mixed\n\
          TimeoutStopSec=10\n\
@@ -316,7 +401,7 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
 </dict>
 </plist>
 "#,
-        label = LAUNCHD_LABEL,
+        label = launchd_label(),
         wd = xml_escape(&spec.working_dir.to_string_lossy()),
     )
 }
@@ -520,7 +605,7 @@ impl Systemd {
     }
 
     fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(format!("{SERVICE_NAME}.service"))
+        self.unit_dir.join(format!("{}.service", service_name()))
     }
 
     fn remove_legacy(&self) {
@@ -550,17 +635,17 @@ impl ServiceManager for Systemd {
         self.remove_legacy();
         write_file(&self.unit_path(), &systemd_unit(spec, self.system))?;
         run(self.systemctl().arg("daemon-reload"))?;
-        run(self.systemctl().args(["enable", SERVICE_NAME]))?;
+        run(self.systemctl().args(["enable", &service_name()]))?;
         Ok(())
     }
     fn start(&self) -> Result<()> {
-        run(self.systemctl().args(["restart", SERVICE_NAME])).map(drop)
+        run(self.systemctl().args(["restart", &service_name()])).map(drop)
     }
     fn stop(&self) -> Result<()> {
-        run(self.systemctl().args(["stop", SERVICE_NAME])).map(drop)
+        run(self.systemctl().args(["stop", &service_name()])).map(drop)
     }
     fn uninstall(&self) -> Result<()> {
-        let _ = run(self.systemctl().args(["disable", "--now", SERVICE_NAME]));
+        let _ = run(self.systemctl().args(["disable", "--now", &service_name()]));
         let _ = std::fs::remove_file(self.unit_path());
         self.remove_legacy();
         let _ = run(self.systemctl().arg("daemon-reload"));
@@ -570,7 +655,7 @@ impl ServiceManager for Systemd {
         let installed = self.unit_path().exists();
         let active = self
             .systemctl()
-            .args(["is-active", SERVICE_NAME])
+            .args(["is-active", &service_name()])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
@@ -588,6 +673,9 @@ impl ServiceManager for Systemd {
                 }
             ),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -614,11 +702,11 @@ impl Launchd {
     }
 
     fn plist_path(&self) -> PathBuf {
-        self.agents_dir.join(format!("{LAUNCHD_LABEL}.plist"))
+        self.agents_dir.join(format!("{}.plist", launchd_label()))
     }
 
     fn target(&self) -> String {
-        format!("gui/{}/{LAUNCHD_LABEL}", self.uid)
+        format!("gui/{}/{}", self.uid, launchd_label())
     }
 
     fn remove_legacy(&self) {
@@ -679,6 +767,9 @@ impl ServiceManager for Launchd {
             kind: "launchd".into(),
             detail: self.plist_path().display().to_string(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
@@ -998,6 +1089,9 @@ impl ServiceManager for WindowsTask {
             detail: text.trim().to_string(),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 /// Running processes by executable path (the logon entry has no pidfile:
@@ -1064,8 +1158,34 @@ mod windows_procs {
     }
 }
 
+/// Systemd when `systemd_dir` (`/run/systemd/system`) exists, else the plain
+/// process. A seam for tests: it checks the filesystem.
+fn linux_runner(systemd_dir: &Path) -> RunnerKind {
+    if systemd_dir.is_dir() {
+        RunnerKind::Systemd
+    } else {
+        RunnerKind::Process
+    }
+}
+
+/// The warning `cua host setup` prints when `requested` was `Auto` and the
+/// stored runner `resolved` is the plain process; `None` otherwise.
+pub fn auto_fallback_warning(requested: RunnerKind, resolved: &str) -> Option<&'static str> {
+    (requested == RunnerKind::Auto && resolved == RunnerKind::Process.as_str()).then_some(
+        "warning: systemd is not running here, so `--runner auto` set the host up as a plain process.\n\
+It will not come back after a reboot or a crash. To fix it, either:\n\
+\x20 - turn on systemd (on WSL: systemd=true under [boot] in /etc/wsl.conf, then wsl --shutdown) and run `cua host setup --runner systemd` again with the same options, or\n\
+\x20 - run `cua host start` after each boot (from your init system or container start script).\n\
+Pass `--runner process` to keep the plain process without this warning.",
+    )
+}
+
+/// The note `cua host status` prints under a `process` runner.
+pub const PROCESS_RUNNER_NOTE: &str = "  note: the process runner does not start the host again after a reboot or a crash; run `cua host start` after each boot.";
+
 /// A detached process with a pidfile: the fallback where no init system
-/// runs (containers). Not restarted on reboot or crash.
+/// runs (containers). Not restarted on reboot or crash; `cua host setup`
+/// warns about it ([`auto_fallback_warning`]).
 pub struct ProcessRunner {
     /// Directory for `service.json` and `driver.pid`.
     pub dir: PathBuf,
@@ -1164,17 +1284,37 @@ impl ServiceManager for ProcessRunner {
         };
         #[cfg(unix)]
         {
-            // SAFETY: plain signal delivery to the pid we started.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            // `start` made the driver the leader of its own process group:
+            // signal the whole group, so what it started there goes too
+            // (the host's cua daemon, which it starts on the first Space
+            // create; CUA-1804). Only while the pid still leads that group:
+            // a reused pid gets a signal of its own, never its group.
+            // SAFETY: getpgid only reads.
+            let group = unsafe { libc::getpgid(pid as libc::pid_t) } == pid as libc::pid_t;
+            let target = if group {
+                -(pid as libc::pid_t)
+            } else {
+                pid as libc::pid_t
+            };
+            // SAFETY: plain signal delivery to the pid (group) we started.
+            unsafe { libc::kill(target, libc::SIGTERM) };
+            let alive = || {
+                if group {
+                    // SAFETY: signal 0 only checks for existence.
+                    unsafe { libc::kill(target, 0) == 0 }
+                } else {
+                    process_alive(pid)
+                }
+            };
             for _ in 0..50 {
-                if !process_alive(pid) {
+                if !alive() {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            if process_alive(pid) {
+            if alive() {
                 // SAFETY: as above.
-                unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                unsafe { libc::kill(target, libc::SIGKILL) };
             }
         }
         #[cfg(not(unix))]
@@ -1200,15 +1340,29 @@ impl ServiceManager for ProcessRunner {
             detail: pid.map(|p| format!("pid {p}")).unwrap_or_default(),
         }
     }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
+    }
 }
 
 // ------------------------------------------------------------- app helper
 
-/// `~/.cua/helper/service.json`: what the Cua Spaces app's helper runs (a
-/// [`ServiceSpec`] as JSON, 0600). A fixed path under the user's home: the
-/// helper's launchd plist is sealed in the app and cannot name a cua home.
+/// `~/.cua/helper/service.json` (Local: `~/.cua-local/helper/service.json`):
+/// what the Cua Spaces app's helper runs (a [`ServiceSpec`] as JSON, 0600).
+/// A fixed path under the user's home, per channel: the helper's launchd
+/// plist is sealed in the app and cannot name a cua home, so the app's
+/// `CuaHome` Info.plist key (stamped per channel) says where it is. Read by
+/// `ServiceLauncher.swift`.
 pub fn helper_spec_path(user_home: &Path) -> PathBuf {
-    user_home.join(".cua").join("helper").join("service.json")
+    helper_spec_path_for(CuaChannel::current(), user_home)
+}
+
+/// [`helper_spec_path`] for `channel`: [`CuaChannel::helper_spec_path`]
+/// below `user_home`.
+pub fn helper_spec_path_for(channel: CuaChannel, user_home: &Path) -> PathBuf {
+    channel_home_in(channel, user_home)
+        .join("helper")
+        .join("service.json")
 }
 
 /// The service's launcher inside `app`: the app's own executable (what
@@ -1218,10 +1372,18 @@ pub fn app_helper_launcher(app: &Path) -> PathBuf {
     app.join(APP_EXECUTABLE)
 }
 
-/// Whether `app` is a Cua Spaces app that carries the helper.
-pub fn has_app_helper(app: &Path) -> bool {
-    app.join(APP_HELPER_PLIST).is_file()
-        && app.join(APP_HELPER_DAEMON).is_file()
+/// Whether `app` is a Cua Spaces app of `channel` that carries the helper.
+///
+/// The channel is told by the helper's plist, which is named after the
+/// channel's launchd label ([`app_helper_plist`]): a Stable app has only
+/// `com.trycua.spaces.helper.plist`, a Local app only
+/// `com.trycua.spaces.local.helper.plist`. So an app of the other channel
+/// never matches, and one channel never registers, starts or writes the spec
+/// of the other's helper.
+pub fn has_app_helper(app: &Path, channel: CuaChannel) -> bool {
+    app.join(app_helper_plist(channel)).is_file()
+        && (app.join(APP_HELPER_DAEMON).is_file()
+            || app.join(APP_HELPER_DAEMON_BEFORE_0_15).is_file())
         && app.join(APP_EXECUTABLE).is_file()
 }
 
@@ -1236,32 +1398,81 @@ pub fn is_app_helper_launcher(launcher: &Path) -> bool {
             .is_some_and(|app| app.extension().is_some_and(|e| e == "app"))
 }
 
-/// The installed Cua Spaces app that carries the helper, if any (macOS):
-/// `CUA_SPACES_APP` when set (empty or `none`: no app), else the app this
-/// process runs from (the app itself, or the `cua` it links onto PATH),
-/// else `/Applications/Cua Spaces.app`, else `~/Applications/Cua Spaces.app`.
+/// The installed Cua Spaces app that carries the helper, if any (macOS), of
+/// this process's channel ([`CuaChannel::current`]); see
+/// [`find_app_helper_for`].
 pub fn find_app_helper() -> Option<PathBuf> {
+    find_app_helper_for(CuaChannel::current())
+}
+
+/// The installed Cua Spaces app of `channel` that carries the helper, if
+/// any (macOS): `CUA_SPACES_APP` when set (empty or `none`: no app), else
+/// the app this process runs from (the app itself, or the `cua` it links
+/// onto PATH), else where the channel installs its app
+/// ([`CuaChannel::app_path`]: `/Applications/Cua Spaces.app`, or
+/// `~/Applications/Cua Spaces Local.app`), else `~/Applications` under the
+/// channel's app name.
+///
+/// An app of the other channel is never picked, whichever way it was named
+/// ([`has_app_helper`]): a Local CLI must never drive Stable's helper, nor
+/// the Stable CLI the Local one.
+pub fn find_app_helper_for(channel: CuaChannel) -> Option<PathBuf> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    if let Some(v) = std::env::var_os("CUA_SPACES_APP") {
-        let p = PathBuf::from(&v);
-        return (!v.is_empty() && v != "none" && has_app_helper(&p)).then_some(p);
+    let spaces_app = std::env::var_os("CUA_SPACES_APP");
+    let exe_app = std::env::current_exe()
+        .and_then(|e| e.canonicalize())
+        .ok()
+        .and_then(|exe| app_containing(&exe));
+    let candidates = app_helper_candidates(channel, exe_app, std::env::var_os("HOME").as_deref());
+    pick_app_helper(channel, spaces_app.as_deref(), candidates)
+}
+
+/// `X.app` for `.../X.app/Contents/MacOS/<exe>`.
+fn app_containing(exe: &Path) -> Option<PathBuf> {
+    exe.parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .filter(|app| app.extension().is_some_and(|e| e == "app"))
+        .map(Path::to_path_buf)
+}
+
+/// The places to look for `channel`'s app, best first: the app this process
+/// runs from, where the channel installs its app, then `~/Applications`
+/// under the channel's app name. Never the other channel's.
+fn app_helper_candidates(
+    channel: CuaChannel,
+    exe_app: Option<PathBuf>,
+    home: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = exe_app.into_iter().collect();
+    candidates.push(channel.app_path());
+    if let Some(home) = home {
+        candidates.push(
+            PathBuf::from(home)
+                .join("Applications")
+                .join(format!("{}.app", channel.app_name())),
+        );
     }
-    let mut candidates = vec![];
-    if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) {
-        // .../X.app/Contents/MacOS/<exe>
-        if let Some(app) = exe.parent().and_then(Path::parent).and_then(Path::parent)
-            && app.extension().is_some_and(|e| e == "app")
-        {
-            candidates.push(app.to_path_buf());
-        }
+    candidates
+}
+
+/// The app of `channel` with the helper among `candidates`, or the one
+/// `CUA_SPACES_APP` names (`spaces_app`; empty or `none`: no app, and the
+/// candidates are not consulted).
+fn pick_app_helper(
+    channel: CuaChannel,
+    spaces_app: Option<&std::ffi::OsStr>,
+    candidates: Vec<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(v) = spaces_app {
+        let p = PathBuf::from(v);
+        return (!v.is_empty() && v != "none" && has_app_helper(&p, channel)).then_some(p);
     }
-    candidates.push(PathBuf::from("/Applications/Cua Spaces.app"));
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(PathBuf::from(home).join("Applications/Cua Spaces.app"));
-    }
-    candidates.into_iter().find(|a| has_app_helper(a))
+    candidates
+        .into_iter()
+        .find(|app| has_app_helper(app, channel))
 }
 
 /// What `CuaSpacesMac --service-helper <command>` reports: the
@@ -1283,20 +1494,31 @@ pub struct HelperRegistration {
 /// macOS holds the app responsible for it, so Screen Recording and
 /// Accessibility are granted to "Cua Spaces" (bundle id
 /// `com.trycua.spaces.macos`, the Cua team), once, and survive app updates.
+/// The Local app's helper is its own (launchd label
+/// `com.trycua.spaces.local.helper`, spec in `~/.cua-local`), beside
+/// Stable's.
 /// (A separate helper bundle got two names in System Settings: macOS lists
 /// a login item's Screen Recording under the app that contains it.)
 pub struct AppHelper {
     /// The app (`/Applications/Cua Spaces.app`).
     pub app: PathBuf,
-    /// [`helper_spec_path`].
+    /// [`helper_spec_path_for`] the app's channel.
     pub spec_path: PathBuf,
     /// The user id (`gui/<uid>`).
     pub uid: u32,
+    /// The channel of `app`: names its launchd label and the app in
+    /// messages.
+    pub channel: CuaChannel,
 }
 
 impl AppHelper {
-    /// The helper of `app` for the current user.
+    /// The helper of `app` (of this process's channel) for the current user.
     pub fn for_current_user(app: PathBuf, user_home: &Path) -> Self {
+        Self::for_channel(CuaChannel::current(), app, user_home)
+    }
+
+    /// The helper of `app`, the app of `channel`, for the current user.
+    pub fn for_channel(channel: CuaChannel, app: PathBuf, user_home: &Path) -> Self {
         #[cfg(unix)]
         // SAFETY: getuid has no preconditions.
         let uid = unsafe { libc::getuid() };
@@ -1304,13 +1526,14 @@ impl AppHelper {
         let uid = 0;
         Self {
             app,
-            spec_path: helper_spec_path(user_home),
+            spec_path: helper_spec_path_for(channel, user_home),
             uid,
+            channel,
         }
     }
 
     fn target(&self) -> String {
-        format!("gui/{}/{APP_HELPER_LABEL}", self.uid)
+        format!("gui/{}/{}", self.uid, self.channel.helper_label())
     }
 
     /// `CuaSpacesMac --service-helper <command>`.
@@ -1372,7 +1595,7 @@ impl ServiceManager for AppHelper {
             let _ = self.registration("unregister");
         }
         let reg = self.registration("register")?;
-        helper_registered(&reg)
+        helper_registered(&reg, self.channel.app_name())
     }
     fn start(&self) -> Result<()> {
         // A fresh registration can take a moment to reach launchd.
@@ -1389,14 +1612,15 @@ impl ServiceManager for AppHelper {
         std::thread::sleep(std::time::Duration::from_secs(2));
         if result.is_ok() && !self.state().running && self.spawn_failed() {
             let _ = self.registration("unregister");
-            helper_registered(&self.registration("register")?)?;
+            helper_registered(&self.registration("register")?, self.channel.app_name())?;
             std::thread::sleep(std::time::Duration::from_millis(500));
             result = kick();
         }
         result.map(drop).map_err(|e| {
+            let name = self.channel.app_name();
             Error::Service(format!(
-                "macOS did not start {APP_HELPER_NAME} ({e}); if it keeps failing, turn on \
-                     Cua Spaces in System Settings > General > Login Items & Extensions"
+                "macOS did not start {name} ({e}); if it keeps failing, turn on \
+                     {name} in System Settings > General > Login Items & Extensions"
             ))
         })
     }
@@ -1428,24 +1652,27 @@ impl ServiceManager for AppHelper {
                 .as_deref()
                 .is_some_and(|p| p.contains("state = running")),
             kind: RunnerKind::AppHelper.as_str().into(),
-            detail: format!("{APP_HELPER_NAME} in {}", self.app.display()),
+            detail: format!("{} in {}", self.channel.app_name(), self.app.display()),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
 /// A registration that did not leave the helper allowed to run, in words.
-fn helper_registered(reg: &HelperRegistration) -> Result<()> {
+fn helper_registered(reg: &HelperRegistration, name: &str) -> Result<()> {
     match (reg.status.as_str(), &reg.error) {
         ("enabled", _) => Ok(()),
         ("requires-approval", _) => Err(Error::Service(format!(
-            "macOS needs you to allow {APP_HELPER_NAME}: turn on Cua Spaces in System Settings > \
+            "macOS needs you to allow {name}: turn on {name} in System Settings > \
              General > Login Items & Extensions, then try again"
         ))),
         (status, Some(e)) => Err(Error::Service(format!(
-            "Cua Spaces could not register {APP_HELPER_NAME} ({status}): {e}"
+            "{name} could not register {name} ({status}): {e}"
         ))),
         (status, None) => Err(Error::Service(format!(
-            "Cua Spaces could not register {APP_HELPER_NAME} ({status})"
+            "{name} could not register {name} ({status})"
         ))),
     }
 }
@@ -1475,15 +1702,20 @@ impl ServiceManager for MissingAppHelper {
             installed: false,
             running: false,
             kind: RunnerKind::AppHelper.as_str().into(),
-            detail: format!("{APP_HELPER_NAME}: the Cua Spaces app is not installed"),
+            detail: format!("{}: the Cua Spaces app is not installed", app_helper_name()),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
+        crate::ports::os_port_free(addr, transport)
     }
 }
 
 fn missing_app() -> Error {
     Error::Service(format!(
-        "{APP_HELPER_NAME} lives in the Cua Spaces app, which is not installed; install it \
-         again, or run `cua host setup --runner launchd`"
+        "{name} lives in the Cua Spaces app, which is not installed; install it \
+         again, or run `{cli} host setup --runner launchd`",
+        name = app_helper_name(),
+        cli = crate::cli()
     ))
 }
 
@@ -1562,6 +1794,13 @@ pub struct FakeServiceManager {
     /// The last installed spec.
     pub spec: Mutex<Option<ServiceSpec>>,
     running: Mutex<bool>,
+    /// `start` fails while this is set.
+    pub fail_start: Mutex<bool>,
+    /// Ports another program holds (any address, TCP and UDP alike): never
+    /// free. Every other port is free, so no test binds a real one.
+    pub held_by_others: Mutex<Vec<u16>>,
+    /// Ports this service holds while it runs (free once it is stopped).
+    pub held_while_running: Mutex<Vec<u16>>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -1575,6 +1814,9 @@ impl ServiceManager for FakeServiceManager {
     }
     fn start(&self) -> Result<()> {
         self.calls.lock().unwrap().push("start".into());
+        if *self.fail_start.lock().unwrap() {
+            return Err(Error::Service("the service would not start".into()));
+        }
         *self.running.lock().unwrap() = true;
         Ok(())
     }
@@ -1596,6 +1838,12 @@ impl ServiceManager for FakeServiceManager {
             kind: "fake".into(),
             detail: String::new(),
         }
+    }
+    fn port_free(&self, addr: std::net::SocketAddr, _: crate::ports::Transport) -> bool {
+        let port = addr.port();
+        !self.held_by_others.lock().unwrap().contains(&port)
+            && !(*self.running.lock().unwrap()
+                && self.held_while_running.lock().unwrap().contains(&port))
     }
 }
 
@@ -1730,6 +1978,32 @@ mod tests {
     }
     use super::*;
 
+    #[test]
+    fn auto_detection_falls_back_to_a_process_without_systemd() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = dir.path().join("system");
+        assert_eq!(linux_runner(&probe), RunnerKind::Process);
+        std::fs::create_dir(&probe).unwrap();
+        assert_eq!(linux_runner(&probe), RunnerKind::Systemd);
+    }
+
+    #[test]
+    fn only_auto_resolved_to_a_process_warns() {
+        let text = auto_fallback_warning(RunnerKind::Auto, "process").expect("warns");
+        assert!(text.contains("will not come back after a reboot"), "{text}");
+        assert!(text.contains("host setup --runner systemd"), "{text}");
+        assert!(text.contains("host start"), "{text}");
+        for (req, resolved) in [
+            (RunnerKind::Process, "process"),
+            (RunnerKind::Auto, "systemd"),
+            (RunnerKind::Auto, "launchd"),
+            (RunnerKind::Auto, "app-helper"),
+            (RunnerKind::Auto, "windows-task"),
+        ] {
+            assert_eq!(auto_fallback_warning(req, resolved), None, "{resolved}");
+        }
+    }
+
     fn spec() -> ServiceSpec {
         ServiceSpec {
             program: "/home/ada/.cua/host/bin/cua-spacesd".into(),
@@ -1757,6 +2031,8 @@ mod tests {
         ));
         assert!(user.contains("Environment=CUA_ENV_LOG=info\n"));
         assert!(user.contains("Restart=always"));
+        // A Space or the daemon killed for memory does not stop the service.
+        assert!(user.contains("OOMPolicy=continue\n"));
         assert!(user.contains("StandardOutput=append:/home/ada/.cua/host/driver.log"));
         let system = systemd_unit(&spec(), true);
         assert!(system.contains("WantedBy=multi-user.target"));
@@ -1872,17 +2148,23 @@ mod tests {
     fn the_app_helper_is_found_by_its_bundle_layout() {
         let dir = tempfile::tempdir().unwrap();
         let app = dir.path().join("Cua Spaces.app");
-        assert!(!has_app_helper(&app));
-        for f in [APP_HELPER_PLIST, APP_EXECUTABLE] {
+        let stable = CuaChannel::Stable;
+        assert!(!has_app_helper(&app, stable));
+        for f in [app_helper_plist(stable).as_str(), APP_EXECUTABLE] {
             std::fs::create_dir_all(app.join(f).parent().unwrap()).unwrap();
             std::fs::write(app.join(f), "").unwrap();
         }
         assert!(
-            !has_app_helper(&app),
+            !has_app_helper(&app, stable),
             "an app without its own cua-spacesd (0.9.4)"
         );
+        std::fs::create_dir_all(app.join(APP_HELPER_DAEMON).parent().unwrap()).unwrap();
         std::fs::write(app.join(APP_HELPER_DAEMON), "").unwrap();
-        assert!(has_app_helper(&app));
+        assert!(has_app_helper(&app, stable));
+        // An app before 0.15 kept it in Contents/MacOS.
+        std::fs::remove_file(app.join(APP_HELPER_DAEMON)).unwrap();
+        std::fs::write(app.join(APP_HELPER_DAEMON_BEFORE_0_15), "").unwrap();
+        assert!(has_app_helper(&app, stable));
         let launcher = app_helper_launcher(&app);
         assert_eq!(launcher, app.join(APP_EXECUTABLE));
         assert!(is_app_helper_launcher(&launcher));
@@ -1893,9 +2175,239 @@ mod tests {
             "/Users/ada/.cua/host/bin/cua-spacesd"
         )));
         assert_eq!(
-            helper_spec_path(Path::new("/Users/ada")),
+            helper_spec_path_for(stable, Path::new("/Users/ada")),
             Path::new("/Users/ada/.cua/helper/service.json")
         );
+    }
+
+    #[test]
+    fn the_app_helper_daemon_is_outside_contents_macos() {
+        // Any executable in Contents/MacOS is the app to LaunchServices once
+        // it starts AppKit; the daemon there took over the app's launch.
+        assert!(APP_HELPER_DAEMON.starts_with("Contents/Helpers/"));
+        assert!(!APP_HELPER_DAEMON.starts_with("Contents/MacOS/"));
+    }
+
+    /// A Cua Spaces app of `channel` with the helper, in `parent`.
+    fn fake_app(parent: &Path, channel: CuaChannel) -> PathBuf {
+        let app = parent.join(format!("{}.app", channel.app_name()));
+        for f in [
+            app_helper_plist(channel).as_str(),
+            APP_HELPER_DAEMON,
+            APP_EXECUTABLE,
+        ] {
+            std::fs::create_dir_all(app.join(f).parent().unwrap()).unwrap();
+            std::fs::write(app.join(f), "").unwrap();
+        }
+        app
+    }
+
+    #[test]
+    fn stable_keeps_its_helper_names() {
+        let stable = CuaChannel::Stable;
+        assert_eq!(stable.helper_label(), "com.trycua.spaces.helper");
+        assert_eq!(
+            app_helper_plist(stable),
+            "Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist"
+        );
+        assert_eq!(
+            helper_spec_path_for(stable, Path::new("/Users/ada")),
+            Path::new("/Users/ada/.cua/helper/service.json")
+        );
+        assert_eq!(stable.host_label(), "com.trycua.spacesd.host");
+        let user = Some(std::ffi::OsStr::new("/Users/ada"));
+        assert_eq!(
+            launchd_label_for(stable, None, user),
+            "com.trycua.spacesd.host"
+        );
+        assert_eq!(
+            launchd_label_for(stable, Some(std::ffi::OsStr::new("/Users/ada/.cua")), user),
+            "com.trycua.spacesd.host"
+        );
+        let helper = AppHelper::for_channel(
+            stable,
+            PathBuf::from("/Applications/Cua Spaces.app"),
+            Path::new("/Users/ada"),
+        );
+        assert_eq!(
+            helper.target(),
+            format!("gui/{}/com.trycua.spaces.helper", helper.uid)
+        );
+        assert_eq!(
+            helper.spec_path,
+            Path::new("/Users/ada/.cua/helper/service.json")
+        );
+    }
+
+    #[test]
+    fn local_has_its_own_helper_names() {
+        let local = CuaChannel::Local;
+        assert_eq!(local.helper_label(), "com.trycua.spaces.local.helper");
+        assert_eq!(
+            app_helper_plist(local),
+            "Contents/Library/LaunchAgents/com.trycua.spaces.local.helper.plist"
+        );
+        assert_eq!(
+            helper_spec_path_for(local, Path::new("/Users/ada")),
+            Path::new("/Users/ada/.cua-local/helper/service.json")
+        );
+        // The plain runner: Local's own home adds no suffix; another home
+        // still gets one, so two Local test homes stay apart.
+        let user = Some(std::ffi::OsStr::new("/Users/ada"));
+        assert_eq!(
+            launchd_label_for(local, None, user),
+            "com.trycua.spacesd.host.local"
+        );
+        assert_eq!(
+            launchd_label_for(
+                local,
+                Some(std::ffi::OsStr::new("/Users/ada/.cua-local")),
+                user
+            ),
+            "com.trycua.spacesd.host.local"
+        );
+        let other = launchd_label_for(local, Some(std::ffi::OsStr::new("/tmp/h")), user);
+        assert!(
+            other.starts_with("com.trycua.spacesd.host.local-"),
+            "{other}"
+        );
+        // Stable's home is not Local's: it is a separate home to Local.
+        assert!(
+            launchd_label_for(local, Some(std::ffi::OsStr::new("/Users/ada/.cua")), user)
+                .starts_with("com.trycua.spacesd.host.local-")
+        );
+        let helper = AppHelper::for_channel(
+            local,
+            PathBuf::from("/Users/ada/Applications/Cua Spaces Local.app"),
+            Path::new("/Users/ada"),
+        );
+        assert_eq!(
+            helper.target(),
+            format!("gui/{}/com.trycua.spaces.local.helper", helper.uid)
+        );
+        assert_eq!(
+            helper.spec_path,
+            Path::new("/Users/ada/.cua-local/helper/service.json")
+        );
+        // Nothing of Local's is Stable's.
+        for (l, s) in [
+            (local.helper_label(), CuaChannel::Stable.helper_label()),
+            (local.host_label(), CuaChannel::Stable.host_label()),
+        ] {
+            assert_ne!(l, s);
+        }
+        assert_ne!(
+            helper_spec_path_for(local, Path::new("/Users/ada")),
+            helper_spec_path_for(CuaChannel::Stable, Path::new("/Users/ada"))
+        );
+    }
+
+    #[test]
+    fn an_app_of_the_other_channel_is_never_the_helper() {
+        let dir = tempfile::tempdir().unwrap();
+        let stable_app = fake_app(dir.path(), CuaChannel::Stable);
+        let local_app = fake_app(dir.path(), CuaChannel::Local);
+        assert_ne!(stable_app, local_app);
+
+        // Each app is the helper of its own channel only.
+        assert!(has_app_helper(&stable_app, CuaChannel::Stable));
+        assert!(has_app_helper(&local_app, CuaChannel::Local));
+        assert!(!has_app_helper(&stable_app, CuaChannel::Local));
+        assert!(!has_app_helper(&local_app, CuaChannel::Stable));
+
+        // Both installed: each channel finds its own, whatever the order.
+        let both = vec![stable_app.clone(), local_app.clone()];
+        let both_rev = vec![local_app.clone(), stable_app.clone()];
+        for found in [both, both_rev] {
+            assert_eq!(
+                pick_app_helper(CuaChannel::Stable, None, found.clone()),
+                Some(stable_app.clone())
+            );
+            assert_eq!(
+                pick_app_helper(CuaChannel::Local, None, found),
+                Some(local_app.clone())
+            );
+        }
+        // Only the other channel's app installed: no helper.
+        assert_eq!(
+            pick_app_helper(CuaChannel::Local, None, vec![stable_app.clone()]),
+            None
+        );
+        assert_eq!(
+            pick_app_helper(CuaChannel::Stable, None, vec![local_app.clone()]),
+            None
+        );
+
+        // `CUA_SPACES_APP` cannot point a channel at the other one's app.
+        let spaces_app = |p: &Path| Some(p.as_os_str().to_owned());
+        assert_eq!(
+            pick_app_helper(
+                CuaChannel::Local,
+                spaces_app(&stable_app).as_deref(),
+                vec![]
+            ),
+            None
+        );
+        assert_eq!(
+            pick_app_helper(
+                CuaChannel::Stable,
+                spaces_app(&local_app).as_deref(),
+                vec![]
+            ),
+            None
+        );
+        assert_eq!(
+            pick_app_helper(CuaChannel::Local, spaces_app(&local_app).as_deref(), vec![]),
+            Some(local_app.clone())
+        );
+        // `none` and empty still mean no app, whatever is installed.
+        for off in ["none", ""] {
+            assert_eq!(
+                pick_app_helper(
+                    CuaChannel::Stable,
+                    Some(std::ffi::OsStr::new(off)),
+                    vec![stable_app.clone()]
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn each_channel_looks_only_for_its_own_app() {
+        let home = Some(std::ffi::OsStr::new("/Users/ada"));
+        let names = |channel| -> Vec<String> {
+            app_helper_candidates(channel, None, home)
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(
+            names(CuaChannel::Stable)
+                .iter()
+                .all(|n| n == "Cua Spaces.app")
+        );
+        assert!(
+            names(CuaChannel::Local)
+                .iter()
+                .all(|n| n == "Cua Spaces Local.app")
+        );
+        assert_eq!(
+            app_helper_candidates(CuaChannel::Stable, None, home)[0],
+            Path::new("/Applications/Cua Spaces.app")
+        );
+        // The app this process runs from comes first.
+        let exe = Path::new("/Users/ada/Applications/Cua Spaces Local.app/Contents/MacOS/cua");
+        let from = app_containing(exe);
+        assert_eq!(
+            from.as_deref(),
+            Some(Path::new("/Users/ada/Applications/Cua Spaces Local.app"))
+        );
+        assert_eq!(
+            app_helper_candidates(CuaChannel::Local, from.clone(), home)[0],
+            from.unwrap()
+        );
+        assert_eq!(app_containing(Path::new("/usr/local/bin/cua")), None);
     }
 
     #[test]
@@ -1904,12 +2416,12 @@ mod tests {
             status: status.into(),
             error: error.map(Into::into),
         };
-        assert!(helper_registered(&reg("enabled", None)).is_ok());
-        let e = helper_registered(&reg("requires-approval", None))
+        assert!(helper_registered(&reg("enabled", None), "Cua Spaces").is_ok());
+        let e = helper_registered(&reg("requires-approval", None), "Cua Spaces")
             .unwrap_err()
             .to_string();
         assert!(e.contains("Login Items"), "{e}");
-        let e = helper_registered(&reg("not-found", Some("Invalid argument")))
+        let e = helper_registered(&reg("not-found", Some("Invalid argument")), "Cua Spaces")
             .unwrap_err()
             .to_string();
         assert!(
@@ -1962,5 +2474,107 @@ mod tests {
         runner.uninstall().unwrap();
         let state = runner.state();
         assert!(!state.installed && !state.running, "{state:?}");
+    }
+
+    /// What the driver starts in its process group (the host's cua
+    /// daemon, which outlives the `cua daemon start` that spawned it) stops
+    /// with it (CUA-1804).
+    #[cfg(unix)]
+    #[test]
+    fn process_runner_stops_what_the_driver_left_running_in_its_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let child_pid = dir.path().join("child.pid");
+        let runner = ProcessRunner {
+            dir: dir.path().join("host"),
+        };
+        // A subshell starts a background `sleep` and exits, as `cua daemon
+        // start` does: the sleep is orphaned, still in the driver's group.
+        let script = format!(
+            "(sleep 300 & echo $! > '{}'); exec sleep 300",
+            child_pid.display()
+        );
+        runner
+            .install(&ServiceSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script],
+                env: vec![],
+                log_path: dir.path().join("host/driver.log"),
+                working_dir: dir.path().into(),
+            })
+            .unwrap();
+        runner.start().unwrap();
+        let mut pid = None;
+        for _ in 0..50 {
+            pid = std::fs::read_to_string(&child_pid)
+                .ok()
+                .and_then(|p| p.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let pid = pid.expect("the background child started");
+        assert!(process_alive(pid));
+        runner.uninstall().unwrap();
+        // The orphan is reaped by init (launchd) a moment after it dies.
+        let mut alive = true;
+        for _ in 0..50 {
+            alive = process_alive(pid);
+            if !alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if alive {
+            // Never leave it behind, whatever the assertion says.
+            // SAFETY: the pid this test started.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+        assert!(!alive, "the driver's background child outlived uninstall");
+    }
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::suffix_for;
+    use cua_home::channel::CuaChannel::{Local, Stable};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn a_separate_cua_home_gets_its_own_service_names() {
+        let user = Some(OsStr::new("/home/ada"));
+        assert_eq!(suffix_for(Stable, None, user), "");
+        assert_eq!(suffix_for(Stable, Some(OsStr::new("")), user), "");
+        assert_eq!(
+            suffix_for(Stable, Some(OsStr::new("/home/ada/.cua")), user),
+            ""
+        );
+        let a = suffix_for(Stable, Some(OsStr::new("/home/ada/fb/home")), user);
+        let b = suffix_for(Stable, Some(OsStr::new("/home/ada/other")), user);
+        assert_eq!(a.len(), 9);
+        assert!(a.starts_with('-'));
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            suffix_for(Stable, Some(OsStr::new("/home/ada/fb/home")), user)
+        );
+    }
+
+    #[test]
+    fn a_channel_own_home_is_not_a_separate_home() {
+        let user = Some(OsStr::new("/home/ada"));
+        assert_eq!(
+            suffix_for(Local, Some(OsStr::new("/home/ada/.cua-local")), user),
+            ""
+        );
+        // Each channel's home is a separate home to the other.
+        assert_eq!(
+            suffix_for(Local, Some(OsStr::new("/home/ada/.cua")), user).len(),
+            9
+        );
+        assert_eq!(
+            suffix_for(Stable, Some(OsStr::new("/home/ada/.cua-local")), user).len(),
+            9
+        );
     }
 }

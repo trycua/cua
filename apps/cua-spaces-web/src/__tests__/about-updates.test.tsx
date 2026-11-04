@@ -54,11 +54,11 @@ describe.skipIf(!wasmBuilt)("Settings, About", () => {
     expect(q("[data-about-updates]")!.hasAttribute("data-about-unavailable")).toBe(true);
     expect(q("[data-about-last-check]")!.textContent).toBe("Updates aren’t available in this build");
     expect((q("[data-about-check]") as HTMLButtonElement).disabled).toBe(true);
-    expect(q("[data-about-check]")!.textContent).toBe("Check Now");
+    expect(q("[data-about-check]")!.textContent).toBe("Check now");
     expect(q("[data-about-auto-check]")!.hasAttribute("data-disabled")).toBe(true);
-    expect(q("[data-about-auto-install]")!.hasAttribute("data-disabled")).toBe(true);
-    expect(document.body.textContent).toContain("Check for and download updates automatically");
-    expect(document.body.textContent).toContain("Update to:");
+    // One switch for checking, downloading and installing; Beta is in Advanced.
+    expect(document.body.textContent).toContain("Keep Cua Spaces up to date");
+    expect(document.body.textContent).not.toContain("Update to:");
   });
 
   it("draws them live where the app updates itself", async () => {
@@ -66,12 +66,13 @@ describe.skipIf(!wasmBuilt)("Settings, About", () => {
     await waitFor(() => expect(q("[data-about-updates]")).not.toBeNull(), { timeout: 8000 });
     expect(q("[data-about-updates]")!.hasAttribute("data-about-unavailable")).toBe(false);
     expect((q("[data-about-check]") as HTMLButtonElement).disabled).toBe(false);
-    expect(q("[data-about-last-check]")!.textContent).toMatch(/^Last check: /);
+    expect(q("[data-about-last-check]")!.textContent).toMatch(/^Last checked /);
   });
 
   it("leaves them out on the SwiftUI host without an updater, as its own About does", async () => {
     await mount("webkit", false);
     await waitFor(() => expect(q("[data-about-version]")).not.toBeNull(), { timeout: 8000 });
-    expect(q("[data-about-updates]")).toBeNull();
+    expect(q("[data-about-check]")).toBeNull();
+    expect(q("[data-about-auto-check]")).toBeNull();
   });
 });

@@ -112,6 +112,7 @@ impl LocalRuntime for Runtime {
             ssh: None,
             serial_log: None,
             container_id: None,
+            bulk: None,
         })
     }
 }

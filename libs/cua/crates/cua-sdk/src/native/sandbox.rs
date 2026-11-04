@@ -91,7 +91,7 @@ impl From<cua_sandbox_core::ImageInfo> for ImageInfo {
 pub struct SandboxInfo {
     /// Name.
     pub name: String,
-    /// What kind of machine: `container` or `vm` (empty when not known:
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known:
     /// an existing machine).
     pub kind: String,
     /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
@@ -516,7 +516,7 @@ pub struct SandboxCreateOptions {
     /// ended" error.
     #[uniffi(default = None)]
     pub on: Option<String>,
-    /// What kind of machine: `auto`, `container` or `vm`. `None`: the user
+    /// What kind of machine: `auto`, `container`, `vm` or `microvm`. `None`: the user
     /// default (`default.kind`, else `auto`: macOS and Windows images are
     /// VMs, an image with a container rootfs is a container, a disk-only
     /// image is a VM).
@@ -540,6 +540,12 @@ pub struct SandboxCreateOptions {
     /// spacesd token.
     #[uniffi(default = None)]
     pub token: Option<String>,
+    /// Create from this pool: locally, a pool made with
+    /// [`Sandboxes::create_pool`] (the sandbox gets the pool's image and
+    /// shape and takes one of its ready sandboxes in about 0.1 s; `image`
+    /// may be left empty).
+    #[uniffi(default = None)]
+    pub pool: Option<String>,
     /// Guest OS (`linux`, `macos`, `windows`).
     #[uniffi(default = None)]
     pub os: Option<String>,
@@ -565,6 +571,11 @@ pub struct SandboxCreateOptions {
     /// are not secrets).
     #[uniffi(default)]
     pub env: HashMap<String, String>,
+    /// Lifetime backstop in seconds: the platform deletes the sandbox this
+    /// long after it stops being kept alive (a provider sandbox such as
+    /// `on = "e2b"`: its lifetime). `None`: the platform's default.
+    #[uniffi(default = None)]
+    pub ttl_seconds: Option<u32>,
     /// The sandbox's command (argv), replacing the image's entrypoint.
     /// Same meaning local (container ENTRYPOINT, or run by cloud-init in a
     /// Linux VM) and in the cloud (the template command with
@@ -606,6 +617,31 @@ pub struct SandboxCreateOptions {
     /// (the default): no GPU.
     #[uniffi(default = None)]
     pub gpu: Option<String>,
+    /// A Space without a desktop: only cua-spacesd runs (exec, files,
+    /// processes, MCP), with no display, window manager or audio. For shell
+    /// and RL workloads it starts several times faster and fits many more
+    /// per machine. Images without cua-spacesd are unaffected; a `command`
+    /// of your own is kept.
+    #[uniffi(default = false)]
+    pub headless: bool,
+    /// Whether an image without cua-spacesd gets a static one injected, so
+    /// any OCI image is a full Space (local containers and microVMs: exec,
+    /// files, ports). `None` (the default): yes. `Some(false)` runs the
+    /// image as it is.
+    #[uniffi(default = None)]
+    pub spacesd: Option<bool>,
+    /// A size profile: defaults for what is left unset. `"rollout"`: 1
+    /// vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+    /// so many more fit on one machine), for RL rollouts and agent episodes
+    /// that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+    #[uniffi(default = None)]
+    pub profile: Option<String>,
+    /// A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints take milliseconds and forks of them
+    /// share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]).
+    /// Other kinds ignore it. `None` (the default): not one.
+    #[uniffi(default = None)]
+    pub forkable: Option<bool>,
 }
 
 impl Default for SandboxCreateOptions {
@@ -642,6 +678,8 @@ impl SandboxCreateOptions {
             wait_for: vec![],
             ready_timeout_ms: None,
             env: HashMap::new(),
+            pool: None,
+            ttl_seconds: None,
             command: None,
             sidecars: vec![],
             registry_secret: None,
@@ -650,6 +688,10 @@ impl SandboxCreateOptions {
             overlays: vec![],
             keep_on_failure: false,
             gpu: None,
+            headless: false,
+            spacesd: None,
+            profile: None,
+            forkable: None,
         }
     }
 
@@ -693,12 +735,13 @@ impl SandboxCreateOptions {
     fn to_request(&self) -> Result<CreateRequest> {
         use cua_sandbox_core::placement::On;
         let placement = self.placement()?;
+        let pool = self.pool.clone().filter(|p| !p.trim().is_empty());
         let (provider, url) = match &placement.on {
             On::Local => (Some(CoreProvider::Local), None),
             On::Direct(a) => (Some(CoreProvider::Direct), Some(a.clone())),
             On::Provider(_) => (Some(CoreProvider::Contrib), None),
             // `placement()` refused the cloud above.
-            On::Relay(_) | On::Host(_) | On::Cloud => (None, None),
+            On::Relay(_) | On::Host(_) | On::Auto | On::Cloud => (None, None),
         };
         Ok(CreateRequest {
             // Resolved here, in the caller's process: a daemon never applies
@@ -711,6 +754,7 @@ impl SandboxCreateOptions {
             name: self.name.clone(),
             image: self.image.clone(),
             token: self.token.clone(),
+            pool,
             os: self.os.clone(),
             cpus: self.cpus,
             memory_mb: self.memory_mb,
@@ -740,6 +784,10 @@ impl SandboxCreateOptions {
             owner_pid: Some(std::process::id()),
             keep_on_failure: self.keep_on_failure,
             gpu: self.gpu.clone().filter(|g| !g.trim().is_empty()),
+            headless: self.headless,
+            spacesd: self.spacesd,
+            profile: self.profile.clone().filter(|p| !p.trim().is_empty()),
+            forkable: self.forkable.unwrap_or(false),
         })
     }
 }
@@ -1113,6 +1161,420 @@ impl Sandboxes {
     }
 }
 
+/// A named checkpoint of a sandbox, and the machine that holds it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, uniffi::Record)]
+pub struct CheckpointSummary {
+    /// The checkpoint's name.
+    pub name: String,
+    /// The sandbox it was taken from.
+    pub source: String,
+    /// The engine that holds it (`firecracker`, `gvisor`, `qemu`, ...).
+    pub runtime_type: String,
+    /// RFC 3339 creation time.
+    pub created_at: String,
+    /// The source's image.
+    pub image: String,
+    /// Pinned: a fork source to keep (`delete_checkpoint` refuses it and
+    /// `prune_checkpoints` leaves it until it is unpinned).
+    pub pinned: bool,
+    /// Its forks map its RAM copy-on-write and share the pages they do not
+    /// write (a QEMU memory checkpoint).
+    pub shared_memory: bool,
+    /// Taken to fork a running sandbox many times ([`Sandboxes::fork_many`]
+    /// of a sandbox): deleted with the last of its forks.
+    pub release_with_forks: bool,
+    /// How many of its forks still exist (for `release_with_forks`).
+    pub forks: u32,
+    /// Where it is: empty for this machine, else the name of the machine of
+    /// yours that holds it (a checkpoint of a Space that machine provides).
+    /// Its forks start there (`Spaces.create` with image
+    /// `checkpoint:<name>`, or `fork_many`), or on another machine after a
+    /// verified copy.
+    pub host: String,
+}
+
+impl From<cua_sandbox_core::CheckpointRecord> for CheckpointSummary {
+    fn from(c: cua_sandbox_core::CheckpointRecord) -> Self {
+        Self {
+            image: c
+                .template
+                .image
+                .get("registry")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            name: c.name,
+            source: c.source,
+            runtime_type: c.runtime_type,
+            created_at: c.created_at,
+            pinned: c.pinned,
+            shared_memory: c.shared_memory,
+            release_with_forks: c.release_with_forks,
+            forks: c.holders.len() as u32,
+            host: String::new(),
+        }
+    }
+}
+
+impl From<cua_proto::daemon::v1::Checkpoint> for CheckpointSummary {
+    fn from(c: cua_proto::daemon::v1::Checkpoint) -> Self {
+        Self {
+            name: c.name,
+            source: c.source,
+            runtime_type: c.runtime_type,
+            created_at: c
+                .created_at
+                .map(|t| {
+                    let at = std::time::UNIX_EPOCH
+                        + std::time::Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32);
+                    humantime::format_rfc3339_seconds(at).to_string()
+                })
+                .unwrap_or_default(),
+            image: c.image,
+            pinned: c.pinned,
+            shared_memory: c.shared_memory,
+            release_with_forks: c.release_with_forks,
+            forks: c.forks,
+            host: c.host,
+        }
+    }
+}
+
+/// Checkpoints and forks of sandboxes (the CLI's `cua sb checkpoint`
+/// and `cua sb fork`).
+#[uniffi::export]
+impl Sandboxes {
+    /// Saves sandbox `name`'s state as `checkpoint` (memory and disk on a
+    /// microVM or a QEMU VM; a container's filesystem). It keeps running.
+    /// `pin` (default false) pins the new checkpoint (see
+    /// [`Sandboxes::pin_checkpoint`]). A QEMU checkpoint's forks share its
+    /// RAM copy-on-write ([`CheckpointSummary::shared_memory`]). `name` may
+    /// also be a Space another machine of yours provides (its name or id):
+    /// that machine takes the checkpoint and keeps it
+    /// ([`CheckpointSummary::host`]).
+    #[uniffi::method(default(pin = false))]
+    pub async fn checkpoint(
+        &self,
+        name: String,
+        checkpoint: String,
+        pin: bool,
+    ) -> Result<CheckpointSummary> {
+        let backend = self.backend.clone();
+        run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt
+                    .checkpoint_anywhere(&name, &checkpoint, pin)
+                    .await?
+                    .into(),
+                Backend::Daemon(d) => d.checkpoint_with(&name, &checkpoint, pin).await?.into(),
+            })
+        })
+        .await
+    }
+
+    /// Pins (`pinned`) or unpins a checkpoint. A pinned checkpoint is a
+    /// fork source to keep: `delete_checkpoint` refuses it and
+    /// `prune_checkpoints` leaves it until it is unpinned.
+    pub async fn pin_checkpoint(&self, name: String, pinned: bool) -> Result<CheckpointSummary> {
+        let backend = self.backend.clone();
+        run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt.pin_checkpoint(&name, pinned).await?.into(),
+                Backend::Daemon(d) => d.pin_checkpoint(&name, pinned).await?.into(),
+            })
+        })
+        .await
+    }
+
+    /// Deletes every checkpoint that is not pinned (forks made from them
+    /// keep running); returns their names.
+    pub async fn prune_checkpoints(&self) -> Result<Vec<String>> {
+        let backend = self.backend.clone();
+        run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt.prune_checkpoints().await?,
+                Backend::Daemon(d) => d.prune_checkpoints().await?,
+            })
+        })
+        .await
+    }
+
+    /// Starts `name` from a sandbox (running or stopped) or a checkpoint.
+    pub async fn fork(&self, source: String, name: String) -> Result<Arc<Sandbox>> {
+        let backend = self.backend.clone();
+        let info: SandboxInfo = run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt.fork(&source, &name, Default::default()).await?,
+                Backend::Daemon(d) => d.fork(&source, &name).await?,
+            })
+        })
+        .await?
+        .into();
+        Ok(self.handle(info))
+    }
+
+    /// Every checkpoint: this machine's (oldest first), then those your
+    /// machines that provide Spaces hold, each name once
+    /// ([`CheckpointSummary::host`]).
+    pub async fn checkpoints(&self) -> Result<Vec<CheckpointSummary>> {
+        let backend = self.backend.clone();
+        run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt
+                    .checkpoints_everywhere()
+                    .await
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                Backend::Daemon(d) => d.checkpoints().await?.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
+    }
+
+    /// Deletes a checkpoint, here and on every machine of yours that holds
+    /// a copy (forks made from it keep running). A pinned checkpoint is
+    /// refused until it is unpinned.
+    pub async fn delete_checkpoint(&self, name: String) -> Result<()> {
+        let backend = self.backend.clone();
+        run(async move {
+            match &backend {
+                Backend::Embedded(rt) => rt.delete_checkpoint_everywhere(&name).await?,
+                Backend::Daemon(d) => d.delete_checkpoint(&name).await?,
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Creates a pool: sandboxes of `image` (and `options`' shape) kept
+    /// ready on this machine by `cua daemon`, so that a create from the
+    /// pool (`SandboxCreateOptions.pool`) takes one in about 0.1 s.
+    ///
+    /// - `min`: kept ready at all times; one starts again as soon as one is
+    ///   created from the pool.
+    /// - `max`: the most kept ready (not counting those created from the
+    ///   pool); above `min` only while creates come faster than sandboxes
+    ///   start. Default: `min`.
+    /// - `idle_ms`: after this long without a create from the pool it keeps
+    ///   none ready, until the next create (which starts on the default tier
+    ///   and refills it). Default: never.
+    ///
+    /// Pools run on this machine (`on = "local"`, the default). Without a
+    /// pool, the daemon keeps sandboxes ready only where repeated creates of
+    /// a shape pay for it; a pool asks for them explicitly. Creating a pool
+    /// with the name of an existing one updates it.
+    pub async fn create_pool(
+        &self,
+        image: String,
+        options: PoolCreateOptions,
+    ) -> Result<SandboxPool> {
+        let backend = self.backend.clone();
+        let on = options
+            .on
+            .clone()
+            .map(|o| o.trim().to_string())
+            .filter(|o| !o.is_empty())
+            .unwrap_or_else(|| "local".into());
+        if on != "local" {
+            return Err(CuaError::Unsupported(format!(
+                "pools run on this machine only today: create it with on=\"local\", not {on:?}"
+            )));
+        }
+        let mut create = SandboxCreateOptions::new("local", image);
+        create.kind = options.kind.clone();
+        create.runtime = options.runtime.clone();
+        create.os = options.os.clone();
+        create.cpus = options.cpus;
+        create.memory_mb = options.memory_mb;
+        create.env = options.env.clone();
+        create.ports = options.ports.clone();
+        create.services = options.services.clone();
+        create.command = options.command.clone();
+        create.headless = options.headless;
+        let req = create.to_request()?;
+        let name = options.name.clone();
+        let (min, max) = (options.min, options.max.unwrap_or(options.min));
+        let idle = options.idle_ms.map(std::time::Duration::from_millis);
+        run(async move {
+            let p = match &backend {
+                Backend::Embedded(rt) => {
+                    rt.create_pool(name.as_deref(), req, min, max, idle).await?
+                }
+                Backend::Daemon(d) => d.create_pool(name.as_deref(), req, min, max, idle).await?,
+            };
+            Ok(SandboxPool::from(p))
+        })
+        .await
+    }
+
+    /// Pool `name`, with what it holds now.
+    pub async fn get_pool(&self, name: String) -> Result<SandboxPool> {
+        let backend = self.backend.clone();
+        run(async move {
+            let p = match &backend {
+                Backend::Embedded(rt) => rt.get_pool(&name)?,
+                Backend::Daemon(d) => d.get_pool(&name).await?,
+            };
+            Ok(SandboxPool::from(p))
+        })
+        .await
+    }
+
+    /// Every pool, with what each holds now.
+    pub async fn list_pools(&self) -> Result<Vec<SandboxPool>> {
+        let backend = self.backend.clone();
+        run(async move {
+            let all = match &backend {
+                Backend::Embedded(rt) => rt.list_pools()?,
+                Backend::Daemon(d) => d.list_pools().await?,
+            };
+            Ok(all.into_iter().map(SandboxPool::from).collect())
+        })
+        .await
+    }
+
+    /// Deletes pool `name`: its ready sandboxes go; sandboxes created from
+    /// it stay. `false` when there was none.
+    pub async fn delete_pool(&self, name: String) -> Result<bool> {
+        let backend = self.backend.clone();
+        run(async move {
+            Ok(match &backend {
+                Backend::Embedded(rt) => rt.delete_pool(&name)?,
+                Backend::Daemon(d) => d.delete_pool(&name).await?,
+            })
+        })
+        .await
+    }
+}
+
+/// What a pool's sandboxes are and how many it keeps ready
+/// ([`Sandboxes::create_pool`]). The shape fields mean what they mean in
+/// [`SandboxCreateOptions`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PoolCreateOptions {
+    /// Pool name (lower-case letters, digits and `-`). `None`: a new name.
+    /// The name of an existing pool updates it.
+    #[uniffi(default = None)]
+    pub name: Option<String>,
+    /// Where its sandboxes run: `local` (the default; the only location
+    /// with pools today).
+    #[uniffi(default = None)]
+    pub on: Option<String>,
+    /// What kind of machine: `auto`, `container`, `vm` or `microvm`.
+    #[uniffi(default = None)]
+    pub kind: Option<String>,
+    /// Which engine: `auto` or one the location offers for the kind.
+    #[uniffi(default = None)]
+    pub runtime: Option<String>,
+    /// Guest OS (`linux`, `macos`, `windows`).
+    #[uniffi(default = None)]
+    pub os: Option<String>,
+    /// vCPUs of each sandbox.
+    #[uniffi(default = None)]
+    pub cpus: Option<u32>,
+    /// Memory of each sandbox (MiB).
+    #[uniffi(default = None)]
+    pub memory_mb: Option<u64>,
+    /// Guest environment.
+    #[uniffi(default)]
+    pub env: HashMap<String, String>,
+    /// Extra guest ports to publish.
+    #[uniffi(default = [])]
+    pub ports: Vec<u16>,
+    /// Named services (name → guest port).
+    #[uniffi(default)]
+    pub services: HashMap<String, u16>,
+    /// The sandboxes' command (argv), replacing the image's entrypoint (as
+    /// [`SandboxCreateOptions::command`]).
+    #[uniffi(default = None)]
+    pub command: Option<Vec<String>>,
+    /// Sandboxes without a desktop (as [`SandboxCreateOptions::headless`]).
+    #[uniffi(default = false)]
+    pub headless: bool,
+    /// Sandboxes kept ready at all times (refilled right after each create
+    /// from the pool).
+    #[uniffi(default = 1)]
+    pub min: u32,
+    /// The most kept ready, not counting those created from the pool
+    /// (default: `min`).
+    #[uniffi(default = None)]
+    pub max: Option<u32>,
+    /// After this long without a create from the pool it keeps none ready,
+    /// until the next create (default: never).
+    #[uniffi(default = None)]
+    pub idle_ms: Option<u64>,
+}
+
+impl Default for PoolCreateOptions {
+    fn default() -> Self {
+        Self {
+            name: None,
+            on: None,
+            kind: None,
+            runtime: None,
+            os: None,
+            cpus: None,
+            memory_mb: None,
+            env: HashMap::new(),
+            ports: vec![],
+            services: HashMap::new(),
+            command: None,
+            headless: false,
+            min: 1,
+            max: None,
+            idle_ms: None,
+        }
+    }
+}
+
+/// A pool ([`Sandboxes::create_pool`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SandboxPool {
+    /// Name.
+    pub name: String,
+    /// Image as given.
+    pub image: String,
+    /// Where its sandboxes run (`local`).
+    pub location: String,
+    /// Kind and runtime as given (empty: auto).
+    pub kind: String,
+    pub runtime: String,
+    /// Each sandbox's CPUs and memory (MiB).
+    pub cpus: u32,
+    pub memory_mb: u64,
+    /// Sandboxes kept ready at all times, and at most.
+    pub min: u32,
+    pub max: u32,
+    /// After this long without a create it keeps none ready (`None`: never).
+    pub idle_ms: Option<u64>,
+    /// Ready now, and starting.
+    pub ready: u32,
+    pub starting: u32,
+    /// Why it holds what it holds, or why it cannot.
+    pub status: String,
+}
+
+impl From<cua_daemon::PoolInfo> for SandboxPool {
+    fn from(p: cua_daemon::PoolInfo) -> Self {
+        Self {
+            name: p.name,
+            image: p.image,
+            location: p.location,
+            kind: p.kind,
+            runtime: p.runtime,
+            cpus: p.cpus,
+            memory_mb: p.memory_mb,
+            min: p.min,
+            max: p.max,
+            idle_ms: p.idle.map(|d| d.as_millis() as u64),
+            ready: p.ready,
+            starting: p.starting,
+            status: p.status,
+        }
+    }
+}
+
 impl Sandboxes {
     /// The sandboxes this machine knows (state files, local backends,
     /// connected URLs) of `provider` (all when `None`). Rust only; the CLI's
@@ -1185,7 +1647,7 @@ impl Sandbox {
         self.info.location.clone()
     }
 
-    /// What kind of machine: `container` or `vm` (empty when not known).
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known).
     pub fn kind(&self) -> String {
         self.info.kind.clone()
     }
@@ -1438,8 +1900,9 @@ impl Sandbox {
             })
             .await?;
             Ok(Arc::new(PortForward {
-                backend,
+                backend: Some(backend),
                 info,
+                tunnel: std::sync::Mutex::new(None),
                 closed: std::sync::atomic::AtomicBool::new(false),
             }))
         }
@@ -1480,6 +1943,39 @@ impl Sandbox {
         .await
     }
 
+    /// Gives this local sandbox a lifetime of `seconds` from now, replacing
+    /// any earlier one: the cua daemon then deletes it (`on_expire`
+    /// `"delete"`, the default) or suspends it (`"suspend"`), whether or
+    /// not this process is still running. Needs the cua daemon (an
+    /// embedded runtime records the lifetime; the next daemon enforces it).
+    pub async fn set_lifetime(&self, seconds: u32, on_expire: Option<String>) -> Result<()> {
+        let action = match on_expire.as_deref() {
+            None => cua_sandbox_core::LocalExpiry::Delete,
+            Some(s) => cua_sandbox_core::LocalExpiry::parse(s).ok_or_else(|| {
+                CuaError::InvalidArgument(format!(
+                    "on_expire {s:?}: expected \"delete\" or \"suspend\""
+                ))
+            })?,
+        };
+        let backend = self.backend.clone();
+        let name = self.info.id.clone();
+        let d = super::secs(seconds);
+        run(async move {
+            match &backend {
+                Backend::Embedded(rt) => Ok(rt.set_lifetime(&name, d, action).await?),
+                Backend::Daemon(c) => Ok(c.set_lifetime(&name, d, action).await?),
+            }
+        })
+        .await
+    }
+
+    /// When this sandbox's lifetime ends ([`Sandbox::set_lifetime`]), as
+    /// Unix seconds; `None` when it has none.
+    pub async fn expires_at_unix(&self) -> Result<Option<i64>> {
+        let info = self.refresh().await?;
+        Ok(info.expires_at_unix)
+    }
+
     /// Suspends.
     pub async fn suspend(&self) -> Result<()> {
         self.lifecycle(Op::Suspend).await
@@ -1493,6 +1989,35 @@ impl Sandbox {
     /// Restarts.
     pub async fn restart(&self) -> Result<()> {
         self.lifecycle(Op::Restart).await
+    }
+
+    /// Gives a local VM another shape: `cpus` vCPUs, `memory_mb` MiB of
+    /// memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
+    /// VM stops and boots again from its own disk, so its memory and
+    /// running processes do not survive; its files do. Returns once it is
+    /// ready again. A disk never shrinks. Containers, Fleet and other
+    /// providers' sandboxes are refused (`Unsupported`).
+    pub async fn resize(
+        &self,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<()> {
+        let shape = cua_sandbox_core::Resize {
+            cpus,
+            memory_mb,
+            disk_gb,
+            probes: Vec::new(),
+        };
+        let backend = self.backend.clone();
+        let name = self.info.id.clone();
+        run(async move {
+            match &backend {
+                Backend::Embedded(rt) => Ok(rt.resize(&name, &shape).await?),
+                Backend::Daemon(d) => Ok(d.resize(&name, &shape).await?),
+            }
+        })
+        .await
     }
 
     /// Deletes (local: removes it; direct: forgets it; your cloud: deletes
@@ -1699,6 +2224,8 @@ impl Sandbox {
                 success: code == 0,
                 code: i32::try_from(code).ok(),
                 signal: None,
+                signal_number: None,
+                signal_name: None,
                 timed_out: false,
                 error: None,
             },
@@ -1928,9 +2455,30 @@ impl Service {
 /// An active port forward. Closed on `close()` or when dropped.
 #[derive(uniffi::Object)]
 pub struct PortForward {
-    backend: Backend,
+    backend: Option<Backend>,
     info: cua_daemon::ForwardInfo,
+    /// A forward over a Space's own connection ([`super::Space::forward`]),
+    /// relayed by this process.
+    tunnel: std::sync::Mutex<Option<cua_spacesd_client::TcpForward>>,
     closed: std::sync::atomic::AtomicBool,
+}
+
+impl PortForward {
+    /// A forward over a spacesd tunnel this process runs.
+    pub(crate) fn tunnel(fwd: cua_spacesd_client::TcpForward) -> Self {
+        let local = fwd.local_addr().to_string();
+        Self {
+            backend: None,
+            info: cua_daemon::ForwardInfo {
+                id: String::new(),
+                guest_port: fwd.guest_port(),
+                url: Some(format!("http://{local}")),
+                local_addr: Some(local),
+            },
+            tunnel: std::sync::Mutex::new(Some(fwd)),
+            closed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
 }
 
 #[uniffi::export]
@@ -1952,10 +2500,16 @@ impl PortForward {
 
     /// Stops the forward.
     pub async fn close(&self) -> Result<()> {
-        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) || self.info.id.is_empty() {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
-        let backend = self.backend.clone();
+        let tunnel = self.tunnel.lock().expect("tunnel").take();
+        if let Some(fwd) = tunnel {
+            return run(async move { Ok(fwd.close().await?) }).await;
+        }
+        let Some(backend) = self.backend.clone().filter(|_| !self.info.id.is_empty()) else {
+            return Ok(());
+        };
         let id = self.info.id.clone();
         run(async move {
             match &backend {
@@ -1969,10 +2523,19 @@ impl PortForward {
 
 impl Drop for PortForward {
     fn drop(&mut self) {
-        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) || self.info.id.is_empty() {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let backend = self.backend.clone();
+        if let Some(fwd) = self.tunnel.lock().expect("tunnel").take() {
+            // Inside the SDK runtime, so the driver-side forward is revoked.
+            super::runtime().spawn(async move {
+                let _ = fwd.close().await;
+            });
+            return;
+        }
+        let Some(backend) = self.backend.clone().filter(|_| !self.info.id.is_empty()) else {
+            return;
+        };
         let id = self.info.id.clone();
         super::runtime().spawn(async move {
             let _ = match &backend {
@@ -2025,12 +2588,19 @@ mod tests {
     fn the_location_defaults_to_the_user_default() {
         use cua_sandbox_core::placement::{Kind, On, Runtime};
         let _env = super::super::test_env::EnvGuard::isolated();
-        let o = SandboxCreateOptions::auto("python:3.12-slim");
+        let mut o = SandboxCreateOptions::auto("python:3.12-slim");
         assert_eq!(o.placement().unwrap().on, On::Local);
         assert_eq!(SandboxCreateOptions::default().on, None);
         let r = o.to_request().unwrap();
         assert_eq!(r.location.as_deref(), Some("local"));
         assert_eq!(r.provider, Some(CoreProvider::Local));
+        // A pool name does not move the sandbox anywhere.
+        o.pool = Some("agents".into());
+        let r = o.to_request().unwrap();
+        assert_eq!(
+            (r.pool.as_deref(), r.location.as_deref()),
+            (Some("agents"), Some("local"))
+        );
         // Cua Cloud has ended.
         let e = SandboxCreateOptions::new("cloud", "x")
             .placement()
@@ -2153,7 +2723,7 @@ pub struct SandboxRefParts {
 
 /// Every location word `on=` accepts, in display order: `local`, `cloud`,
 /// then the contrib providers (`e2b`, `daytona`, `modal`, ...) and your own
-/// clouds (`aws`, `gcp`). A word is listed whether or not this build
+/// clouds (`aws`, `gcp`, `hetzner`). A word is listed whether or not this build
 /// includes that provider (see [`contrib_providers_built`]).
 #[uniffi::export]
 pub fn sandbox_locations() -> Vec<String> {
@@ -2216,4 +2786,472 @@ pub fn ambiguous_sandbox_candidates(message: String) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// -- Batched forks -----------------------------------------------------------
+
+/// A fallback copy of checkpoints. Your machines fetch a checkpoint there
+/// when the machine that holds it cannot be reached
+/// ([`Sandboxes::publish_checkpoint`] puts it there). Set `s3_bucket` (S3,
+/// with each machine's AWS credentials) or `dir` (a folder every machine
+/// mounts, such as your Cua Volume).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SnapshotFallbackOptions {
+    /// S3 bucket.
+    #[uniffi(default = "")]
+    pub s3_bucket: String,
+    /// Key prefix in the bucket (`cua-snapshots/`).
+    #[uniffi(default = "")]
+    pub s3_prefix: String,
+    /// Region (empty: each machine's AWS default).
+    #[uniffi(default = "")]
+    pub s3_region: String,
+    /// An S3-compatible endpoint (empty: AWS).
+    #[uniffi(default = "")]
+    pub s3_endpoint: String,
+    /// A folder every machine mounts (`~` is each machine's home), for
+    /// example `~/Cua Volume/snapshots`.
+    #[uniffi(default = "")]
+    pub dir: String,
+}
+
+impl SnapshotFallbackOptions {
+    fn to_pb(&self) -> cua_proto::env::v1::SnapshotFallback {
+        cua_proto::env::v1::SnapshotFallback {
+            s3: (!self.s3_bucket.trim().is_empty()).then(|| cua_proto::env::v1::SnapshotS3 {
+                bucket: self.s3_bucket.clone(),
+                prefix: self.s3_prefix.clone(),
+                region: self.s3_region.clone(),
+                endpoint: self.s3_endpoint.clone(),
+            }),
+            dir: self.dir.clone(),
+        }
+    }
+}
+
+/// Batched fork options. For [`Sandboxes::fork_many`] and
+/// [`Sandboxes::fork_groups`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ForkManyOptions {
+    /// Where: `local` (this machine, the default), `auto` (your machines
+    /// that provide Spaces, this one included, least loaded first) or
+    /// `host:<machine>`.
+    #[uniffi(default = None)]
+    pub on: Option<String>,
+    /// Forks per group for [`Sandboxes::fork_many`] (0: all in one group).
+    /// A group's forks go to one machine, so they share the checkpoint's
+    /// memory there.
+    #[uniffi(default = 0)]
+    pub group_size: u32,
+    /// Forks started at once on one machine (0: 4).
+    #[uniffi(default = 0)]
+    pub max_parallel_per_host: u32,
+    /// Names are `<prefix>-<n>` (empty: `<checkpoint>-<random>`).
+    #[uniffi(default = "")]
+    pub name_prefix: String,
+    /// vCPUs each fork is counted as when placing (0: 1, as forks of one
+    /// world are mostly idle).
+    #[uniffi(default = 0)]
+    pub cpus: u32,
+    /// Memory (MiB) each fork is counted as when placing (0: the
+    /// checkpoint's).
+    #[uniffi(default = 0)]
+    pub memory_mb: u64,
+    /// Times forks of a machine that failed (or was full) are placed again
+    /// on another (0: once).
+    #[uniffi(default = 0)]
+    pub retries: u32,
+    /// Never place failed forks again: report them.
+    #[uniffi(default = false)]
+    pub no_retry: bool,
+    /// Where machines fetch a checkpoint they lack when the one that holds
+    /// it cannot be reached.
+    #[uniffi(default = None)]
+    pub fallback: Option<SnapshotFallbackOptions>,
+}
+
+/// A group of forks. The forks of one checkpoint that go to one machine
+/// together ([`Sandboxes::fork_groups`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForkGroup {
+    /// The checkpoint, or a local sandbox (see [`Sandboxes::fork_many`]).
+    pub source: String,
+    /// How many forks.
+    pub count: u32,
+    /// Names are `<prefix>-<n>` (empty: the batch's).
+    #[uniffi(default = "")]
+    pub name_prefix: String,
+}
+
+/// One fork of a batch. Ready, or failed with why.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForkBatchItem {
+    /// Its index in the batch.
+    pub index: u32,
+    /// Its group.
+    pub group: u32,
+    /// Its checkpoint.
+    pub source: String,
+    /// Its name.
+    pub name: String,
+    /// The machine it runs on (`local` for this one).
+    pub host: String,
+    /// The Space to connect to (`local:<name>`, `direct:<addr>`,
+    /// `relay:<machine>`); empty when it failed.
+    pub space: String,
+    /// Why it failed; empty when it is ready.
+    pub error: String,
+    /// `host_failed`, `no_capacity`, `sync_failed`, `fork_failed` or
+    /// `no_host` with `error`.
+    pub error_code: String,
+    /// Which placement it came from (1: the first).
+    pub attempt: u32,
+    /// Milliseconds from the start of the batch until it was ready.
+    pub elapsed_ms: u64,
+    /// Milliseconds its own fork took.
+    pub fork_ms: u64,
+}
+
+impl ForkBatchItem {
+    fn of(i: cua_proto::daemon::v1::ForkBatchItem) -> Self {
+        Self {
+            index: i.index,
+            group: i.group,
+            source: i.source,
+            name: i.name,
+            host: i.host,
+            space: i.space,
+            error: i.error,
+            error_code: i.error_code,
+            attempt: i.attempt,
+            elapsed_ms: i.elapsed_ms,
+            fork_ms: i.fork_ms,
+        }
+    }
+}
+
+/// A group's placement. Where its forks went.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForkBatchPlacement {
+    /// The group.
+    pub group: u32,
+    /// Its checkpoint.
+    pub source: String,
+    /// The machine.
+    pub host: String,
+    /// How many of its forks go there.
+    pub count: u32,
+    /// 1 for the first placement, higher when placed again.
+    pub attempt: u32,
+    /// The checkpoint is copied there first.
+    pub needs_sync: bool,
+    /// Why there.
+    pub reason: String,
+}
+
+/// A checkpoint copy's progress. Copying it to a machine that lacked it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SnapshotSyncProgress {
+    /// The checkpoint.
+    pub name: String,
+    /// Its digest.
+    pub digest: String,
+    /// Where the bytes come from now (a machine, `s3`, `volume`).
+    pub from: String,
+    /// Bytes copied.
+    pub bytes_done: u64,
+    /// Bytes to copy in all.
+    pub bytes_total: u64,
+    /// Bytes the machine had already.
+    pub bytes_reused: u64,
+    /// Finished.
+    pub done: bool,
+    /// Every file matched its SHA-256.
+    pub verified: bool,
+}
+
+/// A batch's summary.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForkBatchSummary {
+    /// Forks that are ready.
+    pub ok: u32,
+    /// Forks that failed.
+    pub failed: u32,
+    /// Milliseconds the batch took.
+    pub elapsed_ms: u64,
+    /// Ready forks per machine.
+    pub per_host: HashMap<String, u32>,
+    /// Most forks starting at once per machine.
+    pub peak_parallel: HashMap<String, u32>,
+}
+
+/// A batch event.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ForkBatchEvent {
+    /// A group was placed.
+    Placement { placement: ForkBatchPlacement },
+    /// A checkpoint is being copied to a machine.
+    Sync { progress: SnapshotSyncProgress },
+    /// A fork is ready, or failed.
+    Item { item: ForkBatchItem },
+    /// The batch is over (the last event).
+    Done { summary: ForkBatchSummary },
+}
+
+impl ForkBatchEvent {
+    fn of(r: cua_proto::daemon::v1::ForkSandboxBatchResponse) -> Option<Self> {
+        use cua_proto::daemon::v1::fork_sandbox_batch_response::Event;
+        Some(match r.event? {
+            Event::Placement(p) => ForkBatchEvent::Placement {
+                placement: ForkBatchPlacement {
+                    group: p.group,
+                    source: p.source,
+                    host: p.host,
+                    count: p.count,
+                    attempt: p.attempt,
+                    needs_sync: p.needs_sync,
+                    reason: p.reason,
+                },
+            },
+            Event::Sync(p) => ForkBatchEvent::Sync {
+                progress: SnapshotSyncProgress {
+                    name: p.name,
+                    digest: p.digest,
+                    from: p.from,
+                    bytes_done: p.bytes_done,
+                    bytes_total: p.bytes_total,
+                    bytes_reused: p.bytes_reused,
+                    done: p.done,
+                    verified: p.verified,
+                },
+            },
+            Event::Item(i) => ForkBatchEvent::Item {
+                item: ForkBatchItem::of(i),
+            },
+            Event::Done(s) => ForkBatchEvent::Done {
+                summary: ForkBatchSummary {
+                    ok: s.ok,
+                    failed: s.failed,
+                    elapsed_ms: s.elapsed_ms,
+                    per_host: s.per_host.into_iter().collect(),
+                    peak_parallel: s.peak_parallel.into_iter().collect(),
+                },
+            },
+        })
+    }
+}
+
+/// A finished batch. Every fork and the summary ([`ForkBatch::collect`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForkBatchResult {
+    /// The forks, by index.
+    pub items: Vec<ForkBatchItem>,
+    /// The summary.
+    pub summary: ForkBatchSummary,
+}
+
+enum BatchStream {
+    #[cfg(feature = "spaces")]
+    Embedded(
+        tokio::sync::mpsc::Receiver<
+            cua_daemon::Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>,
+        >,
+    ),
+    Daemon(Box<tonic::Streaming<cua_proto::daemon::v1::ForkSandboxBatchResponse>>),
+    /// Every event was handed out.
+    Done,
+}
+
+/// What `next` has handed out, so `collect` after a drain still answers.
+#[derive(Default)]
+struct Seen {
+    items: Vec<ForkBatchItem>,
+    summary: Option<ForkBatchSummary>,
+}
+
+/// A running batch of forks. Its events as they happen
+/// ([`ForkBatch::next`]), or all of it ([`ForkBatch::collect`]).
+#[derive(uniffi::Object)]
+pub struct ForkBatch {
+    stream: Arc<tokio::sync::Mutex<BatchStream>>,
+    seen: Arc<std::sync::Mutex<Seen>>,
+}
+
+#[uniffi::export]
+impl ForkBatch {
+    /// The next event: a placement, a copy's progress, a fork that is ready
+    /// (or failed), and last the summary. `None` after the summary.
+    pub async fn next(&self) -> Result<Option<ForkBatchEvent>> {
+        let stream = self.stream.clone();
+        let seen = self.seen.clone();
+        run(async move {
+            let mut s = stream.lock().await;
+            loop {
+                let msg = match &mut *s {
+                    #[cfg(feature = "spaces")]
+                    BatchStream::Embedded(rx) => match rx.recv().await {
+                        Some(r) => Some(r?),
+                        None => None,
+                    },
+                    BatchStream::Daemon(st) => st.message().await?,
+                    BatchStream::Done => return Ok(None),
+                };
+                let Some(msg) = msg else {
+                    *s = BatchStream::Done;
+                    return Ok(None);
+                };
+                if let Some(ev) = ForkBatchEvent::of(msg) {
+                    {
+                        let mut seen = seen.lock().unwrap_or_else(|p| p.into_inner());
+                        match &ev {
+                            ForkBatchEvent::Item { item } => seen.items.push(item.clone()),
+                            ForkBatchEvent::Done { summary } => {
+                                seen.summary = Some(summary.clone())
+                            }
+                            _ => {}
+                        }
+                    }
+                    if matches!(ev, ForkBatchEvent::Done { .. }) {
+                        *s = BatchStream::Done;
+                    }
+                    return Ok(Some(ev));
+                }
+            }
+        })
+        .await
+    }
+
+    /// Waits for the whole batch: every fork (ready or failed), by index,
+    /// and the summary. After some or all of the events were read with
+    /// [`ForkBatch::next`], it still returns the whole batch: the forks
+    /// already read plus the rest, with the summary.
+    pub async fn collect(&self) -> Result<ForkBatchResult> {
+        while self.next().await?.is_some() {}
+        let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(summary) = seen.summary.clone() else {
+            return Err(CuaError::Internal(
+                "the batch ended without its summary".into(),
+            ));
+        };
+        let mut items = seen.items.clone();
+        items.sort_by_key(|i| i.index);
+        Ok(ForkBatchResult { items, summary })
+    }
+}
+
+impl ForkManyOptions {
+    fn request(&self) -> cua_proto::daemon::v1::ForkSandboxBatchRequest {
+        cua_proto::daemon::v1::ForkSandboxBatchRequest {
+            on: self.on.clone().unwrap_or_default(),
+            group_size: self.group_size,
+            max_parallel_per_host: self.max_parallel_per_host,
+            name_prefix: self.name_prefix.clone(),
+            cpus: self.cpus,
+            memory_mb: self.memory_mb,
+            retries: self.retries,
+            no_retry: self.no_retry,
+            fallback: self.fallback.as_ref().map(SnapshotFallbackOptions::to_pb),
+            ..Default::default()
+        }
+    }
+}
+
+/// Batched forks.
+#[uniffi::export]
+impl Sandboxes {
+    /// Forks checkpoint `source` `count` times at once and returns the
+    /// running batch: each fork is reported as soon as it is ready (or
+    /// failed: one failure does not stop the others). `source` may also be
+    /// a local sandbox, running or stopped: it is checkpointed once (memory
+    /// saved once, shared copy-on-write by the forks on QEMU) and that
+    /// checkpoint is deleted with the last of its forks. With `on = "auto"`
+    /// the forks go to your machines that provide Spaces: each group
+    /// (`group_size` forks) to one machine, groups spread over the least
+    /// loaded ones, the checkpoint copied (and verified) to a machine that
+    /// lacks it first; a machine that fails has its forks placed again on
+    /// another.
+    pub async fn fork_many(
+        &self,
+        source: String,
+        count: u32,
+        options: Option<ForkManyOptions>,
+    ) -> Result<Arc<ForkBatch>> {
+        let mut req = options.unwrap_or_default().request();
+        req.source = source;
+        req.count = count;
+        self.start_batch(req).await
+    }
+
+    /// [`Sandboxes::fork_many`] for several checkpoints at once: each group
+    /// (the forks of one checkpoint that belong together) goes to one
+    /// machine, and groups of different checkpoints spread.
+    pub async fn fork_groups(
+        &self,
+        groups: Vec<ForkGroup>,
+        options: Option<ForkManyOptions>,
+    ) -> Result<Arc<ForkBatch>> {
+        let mut req = options.unwrap_or_default().request();
+        req.groups = groups
+            .into_iter()
+            .map(|g| cua_proto::daemon::v1::ForkBatchGroup {
+                source: g.source,
+                count: g.count,
+                name_prefix: g.name_prefix,
+            })
+            .collect();
+        self.start_batch(req).await
+    }
+
+    /// Uploads checkpoint `name` to `fallback` (S3, or a folder every
+    /// machine mounts), so batches on your other machines copy it from
+    /// there when this machine cannot be reached. Files already there are
+    /// not uploaded again. Returns the bytes uploaded.
+    pub async fn publish_checkpoint(
+        &self,
+        name: String,
+        fallback: SnapshotFallbackOptions,
+    ) -> Result<u64> {
+        let backend = self.backend.clone();
+        run(async move {
+            let fb = fallback.to_pb();
+            match &backend {
+                #[cfg(feature = "spaces")]
+                Backend::Embedded(rt) => Ok(rt.publish_checkpoint(&name, &fb).await?),
+                #[cfg(not(feature = "spaces"))]
+                Backend::Embedded(_) => Err(CuaError::Unsupported(
+                    "publishing checkpoints needs the Spaces build of the SDK".into(),
+                )),
+                Backend::Daemon(d) => Ok(d.publish_checkpoint(&name, fb).await?),
+            }
+        })
+        .await
+    }
+}
+
+impl Sandboxes {
+    async fn start_batch(
+        &self,
+        req: cua_proto::daemon::v1::ForkSandboxBatchRequest,
+    ) -> Result<Arc<ForkBatch>> {
+        let backend = self.backend.clone();
+        let stream = run(async move {
+            Ok(match &backend {
+                #[cfg(feature = "spaces")]
+                Backend::Embedded(rt) => BatchStream::Embedded(rt.fork_batch(req).await?),
+                #[cfg(not(feature = "spaces"))]
+                Backend::Embedded(_) => {
+                    let _ = req;
+                    return Err(CuaError::Unsupported(
+                        "batched forks need the Spaces build of the SDK".into(),
+                    ));
+                }
+                Backend::Daemon(d) => BatchStream::Daemon(Box::new(d.fork_batch(req).await?)),
+            })
+        })
+        .await?;
+        Ok(Arc::new(ForkBatch {
+            seen: Arc::default(),
+            stream: Arc::new(tokio::sync::Mutex::new(stream)),
+        }))
+    }
 }

@@ -1,0 +1,136 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.shared.web-02",
+  "version": "1.0.0",
+  "title": "WEB-02",
+  "authors": [
+    {
+      "name": "Cua AI"
+    }
+  ],
+  "provenance": {
+    "origin": "original",
+    "third_party_material": false,
+    "notes": "Self-written FSL-1.1-MIT; see PROVENANCE.md."
+  },
+  "instructions": "Complete the seeded localhost workflow in brief.md.",
+  "variants": [
+    {
+      "id": "seeded",
+      "fixture_artifacts": [
+        {
+          "path": "brief.md",
+          "sha256": "6043ffe34f1c50c49731deed61828d734614be512110778c5506bcbecb1b367a"
+        },
+        {
+          "path": "fixture/app.js",
+          "sha256": "ac51b5bb0e272b172201f972dce783019ce56d0a7003be023c05ae57226743af"
+        },
+        {
+          "path": "fixture/scenario.json",
+          "sha256": "4113d1b90f23d6b0668e26bacb3c313cab645cc1621b46f0e94a0bd10a97e19f"
+        },
+        {
+          "path": "reset/setup.py",
+          "sha256": "2677dffe75297f6288831d097400787d865468145abcc21d08bf9b0e00847731"
+        },
+        {
+          "path": "reset/verify.py",
+          "sha256": "439f58f467d741f969676f5b7cc74d901d12f93e20ec519d132f8634aa02ebac"
+        },
+        {
+          "path": "platform/launch.macos.json",
+          "sha256": "0ae013caa90fb2fae40c0cb1c1372571700d45560981e1a3d2287d6dcb64494c"
+        },
+        {
+          "path": "../web-common/server.js",
+          "sha256": "10da7d7349f121ec36abcf38a17f9e4507f214aec68354b9e0e7a4e97a2bdc08"
+        },
+        {
+          "path": "../web-common/client.js",
+          "sha256": "315369819c13698195f4cb89b49fff31fe8e2c25197e2409890a48a1bc1b97b9"
+        },
+        {
+          "path": "../web-common/common.py",
+          "sha256": "40f899504ad3e2bdecf70e4937a3693aac3308ef8f483fc167b60049a3d9f68f"
+        }
+      ]
+    }
+  ],
+  "required_capabilities": [
+    "observe.screen",
+    "act.pointer",
+    "act.keyboard"
+  ],
+  "observation_surfaces": [
+    "screen",
+    "accessibility",
+    "network"
+  ],
+  "network_policy": {
+    "setup": {
+      "mode": "loopback-only"
+    },
+    "agent": {
+      "mode": "loopback-only"
+    },
+    "evaluation": {
+      "mode": "loopback-only"
+    },
+    "cleanup": {
+      "mode": "loopback-only"
+    }
+  },
+  "limits": {
+    "agent_seconds": 360,
+    "evaluator_seconds": 30
+  },
+  "side_effects": {
+    "allowed": [
+      {
+        "scope": "localhost.site",
+        "description": "Complete the requested form workflow."
+      }
+    ],
+    "forbidden": [
+      {
+        "scope": "network.external",
+        "description": "No internet."
+      }
+    ]
+  },
+  "evaluator": {
+    "entrypoint": "evaluator/evaluate.py",
+    "inputs": [
+      {
+        "path": "evaluator/evaluate.py",
+        "sha256": "4aade3164bd3675a8410bc26e8025a0dd327eb47ebbdeaeab1111ad7e0a7ae42"
+      },
+      {
+        "path": "evaluator/oracle.json",
+        "sha256": "42e25ea8febc530c3d28d01c170fb41d71168d1dd303b7e3a0981dca23770854"
+      },
+      {
+        "path": "evaluator/common.py",
+        "sha256": "3313d47e842a29d2ee0c3521dae162a71044c08c183836976732ccedfef59b18"
+      },
+      {
+        "path": "fixture/scenario.json",
+        "sha256": "4113d1b90f23d6b0668e26bacb3c313cab645cc1621b46f0e94a0bd10a97e19f"
+      }
+    ],
+    "staging": "agent-inaccessible",
+    "oracle": {
+      "required": true,
+      "staging": "before-setup"
+    }
+  },
+  "reset": {
+    "entrypoint": "reset/setup.py",
+    "verification": {
+      "entrypoint": "reset/verify.py",
+      "timeout_seconds": 30
+    },
+    "failure_fixtures": []
+  }
+}

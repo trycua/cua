@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   digest:
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,6 +21,8 @@ jobs:
           fetch-tags: true
 
       - name: Check for unreleased changes per package
+        env:
+          ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}
         run: |
           # Service → tag prefix → directory
           declare -A SERVICE_TAG_DIR
@@ -71,7 +74,8 @@ jobs:
           DESCRIPTION=$(echo -e "$UNRELEASED" | sed 's/$/; /' | tr -d '\n' | sed 's/; $//')
 
           # Send alert to AlertManager → Slack
-          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+          # The alert intake needs a password (repository secret ALERTMANAGER_INTAKE_TOKEN).
+          curl -s -u "alerts:${ALERTMANAGER_INTAKE_TOKEN}" -X POST https://am.cua.ai/api/v2/alerts \
             -H "Content-Type: application/json" \
             -d "[
               {

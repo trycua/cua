@@ -18,7 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -47,7 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -77,7 +77,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": "GPU acceleration (Experimental) [ ] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
         "image": "ghcr.io/trycua/macos:26",
@@ -264,7 +264,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9 GB–6.9 GB initially; grows with use"
+          "Disk: 2.9–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",

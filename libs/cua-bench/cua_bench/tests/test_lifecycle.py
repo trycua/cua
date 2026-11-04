@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from cua_bench import make, run_single_task, sandboxes
 from cua_bench.targets import Target
 

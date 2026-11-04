@@ -1294,7 +1294,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Signin => (
             "Sign in",
-            "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.",
+            "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.",
             "Continue",
         ),
         Agents => (
@@ -1315,7 +1315,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
         ),
         Mode => (
             mode_title.as_str(),
-            "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+            "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
             "Continue",
         ),
         Done => ("", "", "Start using Cua Spaces"),
@@ -1351,7 +1351,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             Fact {
                 label: "This computer".into(),
                 value: if s.mode == Some(OnboardingMode::Host) {
-                    "Your other devices can reach it"
+                    "Your other computers can reach it"
                 } else {
                     "Opens your other computers"
                 }
@@ -1393,7 +1393,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
                 ),
                 (
                     OnboardingMode::Host,
-                    format!("Let my other devices reach {here}"),
+                    format!("Let my other computers reach {here}"),
                 ),
             ]
             .into_iter()
@@ -1496,7 +1496,7 @@ fn done_todos(s: &OnboardingState) -> Vec<OnboardingTodo> {
             "Account",
             match signed_in {
                 Some(id) => format!("Signed in as {id}."),
-                None => "Reach your computers from any device.".into(),
+                None => "Reach your computers from any computer.".into(),
             },
             signed_in.is_some(),
             false,
@@ -1691,7 +1691,7 @@ mod tests {
             labels,
             [
                 "Just use this Mac to open my other computers",
-                "Let my other devices reach this Mac"
+                "Let my other computers reach this Mac"
             ]
         );
         assert_eq!(
@@ -1712,7 +1712,7 @@ mod tests {
             assert_eq!(v.title, "Sign in");
             assert_eq!(
                 v.lede,
-                "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."
+                "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later."
             );
             assert!(v.can_skip);
         }

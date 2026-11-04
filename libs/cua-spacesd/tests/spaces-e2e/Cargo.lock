@@ -2320,6 +2320,7 @@ dependencies = [
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "image",
+ "indexmap",
  "jsonschema",
  "keyring 4.2.0",
  "libc",

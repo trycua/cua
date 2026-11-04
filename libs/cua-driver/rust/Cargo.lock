@@ -1275,6 +1275,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "image",
+ "indexmap",
  "jsonschema",
  "keyring",
  "libc",

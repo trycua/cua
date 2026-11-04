@@ -437,7 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn next_call_resumes_with_single_use_host_credential_after_disconnect() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("resumable-service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
@@ -553,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn transient_read_timeouts_are_poll_intervals_not_action_deadlines() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("delayed-service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {

@@ -1591,14 +1591,27 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
+    case "$BIN_DIR" in
+        "$HOME"/*) RC_BIN_DIR="${BIN_DIR#"$HOME"}" ;;
+        *)         RC_BIN_DIR="$BIN_DIR" ;;
+    esac
+    PATH_RC_COVERED=0
+    if [[ -n "$SHELL_RC" && -f "$SHELL_RC" ]] \
+        && grep -v '^[[:space:]]*#' "$SHELL_RC" | grep -qF -- "$RC_BIN_DIR"; then
+        PATH_RC_COVERED=1
+    fi
+    if [[ "$NO_MODIFY_PATH" != "1" && -n "$SHELL_RC" && "$PATH_RC_COVERED" == "0" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
+    elif [[ "$PATH_RC_COVERED" == "1" ]]; then
+        log "$SHELL_RC already mentions $BIN_DIR; skipping PATH update"
     fi
-    print_path_hint
+    if [[ "$PATH_RC_COVERED" == "0" ]]; then
+        print_path_hint
+    fi
 fi
 
 echo ""

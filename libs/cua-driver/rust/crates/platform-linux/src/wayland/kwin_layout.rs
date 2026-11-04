@@ -51,8 +51,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Report {
             return;
         };
         match interface.as_str() {
-            // Only KWin's output management announces this global.
-            "kde_output_device_v2" => state.is_kwin = true,
+            kwin_output if announces_kwin(kwin_output) => state.is_kwin = true,
             "wl_output" => {
                 let index = state.outputs.len();
                 let output =
@@ -134,6 +133,14 @@ impl Dispatch<ZxdgOutputV1, usize> for Report {
             _ => {}
         }
     }
+}
+
+/// Whether a global is one of KWin's output globals. Matched by prefix because
+/// the names change between releases: 6.8 replaced `kde_output_device_v2` with
+/// `kde_output_device_registry_v2`, and an exact match then looks like another
+/// compositor and silently loses the logical frame.
+fn announces_kwin(interface: &str) -> bool {
+    interface.starts_with("kde_output_")
 }
 
 /// Bounding box of every output, which must start at the desktop origin
@@ -220,6 +227,26 @@ mod tests {
     fn a_layout_away_from_the_origin_is_refused_rather_than_offset() {
         let err = bounding_frame(&[output(100, 0, 800, 600, (800, 600))]).unwrap_err();
         assert!(err.to_string().contains("origin"), "{err}");
+    }
+
+    #[test]
+    fn every_kwin_release_tested_is_recognised_by_its_output_globals() {
+        // Announced by KWin 6.3.6 and by 6.8.2, which replaced the first name.
+        assert!(announces_kwin("kde_output_device_v2"));
+        assert!(announces_kwin("kde_output_device_registry_v2"));
+    }
+
+    #[test]
+    fn globals_other_compositors_also_announce_are_not_taken_for_kwin() {
+        for interface in [
+            "wl_output",
+            "zxdg_output_manager_v1",
+            "org_kde_kwin_idle",
+            "org_kde_kwin_server_decoration_manager",
+            "zwlr_output_manager_v1",
+        ] {
+            assert!(!announces_kwin(interface), "{interface}");
+        }
     }
 
     #[test]

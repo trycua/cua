@@ -293,6 +293,7 @@ struct BridgeContractTests {
             ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.rename", ["env": "ANTHROPIC_API_KEY", "label": "Work key"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
             ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
             ("github.enable", ["host": "github.com", "enabled": false]),

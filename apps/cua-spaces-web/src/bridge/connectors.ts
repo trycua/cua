@@ -353,6 +353,55 @@ export interface ModelsView {
 export const modelsView = (core: CoreClient, input: ConnectorsInput): ModelsView | null =>
   core.tryCall<ModelsView>("connectors.models", { input: input as unknown as Json }) ?? null;
 
+/* ---- The agent menu of the prompt box ------------------------------------------------ */
+
+/** One sign-in or key a coding app can run with. */
+export interface AgentAccount {
+  provider: string;
+  providerLabel: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** What the person sees: the sign-in's own name, "Signed in with ChatGPT", a key's name or "API key ending 4f2a". */
+  line: string;
+  via: "sign-in" | "key";
+  /** The account runs use now. */
+  selected: boolean;
+  models: ModelChoice[];
+  defaultModel: string | null;
+}
+
+/** One coding app of the menu and the accounts the person has for it. */
+export interface AgentGroup {
+  /** The harness id a run uses (`openai-codex`). */
+  harness: string;
+  /** The app's Connections id (`codex`), where its sign-ins are managed. */
+  app: string;
+  label: string;
+  state: "connected" | "needs-reconnect" | "not-connected";
+  accounts: AgentAccount[];
+  signInLabel: string;
+}
+
+/** A coding app, an account and a model picked together. */
+export interface AgentRef {
+  harness: string;
+  provider: string;
+  env: string;
+  slot: string | null;
+  model: string;
+}
+
+/** The agent menu (`connectors.agents`). */
+export interface AgentsView {
+  groups: AgentGroup[];
+  default: AgentRef | null;
+  empty: string | null;
+}
+
+export const agentsView = (core: CoreClient, input: ConnectorsInput): AgentsView | null =>
+  core.tryCall<AgentsView>("connectors.agents", { input: input as unknown as Json }) ?? null;
+
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;
 

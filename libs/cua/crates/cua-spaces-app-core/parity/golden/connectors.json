@@ -350,6 +350,42 @@
       "models": "a provider with no list falls back to its default"
     },
     {
+      "agents": "nothing signed in",
+      "default": "- | - | - | -",
+      "empty": "Sign in to an agent to start.",
+      "groups": [
+        "openai-codex | codex | OpenAI Codex | not-connected | Sign in :: ",
+        "hermes | hermes | Hermes | not-connected | Sign in :: ",
+        "claude-code | claude-code | Claude Code | not-connected | Sign in :: ",
+        "opencode | opencode | OpenCode | not-connected | Sign in :: "
+      ]
+    },
+    {
+      "agents": "three Claude sign-ins, one ChatGPT sign-in and an OpenAI key",
+      "default": "openai-codex | OPENAI_API_KEY | - | gpt-5.5",
+      "empty": null,
+      "groups": [
+        "openai-codex | codex | OpenAI Codex | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true // openai | CODEX_AUTH_JSON | - | Signed in with ChatGPT | sign-in | false | gpt-5.5 :: gpt-5.5 | false | true",
+        "hermes | hermes | Hermes | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true",
+        "claude-code | claude-code | Claude Code | connected | Sign in :: anthropic | CLAUDE_CODE_OAUTH_TOKEN | - | Signed in as ada@example.com (Claude Max) | sign-in | false | claude-haiku-4-5 :: claude-haiku-4-5 | true | false / claude-sonnet-5 | false | true / claude-opus-5-5 | false | false // anthropic | CLAUDE_CODE_OAUTH_TOKEN | work | work Max | sign-in | true | claude-haiku-4-5 :: claude-haiku-4-5 | true | false / claude-sonnet-5 | false | true / claude-opus-5-5 | false | false // anthropic | CLAUDE_CODE_OAUTH_TOKEN | side | side project Max | sign-in | false | claude-haiku-4-5 :: claude-haiku-4-5 | true | false / claude-sonnet-5 | false | true / claude-opus-5-5 | false | false",
+        "opencode | opencode | OpenCode | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true",
+        "goose | goose | Goose | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true",
+        "pi | pi | Pi | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true",
+        "openclaw | openclaw | OpenClaw | connected | Sign in :: openai | OPENAI_API_KEY | - | API key ending bb22 | key | true | gpt-5.5 :: gpt-5.5 | false | true"
+      ]
+    },
+    {
+      "agents": "a Claude sign-in that ran out",
+      "default": "- | - | - | -",
+      "empty": "Sign in to an agent to start.",
+      "groups": [
+        "openai-codex | codex | OpenAI Codex | not-connected | Sign in :: ",
+        "hermes | hermes | Hermes | not-connected | Sign in :: ",
+        "claude-code | claude-code | Claude Code | needs-reconnect | Sign in again :: ",
+        "opencode | opencode | OpenCode | not-connected | Sign in :: "
+      ]
+    },
+    {
       "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
       "importSheet": "macos",
       "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this Mac, or its sign-in couldn't be read. Pick one:",

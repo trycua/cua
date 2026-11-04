@@ -138,6 +138,11 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
             if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
             return try await model.agentKeys.call("agent_keys.use", useArgs)
+        // A saved key or sign-in gets a name (no slot: the first saved for env).
+        case "agentKeys.rename":
+            var renameArgs: [String: Any] = ["env": try string(args, "env"), "label": try string(args, "label")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { renameArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
         case "agentKeys.fromShell":

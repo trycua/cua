@@ -5744,6 +5744,59 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "connect": line(&[&v["connectLabel"], &v["empty"]]),
         }));
     }
+    for step in f["agents"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.agents", json!({ "input": step["input"] }))?;
+        let groups: Vec<String> = v["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let accounts: Vec<String> = g["accounts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| {
+                        let models: Vec<String> = a["models"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|m| line(&[&m["id"], &m["fast"], &m["default"]]))
+                            .collect();
+                        format!(
+                            "{} :: {}",
+                            line(&[
+                                &a["provider"],
+                                &a["env"],
+                                &a["slot"],
+                                &a["line"],
+                                &a["via"],
+                                &a["selected"],
+                                &a["defaultModel"]
+                            ]),
+                            models.join(" / ")
+                        )
+                    })
+                    .collect();
+                format!(
+                    "{} :: {}",
+                    line(&[
+                        &g["harness"],
+                        &g["app"],
+                        &g["label"],
+                        &g["state"],
+                        &g["signInLabel"]
+                    ]),
+                    accounts.join(" // ")
+                )
+            })
+            .collect();
+        frames.push(json!({
+            "agents": step["step"],
+            "groups": groups,
+            "default": line(&[&v["default"]["harness"], &v["default"]["env"], &v["default"]["slot"], &v["default"]["model"]]),
+            "empty": v["empty"],
+        }));
+    }
     for os in ["macos", "linux"] {
         let s = c(h, "connectors.importSheet", json!({ "hostOs": os }))?;
         let options: Vec<String> = s["options"]

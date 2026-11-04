@@ -2,81 +2,111 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The model the ask box starts a task with, and which coding app runs it.
- * The person picks a model (and, optionally, a repo); the app that runs it
- * follows: a Claude sign-in is Claude Code's and a ChatGPT sign-in is Codex's,
- * a key goes to the app that reads it best. The last pick is kept on this
- * device, so most of the time nothing is touched and the person just types.
+ * The agent the ask box starts a task with: a coding app, one of the
+ * accounts (sign-ins) the person has for it and, when the account offers a
+ * choice, a model. What each app can run on is the core's
+ * (`connectors.agents`); this finds the last pick again and names it.
+ *
+ * What is kept: the account is the app's own choice, saved by the host
+ * (`agentKeys.use`) so it outlives the page and is the one a run uses; the
+ * app and the model are kept on this computer. A remembered account that
+ * is no longer saved is never used: the app's own choice, else its first
+ * account, stands in. With nothing remembered, the first connected app.
  */
 
 import { useSyncExternalStore } from "react";
 
-import type { ModelChoice, ModelGroup, ModelsView } from "@/bridge";
+import type { AgentAccount, AgentGroup, AgentsView, ModelChoice } from "@/bridge";
 
-/** What was picked: a provider and one of its models. */
-export interface PickedModel {
-  provider: string;
-  model: string;
+/** What was picked: an app and, when the person chose, its account and model. */
+export interface PickedAgent {
+  harness: string;
+  model?: string;
+  env?: string;
+  slot?: string;
 }
 
-/** The app that runs a provider's models when no sign-in names one (an API key). */
-const PROVIDER_APP: Record<string, string> = { anthropic: "claude-code", openai: "openai-codex", google: "gemini-cli" };
-/** The general app that runs every other provider's models. */
-export const GENERAL_APP = "opencode";
-
-/** The coding app (harness id) that runs a group's models. */
-export function harnessFor(group: Pick<ModelGroup, "provider" | "harness">): string {
-  return group.harness ?? PROVIDER_APP[group.provider] ?? GENERAL_APP;
-}
-
-/** A picked model with the group and row it names. */
-export interface ModelSelection {
-  group: ModelGroup;
+/** A pick with the rows it names. */
+export interface AgentSelection {
+  group: AgentGroup;
+  account: AgentAccount;
   model: ModelChoice;
+  /** The harness id a run uses. */
   harness: string;
 }
 
-/**
- * The model to start with: the person's last pick while it is still offered
- * (connected), else the host's default (the first fast model), else nothing.
- */
-export function resolveModel(view: ModelsView | null | undefined, picked: PickedModel | null): ModelSelection | null {
-  if (!view) return null;
-  const find = (p: PickedModel | null | undefined) => {
-    if (!p) return null;
-    const group = view.groups.find((g) => g.provider === p.provider && g.state === "connected");
-    const model = group?.models.find((m) => m.id === p.model);
-    return group && model ? { group, model, harness: harnessFor(group) } : null;
-  };
-  return find(picked) ?? find(view.default);
+const sameAccount = (a: AgentAccount, p: { env?: string; slot?: string | null }) => a.env === p.env && (a.slot ?? null) === (p.slot ?? null);
+
+/** The account an app runs with: the remembered one while it is still saved, else the app's own choice, else its first. */
+function accountOf(group: AgentGroup, p: PickedAgent | null): AgentAccount | null {
+  const remembered = p?.harness === group.harness && p.env ? group.accounts.find((a) => sameAccount(a, p)) : undefined;
+  return remembered ?? group.accounts.find((a) => a.selected) ?? group.accounts[0] ?? null;
 }
 
-/** A model's name with its provider, as one plain line ("Claude Haiku 4.5, Anthropic"). */
-export const modelLine = (s: ModelSelection) => `${s.model.label}, ${s.group.label}`;
+function select(group: AgentGroup | undefined, p: PickedAgent | null, wanted?: string | null): AgentSelection | null {
+  if (!group || group.state !== "connected") return null;
+  const account = accountOf(group, p);
+  if (!account) return null;
+  const id = [wanted, p?.harness === group.harness ? p.model : undefined].find((m) => m && account.models.some((x) => x.id === m)) ?? account.defaultModel;
+  const model = account.models.find((m) => m.id === id) ?? account.models[0];
+  return model ? { group, account, model, harness: group.harness } : null;
+}
 
-/* ---- the last pick, per device ---- */
+/**
+ * The agent to start with: the person's last pick while it is still offered, else the first connected app
+ * (the menu's order) with its own account and quick model, else nothing.
+ */
+export function resolveAgent(view: AgentsView | null | undefined, picked: PickedAgent | null): AgentSelection | null {
+  if (!view) return null;
+  const last = picked ? select(view.groups.find((g) => g.harness === picked.harness), picked) : null;
+  if (last) return last;
+  const d = view.default;
+  return d ? select(view.groups.find((g) => g.harness === d.harness), { harness: d.harness, env: d.env, ...(d.slot ? { slot: d.slot } : {}) }, d.model) : null;
+}
 
-const KEY = "cua.askFirst.model";
-let cache: PickedModel | null | undefined;
+/** What picking `account` of `group` starts with: that account and its quick model (the last model while it is offered). */
+export function pickAccount(group: AgentGroup, account: AgentAccount, picked: PickedAgent | null): PickedAgent {
+  const keep = picked?.harness === group.harness && picked.model && account.models.some((m) => m.id === picked.model) ? picked.model : account.defaultModel;
+  return { harness: group.harness, env: account.env, ...(account.slot ? { slot: account.slot } : {}), ...(keep ? { model: keep } : {}) };
+}
+
+/** The pick as the chip says it: the app and the account ("Claude Code, work Max"). */
+export const agentLine = (s: AgentSelection) => `${s.group.label}, ${s.account.line}`;
+
+/** The pick to remember for a selection. */
+export const pickOf = (s: AgentSelection): PickedAgent => ({ harness: s.harness, model: s.model.id, env: s.account.env, ...(s.account.slot ? { slot: s.account.slot } : {}) });
+
+/* ---- the last pick, per computer ---- */
+
+const KEY = "cua.askFirst.agent";
+let cache: PickedAgent | null | undefined;
 const listeners = new Set<() => void>();
 
-function load(): PickedModel | null {
+function load(): PickedAgent | null {
   if (cache !== undefined) return cache;
   try {
     const raw = globalThis.localStorage?.getItem(KEY);
-    const v = raw ? (JSON.parse(raw) as Partial<PickedModel>) : null;
-    cache = v && typeof v.provider === "string" && typeof v.model === "string" ? { provider: v.provider, model: v.model } : null;
+    const v = raw ? (JSON.parse(raw) as Partial<PickedAgent>) : null;
+    cache =
+      v && typeof v.harness === "string"
+        ? {
+            harness: v.harness,
+            ...(typeof v.model === "string" ? { model: v.model } : {}),
+            ...(typeof v.env === "string" ? { env: v.env } : {}),
+            ...(typeof v.slot === "string" ? { slot: v.slot } : {}),
+          }
+        : null;
   } catch {
     cache = null;
   }
   return cache;
 }
 
-export function pickedModel(): PickedModel | null {
+export function pickedAgent(): PickedAgent | null {
   return load();
 }
 
-export function rememberModel(p: PickedModel): void {
+export function rememberAgent(p: PickedAgent): void {
   cache = p;
   try {
     globalThis.localStorage?.setItem(KEY, JSON.stringify(p));
@@ -87,7 +117,7 @@ export function rememberModel(p: PickedModel): void {
 }
 
 /** For tests: forget the cached pick. */
-export function resetPickedModel(): void {
+export function resetPickedAgent(): void {
   cache = undefined;
 }
 
@@ -96,7 +126,7 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-/** The last picked model (re-renders when it changes). */
-export function usePickedModel(): PickedModel | null {
+/** The last picked agent (re-renders when it changes). */
+export function usePickedAgent(): PickedAgent | null {
   return useSyncExternalStore(subscribe, load, () => null);
 }

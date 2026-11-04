@@ -14,7 +14,7 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { askTasks, resetAskTasks } from "@/lib/ask-first";
-import { resetPickedModel } from "@/lib/ask-first-model";
+import { resetPickedAgent } from "@/lib/ask-first-model";
 import { resetRepos } from "@/lib/ask-first-repo";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -22,7 +22,7 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-  resetPickedModel();
+  resetPickedAgent();
   resetRepos();
   resetConnectState();
   resetConnectedAppsState();
@@ -34,58 +34,140 @@ afterEach(() => {
 });
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
-const SEVERAL = { demo: { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } };
+// Three Claude sign-ins and one ChatGPT sign-in; nothing for Hermes or OpenCode.
+const ACCOUNTS = { demo: { accounts: true } };
 
-async function openModels() {
+async function openAgents() {
   await act(async () => {
-    fireEvent.click(await waitFor(() => q('[data-picker="model"]')!));
+    fireEvent.click(await waitFor(() => q('[data-picker="agent"]')!));
   });
-  await waitFor(() => expect(q("[data-model-menu]")).not.toBeNull());
+  await waitFor(() => expect(q("[data-agent-menu]")).not.toBeNull());
 }
 
 describe.skipIf(!wasmBuilt)("the prompt box", () => {
-  it("has a model to start with (the quick one of what is connected) and only the model and a repo to pick", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...SEVERAL });
+  it("starts with the first connected app and its account (Codex, then Hermes, Claude Code, OpenCode) and only the agent and a repo to pick", async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-model]")!.textContent).toBe("Claude Haiku 4.5"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("OpenAI Codex, Signed in with ChatGPT"));
     expect(q('[data-picker="repo"]')!.textContent).toContain("Add a repo");
-    // No coding app picker: the app follows the model.
+    // No model chip and no separate coding app picker.
+    expect(q('[data-picker="model"]')).toBeNull();
     expect(q('[data-picker="who"]')).toBeNull();
-    expect(q("[data-ask-mention]")).toBeNull();
   });
 
-  it("lists connected models by provider with Fast on the quick ones, and picks one with a click or a digit", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...SEVERAL });
+  it("groups by coding app: the top four first, their accounts as rows, Sign in where there is none", async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-model]")!.textContent).toBe("Claude Haiku 4.5"));
-    await openModels();
-    const groups = [...document.querySelectorAll<HTMLElement>("[data-model-group]")].map((g) => g.dataset.modelGroup);
-    expect(groups).toEqual(expect.arrayContaining(["anthropic", "openrouter"]));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await openAgents();
+    const groups = [...document.querySelectorAll<HTMLElement>("[data-agent-group]")].map((g) => g.dataset.agentGroup);
+    expect(groups).toEqual(["codex", "hermes", "claude-code", "opencode"]);
+    const rows = (app: string) => [...document.querySelectorAll<HTMLElement>(`[data-agent-group="${app}"] [role="option"]`)].map((r) => r.textContent);
+    expect(rows("claude-code")).toEqual(["Signed in as ada@example.com (Claude Max)", "work Max", "side project Max"]);
+    expect(rows("codex")).toEqual(["Signed in with ChatGPT"]);
+    expect(q('[data-agent-sign-in="hermes"]')!.textContent).toBe("Sign in");
+    expect(q('[data-agent-sign-in="opencode"]')!.textContent).toBe("Sign in");
+    expect(q('[data-agent-sign-in="claude-code"]')).toBeNull();
+    // The model is not a group: it is one quiet line, and only for an account that offers a choice.
+    expect(q("[data-model-group]")).toBeNull();
+    // An account with one model shows no model line at all.
+    expect(q("[data-agent-model-row]")).toBeNull();
+  });
+
+  it("picks an app and an account, shows both on the chip, and remembers them across a reload", async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    const host = { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op: string, args: unknown) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) };
+    await mountApp("/home", host);
+    await screen.findByLabelText("What should it do?");
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await openAgents();
+    await act(async () => {
+      fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
+    });
+    expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code, work Max");
+    // The host keeps which account the app runs with, so a run uses the one shown.
+    await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.use" && c.args.app === "claude-code" && c.args.env === "CLAUDE_CODE_OAUTH_TOKEN" && c.args.slot === "kwork")).toBe(true));
+    cleanup();
+    // A new launch: the choice is still there (the app and model here, the account from the host's store).
+    await mountApp("/home", host);
+    await screen.findByLabelText("What should it do?");
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code, work Max"));
+  });
+
+  it("opens an app's sign-ins from its chevron: the default, make default, rename and remove", async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    await screen.findByLabelText("What should it do?");
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await openAgents();
+    await act(async () => {
+      fireEvent.click(q('[data-agent-manage="claude-code"]')!);
+    });
+    const page = await waitFor(() => {
+      const el = q('[data-agent-manage-page="claude-code"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(page.textContent).toContain("Claude Code sign-ins");
+    expect(q("[data-manage-default]")!.closest("[data-manage-account]")!.textContent).toContain("ada@example.com");
+    await act(async () => {
+      fireEvent.click(q('[data-manage-account="kwork"] [data-manage-use]')!);
+    });
+    await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.use" && c.args.slot === "kwork")).toBe(true));
+    await act(async () => {
+      fireEvent.click(q('[data-manage-account="kside"] [data-manage-rename]')!);
+    });
+    const name = screen.getByLabelText("Name") as HTMLInputElement;
+    fireEvent.change(name, { target: { value: "client Max" } });
+    await act(async () => {
+      fireEvent.keyDown(name, { key: "Enter" });
+    });
+    await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.rename" && c.args.slot === "kside" && c.args.label === "client Max")).toBe(true));
+    await waitFor(() => expect(q('[data-manage-account="kside"]')!.textContent).toContain("client Max"));
+    await act(async () => {
+      fireEvent.click(q('[data-manage-account="kside"] [data-manage-remove]')!);
+    });
+    await act(async () => {
+      fireEvent.click(q("[data-manage-confirm-remove]")!);
+    });
+    await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.remove" && c.args.slot === "kside")).toBe(true));
+    await waitFor(() => expect(q('[data-manage-account="kside"]')).toBeNull());
+  });
+
+  it("the model is a secondary line: it lists the account's models and keeps the pick", async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
+    await screen.findByLabelText("What should it do?");
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await openAgents();
+    await act(async () => {
+      fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
+    });
+    await openAgents();
+    await act(async () => {
+      fireEvent.click(q("[data-agent-model-row]")!);
+    });
     expect(q('[data-model-row="claude-haiku-4-5"]')!.textContent).toContain("Fast");
-    expect(q('[data-model-row="claude-sonnet-5"]')!.textContent).not.toContain("Fast");
     await act(async () => {
       fireEvent.click(q('[data-model-row="claude-sonnet-5"]')!);
     });
-    expect(q("[data-ask-model]")!.textContent).toBe("Claude Sonnet 5");
-    // Picked once, kept: a reopened menu ticks it, and the digits pick rows.
-    await openModels();
-    expect(q('[data-model-row="claude-sonnet-5"]')!.getAttribute("aria-selected")).toBe("true");
-    await act(async () => {
-      fireEvent.keyDown(q("[data-model-menu]")!, { key: "1" });
-    });
-    expect(q("[data-ask-model]")!.textContent).toBe("Claude Haiku 4.5");
+    await openAgents();
+    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Sonnet 5");
   });
 
-  it("Enter sends the job with the picked model and the app that runs it; Shift+Enter is a new line", async () => {
+  it("Enter sends the job with the picked app, account and model; Shift+Enter is a new line", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     await mountApp("/home", {
       failsCreates: false,
       listsGhost: false,
-      ...SEVERAL,
+      ...ACCOUNTS,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
     });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-model]")!.textContent).toBe("Claude Haiku 4.5"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await openAgents();
+    await act(async () => {
+      fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
+    });
     fireEvent.change(box, { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
@@ -98,20 +180,18 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toBe(true), { timeout: 15000 });
   });
 
-  it("Connect a provider opens Connections, and with nothing connected the model says so and Start waits", async () => {
-    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
+  it("with nothing signed in the chip says to sign in, every app has a Sign in row and Start waits", async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-model]")!.textContent).toBe("Connect a provider"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sign in to an agent"));
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => {
-      fireEvent.click(q('[data-picker="model"]')!);
-    });
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
+    await openAgents();
+    expect(document.querySelectorAll("[data-agent-sign-in]")).toHaveLength(4);
   });
 
   it("adds a repo from a link, refuses what is not one, keeps it on the task, and removes it with the x", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
     await act(async () => {
       fireEvent.click(await waitFor(() => {
@@ -157,7 +237,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 describe("the box's words", () => {
   it("never join two things with a middle dot, and never say devices", () => {
     const dir = join(__dirname, "..", "components", "ask-first");
-    for (const f of ["ask-box.tsx", "model-picker.tsx", "repo-chip.tsx", "home.tsx"]) {
+    for (const f of ["ask-box.tsx", "agent-picker.tsx", "repo-chip.tsx", "home.tsx"]) {
       const text = readFileSync(join(dir, f), "utf8");
       expect(text, f).not.toContain("·");
       expect(text.toLowerCase(), f).not.toMatch(/\bdevices?\b/);

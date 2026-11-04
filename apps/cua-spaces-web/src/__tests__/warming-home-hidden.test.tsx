@@ -14,6 +14,7 @@ import { resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetAskTasks } from "@/lib/ask-first";
+import { rememberAgent, resetPickedAgent } from "@/lib/ask-first-model";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -25,6 +26,9 @@ beforeEach(() => {
   resetConnectedAppsState();
   resetPrepare();
   resetAskTasks();
+  // The agent the first run prepares a home for is the one the person last used.
+  resetPickedAgent();
+  rememberAgent({ harness: "claude-code" });
   setFlagOverride("spaces_ask_first_home", true);
   setFlagOverride("spaces_new_onboarding", true);
 });

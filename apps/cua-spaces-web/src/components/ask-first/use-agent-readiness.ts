@@ -3,10 +3,10 @@
 
 import { useEffect, useState } from "react";
 
-import { threadOpAvailable, useBridge, useSpaces, type AgentMember, type ModelsView } from "@/bridge";
+import { threadOpAvailable, useBridge, useSpaces, type AgentMember, type AgentsView } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { reusableHome } from "@/lib/agent-home/home-space";
-import type { ModelSelection } from "@/lib/ask-first-model";
+import type { AgentSelection } from "@/lib/ask-first-model";
 
 import type { AgentReadiness } from "./agent-status";
 
@@ -19,14 +19,14 @@ export const READINESS_POLL_MS = 2_500;
  * still starting (`asleep` or `working` before it has been ready), or a
  * provider's sign-in ran out and nothing connected is left to pick.
  */
-export function readinessOf(member: Pick<AgentMember, "status"> | undefined, view: ModelsView | null, selected: ModelSelection | null): AgentReadiness {
+export function readinessOf(member: Pick<AgentMember, "status"> | undefined, view: AgentsView | null, selected: AgentSelection | null): AgentReadiness {
   if (!selected) return view?.groups.some((g) => g.state === "needs-reconnect") ? "reconnect" : "none";
   if (!member) return "none";
   if (member.status === "failed") return "reconnect";
   return member.status === "idle" || member.status === "working" || member.status === "waiting" ? "ready" : "starting";
 }
 
-export function useAgentReadiness(agent: string, enabled: boolean, view: ModelsView | null, selected: ModelSelection | null): AgentReadiness {
+export function useAgentReadiness(agent: string, enabled: boolean, view: AgentsView | null, selected: AgentSelection | null): AgentReadiness {
   const { data } = useBridge();
   const { data: spaces } = useSpaces();
   const children = useChildren();

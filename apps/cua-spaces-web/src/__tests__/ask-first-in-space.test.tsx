@@ -97,10 +97,10 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
 });
 
 describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
-  it("has no model to start with: the box says Connect a provider and Start waits", { timeout: 40000 }, async () => {
+  it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
-    expect(q("[data-ask-model]")!.textContent).toBe("Connect a provider");
+    expect(q("[data-ask-agent]")!.textContent).toBe("Sign in to an agent");
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

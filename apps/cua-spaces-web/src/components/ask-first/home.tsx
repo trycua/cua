@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
-import { modelsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentRunSummary } from "@/bridge";
+import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
 import { currentWhere, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
-import { rememberModel, resolveModel, usePickedModel } from "@/lib/ask-first-model";
+import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from "@/lib/ask-first-model";
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
@@ -20,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { AskBox, type TaskWhere } from "./ask-box";
 import { agentName } from "./task-agents";
 import { AgentStatus } from "./agent-status";
+import type { AccountActions } from "./agent-picker";
 import { useAgentReadiness } from "./use-agent-readiness";
 import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
@@ -56,14 +56,14 @@ export function AskFirstHome() {
   const listed = useListedSpaces(spaces);
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
-  const navigate = useNavigate();
   const { core } = useBridge();
-  // The model: the last one picked while it is still connected, else the quick one the host names. The coding
-  // app that runs the job follows the model.
+  // The agent: the last app, account and model picked while they are still there, else the first connected app. The
+  // account is the app's own choice (kept by the host), so a run uses the one shown.
   const connectors = useConnectors();
-  const models = useMemo(() => (core ? modelsView(core, connectors.input) : null), [core, connectors.input]);
-  const picked = usePickedModel();
-  const selected = resolveModel(models, picked);
+  const keys = useAgentKeys();
+  const agents = useMemo(() => (core ? agentsView(core, connectors.input) : null), [core, connectors.input]);
+  const picked = usePickedAgent();
+  const selected = resolveAgent(agents, picked);
   const { current: repo } = useRepos();
   const [text, setText] = useState("");
   // With Child Spaces on (and this Home, the Ask first experiment), the job goes to the agent's Home Space, which
@@ -74,7 +74,7 @@ export function AskFirstHome() {
   const { data: machineRows } = useMachines();
   const machines = useMemo(() => (machineRows ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current, online: m.online })), [machineRows]);
   useKeepHomeWarm(chosenAgent, agentHome);
-  const readiness = useAgentReadiness(chosenAgent, agentHome, models, selected);
+  const readiness = useAgentReadiness(chosenAgent, agentHome, agents, selected);
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
   // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
@@ -85,10 +85,22 @@ export function AskFirstHome() {
   const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : null), kinds, pickable);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
+    // The run uses the app's own choice of account: make it the one shown.
+    if (!selected.account.selected) void connectors.useCredential(selected.group.app, { env: selected.account.env, slot: selected.account.slot });
     start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
     setText("");
   };
-  const connect = () => void navigate({ to: "/settings/connections" });
+  const useAccount = (group: AgentGroup, account: AgentAccount) => {
+    rememberAgent(pickAccount(group, account, picked));
+    if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
+  };
+  const accountActions: AccountActions = {
+    onUse: useAccount,
+    onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
+    onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
+    // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
+    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
+  };
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -106,10 +118,12 @@ export function AskFirstHome() {
         <AskBox
           text={text}
           onText={setText}
-          view={models}
+          view={agents}
           selected={selected}
-          onPickModel={rememberModel}
-          onConnect={connect}
+          onPickAccount={useAccount}
+          onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
+          onSignIn={(g) => void connectors.connectApp(g.app)}
+          accounts={accountActions}
           repo={repo}
           where={where}
           onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
@@ -125,7 +139,7 @@ export function AskFirstHome() {
           compact={!first}
           autoFocus
         />
-        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={connect} />
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void connectors.connectApp(selected.group.app)} />
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
         {first ? (

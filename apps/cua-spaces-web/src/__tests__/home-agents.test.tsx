@@ -120,8 +120,8 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     expect(q("[data-home-spaces] h2")?.textContent).not.toMatch(/\bon\b/);
     // The Spaces page's tiles.
     expect(qa("[data-home-spaces] [data-space-id]").length).toBeGreaterThan(0);
-    // The composer: the model (the demo has an OpenAI key saved), where as a Space.
-    expect(q("[data-ask-model]")?.textContent).toBe("GPT-5.5");
+    // The composer: the agent and its account (the demo has an OpenAI key saved), where as a Space.
+    expect(q("[data-ask-agent]")?.textContent).toBe("OpenAI Codex, API key ending 3f9a");
     expect(q("[data-ask-where]")?.textContent).toBe("New SpaceLinux on This Mac");
   });
 

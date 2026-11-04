@@ -72,6 +72,23 @@
     { "forApp": "claude-code", "query": "", "expanded": false },
     { "forApp": null, "query": "kimi", "expanded": false }
   ],
+  "agents": [
+    { "step": "nothing signed in", "input": { "keys": { "keys": [] } } },
+    { "step": "three Claude sign-ins, one ChatGPT sign-in and an OpenAI key", "input": {
+      "keys": { "keys": [
+        { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000, "label": "Signed in as ada@example.com (Claude Max)" },
+        { "provider": "openai", "env": "CODEX_AUTH_JSON", "last4": "", "addedMs": 1790000200000, "label": "Signed in with ChatGPT" },
+        { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "bb22", "addedMs": 1790000300000 }
+      ] },
+      "keyExtras": [
+        { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000400000, "label": "work Max", "slot": "work" },
+        { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000500000, "label": "side project Max", "slot": "side" }
+      ],
+      "uses": { "claude-code": { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "slot": "work" } }
+    } },
+    { "step": "a Claude sign-in that ran out", "input": { "keys": { "keys": [
+      { "provider": "anthropic", "env": "CLAUDE_CODE_OAUTH_TOKEN", "last4": "", "addedMs": 1790000100000, "expired": true } ] } } }
+  ],
   "models": [
     { "step": "nothing connected", "input": { "keys": { "keys": [] } } },
     { "step": "an Anthropic key, an OpenAI key and a DeepSeek key", "input": { "keys": { "keys": [

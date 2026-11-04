@@ -41,7 +41,7 @@ import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewS
 import { demoShareHandlers } from "./demo/share";
 import { DEMO_THREAD_SPACE, demoThreadHandlers, hangingSpace, seedLongDm } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
-import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
+import { demoAccountKeys, demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
@@ -97,6 +97,8 @@ export interface DemoOptions {
   claudeLogin?: "signed-in" | "expired" | "none";
   /** `?demo=chatgpt-signed-in`: a ChatGPT sign-in is saved for Codex (no OpenAI API key unless `no-keys` is left off). */
   chatgptLogin?: boolean;
+  /** Three Claude sign-ins and one ChatGPT sign-in, nothing else (`?demo=accounts`). */
+  accounts?: boolean;
   /** Which connections are saved: `none` (`?demo=no-keys`, an empty Connections list) or `several` (`?demo=connections`: Anthropic, OpenRouter, a custom endpoint and a DeepSeek key the provider refuses). Default: an OpenAI key. */
   keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
@@ -281,6 +283,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
     ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
     ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
+    ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
     ...(() => {
@@ -405,7 +408,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys, options.chatgptLogin),
+    keyStore: (() => {
+      const store = demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys, options.chatgptLogin);
+      return options.accounts ? { ...store, keys: demoAccountKeys(now) } : store;
+    })(),
     readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,

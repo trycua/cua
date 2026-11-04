@@ -1675,6 +1675,243 @@ pub fn models_view(input: &ConnectorsInput) -> ModelsView {
     }
 }
 
+/// One sign-in or key a coding app can run with (an account of the agent menu).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAccount {
+    pub provider: String,
+    pub provider_label: String,
+    pub icon: String,
+    pub env: String,
+    pub slot: Option<String>,
+    /// What the person sees for it: the sign-in's own name ("Signed in as ada@example.com (Claude Max)"),
+    /// "Signed in with ChatGPT", a key's name, or "API key ending 4f2a".
+    pub line: String,
+    /// `sign-in` for the app's own sign-in, `key` for an API key.
+    pub via: String,
+    /// The account runs use now: the one the app was told to use, else the first.
+    pub selected: bool,
+    /// The models it can run.
+    pub models: Vec<ModelChoice>,
+    /// The model a pick of this account starts with: its quick one, else its default, else the first.
+    pub default_model: Option<String>,
+}
+
+/// One coding app (harness) of the agent menu, with the accounts the person has for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentGroup {
+    /// The harness id a run uses (`openai-codex`).
+    pub harness: String,
+    /// The setup id of its Connectors row (`codex`), where its sign-ins are managed.
+    pub app: String,
+    pub label: String,
+    /// `connected` (an account works), `needs-reconnect` (only sign-ins that ran out) or `not-connected`.
+    pub state: String,
+    pub accounts: Vec<AgentAccount>,
+    /// The words of the row that signs in, for an app with no account.
+    pub sign_in_label: String,
+}
+
+/// A coding app, an account and a model picked together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRef {
+    pub harness: String,
+    pub provider: String,
+    pub env: String,
+    pub slot: Option<String>,
+    pub model: String,
+}
+
+/// What the agent menu of the prompt box reads (`connectors.agents`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsView {
+    /// Codex, Hermes, Claude Code and OpenCode first, always; the other apps only when an account works.
+    pub groups: Vec<AgentGroup>,
+    /// Where to start when nothing was picked: the first app with an account, its account, its quick model.
+    pub default: Option<AgentRef>,
+    /// Said when no app has an account.
+    pub empty: Option<String>,
+}
+
+/// The apps the menu always lists, in its order.
+const MENU_FIRST: &[&str] = &["codex", "hermes", "claude-code", "opencode"];
+
+/// One credential an app can run with: its provider, variable, slot and the saved key.
+type Credential<'a> = (
+    &'static reg::Provider,
+    &'static str,
+    Option<&'a str>,
+    &'a AgentKeyInput,
+);
+
+/// The credentials `app` can run with now, in the order of preference: the providers by rank, the first
+/// of each variable before those saved beside it. An app with its own sign-ins (Claude Code, Codex) lists
+/// what it reads; an app that takes any provider lists every key it can use.
+fn agent_credentials<'a>(input: &'a ConnectorsInput, app: &str) -> Vec<Credential<'a>> {
+    let Some(a) = app_sign_in(app) else {
+        return vec![];
+    };
+    let harness = harness_of_app(app).unwrap_or(app);
+    let mut out = vec![];
+    for p in &a.providers {
+        for env in provider_envs(p) {
+            let allowed = if a.reads.is_empty() {
+                p.scope_of(env).is_none() && reg::can_read(harness, env)
+            } else {
+                a.reads.contains(&env)
+            };
+            if !allowed {
+                continue;
+            }
+            for (k, slot) in input.keys_of(env).filter(|(k, _)| !k.expired) {
+                if p.kind == reg::Kind::Custom && !endpoint_fields(k) {
+                    continue;
+                }
+                out.push((*p, env, slot, k));
+            }
+        }
+    }
+    out
+}
+
+/// A custom endpoint has the URL and model it needs.
+fn endpoint_fields(k: &AgentKeyInput) -> bool {
+    k.fields.get("base_url").is_some_and(|v| !v.is_empty())
+        && k.fields.get("model").is_some_and(|v| !v.is_empty())
+}
+
+/// What one credential reads as in the agent menu.
+fn account_line(p: &reg::Provider, env: &str, k: &AgentKeyInput) -> String {
+    if let Some(l) = k.label.as_deref().filter(|l| !l.is_empty()) {
+        return l.to_string();
+    }
+    match env {
+        "CLAUDE_CODE_OAUTH_TOKEN" => "Signed in to Claude".into(),
+        "CODEX_AUTH_JSON" => "Signed in with ChatGPT".into(),
+        _ => use_line(p, k),
+    }
+}
+
+/// The agent menu: the coding apps the person can run, each with the accounts they have for it and
+/// the models those accounts offer. A Claude sign-in is Claude Code's and a ChatGPT sign-in is
+/// Codex's; the apps that take any provider list their API keys. An app with no account says how to
+/// sign in.
+pub fn agents_view(input: &ConnectorsInput) -> AgentsView {
+    let build = |h: &HarnessApp| -> AgentGroup {
+        let creds = agent_credentials(input, h.app);
+        let told = input.uses.get(h.app);
+        let picked = told.and_then(|u| {
+            creds
+                .iter()
+                .position(|(_, env, slot, _)| *env == u.env && *slot == u.slot.as_deref())
+        });
+        // An app told to use a credential that is gone has none selected; it never moves to another.
+        let selected_ix = match told {
+            Some(_) => picked,
+            None => (!creds.is_empty()).then_some(0),
+        };
+        let accounts: Vec<AgentAccount> = creds
+            .iter()
+            .enumerate()
+            .map(|(i, (p, env, slot, k))| {
+                let models: Vec<ModelChoice> = match k.fields.get("model").filter(|m| !m.is_empty())
+                {
+                    Some(m) if p.kind == reg::Kind::Custom => vec![ModelChoice {
+                        id: m.clone(),
+                        label: m.clone(),
+                        fast: false,
+                        default: true,
+                    }],
+                    _ => p
+                        .model_list()
+                        .iter()
+                        .map(|m| ModelChoice {
+                            id: m.id.into(),
+                            label: m.name.into(),
+                            fast: m.fast,
+                            default: m.id == p.default_model,
+                        })
+                        .collect(),
+                };
+                AgentAccount {
+                    provider: p.id.into(),
+                    provider_label: p.name.into(),
+                    icon: p.icon.into(),
+                    env: (*env).into(),
+                    slot: slot.map(str::to_string),
+                    line: account_line(p, env, k),
+                    via: if p.scope_of(env).is_some() {
+                        "sign-in"
+                    } else {
+                        "key"
+                    }
+                    .into(),
+                    selected: Some(i) == selected_ix,
+                    default_model: models
+                        .iter()
+                        .find(|m| m.fast)
+                        .or_else(|| models.iter().find(|m| m.default))
+                        .or_else(|| models.first())
+                        .map(|m| m.id.clone()),
+                    models,
+                }
+            })
+            .collect();
+        let expired = accounts.is_empty()
+            && app_sign_in(h.app).is_some_and(|a| {
+                a.providers
+                    .iter()
+                    .any(|p| provider_expired_for(input, p, h.app))
+            });
+        AgentGroup {
+            harness: h.harness.into(),
+            app: h.app.into(),
+            label: h.name.into(),
+            state: if !accounts.is_empty() {
+                "connected"
+            } else if expired {
+                "needs-reconnect"
+            } else {
+                "not-connected"
+            }
+            .into(),
+            accounts,
+            sign_in_label: if expired { "Sign in again" } else { "Sign in" }.into(),
+        }
+    };
+    let mut groups: Vec<AgentGroup> = MENU_FIRST
+        .iter()
+        .filter_map(|app| HARNESS_APPS.iter().find(|h| h.app == *app))
+        .map(build)
+        .collect();
+    groups.extend(
+        HARNESS_APPS
+            .iter()
+            .filter(|h| !MENU_FIRST.contains(&h.app))
+            .map(build)
+            .filter(|g| g.state != "not-connected"),
+    );
+    let default = groups.iter().find_map(|g| {
+        let a = g.accounts.iter().find(|a| a.selected)?;
+        Some(AgentRef {
+            harness: g.harness.clone(),
+            provider: a.provider.clone(),
+            env: a.env.clone(),
+            slot: a.slot.clone(),
+            model: a.default_model.clone()?,
+        })
+    });
+    let none = default.is_none();
+    AgentsView {
+        groups,
+        default,
+        empty: none.then(|| "Sign in to an agent to start.".to_string()),
+    }
+}
+
 /// What importing Claude Code's sign-in says before it reads anything, and
 /// what it offers when there is nothing to import.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1873,38 +2110,19 @@ fn use_line(p: &reg::Provider, k: &AgentKeyInput) -> String {
 /// Every credential `app` can use now, in the order of preference: providers by rank, the
 /// first key of each before the keys saved beside it.
 fn use_options(input: &ConnectorsInput, app: &str) -> Vec<UseOption> {
-    let Some(a) = app_sign_in(app) else {
-        return vec![];
-    };
-    let harness = harness_of_app(app).unwrap_or(app);
-    let mut out = vec![];
-    for p in &a.providers {
-        for env in provider_envs(p) {
-            for (k, slot) in input.keys_of(env).filter(|(k, _)| !k.expired) {
-                // A sign-in scoped to another app is never offered; a custom endpoint needs its URL and model.
-                if p.scope_of(env).is_some() || !reg::can_read(harness, env) {
-                    continue;
-                }
-                if p.kind == reg::Kind::Custom
-                    && !(k.fields.get("base_url").is_some_and(|v| !v.is_empty())
-                        && k.fields.get("model").is_some_and(|v| !v.is_empty()))
-                {
-                    continue;
-                }
-                out.push(UseOption {
-                    provider: p.id.into(),
-                    provider_name: p.name.into(),
-                    icon: p.id.into(),
-                    env: env.into(),
-                    slot: slot.map(str::to_string),
-                    line: use_line(p, k),
-                    model: k.fields.get("model").filter(|m| !m.is_empty()).cloned(),
-                    selected: false,
-                });
-            }
-        }
-    }
-    out
+    agent_credentials(input, app)
+        .into_iter()
+        .map(|(p, env, slot, k)| UseOption {
+            provider: p.id.into(),
+            provider_name: p.name.into(),
+            icon: p.id.into(),
+            env: env.into(),
+            slot: slot.map(str::to_string),
+            line: account_line(p, env, k),
+            model: k.fields.get("model").filter(|m| !m.is_empty()).cloned(),
+            selected: false,
+        })
+        .collect()
 }
 
 /// The option an app was told to use, while it is still saved and works.
@@ -3516,5 +3734,171 @@ mod tests {
             );
             assert!(text.contains("Takes effect the next time"), "{text}");
         }
+    }
+
+    fn with_keys(keys: Vec<AgentKeyInput>, extras: Vec<(AgentKeyInput, &str)>) -> ConnectorsInput {
+        let mut i = input();
+        i.keys.keys = keys;
+        i.key_extras = extras
+            .into_iter()
+            .map(|(key, slot)| ExtraKeyInput {
+                key,
+                slot: Some(slot.into()),
+            })
+            .collect();
+        i
+    }
+
+    fn named(env: &str, label: &str) -> AgentKeyInput {
+        let mut k = key(env, "");
+        k.label = Some(label.into());
+        k
+    }
+
+    fn group<'a>(v: &'a AgentsView, app: &str) -> &'a AgentGroup {
+        v.groups.iter().find(|g| g.app == app).unwrap()
+    }
+
+    #[test]
+    fn the_agent_menu_lists_the_top_four_with_sign_in_when_nothing_is_saved() {
+        let v = agents_view(&with_keys(vec![], vec![]));
+        let apps: Vec<&str> = v.groups.iter().map(|g| g.app.as_str()).collect();
+        assert_eq!(apps, ["codex", "hermes", "claude-code", "opencode"]);
+        for g in &v.groups {
+            assert_eq!(g.state, "not-connected");
+            assert!(g.accounts.is_empty());
+            assert_eq!(g.sign_in_label, "Sign in");
+        }
+        assert!(v.default.is_none() && v.empty.is_some());
+    }
+
+    #[test]
+    fn a_harness_lists_every_account_the_person_has_for_it() {
+        let v = agents_view(&with_keys(
+            vec![
+                named(
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "Signed in as ada@example.com (Claude Max)",
+                ),
+                named("CODEX_AUTH_JSON", ""),
+            ],
+            vec![
+                (named("CLAUDE_CODE_OAUTH_TOKEN", "work Max"), "work"),
+                (named("CLAUDE_CODE_OAUTH_TOKEN", "side project Max"), "side"),
+            ],
+        ));
+        let cc = group(&v, "claude-code");
+        let lines: Vec<&str> = cc.accounts.iter().map(|a| a.line.as_str()).collect();
+        assert_eq!(
+            lines,
+            [
+                "Signed in as ada@example.com (Claude Max)",
+                "work Max",
+                "side project Max"
+            ]
+        );
+        assert!(
+            cc.accounts
+                .iter()
+                .all(|a| a.via == "sign-in" && a.provider == "anthropic")
+        );
+        assert_eq!(cc.accounts.iter().filter(|a| a.selected).count(), 1);
+        assert!(cc.accounts[0].selected);
+        assert!(!cc.accounts[0].models.is_empty() && cc.accounts[0].default_model.is_some());
+        // Codex has its one ChatGPT sign-in; Hermes and OpenCode read no sign-in.
+        let cx = group(&v, "codex");
+        assert_eq!(cx.accounts.len(), 1);
+        assert_eq!(cx.accounts[0].line, "Signed in with ChatGPT");
+        for app in ["hermes", "opencode"] {
+            assert_eq!(group(&v, app).state, "not-connected", "{app}");
+        }
+        // The default is the first connected app in the menu's order (Codex), its account and quick model.
+        let d = v.default.unwrap();
+        assert_eq!(
+            (d.harness.as_str(), d.env.as_str()),
+            ("openai-codex", "CODEX_AUTH_JSON")
+        );
+    }
+
+    #[test]
+    fn an_app_told_which_account_to_use_selects_it_and_one_that_is_gone_selects_none() {
+        let mut i = with_keys(
+            vec![named("CLAUDE_CODE_OAUTH_TOKEN", "personal")],
+            vec![(named("CLAUDE_CODE_OAUTH_TOKEN", "work Max"), "work")],
+        );
+        i.uses.insert(
+            "claude-code".into(),
+            UseInput {
+                provider: "anthropic".into(),
+                env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
+                slot: Some("work".into()),
+            },
+        );
+        let v = agents_view(&i);
+        let sel: Vec<&str> = group(&v, "claude-code")
+            .accounts
+            .iter()
+            .filter(|a| a.selected)
+            .map(|a| a.line.as_str())
+            .collect();
+        assert_eq!(sel, ["work Max"]);
+        i.uses.insert(
+            "claude-code".into(),
+            UseInput {
+                provider: "anthropic".into(),
+                env: "CLAUDE_CODE_OAUTH_TOKEN".into(),
+                slot: Some("removed".into()),
+            },
+        );
+        let v = agents_view(&i);
+        assert!(
+            group(&v, "claude-code")
+                .accounts
+                .iter()
+                .all(|a| !a.selected)
+        );
+    }
+
+    #[test]
+    fn api_keys_are_accounts_of_the_apps_that_take_any_provider_and_other_apps_show_when_connected()
+    {
+        let v = agents_view(&with_keys(
+            vec![
+                key("ANTHROPIC_API_KEY", "aa11"),
+                key("OPENAI_API_KEY", "bb22"),
+            ],
+            vec![(named("OPENAI_API_KEY", "Work key"), "work")],
+        ));
+        let h = group(&v, "hermes");
+        assert_eq!(h.state, "connected");
+        let lines: Vec<&str> = h.accounts.iter().map(|a| a.line.as_str()).collect();
+        assert!(
+            lines.contains(&"Work key") && lines.contains(&"API key ending bb22"),
+            "{lines:?}"
+        );
+        assert!(h.accounts.iter().all(|a| a.via == "key"));
+        // An app outside the first four shows only once it has an account.
+        let apps: Vec<&str> = v.groups.iter().map(|g| g.app.as_str()).collect();
+        assert_eq!(&apps[..4], ["codex", "hermes", "claude-code", "opencode"]);
+        assert!(apps[4..].iter().all(|a| group(&v, a).state == "connected"));
+    }
+
+    #[test]
+    fn a_sign_in_that_ran_out_asks_to_sign_in_again() {
+        let mut expired = named("CLAUDE_CODE_OAUTH_TOKEN", "work");
+        expired.expired = true;
+        let v = agents_view(&with_keys(vec![expired], vec![]));
+        let cc = group(&v, "claude-code");
+        assert_eq!(
+            (cc.state.as_str(), cc.sign_in_label.as_str()),
+            ("needs-reconnect", "Sign in again")
+        );
+    }
+
+    #[test]
+    fn no_agent_menu_string_says_machine_device_or_has_a_middle_dot() {
+        let v = agents_view(&with_keys(vec![], vec![]));
+        let text = serde_json::to_string(&v).unwrap().to_lowercase();
+        assert!(!text.contains('\u{b7}') && !text.contains("device") && !text.contains("machine"));
     }
 }

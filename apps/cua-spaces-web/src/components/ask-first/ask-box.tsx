@@ -5,15 +5,15 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ArrowUpIcon, CheckIcon, ChevronDownIcon, EllipsisIcon, LaptopIcon, MonitorIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 
-import type { ModelsView, Space, SpaceOs } from "@/bridge";
+import type { AgentAccount, AgentGroup, AgentsView, Space, SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
-import type { ModelSelection, PickedModel } from "@/lib/ask-first-model";
+import type { AgentSelection } from "@/lib/ask-first-model";
 import type { AskRepo } from "@/lib/ask-first-repo";
 import { cn } from "@/lib/utils";
 
-import { ModelPicker } from "./model-picker";
+import { AgentPicker, type AccountActions } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
 
 export type { TaskWhere } from "@/lib/ask-first";
@@ -103,17 +103,18 @@ const whereButton = "flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13px] o
 
 /**
  * Home's box, like the first prompt of a chat app: the job in your own words,
- * then one row under it with the model, an optional repo and where it runs.
- * Enter starts it (Shift+Enter for a new line). Which coding app runs the job
- * follows the model.
+ * then one row under it with the agent (the app and its account), an optional repo and, without an agent home, where it runs.
+ * Enter starts it (Shift+Enter for a new line). The model is a line in the agent menu.
  */
 export function AskBox({
   text,
   onText,
   view,
   selected,
-  onPickModel,
-  onConnect,
+  onPickAccount,
+  onModel,
+  onSignIn,
+  accounts,
   repo,
   onRepo,
   where,
@@ -132,13 +133,16 @@ export function AskBox({
 }: {
   text: string;
   onText: (t: string) => void;
-  /** The connected models (`connectors.models`); null before they are read. */
-  view: ModelsView | null;
-  /** The model it will use. */
-  selected: ModelSelection | null;
-  onPickModel: (p: PickedModel) => void;
-  /** Opens Connections (to connect a provider, or reconnect the one named). */
-  onConnect: (provider?: string) => void;
+  /** The coding apps and the accounts for each (`connectors.agents`); null before they are read. */
+  view: AgentsView | null;
+  /** The app, account and model it will use. */
+  selected: AgentSelection | null;
+  onPickAccount: (group: AgentGroup, account: AgentAccount) => void;
+  onModel: (model: string) => void;
+  /** Starts the sign-in of an app that has no account. */
+  onSignIn: (group: AgentGroup) => void;
+  /** What the menu does with an app's accounts (default, rename, remove, add). */
+  accounts: AccountActions;
   repo: AskRepo | null;
   onRepo?: (r: AskRepo | null) => void;
   where: TaskWhere;
@@ -189,7 +193,7 @@ export function AskBox({
         className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <ModelPicker view={view} selected={selected} onPick={onPickModel} onConnect={onConnect} />
+        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} accounts={accounts} />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">

@@ -102,15 +102,18 @@ async fn a_base_pulled_at_another_digest_is_removed_and_refused() {
         .start(&spec("cua-pd-moved", &reference))
         .await
         .unwrap_err();
-    let VmmError::Invalid(m) = &err else {
-        panic!("expected an invalid request, got {err:?}");
+    let VmmError::DigestMoved {
+        tag,
+        want,
+        got,
+        note,
+    } = &err
+    else {
+        panic!("expected the moved digest, got {err:?}");
     };
-    assert!(
-        m.contains(&format!(
-            "registry.example/test/macos:moved names {Y} now, not {X}"
-        )),
-        "{m}"
-    );
+    assert_eq!(tag, "registry.example/test/macos:moved");
+    assert_eq!((want.as_str(), got.as_str()), (X, Y));
+    assert_eq!(note, "", "the base was removed");
     let st = state.lock().unwrap();
     assert!(
         st.vms.is_empty(),
@@ -128,6 +131,26 @@ async fn a_base_pulled_at_its_digest_is_kept() {
     lume_pulled(&base, X);
     fake_lume::runtime(url)
         .start(&spec("cua-pd-kept", &reference))
+        .await
+        .unwrap();
+    assert!(state.lock().unwrap().vms.contains_key(&base));
+    assert!(owns(&base));
+}
+
+/// Digests compare without regard to case: a registry may spell the hex in
+/// upper case, and the base it names is still the one Lume pulled.
+#[tokio::test]
+async fn a_digest_in_upper_case_is_the_same_digest() {
+    let (state, url) = fake().await;
+    let lower = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let reference = format!(
+        "registry.example/test/macos:upper@{}",
+        lower.to_uppercase().replacen("SHA256", "sha256", 1)
+    );
+    let base = base_vm_name(&reference);
+    lume_pulled(&base, lower);
+    fake_lume::runtime(url)
+        .start(&spec("cua-pd-upper", &reference))
         .await
         .unwrap();
     assert!(state.lock().unwrap().vms.contains_key(&base));

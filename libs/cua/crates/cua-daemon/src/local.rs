@@ -75,12 +75,43 @@ fn rt_err(e: VmmError) -> RuntimeError {
         VmmError::UnsupportedImage { reason, .. } => RuntimeError::UnsupportedImage(reason),
         VmmError::InsufficientDisk(d) => RuntimeError::InsufficientDisk(d.to_string()),
         VmmError::HostCapacity(m) => RuntimeError::HostCapacity(m),
-        VmmError::Invalid(m) => RuntimeError::InvalidArgument(m),
+        VmmError::Refused(m) => RuntimeError::InvalidArgument(m),
         VmmError::Unsupported { backend, op } => RuntimeError::Unsupported {
             backend: backend.to_string(),
             op: op.to_string(),
         },
         other => RuntimeError::Other(other.to_string()),
+    }
+}
+
+/// [`rt_err`] for a start of the image the user named, `image`. When Lume
+/// pulled another image than the digest the base is named for
+/// ([`VmmError::DigestMoved`]): a digest `image` pinned is one no retry or
+/// other machine can pull, so it is refused; one this create resolved, the
+/// tag moved under it, and trying again resolves it afresh.
+fn start_err(image: &str, e: VmmError) -> RuntimeError {
+    let VmmError::DigestMoved {
+        tag,
+        want,
+        got,
+        note,
+    } = e
+    else {
+        return rt_err(e);
+    };
+    let pinned = cua_image::resolve::NormalizedRef::parse(image)
+        .is_ok_and(|r| r.digest.is_some_and(|d| d.eq_ignore_ascii_case(&want)));
+    if pinned {
+        RuntimeError::InvalidArgument(format!(
+            "{tag} names {got} now, not the pinned {want}, and Lume pulls by tag, so it cannot \
+             fetch {want}; create from {tag} for the image it names now, or from a tag that \
+             still names {want}{note}"
+        ))
+    } else {
+        RuntimeError::Other(format!(
+            "{tag} moved from {want} to {got} while this create pulled it; try again for the \
+             image it names now{note}"
+        ))
     }
 }
 
@@ -91,7 +122,7 @@ pub fn vmm_error(e: VmmError) -> Error {
         VmmError::Unsupported { backend, op } => {
             Error::Unsupported(format!("{backend} does not support {op}"))
         }
-        VmmError::Invalid(m) => Error::InvalidArgument(m),
+        VmmError::Invalid(m) | VmmError::Refused(m) => Error::InvalidArgument(m),
         VmmError::UnsupportedImage { reason, .. } => Error::Unsupported(reason),
         e @ (VmmError::Missing { .. } | VmmError::NotRunning { .. }) => {
             Error::ProviderNotConfigured(e.to_string())
@@ -2119,9 +2150,9 @@ impl LocalRuntime for VmmLocal {
                 REPO_CACHE_MOUNT_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
                 s.mounts
                     .retain(|m| m.guest != cua_sandbox_core::repo_cache::GUEST_ROOT);
-                rt.start(&s).await.map_err(rt_err)?
+                rt.start(&s).await.map_err(|e| start_err(&spec.image, e))?
             }
-            Err(e) => return Err(rt_err(e)),
+            Err(e) => return Err(start_err(&spec.image, e)),
         };
         // Behind a port forward (the probe on cua-spacesd's port says so),
         // ready once it serves an authenticated call with the Space's
@@ -3495,16 +3526,22 @@ mod tests {
         assert!(matches!(r, Ok((BackendKind::Lume, ()))));
     }
 
-    /// A start the backend refuses outright (Lume cannot pull the image)
-    /// reaches the caller as an invalid argument, not a runtime failure.
+    /// A start the backend refuses outright (Lume's argument check, or an
+    /// image pinned to a digest its tag no longer names) reaches the caller
+    /// as an invalid argument, which `on=auto` does not take elsewhere. An
+    /// invalid request of one machine's (its base VM is running), or a tag
+    /// that moved under an unpinned create, stays a failure another try or
+    /// machine can get past.
     #[test]
-    fn a_refused_start_stays_an_invalid_argument() {
-        use super::{RuntimeError, VmmError, rt_err};
-        let refused = || rt_err(VmmError::Invalid("Lume refused to pull the image".into()));
+    fn only_a_refused_start_is_an_invalid_argument() {
+        use super::{RuntimeError, VmmError, rt_err, start_err};
+        let code = |r: RuntimeError| {
+            let err = crate::Error::from(cua_sandbox_core::Error::Runtime(r));
+            err.to_status().code()
+        };
+        let refused = || rt_err(VmmError::Refused("Lume refused to pull the image".into()));
         assert!(matches!(refused(), RuntimeError::InvalidArgument(_)));
-        let err = crate::Error::from(cua_sandbox_core::Error::Runtime(refused()));
-        assert!(matches!(err, crate::Error::InvalidArgument(_)), "{err:?}");
-        assert_eq!(err.to_status().code(), tonic::Code::InvalidArgument);
+        assert_eq!(code(refused()), tonic::Code::InvalidArgument);
         #[cfg(feature = "spaces")]
         {
             let err = crate::Error::from(cua_spaces::Error::from(
@@ -3512,6 +3549,34 @@ mod tests {
             ));
             assert!(matches!(err, crate::Error::InvalidArgument(_)), "{err:?}");
         }
+        let running = rt_err(VmmError::invalid("base VM 'b' is running"));
+        assert!(matches!(running, RuntimeError::Other(_)), "{running:?}");
+        assert_eq!(code(running), tonic::Code::Aborted);
+
+        let want = format!("sha256:{}", "a".repeat(64));
+        let got = format!("sha256:{}", "b".repeat(64));
+        let moved = || VmmError::DigestMoved {
+            tag: "ghcr.io/trycua/macos:26".into(),
+            want: want.clone(),
+            got: got.clone(),
+            note: String::new(),
+        };
+        let pinned = start_err(&format!("ghcr.io/trycua/macos:26@{want}"), moved());
+        let RuntimeError::InvalidArgument(m) = &pinned else {
+            panic!("a pinned digest is refused: {pinned:?}");
+        };
+        assert!(m.contains(&format!("not the pinned {want}")), "{m}");
+        let upper = format!("ghcr.io/trycua/macos:26@sha256:{}", "A".repeat(64));
+        assert!(matches!(
+            start_err(&upper, moved()),
+            RuntimeError::InvalidArgument(_)
+        ));
+        let unpinned = start_err("ghcr.io/trycua/macos:26", moved());
+        let RuntimeError::Other(m) = &unpinned else {
+            panic!("a tag that moved under the create is retried: {unpinned:?}");
+        };
+        assert!(m.contains("try again"), "{m}");
+        assert_eq!(code(unpinned), tonic::Code::Aborted);
     }
 
     #[test]

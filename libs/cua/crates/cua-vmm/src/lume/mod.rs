@@ -302,11 +302,16 @@ pub fn lume_pull_ref(reference: &str) -> &str {
 }
 
 /// `tag-ref@sha256:…` split into the tag reference Lume pulls and the
-/// digest the base is named for; `None` for any other reference.
+/// digest the base is named for; `None` for any other reference. The tag is
+/// a `:` in the last path segment, so a registry port is not one.
 fn lume_tag_and_digest(reference: &str) -> Option<(&str, &str)> {
-    reference
-        .rsplit_once('@')
-        .filter(|(tag_ref, digest)| digest.starts_with("sha256:") && tag_ref.contains(':'))
+    reference.rsplit_once('@').filter(|&(tag_ref, digest)| {
+        digest.starts_with("sha256:")
+            && tag_ref
+                .rsplit_once('/')
+                .map_or(tag_ref, |(_, name)| name)
+                .contains(':')
+    })
 }
 
 /// Stable base-VM name for an OCI reference: `cua-base-<sha256[:12]>`
@@ -1608,21 +1613,25 @@ impl LumeRuntime {
             );
             return Ok(());
         };
-        if got == want {
+        // Registries may spell a digest's hex in upper case.
+        if got.eq_ignore_ascii_case(want) {
             return Ok(());
         }
-        let mut msg = format!(
-            "{tag} names {got} now, not {want}, and Lume pulls by tag, so it cannot fetch \
-             {want}; create from {tag} for the image it names now, or from a tag that still \
-             names {want}"
-        );
-        match self.client.delete(base_name).await {
-            Ok(()) => OwnedVms::default().forget(base_name),
-            Err(e) => msg.push_str(&format!(
+        let note = match self.client.delete(base_name).await {
+            Ok(()) => {
+                OwnedVms::default().forget(base_name);
+                String::new()
+            }
+            Err(e) => format!(
                 " (the pulled base {base_name} could not be removed: {e}; `lume delete {base_name}`)"
-            )),
-        }
-        Err(VmmError::Invalid(msg))
+            ),
+        };
+        Err(VmmError::DigestMoved {
+            tag: tag.into(),
+            want: want.into(),
+            got,
+            note,
+        })
     }
 
     /// Installs the start spec's workload environment in a booted macOS
@@ -3438,6 +3447,15 @@ mod tests {
         assert_eq!(
             lume_pull_ref("ghcr.io/trycua/macos@sha256:ab"),
             "ghcr.io/trycua/macos@sha256:ab"
+        );
+        // Nor is a registry port.
+        assert_eq!(
+            lume_pull_ref("localhost:5000/macos@sha256:ab"),
+            "localhost:5000/macos@sha256:ab"
+        );
+        assert_eq!(
+            lume_pull_ref("localhost:5000/macos:26@sha256:ab"),
+            "localhost:5000/macos:26"
         );
         // A moved tag names a different base.
         assert_ne!(

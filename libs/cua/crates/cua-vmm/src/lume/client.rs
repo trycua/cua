@@ -736,7 +736,7 @@ impl LumeClient {
                     // pull fails the same way, so it is not offered as a
                     // download to resume.
                     if reason.contains("ValidationError") {
-                        return Err(VmmError::Invalid(format!(
+                        return Err(VmmError::Refused(format!(
                             "Lume refused to pull the image for {name} ({reason}); \
                              trying again will not help"
                         )));
@@ -1150,7 +1150,7 @@ pub(crate) mod tests {
             .wait_pulled("b4d", Duration::from_secs(30))
             .await
             .unwrap_err();
-        assert!(matches!(err, VmmError::Invalid(_)), "{err}");
+        assert!(matches!(err, VmmError::Refused(_)), "{err}");
         assert!(!err.to_string().contains("Try again"), "{err}");
     }
 

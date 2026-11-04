@@ -343,6 +343,8 @@ struct BridgeContractTests {
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
         "agents.message": "as agents.start (the daemon's agent_message)",
+        "agents.recentThreads": "needs the daemon's agent_threads; WebUIHostTests checks it is unsupported without it",
+        "agents.threadHistory": "as agents.recentThreads (the daemon's agent_thread_read)",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers

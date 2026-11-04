@@ -197,7 +197,7 @@ for file, module, types in TYPES:
 text = "\n".join(out)
 if "--check" in sys.argv:
     if not OUT.exists() or OUT.read_text() != text:
-        raise SystemExit(f"{OUT} is stale; run {sys.argv[0]}")
+        raise SystemExit(f"{OUT} is stale; run scripts/regen-all.sh --only ffi-mirror")
     print("app core FFI mirrors are current")
 else:
     OUT.write_text(text)

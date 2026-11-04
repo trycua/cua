@@ -39,7 +39,7 @@ fn main() {
             .unwrap_or_else(|error| panic!("read {}: {error}", output_path.display()));
         if existing != generated {
             eprintln!(
-                "{} is stale; run `cargo run -p cua-driver-bindgen --bin cua-driver-abi-header`",
+                "{} is stale; run scripts/regen-all.sh --only driver",
                 output_path.display()
             );
             std::process::exit(1);

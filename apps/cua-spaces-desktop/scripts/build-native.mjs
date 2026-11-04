@@ -240,7 +240,7 @@ function checkBindings() {
     const stale = Object.entries(files)
       .filter(([name, contents]) => !existsSync(join(generatedDir, name)) || readFileSync(join(generatedDir, name), "utf8") !== contents)
       .map(([name]) => name);
-    if (stale.length) throw new Error(`stale bindings in src/native/generated: ${stale.join(", ")} (pnpm native -- --bindings)`);
+    if (stale.length) throw new Error(`stale bindings in src/native/generated: ${stale.join(", ")} (run scripts/regen-all.sh from the repo root; it also refreshes the Swift binding)`);
     console.log("The bindings are up to date.");
   } finally {
     rmSync(scratch, { recursive: true, force: true });

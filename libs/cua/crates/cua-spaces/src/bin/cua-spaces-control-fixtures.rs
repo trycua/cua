@@ -30,7 +30,7 @@ fn main() {
             }
             _ => {
                 eprintln!("stale control-plane fixture: {}", path.display());
-                eprintln!("run: cargo run -p cua-spaces --bin cua-spaces-control-fixtures");
+                eprintln!("run: scripts/regen-all.sh --only contract");
                 std::process::exit(1);
             }
         }

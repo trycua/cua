@@ -170,7 +170,24 @@ async fn an_anonymous_unknown_id_is_refused_auth_in_every_mode() {
     let mut bodies = std::collections::BTreeSet::new();
     for mode in modes() {
         let env = start(mode).await;
-        for path in ["healthz", "health", "cua.env.v1.SystemService/Health"] {
+        // With phone support off the machine's own `/health` is forwarded
+        // without a credential (so an unknown id is `offline`, not refused).
+        if !mode.push {
+            let r = env
+                .http
+                .get(format!("{}/m/{NIL}/health", env.base))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 502, "{mode:?}");
+            assert_eq!(marker(&r).as_deref(), Some("offline"), "{mode:?}");
+        }
+        let paths = if mode.push {
+            &["healthz", "health", "cua.env.v1.SystemService/Health"][..]
+        } else {
+            &["healthz", "cua.env.v1.SystemService/Health"][..]
+        };
+        for path in paths {
             let r = env
                 .http
                 .get(format!("{}/m/{NIL}/{path}", env.base))

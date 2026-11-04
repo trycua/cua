@@ -79,3 +79,9 @@ does not. That is why assets are minted here rather than in the destination page
 | `gemini-argon-ledger-entries.jpg` | [`38cb5c14…`](https://github.com/user-attachments/assets/38cb5c14-121f-42c5-a642-b4e92d8a59f9) | `cua-driver/guides/gemini` |
 | `gemini-cua-driver-architecture.png` | [`7222ab31…`](https://github.com/user-attachments/assets/7222ab31-cda1-4a74-b298-d72ebc1e488a) | `cua-driver/guides/gemini` |
 | `gemini-cua-driver-loop.png` | [`bdfff431…`](https://github.com/user-attachments/assets/bdfff431-0f7f-440c-867a-2905fbda4a98) | `cua-driver/guides/gemini` |
+
+CUA-3318 first run screenshots: <img width="1872" height="676" alt="first-run-1-welcome" src="https://github.com/user-attachments/assets/1146557d-6e3b-4273-9394-f9b5cd1fefd9" />
+ <img width="2796" height="676" alt="first-run-1b-sign-in" src="https://github.com/user-attachments/assets/33c04b19-9fdc-4f2d-8f1c-d8221c6efbdb" />
+ <img width="2796" height="676" alt="first-run-2-where" src="https://github.com/user-attachments/assets/703dec3d-b970-4e5e-8b82-99c52ae6e98f" />
+ <img width="2796" height="676" alt="first-run-3-agent" src="https://github.com/user-attachments/assets/6ef9de48-c8a4-4064-a734-ed253b050e49" />
+ <img width="2796" height="676" alt="first-run-4-6-ready-next" src="https://github.com/user-attachments/assets/27f7089d-297a-4b0a-961b-d2f99948afae" />

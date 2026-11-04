@@ -386,6 +386,295 @@
       ]
     },
     {
+      "agentMenu": "nothing chosen, nothing signed in",
+      "choices": [],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "claude-code | not-connected",
+        "opencode | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | true | Not signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "nothing chosen, accounts that also run Goose and Pi",
+      "choices": [],
+      "default": "openai-codex | CODEX_AUTH_JSON | - | gpt-5.5",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | connected",
+        "hermes | connected",
+        "claude-code | connected",
+        "opencode | connected",
+        "goose | connected",
+        "pi | connected",
+        "openclaw | connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Signed in | false",
+        "hermes | Hermes | true | Signed in | false",
+        "claude-code | Claude Code | true | Signed in | false",
+        "opencode | OpenCode | true | Signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | true | Signed in | false",
+        "pi | Pi | true | Signed in | false",
+        "openclaw | OpenClaw | true | Signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [
+          "codex|CODEX_AUTH_JSON|",
+          "hermes|ANTHROPIC_API_KEY|",
+          "claude-code|ANTHROPIC_API_KEY|",
+          "claude-code|CLAUDE_CODE_OAUTH_TOKEN|",
+          "opencode|ANTHROPIC_API_KEY|",
+          "goose|ANTHROPIC_API_KEY|",
+          "pi|ANTHROPIC_API_KEY|",
+          "openclaw|ANTHROPIC_API_KEY|"
+        ],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "Hermes hidden, Goose hidden",
+      "choices": [],
+      "default": "openai-codex | CODEX_AUTH_JSON | - | gpt-5.5",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | connected",
+        "claude-code | connected",
+        "opencode | connected",
+        "pi | connected",
+        "openclaw | connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Signed in | false",
+        "hermes | Hermes | false | Signed in | false",
+        "claude-code | Claude Code | true | Signed in | false",
+        "opencode | OpenCode | true | Signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Signed in | false",
+        "pi | Pi | true | Signed in | false",
+        "openclaw | OpenClaw | true | Signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [
+          "codex|CODEX_AUTH_JSON|",
+          "hermes|ANTHROPIC_API_KEY|",
+          "claude-code|ANTHROPIC_API_KEY|",
+          "claude-code|CLAUDE_CODE_OAUTH_TOKEN|",
+          "opencode|ANTHROPIC_API_KEY|",
+          "goose|ANTHROPIC_API_KEY|",
+          "pi|ANTHROPIC_API_KEY|",
+          "openclaw|ANTHROPIC_API_KEY|"
+        ],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "Antigravity shown before it is signed in",
+      "choices": [],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "claude-code | not-connected",
+        "opencode | not-connected",
+        "antigravity | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | true | Not signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | true | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [],
+        "shown": [
+          "antigravity"
+        ]
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "hiding one app at a time down to the last one",
+      "choices": [
+        "codex off :: shown [] / hidden [\"codex\"] :: -",
+        "hermes off :: shown [] / hidden [\"codex\",\"hermes\"] :: -",
+        "claude-code off :: shown [] / hidden [\"codex\",\"hermes\",\"claude-code\"] :: -",
+        "opencode off :: shown [] / hidden [\"codex\",\"hermes\",\"claude-code\"] :: OpenCode stays in the menu: at least one coding app has to be shown.",
+        "opencode on :: shown [] / hidden [\"codex\",\"hermes\",\"claude-code\"] :: -",
+        "nope off :: shown [] / hidden [\"codex\",\"hermes\",\"claude-code\"] :: -"
+      ],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "claude-code | not-connected",
+        "opencode | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | true | Not signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "a file that hides all four reads as the defaults",
+      "choices": [],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "claude-code | not-connected",
+        "opencode | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | true | Not signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [
+          "codex",
+          "hermes",
+          "claude-code",
+          "opencode"
+        ],
+        "seen": [],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "Claude Code hidden while signed out, then an account is added",
+      "choices": [],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "opencode | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | false | Signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [],
+        "seen": [
+          "claude-code|CLAUDE_CODE_OAUTH_TOKEN|"
+        ],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
+      "agentMenu": "Claude Code hidden with its account already seen: stays hidden",
+      "choices": [],
+      "default": "- | - | - | -",
+      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "lastNote": null,
+      "menu": [
+        "codex | not-connected",
+        "hermes | not-connected",
+        "opencode | not-connected"
+      ],
+      "rows": [
+        "codex | OpenAI Codex | true | Not signed in | false",
+        "hermes | Hermes | true | Not signed in | false",
+        "claude-code | Claude Code | false | Signed in | false",
+        "opencode | OpenCode | true | Not signed in | false",
+        "gemini-cli | Gemini CLI | false | Not signed in | false",
+        "antigravity | Google Antigravity | false | Not signed in | false",
+        "goose | Goose | false | Not signed in | false",
+        "pi | Pi | false | Not signed in | false",
+        "openclaw | OpenClaw | false | Not signed in | false"
+      ],
+      "switch": "Show in the agent menu",
+      "synced": {
+        "hidden": [
+          "claude-code"
+        ],
+        "seen": [
+          "claude-code|CLAUDE_CODE_OAUTH_TOKEN|"
+        ],
+        "shown": []
+      },
+      "title": "Agent menu"
+    },
+    {
       "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
       "importSheet": "macos",
       "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this Mac, or its sign-in couldn't be read. Pick one:",

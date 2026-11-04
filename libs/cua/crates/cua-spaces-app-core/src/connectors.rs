@@ -1737,7 +1737,7 @@ pub struct AgentsView {
 }
 
 /// The apps the menu always lists, in its order.
-const MENU_FIRST: &[&str] = &["codex", "hermes", "claude-code", "opencode"];
+pub(crate) const MENU_FIRST: &[&str] = &["codex", "hermes", "claude-code", "opencode"];
 
 /// One credential an app can run with: its provider, variable, slot and the saved key.
 type Credential<'a> = (
@@ -1847,6 +1847,12 @@ fn account_line(p: &reg::Provider, env: &str, k: &AgentKeyInput) -> String {
 /// Codex's; the apps that take any provider list their API keys. An app with no account says how to
 /// sign in.
 pub fn agents_view(input: &ConnectorsInput) -> AgentsView {
+    agents_view_with(input, &crate::agent_menu::AgentMenuPrefs::default())
+}
+
+/// Every coding app as a menu group, the four that lead first, then the rest in the page's order,
+/// whether or not it is shown ([`crate::agent_menu`] decides that).
+pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
     let build = |h: &HarnessApp| -> AgentGroup {
         let creds = agent_credentials(input, h.app);
         let told = input.uses.get(h.app);
@@ -1938,9 +1944,20 @@ pub fn agents_view(input: &ConnectorsInput) -> AgentsView {
         HARNESS_APPS
             .iter()
             .filter(|h| !MENU_FIRST.contains(&h.app))
-            .map(build)
-            .filter(|g| g.state != "not-connected"),
+            .map(build),
     );
+    groups
+}
+
+/// [`agents_view`] with the person's choice of which apps the menu shows ([`crate::agent_menu`]): a
+/// hidden app is left out (its sign-ins stay), and a pick of one falls to the first app shown.
+pub fn agents_view_with(
+    input: &ConnectorsInput,
+    prefs: &crate::agent_menu::AgentMenuPrefs,
+) -> AgentsView {
+    let all = menu_groups(input);
+    let shown = crate::agent_menu::shown_apps(prefs, &all);
+    let groups: Vec<AgentGroup> = all.into_iter().filter(|g| shown.contains(&g.app)).collect();
     let default = groups.iter().find_map(|g| {
         let a = g.accounts.iter().find(|a| a.selected)?;
         Some(AgentRef {

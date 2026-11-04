@@ -16,7 +16,7 @@ use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, ci_runners,
+    CoreError, about, account, agent_keys, agent_menu, agents, bulk_confirm, checklist, ci_runners,
     cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
     drive_page, drive_settings, driver_preview, experiments, github_connection, host,
     local_network, login_item, machines, notch, notifications, nudges, onboarding,
@@ -205,6 +205,9 @@ pub const METHODS: &[&str] = &[
     "connectors.providerPicker",
     "connectors.models",
     "connectors.agents",
+    "agentMenu.view",
+    "agentMenu.choose",
+    "agentMenu.sync",
     "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
@@ -1071,7 +1074,28 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<bool>>("expanded")?.unwrap_or(false),
         )),
         "connectors.models" => out(connectors::models_view(&a.get("input")?)),
-        "connectors.agents" => out(connectors::agents_view(&a.get("input")?)),
+        "connectors.agents" => out(connectors::agents_view_with(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.view" => out(agent_menu::settings_view(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.sync" => out(agent_menu::sync(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.choose" => out(agent_menu::choose(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+            &a.get::<String>("app")?,
+            a.get::<Option<bool>>("on")?.unwrap_or(false),
+        )),
         "connectors.importSheet" => out(connectors::import_sheet_on(
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),

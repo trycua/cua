@@ -127,5 +127,198 @@
       { "id": "b", "spaceId": "pending:b", "spaceName": "space-2", "harness": "codex", "label": "Codex", "job": "update the README", "atMs": 11, "state": "creating" },
       { "id": "c", "spaceId": "", "spaceName": "", "harness": "hermes", "label": "Hermes", "job": "tidy the repo", "atMs": 3, "state": "failed" }
     ]
-  }
+  },
+  "agentMenu": [
+    {
+      "step": "nothing chosen, nothing signed in",
+      "input": {
+        "keys": {
+          "keys": []
+        }
+      },
+      "menu": {},
+      "choose": []
+    },
+    {
+      "step": "nothing chosen, accounts that also run Goose and Pi",
+      "input": {
+        "keys": {
+          "keys": [
+            {
+              "provider": "anthropic",
+              "env": "CLAUDE_CODE_OAUTH_TOKEN",
+              "last4": "",
+              "addedMs": 1790000100000,
+              "label": "Signed in as ada@example.com (Claude Max)"
+            },
+            {
+              "provider": "openai",
+              "env": "CODEX_AUTH_JSON",
+              "last4": "",
+              "addedMs": 1790000200000,
+              "label": "Signed in with ChatGPT"
+            },
+            {
+              "provider": "anthropic",
+              "env": "ANTHROPIC_API_KEY",
+              "last4": "4f2a",
+              "addedMs": 1790000300000
+            }
+          ]
+        }
+      },
+      "menu": {},
+      "choose": []
+    },
+    {
+      "step": "Hermes hidden, Goose hidden",
+      "input": {
+        "keys": {
+          "keys": [
+            {
+              "provider": "anthropic",
+              "env": "CLAUDE_CODE_OAUTH_TOKEN",
+              "last4": "",
+              "addedMs": 1790000100000,
+              "label": "Signed in as ada@example.com (Claude Max)"
+            },
+            {
+              "provider": "openai",
+              "env": "CODEX_AUTH_JSON",
+              "last4": "",
+              "addedMs": 1790000200000,
+              "label": "Signed in with ChatGPT"
+            },
+            {
+              "provider": "anthropic",
+              "env": "ANTHROPIC_API_KEY",
+              "last4": "4f2a",
+              "addedMs": 1790000300000
+            }
+          ]
+        }
+      },
+      "menu": {
+        "hidden": [
+          "hermes",
+          "goose"
+        ]
+      },
+      "choose": []
+    },
+    {
+      "step": "Antigravity shown before it is signed in",
+      "input": {
+        "keys": {
+          "keys": []
+        }
+      },
+      "menu": {
+        "shown": [
+          "antigravity"
+        ]
+      },
+      "choose": []
+    },
+    {
+      "step": "hiding one app at a time down to the last one",
+      "input": {
+        "keys": {
+          "keys": []
+        }
+      },
+      "menu": {},
+      "choose": [
+        {
+          "app": "codex",
+          "on": false
+        },
+        {
+          "app": "hermes",
+          "on": false
+        },
+        {
+          "app": "claude-code",
+          "on": false
+        },
+        {
+          "app": "opencode",
+          "on": false
+        },
+        {
+          "app": "opencode",
+          "on": true
+        },
+        {
+          "app": "nope",
+          "on": false
+        }
+      ]
+    },
+    {
+      "step": "a file that hides all four reads as the defaults",
+      "input": {
+        "keys": {
+          "keys": []
+        }
+      },
+      "menu": {
+        "hidden": [
+          "codex",
+          "hermes",
+          "claude-code",
+          "opencode"
+        ]
+      },
+      "choose": []
+    },
+    {
+      "step": "Claude Code hidden while signed out, then an account is added",
+      "input": {
+        "keys": {
+          "keys": [
+            {
+              "provider": "anthropic",
+              "env": "CLAUDE_CODE_OAUTH_TOKEN",
+              "last4": "",
+              "addedMs": 1790000100000,
+              "label": "Signed in as ada@example.com (Claude Max)"
+            }
+          ]
+        }
+      },
+      "menu": {
+        "hidden": [
+          "claude-code"
+        ],
+        "seen": []
+      },
+      "choose": []
+    },
+    {
+      "step": "Claude Code hidden with its account already seen: stays hidden",
+      "input": {
+        "keys": {
+          "keys": [
+            {
+              "provider": "anthropic",
+              "env": "CLAUDE_CODE_OAUTH_TOKEN",
+              "last4": "",
+              "addedMs": 1790000100000,
+              "label": "Signed in as ada@example.com (Claude Max)"
+            }
+          ]
+        }
+      },
+      "menu": {
+        "hidden": [
+          "claude-code"
+        ],
+        "seen": [
+          "claude-code|CLAUDE_CODE_OAUTH_TOKEN|"
+        ]
+      },
+      "choose": []
+    }
+  ]
 }

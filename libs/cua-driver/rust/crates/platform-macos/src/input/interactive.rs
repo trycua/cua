@@ -261,6 +261,16 @@ fn run_worker(
     }
 }
 
+/// One pointer sample ready to post: the native event, the point in the
+/// target's own coordinates, the button it concerns, and the click count
+/// stamped on it (`None` for a move or drag).
+struct PointerSample {
+    event: CGEvent,
+    window_local: (f64, f64),
+    button: PointerButton,
+    click_state: Option<i64>,
+}
+
 struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
@@ -403,9 +413,13 @@ impl NativeInputState {
         y_normalized: f64,
         modifiers: &[Modifier],
     ) -> Result<()> {
-        let (event, window_local, effective_button, click_state) =
-            self.pointer_event(phase, button, x_normalized, y_normalized, modifiers)?;
-        self.post_pointer(&event, window_local, effective_button, click_state);
+        let sample = self.pointer_event(phase, button, x_normalized, y_normalized, modifiers)?;
+        self.post_pointer(
+            &sample.event,
+            sample.window_local,
+            sample.button,
+            sample.click_state,
+        );
         Ok(())
     }
 
@@ -415,9 +429,7 @@ impl NativeInputState {
     /// each other within the user's double-click interval at one spot. macOS
     /// leaves a posted event's count as created (1 on a down, 0 on an up), so
     /// without the stamp every press reaches the app as a lone click and a
-    /// viewer's double-click never selects a word or opens an icon. Returns
-    /// the event, the window-local point, the button, and the stamped count
-    /// (`None` for a move or drag).
+    /// viewer's double-click never selects a word or opens an icon.
     fn pointer_event(
         &mut self,
         phase: PointerPhase,
@@ -425,7 +437,7 @@ impl NativeInputState {
         x_normalized: f64,
         y_normalized: f64,
         modifiers: &[Modifier],
-    ) -> Result<(CGEvent, (f64, f64), PointerButton, Option<i64>)> {
+    ) -> Result<PointerSample> {
         let (point, window_local) = self.resolve_point(x_normalized, y_normalized)?;
         let effective_button = button
             .or(self.pressed_button)
@@ -468,7 +480,12 @@ impl NativeInputState {
             self.pressed_button = None;
             self.click_state = 0;
         }
-        Ok((event, window_local, effective_button, click_state))
+        Ok(PointerSample {
+            event,
+            window_local,
+            button: effective_button,
+            click_state,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -762,11 +779,17 @@ mod tests {
         let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
         let mut state = NativeInputState::new(config, source, bounds);
         let press = |state: &mut NativeInputState, phase, x, y| {
-            let (event, _, _, stamped) = state
+            let sample = state
                 .pointer_event(phase, Some(PointerButton::Left), x, y, &[])
                 .unwrap();
-            let field = event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE);
-            assert_eq!(stamped, Some(field), "the event carries the stamped count");
+            let field = sample
+                .event
+                .get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE);
+            assert_eq!(
+                sample.click_state,
+                Some(field),
+                "the event carries the stamped count"
+            );
             field
         };
 
@@ -783,12 +806,14 @@ mod tests {
         assert_eq!(press(&mut state, PointerPhase::Up, 0.1, 0.1), 1);
         assert_ne!(state.click_group_id, group, "a new sequence is a new group");
 
-        let (moved, _, _, stamped) = state
+        let moved = state
             .pointer_event(PointerPhase::Move, None, 0.2, 0.2, &[])
             .unwrap();
-        assert_eq!(stamped, None, "a move carries no click count");
+        assert_eq!(moved.click_state, None, "a move carries no click count");
         assert_eq!(
-            moved.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
+            moved
+                .event
+                .get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
             0
         );
     }

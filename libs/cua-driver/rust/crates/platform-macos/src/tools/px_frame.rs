@@ -164,6 +164,23 @@ pub(crate) fn verify_native_geometry(pid: i32, window_id: u32) -> Result<(), PxF
     }
 }
 
+/// Refuse a window-local pixel request on a confirmed native geometry
+/// mismatch, before key-window or focus preparation runs for it.
+pub(crate) async fn refuse_pixel_on_native_mismatch(
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<(), ToolResult> {
+    let Some(wid) = window_id else {
+        return Ok(());
+    };
+    match tokio::task::spawn_blocking(move || verify_native_geometry(pid, wid)).await {
+        Ok(result) => result.map_err(|error| refusal(&error)),
+        Err(error) => Err(ToolResult::error(format!(
+            "Native geometry lookup failed: {error}"
+        ))),
+    }
+}
+
 fn resolve_capture_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameError> {
     let bounds = crate::windows::window_bounds_by_id(window_id)
         .filter(|b| b.width > 0.0 && b.height > 0.0)

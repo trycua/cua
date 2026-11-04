@@ -411,11 +411,11 @@ impl Tool for HotkeyTool {
             None
         };
 
-        // Key post: the addressed window must be the confirmed key window.
-        if key_scope.is_none() {
-            match super::acquire_key_scope(pid, window_id, fg).await {
-                Ok(scope) => key_scope = scope,
-                Err(refusal) => return refusal,
+        if px.is_some() {
+            if let Err(refusal) =
+                super::px_frame::refuse_pixel_on_native_mismatch(pid, window_id).await
+            {
+                return refusal;
             }
         }
 
@@ -473,6 +473,16 @@ impl Tool for HotkeyTool {
         } else {
             None
         };
+
+        // Key post: the addressed window must be the confirmed key window.
+        // Taken after the web focus lookup, which can refuse on a native
+        // geometry mismatch before the key window changes.
+        if key_scope.is_none() {
+            match super::acquire_key_scope(pid, window_id, fg).await {
+                Ok(scope) => key_scope = scope,
+                Err(refusal) => return refusal,
+            }
+        }
 
         // PX form, plus the web-content AX fallback above: focus the field
         // before sending the combo. Foreground delivery still needs to front

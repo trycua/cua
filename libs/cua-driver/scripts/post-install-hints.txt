@@ -1,68 +1,20 @@
 
 Next steps:
 
-  1. Try it:
-       {{BINARY}} --version
+  1. Grant permissions (macOS: Accessibility + Screen Recording):
+       {{BINARY}} permissions grant
+     This launches the installed app by its exact path, so every dialog and
+     Settings entry names Cua Driver, not your terminal.
+
+  2. Connect your agent:
+       {{BINARY}} mcp-config --client <name>
+     Names: claude, codex, cursor, hermes, antigravity, openclaw, opencode,
+     pi, prime-agent, qwen, droid, zcode. Leave out --client for a generic
+     snippet. Muse Code and GitHub Copilot CLI: see the docs link below.
+
+  3. Check it works:
        {{BINARY}} list-tools
 
-  2. Grant permissions (macOS — Accessibility + Screen Recording):
-       {{BINARY}} permissions status   # report status (read-only; tells you which
-                                       # identity the grants belong to)
-       {{BINARY}} permissions grant    # the correct way to grant — launches CuaDriver
-                                       # so the dialog says "Cua Driver" and the grant
-                                       # sticks to the driver, not your terminal.
-                                   # Tip: `--autostart` (above) keeps a launchd daemon
-                                   # running so you grant once and it persists.
-
-  3. Agent skill pack (optional):
-       {{BINARY}} skills install   # fetch + link the cua-driver skill pack
-                                   # into Claude Code / Codex / OpenClaw / OpenCode.
-                                   # The install never touches your agent dirs.
-
-  4. As an MCP server — run the one matching your client. Each is also
-     available via '{{BINARY}} mcp-config --client <name>':
-
-     • Claude Code:
-         {{BINARY}} mcp-config --client claude
-       Copy-paste the printed command into your shell. It uses
-       `claude mcp add-json` so the configuration survives PowerShell's
-       argument parsing and exposes the normal CuaDriver tool set. There
-       is no standalone screenshot tool: use `get_window_state` for a
-       window, `get_desktop_state` for the display, or `zoom` for a region.
-
-     • Codex (OpenAI):
-         codex mcp add cua-driver -- {{BINARY}} mcp
-
-     • Qwen Code:
-         qwen mcp add cua-driver {{BINARY}} mcp
-
-     • Factory Droid:
-         droid mcp add cua-driver "{{BINARY}} mcp"
-
-     • OpenClaw:
-         {{BINARY}} mcp-config --client openclaw
-
-     • GitHub Copilot CLI (paste into ~/.copilot/mcp-config.json):
-         {
-           "mcpServers": {
-             "cua-driver": {
-               "type": "local",
-               "command": "{{BINARY}}",
-               "args": ["mcp"],
-               "tools": ["*"]
-             }
-           }
-         }
-
-     • Cursor / OpenCode / Hermes (no add CLI — paste config):
-         {{BINARY}} mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
-         {{BINARY}} mcp-config --client opencode   # JSON for opencode.json
-         {{BINARY}} mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
-
-     • ZCode (Z.ai — GUI app; paste in Settings → MCP Servers):
-         {{BINARY}} mcp-config --client zcode
-
-     For other clients accepting the generic mcpServers shape:
-         {{BINARY}} mcp-config
-
-Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust
+More: {{BINARY}} skills install (agent skill pack), {{BINARY}} doctor
+(diagnose this install). Permission modes: see the docs.
+Docs: https://cua.ai/docs/cua-driver/guides/connect-your-agent

@@ -118,7 +118,7 @@ OpenClaw validates missing pull requests, missing human attribution, invalid iss
 
 OpenClaw's full process is larger than we need for two products. We should adopt its PR-first source of truth and validation rules without copying its complete release system.
 
-The OpenClaw checkout was not available under `/Users/administrator/repo` during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
+The OpenClaw checkout was not available under the local repo directory during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
 
 ## Goals
 
@@ -138,9 +138,114 @@ The OpenClaw checkout was not available under `/Users/administrator/repo` during
 - Migrating every package in the monorepo.
 - Automatically posting to X.
 - Generating final editorial prose with no review.
-- Backfilling perfect attribution for every historical release.
+- Changing historical release tags, assets, titles, or release flags.
 - Building a general marketing automation service in the cloud repository.
 - Copying OpenClaw's full release evidence and multi-platform approval system.
+
+## Historical Driver and Lume backfill
+
+The historical backfill ships as one pull request. The pull request contains
+the frozen release catalog, evidence, AI-authored candidates, deterministic
+validation, rendered bodies, skip ledger, body-only GitHub client, tests, and
+operator runbook. Merging it does not edit published releases. A release owner
+runs an explicit apply command from the approved merged commit.
+
+### Scope
+
+The backfill includes published `cua-driver-rs-v*` releases and published Lume
+releases across the plain `v*` and prefixed `lume-v*` tag series. It excludes
+the overlapping Swift `cua-driver-v*` history, infographics, social posts, tag
+changes, asset changes, release title changes, and release flag changes.
+
+The July 17, 2026 inventory contains:
+
+- 54 Rust Cua Driver releases;
+- 128 Lume releases;
+- two unpublished Driver tags and 15 unpublished Lume tags that remain explicit
+  range boundaries;
+- a disconnected Lume history boundary at `v0.1.1`;
+- same-SHA release pairs that must be skipped;
+- the Lume move from standalone root paths to `libs/lume`;
+- the Driver move from `libs/cua-driver-rs` to `libs/cua-driver/rust`.
+
+### Evidence and authoring boundary
+
+The collector freezes the GitHub release ID, tag SHA, explicit previous tag,
+path eras, original body bytes and hash, release flags, and asset inventory. It
+then records exact product commits, associated pull requests, direct commits,
+changed files, linked issues, and verified GitHub contributors.
+
+An AI agent receives bounded evidence packets and writes only:
+
+- a release summary with `summaryEvidence` source IDs;
+- categorized change summaries;
+- evidence IDs for every change.
+
+Evidence titles, bodies, and existing release notes are untrusted quoted data.
+The agent cannot choose tag ranges, resolve identities, supply links, add
+contributors, or write GitHub releases. The validator rejects missing or
+out-of-packet evidence, unsupported change types, URLs or GitHub handles in
+agent prose, invalid identities, stale hashes, incomplete coverage, and output
+over GitHub's body limit.
+
+The collector credits direct commits only when GitHub returns a verified login
+or an approved coauthor mapping exists. It never converts display names or
+email prefixes into handles. Ambiguous, private security, same-SHA, empty-range,
+and unresolved-identity cases enter a machine-readable skip ledger.
+
+### Public body policy
+
+The first backfill appends a versioned managed block to the original release
+body. It preserves the original notes byte for byte. A second run is a verified
+no-op. An existing marker with different content is a collision and stops the
+operation.
+
+The historical GitHub client exposes one write method: a release-body PATCH.
+It has no delete, upload, tag, title, draft, prerelease, or latest-release
+mutation method. Before every patch it re-fetches and verifies the release ID,
+tag SHA, title, original body hash, draft flag, prerelease flag, and asset
+inventory. It journals the full pre-image before writing and re-fetches the
+release after the patch.
+
+Rollback restores exact journaled body bytes only when the current body still
+matches the verified post-backfill hash. Any later human edit prevents
+rollback from overwriting it.
+
+### One-pull-request sequence
+
+1. Freeze and review the catalog, adjacency table, discontinuities, and path
+   eras.
+2. Collect evidence for every in-scope release and produce evidence-stage
+   skips before AI authoring.
+3. Generate candidates in bounded, checkpointed batches. Record the model ID,
+   prompt version, prompt hash, evidence hash, output hash, and generation time.
+4. Render exact managed blocks and final bodies. Produce a human-readable
+   candidate review with one candidate or skip for all 182 releases.
+5. Review every minor and milestone release and sample patch releases across
+   both products and every path era.
+6. Run a read-only Claude Code Fable audit of adjacency, identity handling,
+   evidence validation, mutation boundaries, journaling, idempotency, and
+   rollback. Resolve every blocking finding.
+7. Merge the pull request after CI and review. No release mutation runs from CI.
+8. Apply a six-release pilot from the exact clean merged commit: Driver `0.8.0`,
+   `0.8.1`, and `0.8.2`; Lume `0.3.0`, `0.3.14`, and `0.3.15`.
+9. Re-fetch the pilot, rerun apply to prove it is a no-op, and rehearse one
+   rollback followed by reapply.
+10. Apply the remaining accepted releases in reverse chronological batches of
+    15 to 25 per product, with approval between batches.
+
+### Backfill definition of done
+
+The pull request is complete when it contains one catalog record for every
+in-scope published release, one accepted candidate or skip for every catalog
+record, reproducible evidence and rendered hashes, the safe body-only client,
+passing tests and CI, the operator runbook, and a Fable review with no blocking
+finding.
+
+Production backfill is a separate completion state. It requires the verified
+six-release pilot, idempotency and rollback evidence, all approved batches, and
+an archived journal and verification report. Skipped releases remain explicit
+follow-up work.
 
 ## Proposed release model
 
@@ -463,7 +568,7 @@ GitHub release: draft
 Target SHA: the merged release pull request commit
 ```
 
-The Cua Driver CD workflow starts from the tag, builds the platform artifacts, looks up the matching draft by release ID, and uploads assets without changing its body or publication state. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
+The tag push starts the Cua Driver CD workflow, which builds the release artifacts from the exact tagged commit. The same run then calls the canonical Linux, Windows, macOS hosted, and standalone-browser E2E suites against that tag SHA; the Linux and Windows matrices also exercise `install-local.sh` and `install-local.ps1` in isolated namespaces. When the builds, the release artifact checks, and every E2E suite pass, the run's release job uploads the assets and publishes the draft. Nobody dispatches a workflow to publish. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
 
 #### Final GitHub release body
 
@@ -735,13 +840,15 @@ The cloud repository should consume the release manifest only after the core wor
 
 ### Publication
 
-1. Let the existing tag-triggered CD workflow build and test the exact tagged commit.
-2. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
-3. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
-4. Attach the attribution manifest and optional visual to the same release ID.
-5. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
-6. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
-7. Publish the GitHub release and produce the non-blocking social draft artifact.
+1. Let the tag-triggered CD workflow build candidate artifacts from the exact tagged commit.
+2. In that same run, call the canonical E2E workflows with the tag SHA: the Linux shared, native, capture, and `install-local.sh` lanes; the Windows interactive lanes plus the `install-local.ps1` lane on the GitHub-hosted runner; the macOS hosted matrix; and the standalone-browser suites. The macOS Lume matrix stays pre-merge evidence and is not part of this automatic gate.
+3. Run the release job on the tag push only after the builds, the release artifact checks, and every E2E suite pass. No maintainer dispatch is required.
+4. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
+5. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
+6. Attach the attribution manifest and optional visual to the same release ID.
+7. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
+8. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
+9. Publish the GitHub release and produce the non-blocking social draft artifact.
 
 All jobs that mutate a release use a per-tag concurrency group. During the
 pilot, rendering failures leave the release in draft along with artifact,

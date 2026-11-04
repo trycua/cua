@@ -1,0 +1,93 @@
+{
+  "name": "stream-section",
+  "about": "A Space's Stream section: the Desktop row with its OS mark and the primary display's resolution, then one row per window labelled by its title (the app name when the title is empty) with the app's icon reference and a picture-in-picture button; the guest's screen target is not a row. Loading, a failed list, a filter with no match, an open panel and a Space with no display list yet. Then picture in picture: the panels the shell reports opening and closing (and a full re-read), each row’s button (pip.exit while its panel is open) and what a click does.",
+  "cases": [
+    {
+      "name": "loading, Ubuntu 1280x800",
+      "input": {
+        "windows": null,
+        "display": { "widthPx": 1280, "heightPx": 800 },
+        "os": "linux",
+        "osName": "Ubuntu 24.04"
+      }
+    },
+    {
+      "name": "windows, one panel open",
+      "input": {
+        "windows": [
+          { "id": "w-screen", "appName": "cua driver", "title": "Screen", "visible": true, "appId": "cua-driver", "targetEpoch": 1, "widthPx": 1280, "heightPx": 800 },
+          { "id": "w-1", "appName": "Firefox", "title": "Mozilla Firefox", "visible": true, "appId": "firefox", "targetEpoch": 3, "pid": 812 },
+          { "id": "w-2", "appName": "xterm", "title": "", "visible": true, "appId": "xterm", "targetEpoch": 1, "pid": 904 },
+          { "id": "w-3", "appName": "gedit", "title": "Quarterly planning notes for the Spaces launch, draft 7 (unsaved changes) - gedit", "visible": true, "appId": "org.gnome.gedit", "targetEpoch": 2 }
+        ],
+        "display": { "widthPx": 1280, "heightPx": 800 },
+        "os": "linux",
+        "osName": "Ubuntu 24.04",
+        "open": ["w-2"]
+      }
+    },
+    {
+      "name": "desktop open, no display list yet, macOS",
+      "input": {
+        "windows": [
+          { "id": "m-1", "appName": "Safari", "title": "Start Page", "visible": true, "appId": "com.apple.Safari", "targetEpoch": 1, "pid": 511 }
+        ],
+        "display": null,
+        "os": "macos",
+        "open": ["desktop"]
+      }
+    },
+    {
+      "name": "failed, Windows 1920x1080",
+      "input": {
+        "windows": [],
+        "failed": true,
+        "display": { "widthPx": 1920, "heightPx": 1080 },
+        "os": "windows",
+        "osName": "Windows 11 Pro"
+      }
+    },
+    {
+      "name": "no windows, Arch",
+      "input": {
+        "windows": [],
+        "display": { "widthPx": 1024, "heightPx": 768 },
+        "os": "linux",
+        "osName": "Arch Linux"
+      }
+    },
+    {
+      "name": "filter hides every window",
+      "input": {
+        "windows": [
+          { "id": "w-1", "appName": "Firefox", "title": "Mozilla Firefox", "visible": true, "appId": "firefox", "targetEpoch": 3, "pid": 812 }
+        ],
+        "display": { "widthPx": 1280, "heightPx": 800 },
+        "os": "linux",
+        "query": "blender"
+      }
+    }
+  ],
+  "pip": {
+    "input": {
+      "windows": [
+        { "id": "w-1", "appName": "Firefox", "title": "Mozilla Firefox", "visible": true, "appId": "firefox", "targetEpoch": 3, "pid": 812 },
+        { "id": "w-2", "appName": "xterm", "title": "", "visible": true, "appId": "xterm", "targetEpoch": 1, "pid": 904 }
+      ],
+      "display": { "widthPx": 1280, "heightPx": 800 },
+      "os": "linux",
+      "osName": "Ubuntu 24.04"
+    },
+    "steps": [
+      { "click": "desktop" },
+      { "event": { "type": "opened", "row": "desktop" } },
+      { "click": "desktop" },
+      { "event": { "type": "opened", "row": "w-2" } },
+      { "click": "w-2" },
+      { "click": "w-1" },
+      { "event": { "type": "closed", "row": "w-2" } },
+      { "event": { "type": "synced", "rows": ["w-1", "desktop"] } },
+      { "event": { "type": "closed", "row": "desktop" } }
+    ]
+  }
+}

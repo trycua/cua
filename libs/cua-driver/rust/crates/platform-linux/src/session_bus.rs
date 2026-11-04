@@ -22,11 +22,14 @@
 //! systemd user-bus socket at `/run/user/<uid>/bus`, and otherwise reads
 //! `DBUS_SESSION_BUS_ADDRESS` out of a running desktop-session process's
 //! `/proc/<pid>/environ`, exporting it before the first session-bus connect.
-//! It is a no-op when the variable is already set and runs at most once.
+//! It is a no-op when the variable is already set. Until a bus is found it
+//! looks again on each call, so a daemon that asked before the desktop
+//! session was up still adopts the bus once it is.
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static DONE: OnceLock<()> = OnceLock::new();
+/// Held while the address is discovered and exported.
+static ADOPT: Mutex<()> = Mutex::new(());
 
 /// `comm` names (15-char-truncated by the kernel) of long-lived desktop-session
 /// leaders that carry `DBUS_SESSION_BUS_ADDRESS` in their environment. Matched
@@ -51,31 +54,35 @@ const SESSION_PROCESS_COMMS: &[&str] = &[
 
 /// Discover and export `DBUS_SESSION_BUS_ADDRESS` when it is unset, so AT-SPI
 /// works even when the daemon was started outside the desktop session
-/// (container, headless, `runuser`, systemd system unit). Idempotent (runs once
-/// per process) and safe to call eagerly at daemon startup.
-pub fn ensure_session_bus_discovered() {
-    DONE.get_or_init(|| {
-        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
-            return;
-        }
-        if let Some(address) = discover_session_bus_address() {
-            // SAFETY: set early at startup, before any session-bus connect /
-            // worker thread reads the environment.
-            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
-            tracing::info!(
-                target: "cua-driver",
-                "DBUS_SESSION_BUS_ADDRESS was unset; adopted the desktop session bus at {address} \
-                 so AT-SPI works without a session-attached launch"
-            );
-        } else {
-            tracing::debug!(
-                target: "cua-driver",
-                "DBUS_SESSION_BUS_ADDRESS unset and no session bus found \
-                 (no /run/user/<uid>/bus socket, no desktop-session process exposing it); \
-                 AT-SPI trees may stay empty — start the daemon inside the desktop session"
-            );
-        }
-    });
+/// (container, headless, `runuser`, systemd system unit). Returns whether a
+/// session bus address is set. Cheap once it is; until then each call looks
+/// again (the desktop session may start after the daemon).
+pub fn ensure_session_bus_discovered() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    let _adopting = ADOPT.lock().unwrap_or_else(|e| e.into_inner());
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    if let Some(address) = discover_session_bus_address() {
+        // Set once, before this process's first session-bus connect.
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        tracing::info!(
+            target: "cua-driver",
+            "DBUS_SESSION_BUS_ADDRESS was unset; adopted the desktop session bus at {address} \
+             so AT-SPI works without a session-attached launch"
+        );
+        true
+    } else {
+        tracing::debug!(
+            target: "cua-driver",
+            "DBUS_SESSION_BUS_ADDRESS unset and no session bus found \
+             (no /run/user/<uid>/bus socket, no desktop-session process exposing it); \
+             AT-SPI trees may stay empty — start the daemon inside the desktop session"
+        );
+        false
+    }
 }
 
 /// Prefer the standard systemd user-bus socket; fall back to reading the
@@ -94,7 +101,9 @@ fn discover_session_bus_address() -> Option<String> {
 /// misses and we go to the environ scan.
 fn current_uid() -> u32 {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+    std::fs::metadata("/proc/self")
+        .map(|m| m.uid())
+        .unwrap_or(0)
 }
 
 /// Scan `/proc` for a desktop-session leader and return the
@@ -163,18 +172,10 @@ mod tests {
         // Kernel-truncated comm (15 chars).
         assert!(is_session_process("gnome-session-b")); // gnome-session-binary
         assert!(is_session_process("cinnamon-sessio")); // cinnamon-session
-        // Non-session processes are ignored.
+                                                        // Non-session processes are ignored.
         assert!(!is_session_process("bash"));
         assert!(!is_session_process("cua-driver"));
         assert!(!is_session_process(""));
-    }
-
-    #[test]
-    fn standard_socket_address_is_unix_path() {
-        // Pure formatting check — the discovery itself is environment-dependent.
-        let uid = current_uid();
-        let socket = format!("/run/user/{uid}/bus");
-        assert!(format!("unix:path={socket}").starts_with("unix:path=/run/user/"));
     }
 
     #[test]
@@ -187,16 +188,25 @@ mod tests {
         );
         // Not anchored to the first entry, and tolerates a trailing NUL.
         let mid = b"A=1\0DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-xyz\0";
-        assert_eq!(dbus_address_from_environ(mid).as_deref(), Some("unix:abstract=/tmp/dbus-xyz"));
+        assert_eq!(
+            dbus_address_from_environ(mid).as_deref(),
+            Some("unix:abstract=/tmp/dbus-xyz")
+        );
     }
 
     #[test]
     fn dbus_address_absent_or_empty_is_none() {
         assert_eq!(dbus_address_from_environ(b"PATH=/usr/bin\0HOME=/x\0"), None);
         // Present but empty value must not match (avoids exporting "").
-        assert_eq!(dbus_address_from_environ(b"DBUS_SESSION_BUS_ADDRESS=\0"), None);
+        assert_eq!(
+            dbus_address_from_environ(b"DBUS_SESSION_BUS_ADDRESS=\0"),
+            None
+        );
         assert_eq!(dbus_address_from_environ(b""), None);
         // A key that merely contains the name as a substring must not match.
-        assert_eq!(dbus_address_from_environ(b"OLD_DBUS_SESSION_BUS_ADDRESS=x\0"), None);
+        assert_eq!(
+            dbus_address_from_environ(b"OLD_DBUS_SESSION_BUS_ADDRESS=x\0"),
+            None
+        );
     }
 }

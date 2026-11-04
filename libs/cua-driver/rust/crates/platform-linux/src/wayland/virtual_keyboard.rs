@@ -11,7 +11,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use self::protocol::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use self::protocol::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
-mod protocol {
+pub(super) mod protocol {
     use wayland_client;
     use wayland_client::protocol::*;
 
@@ -37,7 +37,7 @@ const KEY_PRESSED: u32 = 1;
 
 #[derive(Default)]
 struct State {
-    seat: Option<WlSeat>,
+    seats: super::primary_seat::Seats<WlSeat>,
     manager: Option<ZwpVirtualKeyboardManagerV1>,
 }
 
@@ -57,7 +57,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         } = event
         {
             if interface == WlSeat::interface().name {
-                state.seat = Some(registry.bind(name, version.min(7), qh, ()));
+                state.seats.add(registry.bind(name, version.min(7), qh, ()));
             } else if interface == ZwpVirtualKeyboardManagerV1::interface().name {
                 state.manager = Some(registry.bind(name, version.min(1), qh, ()));
             }
@@ -67,13 +67,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 
 impl Dispatch<WlSeat, ()> for State {
     fn event(
-        _: &mut Self,
-        _: &WlSeat,
-        _: <WlSeat as Proxy>::Event,
+        state: &mut Self,
+        seat: &WlSeat,
+        event: <WlSeat as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wayland_client::protocol::wl_seat::Event::Name { name } = event {
+            state.seats.name(seat, name);
+        }
     }
 }
 
@@ -112,12 +115,13 @@ pub(super) fn hotkey(modifiers: &[String], key: &str) -> anyhow::Result<()> {
     queue.roundtrip(&mut state)?;
 
     let seat = state
-        .seat
-        .clone()
+        .seats
+        .selected()
         .ok_or_else(|| anyhow::anyhow!("compositor exposes no wl_seat"))?;
-    let manager = state.manager.clone().ok_or_else(|| {
-        anyhow::anyhow!("compositor exposes no zwp_virtual_keyboard_manager_v1")
-    })?;
+    let manager = state
+        .manager
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposes no zwp_virtual_keyboard_manager_v1"))?;
     let keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
     let keymap = keymap_file()?;
     keyboard.keymap(1, keymap.as_fd(), XKB_KEYMAP.len() as u32 + 1);
@@ -156,7 +160,7 @@ fn send_key(
 ) -> anyhow::Result<()> {
     keyboard.key(super::event_time_ms(), keycode, key_state);
     queue.roundtrip(state)?;
-    std::thread::sleep(std::time::Duration::from_millis(4));
+    crate::interaction::pause(std::time::Duration::from_millis(4));
     Ok(())
 }
 
@@ -234,12 +238,36 @@ mod tests {
         assert_eq!(
             hotkey_transitions(&["ctrl".into(), "shift".into()], "7").unwrap(),
             [
-                KeyTransition { keycode: 29, pressed: true, modifier_mask: 4 },
-                KeyTransition { keycode: 42, pressed: true, modifier_mask: 5 },
-                KeyTransition { keycode: 8, pressed: true, modifier_mask: 5 },
-                KeyTransition { keycode: 8, pressed: false, modifier_mask: 5 },
-                KeyTransition { keycode: 42, pressed: false, modifier_mask: 4 },
-                KeyTransition { keycode: 29, pressed: false, modifier_mask: 0 },
+                KeyTransition {
+                    keycode: 29,
+                    pressed: true,
+                    modifier_mask: 4
+                },
+                KeyTransition {
+                    keycode: 42,
+                    pressed: true,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 8,
+                    pressed: true,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 8,
+                    pressed: false,
+                    modifier_mask: 5
+                },
+                KeyTransition {
+                    keycode: 42,
+                    pressed: false,
+                    modifier_mask: 4
+                },
+                KeyTransition {
+                    keycode: 29,
+                    pressed: false,
+                    modifier_mask: 0
+                },
             ]
         );
     }

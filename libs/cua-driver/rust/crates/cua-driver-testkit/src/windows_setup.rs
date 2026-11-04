@@ -14,8 +14,8 @@ fn is_hosted_runner_console(title: &str, class_name: &str) -> bool {
             "runner.worker",
             "github actions runner",
         ]
-            .iter()
-            .any(|marker| title.contains(marker))
+        .iter()
+        .any(|marker| title.contains(marker))
 }
 
 #[cfg(target_os = "windows")]

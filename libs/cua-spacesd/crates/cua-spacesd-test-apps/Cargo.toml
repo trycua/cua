@@ -1,0 +1,35 @@
+[package]
+name = "cua-spacesd-test-apps"
+description = "Native fixture applications for RCDP end-to-end tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-spacesd-test-pad"
+path = "src/bin/test_pad.rs"
+
+[[bin]]
+name = "cua-spacesd-x11-pad"
+path = "src/bin/x11_pad.rs"
+
+[dependencies]
+serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+libc = "0.2"
+libloading = "0.8"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }

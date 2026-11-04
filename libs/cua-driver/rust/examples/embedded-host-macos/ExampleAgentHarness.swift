@@ -8,8 +8,8 @@
 // Runs the one-grant demo sequence from EMBEDDING.md end to end:
 //   1. Requests Accessibility + Screen Recording AS THE HOST (the only
 //      prompts the user ever sees), then
-//   2. spawns cua-driver as a direct child in embedded mode and, over
-//      stdio MCP, verifies attribution, takes a background screenshot,
+//   2. spawns an embedded cua-driver daemon plus its stdio MCP proxy and
+//      verifies attribution, takes a background screenshot,
 //      reads a background app's window state, and glides the agent-cursor
 //      overlay — with zero driver-side prompts.
 //
@@ -32,7 +32,7 @@ func log(_ line: String) {
 let axOpts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
 let ax = AXIsProcessTrustedWithOptions(axOpts)
 let sr = CGRequestScreenCaptureAccess()
-log("host grants — accessibility: \(ax), screen recording: \(sr)")
+log("host grants: accessibility: \(ax), screen recording: \(sr)")
 // Keep going even without grants: the run registers BOTH rows in one pass
 // (the AX request above, plus — on newer macOS, where the app only appears
 // in the Screen Recording pane after a real ScreenCaptureKit attempt — the
@@ -42,16 +42,36 @@ if !ax || !sr {
     log("after this run: grant the missing item(s) in System Settings, then re-run")
 }
 
-// 2. Spawn cua-driver as a DIRECT child (never via `open`/NSWorkspace —
-//    that breaks responsibility inheritance) in embedded mode.
+// 2. Spawn the daemon as a DIRECT child (never via `open`/NSWorkspace —
+//    that breaks responsibility inheritance), then attach an MCP proxy.
 let driverPath = ProcessInfo.processInfo.environment["CUA_DRIVER_PATH"]
     ?? "/usr/local/bin/cua-driver"
-let driver = Process()
-driver.executableURL = URL(fileURLWithPath: driverPath)
-driver.arguments = ["mcp"]
+let socketPath = "/tmp/cua-embedded-\(ProcessInfo.processInfo.processIdentifier).sock"
 var env = ProcessInfo.processInfo.environment
 env["CUA_DRIVER_EMBEDDED"] = "1"
 env["CUA_DRIVER_HOST_BUNDLE_ID"] = Bundle.main.bundleIdentifier ?? ""
+
+let daemon = Process()
+daemon.executableURL = URL(fileURLWithPath: driverPath)
+daemon.arguments = ["serve", "--embedded", "--socket", socketPath]
+daemon.environment = env
+daemon.standardOutput = logFile
+daemon.standardError = logFile
+try daemon.run()
+
+let deadline = Date().addingTimeInterval(10)
+while !FileManager.default.fileExists(atPath: socketPath) && Date() < deadline {
+    Thread.sleep(forTimeInterval: 0.05)
+}
+guard FileManager.default.fileExists(atPath: socketPath) else {
+    log("embedded daemon did not create \(socketPath)")
+    daemon.terminate()
+    exit(1)
+}
+
+let driver = Process()
+driver.executableURL = URL(fileURLWithPath: driverPath)
+driver.arguments = ["mcp", "--embedded", "--socket", socketPath]
 driver.environment = env
 let toDriver = Pipe(), fromDriver = Pipe()
 driver.standardInput = toDriver
@@ -100,14 +120,31 @@ send(["jsonrpc": "2.0", "id": nextId, "method": "initialize", "params": [
     "clientInfo": ["name": "ExampleAgentHarness", "version": "0.1"]]])
 _ = readMessage()
 send(["jsonrpc": "2.0", "method": "notifications/initialized"])
-log("embedded cua-driver started (\(driverPath)) — no driver prompt should have appeared")
+log("embedded cua-driver daemon + proxy started (\(driverPath)); no driver prompt should have appeared")
 
-// 4. check_permissions must report attribution "host" and never prompt.
+// 4. health_report must observe this actual parent app, and
+//    check_permissions must report host attribution and matching TCC results.
+let health = call("health_report", ["include": ["bundle_identity"]])
+let healthStructured = health["structuredContent"] as? [String: Any] ?? [:]
+let healthChecks = healthStructured["checks"] as? [[String: Any]] ?? []
+let identity = healthChecks.first { $0["name"] as? String == "bundle_identity" } ?? [:]
+let identityData = identity["data"] as? [String: Any] ?? [:]
+let hostBundleId = Bundle.main.bundleIdentifier ?? ""
+let identityOk = identity["status"] as? String == "pass" &&
+    identityData["bundle_identifier"] as? String == hostBundleId &&
+    identityData["identity_source"] as? String == "parent_application" &&
+    (identityData["parent_process_id"] as? Int) == Int(ProcessInfo.processInfo.processIdentifier)
+log("health_report: bundle_identity: \(identity["status"] ?? "?"), " +
+    "observed host: \(identityData["bundle_identifier"] ?? "?") (want: \(hostBundleId))")
+
 let perms = call("check_permissions")
 let structured = perms["structuredContent"] as? [String: Any] ?? [:]
 let source = structured["source"] as? [String: Any] ?? [:]
 let attribution = source["attribution"] as? String ?? "?"
-log("check_permissions — attribution: \(attribution) (want: host), " +
+let permissionsMatchHost = structured["accessibility"] as? Bool == ax &&
+    structured["screen_recording"] as? Bool == sr
+log("check_permissions: attribution: \(attribution) (want: host), " +
+    "TCC matches host: \(permissionsMatchHost), " +
     "capturable: \(structured["screen_recording_capturable"] ?? "?")")
 
 // 5. Background AX read + window screenshot — proves both grants
@@ -119,13 +156,15 @@ let launched = launch["structuredContent"] as? [String: Any] ?? [:]
 let pid = launched["pid"] as? Int ?? 0
 let windows = launched["windows"] as? [[String: Any]] ?? []
 let windowId = windows.first?["window_id"] as? Int ?? 0
-log("launch_app(Finder) — pid: \(pid), windows: \(windows.count)")
+log("launch_app(Finder): pid: \(pid), windows: \(windows.count)")
 
-let state = call("get_window_state", ["pid": pid, "window_id": windowId])
+// `tree_format: "elements"` asks for the structured element array; the
+// default read returns only the compact markdown tree.
+let state = call("get_window_state", ["pid": pid, "window_id": windowId, "tree_format": "elements"])
 let images = (state["content"] as? [[String: Any]] ?? [])
     .filter { $0["type"] as? String == "image" }
 let hasTree = (state["structuredContent"] as? [String: Any])?["elements"] != nil
-log("get_window_state(Finder) — tree: \(hasTree ? "ok" : "EMPTY"), " +
+log("get_window_state(Finder): tree: \(hasTree ? "ok" : "EMPTY"), " +
     "screenshot: \(images.count) image(s) (want: ≥1)")
 
 // 6. Agent-cursor glide — shows the overlay, no real-pointer move.
@@ -136,9 +175,11 @@ let cursor2 = call("move_cursor", ["x": 900, "y": 500])
 Thread.sleep(forTimeInterval: 2)
 let cursorOk = (cursor1["isError"] as? Bool) != true &&
     (cursor2["isError"] as? Bool) != true
-log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
+log("move_cursor: \(cursorOk ? "ok" : "FAILED")")
 
-let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
+let pass = identityOk && attribution == "host" && permissionsMatchHost &&
+    !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
+daemon.terminate()
 exit(pass ? 0 : 1)

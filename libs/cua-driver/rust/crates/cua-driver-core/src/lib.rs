@@ -1,20 +1,24 @@
-//! MCP JSON-RPC 2.0 server over stdio — platform-independent core.
+//! Platform-independent Driver core and dual-era MCP dispatch.
 //!
-//! Implements the Model Context Protocol (MCP) 2024-11-05 over stdio,
-//! matching the interface of `libs/cua-driver` (Swift/macOS) and
-//! `CuaDriver.Win` (.NET/Windows).
-//!
-//! # Protocol
-//! - Line-delimited JSON-RPC 2.0 on stdin/stdout
-//! - Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`
-//! - Each request has `jsonrpc: "2.0"`, `id` (any), `method`, optional `params`
-//! - Notifications (no `id`) are silently ignored
+//! Stdio supports legacy initialization and modern per-request negotiation.
+//! Protocol metadata does not grant Driver permissions or session ownership.
+
+// `ToolResult` is the tool reply itself: fallible helpers return
+// `Result<_, ToolResult>` so an early exit is already the finished response,
+// built once per call and handed straight to the caller. clippy's
+// result_large_err assumes an error that propagates through hot paths; boxing
+// here would churn every adapter's call sites for no runtime gain.
+#![allow(clippy::result_large_err)]
+
+pub mod guide;
+pub mod mcp_skills;
+pub mod mcp_wire;
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 
-/// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the driver runs
-/// as a direct child of a host app and stays in its TCC responsibility
-/// chain — no disclaim re-exec, no daemon relaunch, no permission prompts.
+/// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the daemon runs as
+/// a direct child of a host app and stays in its TCC responsibility chain —
+/// no disclaim re-exec, standalone-app relaunch, or permission prompts.
 /// See `Skills/cua-driver/EMBEDDING.md`.
 ///
 /// Caller-controlled, which is safe only because embedded mode strictly
@@ -27,38 +31,107 @@ pub const EMBEDDED_ENV: &str = "CUA_DRIVER_EMBEDDED";
 /// OS responsibility chain.
 pub const HOST_BUNDLE_ID_ENV: &str = "CUA_DRIVER_HOST_BUNDLE_ID";
 
+/// Internal embedded-host contract: when set to the exact value `1`, the
+/// daemon treats EOF on stdin as proof that its owning host has exited. The
+/// Rust SDK sets this only on the directly-spawned `serve` child; MCP proxies
+/// continue to use stdin for JSON-RPC and never set it.
+pub const PARENT_LIVENESS_STDIN_ENV: &str = "CUA_DRIVER_PARENT_LIVENESS_STDIN";
+
 /// Only the exact value `1` counts — fail-safe for anything else.
 pub fn embedded_mode() -> bool {
-    std::env::var_os(EMBEDDED_ENV).is_some_and(|v| v == "1")
+    is_embedded_sentinel(std::env::var_os(EMBEDDED_ENV).as_deref())
 }
 
+/// The [`EMBEDDED_ENV`] rule on an already-read value.
+pub fn is_embedded_sentinel(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| v == "1")
+}
+
+/// Parent-EOF shutdown is valid only for a directly embedded daemon. Requiring
+/// both sentinels prevents an ambient variable from changing ordinary
+/// standalone or MCP stdin behavior.
+pub fn parent_liveness_stdin_enabled() -> bool {
+    embedded_mode() && std::env::var_os(PARENT_LIVENESS_STDIN_ENV).is_some_and(|value| value == "1")
+}
+
+pub mod action_record;
+pub mod action_target;
+pub mod agent_cursor;
+pub mod authorization;
+pub mod background_input;
+pub mod batch_nudge;
+pub mod batch_tools;
 pub mod browser;
+pub mod build_info;
 pub mod capture_mode;
+pub(crate) mod capture_registry;
+pub mod capture_runtime;
+pub mod capture_scope;
 pub mod cdp;
-pub mod element_cache;
+pub mod clipboard;
+pub mod consent;
+pub mod cursor_events;
+pub mod cursor_hook;
+pub mod cursor_sampler;
+pub mod cursor_shape;
+pub mod daemon;
+pub mod delivery;
+pub mod desktop_capture_scale;
+pub mod element_frame;
+pub mod element_query;
 pub mod element_token;
+pub mod expectation;
+pub mod fast_path;
 pub mod ffmpeg_install;
 pub mod health_report;
+pub mod history;
+#[cfg(feature = "keyring")]
+pub mod history_keyring;
 pub mod image_utils;
+pub mod interactive_input;
+pub mod key_pacing;
+pub mod launch_guard;
+pub mod mcp_result;
 pub mod page;
+pub mod perception_client;
+pub mod perception_tools;
 pub mod pip_hook;
+pub mod pointer_shape;
 pub mod policy;
+pub mod post_action_wait;
 pub mod protocol;
-pub mod cursor_sampler;
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
+pub mod recovery_hint;
+#[cfg(feature = "script")]
+pub mod script_tool;
 pub mod server;
 pub mod session;
+pub mod session_authorization;
+pub mod session_manifest;
 pub mod session_tools;
+pub mod single_flight;
+pub mod snapshot_store;
+#[cfg(test)]
+pub(crate) mod snapshot_test_support;
 pub mod socket_io;
+pub mod step_pacing;
 pub mod text_sanitize;
+pub mod timestamp;
 pub mod tool;
-pub mod tool_schema;
+pub mod tool_activity;
 pub mod tool_args;
+pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod walk_budget;
+pub mod window_inspection;
+pub mod window_observation;
+pub mod window_state_view;
+pub mod window_target;
 
+pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;

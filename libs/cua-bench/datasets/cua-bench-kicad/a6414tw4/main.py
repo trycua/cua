@@ -14,8 +14,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Use KiCad schematic designer to create an empty netlist file.''',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="""Use KiCad schematic designer to create an empty netlist file.""",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

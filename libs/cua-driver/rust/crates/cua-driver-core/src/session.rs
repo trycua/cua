@@ -1,15 +1,15 @@
 //! Session lifecycle hooks.
 //!
-//! The cua-driver daemon (`serve.rs`) drives ONE shared `ToolRegistry`; every
-//! `cua-driver mcp` proxy process connects to it and shares its state. A
+//! The public SDK runtime owns one shared platform registry; the cua-driver
+//! daemon and every `cua-driver mcp` proxy consume that runtime downstream. A
 //! proxy-minted `session_id` (carried in the daemon request envelope) lets the
 //! daemon OWN and CLEAN UP per-session state.
 //!
 //! Recording ownership lives on the core `RecordingSession` directly. But some
 //! session-scoped state is platform-specific (e.g. macOS per-session config
 //! overrides in `platform-macos::tools::SessionConfigRegistry`) and the daemon
-//! only holds an `Arc<ToolRegistry>` — it can't reach into a platform crate's
-//! `ToolState`. This module bridges that gap with a small process-global list
+//! cannot reach into a platform crate's private `ToolState`. This module
+//! bridges that gap with a small process-global list
 //! of cleanup callbacks: each platform registers a `Fn(&str)` once at startup,
 //! and the daemon's `session_end` arm fans the disconnecting `session_id` out
 //! to all of them.
@@ -19,10 +19,44 @@
 //! reverse coupling from core into the platform crates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 
-type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
+use cua_driver_contract::{CaptureScope, EscalationReason};
+
+pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+
+type SessionEndHook = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+type SessionReviveHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCleanupFailure {
+    pub hook: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCleanupReport {
+    pub complete: bool,
+    pub in_progress: bool,
+    pub failures: Vec<SessionCleanupFailure>,
+}
+
+#[derive(Clone)]
+struct RegisteredSessionEndHook {
+    name: String,
+    callback: SessionEndHook,
+}
+
+struct SessionCleanupProgress {
+    hooks: Vec<(u64, RegisteredSessionEndHook)>,
+    completed: HashSet<u64>,
+    failures: Vec<SessionCleanupFailure>,
+    running: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionDeclaration {
@@ -39,6 +73,12 @@ pub enum SessionEndReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureModality {
+    Window,
+    Desktop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionTransport {
     Cli,
     Daemon,
@@ -46,25 +86,48 @@ pub enum SessionTransport {
     McpHttp,
 }
 
+/// Closed entry-surface category for one explicit session episode. This is
+/// deliberately independent from transport: Python and TypeScript SDKs both
+/// use the direct daemon transport, while MCP can use stdio or HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionClientKind {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk,
+}
+
+pub fn infer_transport_metadata(owner: &str) -> (SessionTransport, SessionClientKind) {
+    if owner.contains(":http-") {
+        (SessionTransport::McpHttp, SessionClientKind::Mcp)
+    } else if owner.contains(":mcp-") {
+        (SessionTransport::McpStdio, SessionClientKind::Mcp)
+    } else if owner.contains(":cli-") {
+        (SessionTransport::Cli, SessionClientKind::Cli)
+    } else {
+        (SessionTransport::Daemon, SessionClientKind::Direct)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionStartObservation {
     pub declaration: SessionDeclaration,
     pub revived: bool,
     pub transport: SessionTransport,
+    pub client_kind: SessionClientKind,
+    pub capture_scope: CaptureScope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorStyleCategory {
+pub struct SessionObservationState {
+    pub ended: bool,
+    pub capture_scope: CaptureScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorThemeCategory {
     Default,
-    BuiltinArrow,
-    BuiltinTeardrop,
-    CustomIcon,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorColorSource {
-    AutomaticPalette,
     Custom,
     Unknown,
 }
@@ -75,52 +138,37 @@ pub enum CursorColorSource {
 pub struct CursorOutcomeObservation {
     pub observed: bool,
     pub enabled: bool,
-    pub style: CursorStyleCategory,
-    pub color_source: CursorColorSource,
-    pub label_set: bool,
+    /// True only when the platform render state currently reports visible
+    /// pixels for this exact session cursor.
+    pub visible: bool,
+    pub theme: CursorThemeCategory,
     pub motion_customized: bool,
     pub active_cursor_count: usize,
 }
 
 /// Convert platform cursor fields to fixed categories without retaining any
-/// raw icon, color, label, identifier, or motion value.
+/// raw theme identifier or motion value.
 pub fn bounded_cursor_outcome(
     observed: bool,
     enabled: bool,
-    icon: Option<&str>,
-    color: Option<&str>,
-    label: Option<&str>,
+    visible: bool,
+    theme_id: Option<&str>,
     motion_customized: bool,
     active_cursor_count: usize,
 ) -> CursorOutcomeObservation {
-    let style = if !observed {
-        CursorStyleCategory::Unknown
+    let theme = if !observed {
+        CursorThemeCategory::Unknown
     } else {
-        match icon.map(str::trim).filter(|value| !value.is_empty()) {
-            None => CursorStyleCategory::Default,
-            Some(value) if value.eq_ignore_ascii_case("arrow") => {
-                CursorStyleCategory::BuiltinArrow
-            }
-            Some(value) if value.eq_ignore_ascii_case("teardrop") => {
-                CursorStyleCategory::BuiltinTeardrop
-            }
-            Some(_) => CursorStyleCategory::CustomIcon,
-        }
-    };
-    let color_source = if !observed {
-        CursorColorSource::Unknown
-    } else {
-        match color.map(str::trim).filter(|value| !value.is_empty()) {
-            None | Some("#00FFFF") | Some("#00ffff") => CursorColorSource::AutomaticPalette,
-            Some(_) => CursorColorSource::Custom,
+        match theme_id.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("cua.default") => CursorThemeCategory::Default,
+            Some(_) => CursorThemeCategory::Custom,
         }
     };
     CursorOutcomeObservation {
         observed,
         enabled: observed && enabled,
-        style,
-        color_source,
-        label_set: observed && label.is_some_and(|value| !value.trim().is_empty()),
+        visible: observed && enabled && visible,
+        theme,
         motion_customized: observed && motion_customized,
         active_cursor_count,
     }
@@ -139,6 +187,8 @@ pub trait SessionObserver: Send + Sync + 'static {
         session_id: &str,
         transport: SessionTransport,
         computer_action: bool,
+        capture_modality: Option<CaptureModality>,
+        escalation_reason: Option<EscalationReason>,
         outcome: &crate::server::ToolCompletionObservation,
     );
     fn on_session_ended(
@@ -151,7 +201,12 @@ pub trait SessionObserver: Send + Sync + 'static {
 
 static SESSION_OBSERVER: OnceLock<Arc<dyn SessionObserver>> = OnceLock::new();
 type CursorOutcomeReader = Arc<dyn Fn(&str) -> CursorOutcomeObservation + Send + Sync>;
-static CURSOR_OUTCOME_READER: OnceLock<Mutex<Option<CursorOutcomeReader>>> = OnceLock::new();
+static CURSOR_OUTCOME_READERS: OnceLock<Mutex<HashMap<u64, CursorOutcomeReader>>> = OnceLock::new();
+static NEXT_CURSOR_OUTCOME_READER_ID: AtomicU64 = AtomicU64::new(1);
+type RecordingStateReader = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+static RECORDING_STATE_READERS: OnceLock<Mutex<HashMap<u64, RecordingStateReader>>> =
+    OnceLock::new();
+static NEXT_RECORDING_STATE_READER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
     SESSION_OBSERVER.set(observer).is_ok()
@@ -161,11 +216,85 @@ pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
 /// used only for the synchronous process-local lookup; the callback returns a
 /// struct that cannot contain raw cursor values.
 pub fn set_cursor_outcome_reader(reader: CursorOutcomeReader) -> bool {
-    *CURSOR_OUTCOME_READER
-        .get_or_init(|| Mutex::new(None))
+    CURSOR_OUTCOME_READERS
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap() = Some(reader);
+        .unwrap()
+        .insert(0, reader);
     true
+}
+
+pub fn register_scoped_cursor_outcome_reader(
+    reader: CursorOutcomeReader,
+) -> CursorOutcomeReaderRegistration {
+    let id = NEXT_CURSOR_OUTCOME_READER_ID.fetch_add(1, Ordering::Relaxed);
+    CURSOR_OUTCOME_READERS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .insert(id, reader);
+    CursorOutcomeReaderRegistration { id }
+}
+
+pub struct CursorOutcomeReaderRegistration {
+    id: u64,
+}
+
+impl Drop for CursorOutcomeReaderRegistration {
+    fn drop(&mut self) {
+        if let Some(readers) = CURSOR_OUTCOME_READERS.get() {
+            readers.lock().unwrap().remove(&self.id);
+        }
+    }
+}
+
+pub fn register_scoped_recording_state_reader(
+    reader: RecordingStateReader,
+) -> RecordingStateReaderRegistration {
+    let id = NEXT_RECORDING_STATE_READER_ID.fetch_add(1, Ordering::Relaxed);
+    RECORDING_STATE_READERS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .insert(id, reader);
+    RecordingStateReaderRegistration { id }
+}
+
+pub struct RecordingStateReaderRegistration {
+    id: u64,
+}
+
+impl Drop for RecordingStateReaderRegistration {
+    fn drop(&mut self) {
+        if let Some(readers) = RECORDING_STATE_READERS.get() {
+            readers.lock().unwrap().remove(&self.id);
+        }
+    }
+}
+
+pub fn cursor_visible(session_id: &str) -> bool {
+    CURSOR_OUTCOME_READERS
+        .get()
+        .map(|readers| {
+            readers.lock().unwrap().values().any(|reader| {
+                let outcome = reader(session_id);
+                outcome.visible
+            })
+        })
+        .unwrap_or(false)
+}
+
+pub fn recording_active(session_id: &str) -> bool {
+    RECORDING_STATE_READERS
+        .get()
+        .map(|readers| {
+            readers
+                .lock()
+                .unwrap()
+                .values()
+                .any(|reader| reader(session_id))
+        })
+        .unwrap_or(false)
 }
 
 /// Private per-call context. The raw caller session id never crosses into a
@@ -175,6 +304,8 @@ pub struct SessionToolContext {
     session_id: String,
     transport: SessionTransport,
     computer_action: bool,
+    capture_modality: Option<CaptureModality>,
+    escalation_reason: Option<EscalationReason>,
 }
 
 impl SessionToolContext {
@@ -184,22 +315,541 @@ impl SessionToolContext {
                 &self.session_id,
                 self.transport,
                 self.computer_action,
+                self.capture_modality,
+                self.escalation_reason,
                 outcome,
             );
         }
     }
 }
 
-static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
+static SESSION_END_HOOKS: OnceLock<Mutex<HashMap<u64, RegisteredSessionEndHook>>> = OnceLock::new();
+static NEXT_SESSION_END_HOOK_ID: AtomicU64 = AtomicU64::new(1);
+static SESSION_CLEANUP_PROGRESS: OnceLock<Mutex<HashMap<String, SessionCleanupProgress>>> =
+    OnceLock::new();
+static SESSION_REVIVE_HOOKS: OnceLock<Mutex<HashMap<u64, SessionReviveHook>>> = OnceLock::new();
+static NEXT_SESSION_REVIVE_HOOK_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Last-activity timestamp per live session id. A session is "touched" every
-/// time a tool call carries its explicit `session` id (see the daemon boundary
-/// in `serve.rs`). The idle-TTL sweep ([`evict_idle`]) ends sessions that
-/// haven't been touched within the TTL — this is the cleanup path that replaces
-/// connection-EOF reaping now that a session is a caller-declared identity, not
-/// a per-MCP-connection one. `"default"` and empty ids are never tracked (they
-/// are the anonymous, cursor-less fallback).
+/// Last-activity timestamp per live lifecycle session. Only an admitted,
+/// session-requiring call that reaches dispatch refreshes this timestamp.
+/// Transport close remains an immediate cleanup path; idle eviction is the
+/// crash and inactivity fallback. `"default"` and empty ids are never tracked.
 static SESSION_ACTIVITY: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct LifecycleRecord {
+    public_label: Option<String>,
+    implicit: bool,
+    owner_transport: String,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    started_at: Instant,
+    /// Trusted host override. Ordinary sessions use the runtime sweep's
+    /// default TTL so tests and process-level configuration can still supply
+    /// that fallback.
+    idle_ttl: Option<Duration>,
+    in_flight: usize,
+    pending_end: Option<SessionEndReason>,
+}
+
+static LIFECYCLE_RECORDS: OnceLock<Mutex<HashMap<String, LifecycleRecord>>> = OnceLock::new();
+
+fn lifecycle_records() -> &'static Mutex<HashMap<String, LifecycleRecord>> {
+    LIFECYCLE_RECORDS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone)]
+pub struct LifecycleSessionSnapshot {
+    pub runtime_id: String,
+    pub public_label: Option<String>,
+    pub implicit: bool,
+    pub transport: SessionTransport,
+    pub client_kind: SessionClientKind,
+    pub owner_transport: String,
+    pub ending: bool,
+    pub started_for: Duration,
+    pub idle: Duration,
+    pub idle_ttl: Duration,
+    pub expires_in: Duration,
+}
+
+/// RAII protection for one admitted session-requiring dispatch. Idle eviction
+/// cannot end the session while this guard is alive. Dropping it refreshes the
+/// idle clock at platform-dispatch completion and completes any end that raced
+/// the call.
+pub struct SessionDispatchGuard {
+    session_id: String,
+}
+
+impl Drop for SessionDispatchGuard {
+    fn drop(&mut self) {
+        let pending = {
+            let mut records = lifecycle_records().lock().unwrap();
+            let Some(record) = records.get_mut(&self.session_id) else {
+                return;
+            };
+            record.in_flight = record.in_flight.saturating_sub(1);
+            activity()
+                .lock()
+                .unwrap()
+                .insert(self.session_id.clone(), Instant::now());
+            (record.in_flight == 0)
+                .then(|| record.pending_end.take())
+                .flatten()
+        };
+        if let Some(reason) = pending {
+            finish_session_end(&self.session_id, reason);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn begin_session_dispatch(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+) -> Result<SessionDispatchGuard, &'static str> {
+    begin_session_dispatch_inner(
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn begin_session_dispatch_with_ttl(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Duration,
+) -> Result<SessionDispatchGuard, &'static str> {
+    begin_session_dispatch_inner(
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        Some(idle_ttl),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn begin_session_dispatch_inner(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Option<Duration>,
+) -> Result<SessionDispatchGuard, &'static str> {
+    if !is_trackable(session_id) {
+        return Err("session has ended");
+    }
+    // An unnamed transport session reclaimed by the idle sweep starts a new
+    // lifecycle episode on its owner's next call instead of refusing every
+    // later call. Its cleanup must have finished first, so snapshots, element
+    // tokens, grants, and recordings from the ended episode stay retired.
+    let recreate = recreates_on_next_call(session_id, owner_transport);
+    if recreate && !retry_session_cleanup(session_id).complete {
+        return Err("session cleanup is incomplete; retry the call");
+    }
+    let now = Instant::now();
+    let recreated = {
+        // Keep tombstone admission and live-record insertion in one critical
+        // section. Otherwise an end could land between the old pre-check and
+        // insertion, leaving a tombstoned record that was silently recreated
+        // by a racing first action.
+        let mut ended = ended_sessions().lock().unwrap();
+        let mut idle_ended = idle_ended_implicit_sessions().lock().unwrap();
+        let recreated = ended.contains_key(session_id);
+        if recreated
+            && !(recreate
+                && idle_ended.contains(session_id)
+                && ended
+                    .get(session_id)
+                    .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
+        {
+            return Err("session has ended");
+        }
+        let mut records = lifecycle_records().lock().unwrap();
+        let record = records
+            .entry(session_id.to_owned())
+            .or_insert_with(|| LifecycleRecord {
+                public_label: public_label.map(str::to_owned),
+                implicit,
+                owner_transport: owner_transport.to_owned(),
+                transport,
+                client_kind,
+                started_at: now,
+                idle_ttl,
+                in_flight: 0,
+                pending_end: None,
+            });
+        if record.owner_transport != owner_transport {
+            return Err("session is not available to this transport");
+        }
+        if record.pending_end.is_some() {
+            return Err("session is ending");
+        }
+        if idle_ttl.is_some() {
+            record.idle_ttl = idle_ttl;
+        }
+        record.in_flight += 1;
+        if recreated {
+            ended.remove(session_id);
+            idle_ended.remove(session_id);
+        }
+        recreated
+    };
+    activity()
+        .lock()
+        .unwrap()
+        .insert(session_id.to_owned(), now);
+    if recreated {
+        // Platform overlays keep their own late-command tombstones; clear
+        // them exactly as an explicit start_session revival would.
+        fire_session_revive_for_owner(session_id, owner_transport);
+    }
+    Ok(SessionDispatchGuard {
+        session_id: session_id.to_owned(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn activate_session(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+) -> Result<(), &'static str> {
+    activate_session_inner(
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn activate_session_with_ttl(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Duration,
+) -> Result<(), &'static str> {
+    activate_session_inner(
+        session_id,
+        public_label,
+        owner_transport,
+        implicit,
+        transport,
+        client_kind,
+        Some(idle_ttl),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn activate_session_inner(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Option<Duration>,
+) -> Result<(), &'static str> {
+    let now = Instant::now();
+    {
+        let mut records = lifecycle_records().lock().unwrap();
+        if let Some(record) = records.get_mut(session_id) {
+            if record.owner_transport != owner_transport {
+                return Err("session is not available to this transport");
+            }
+            if record.pending_end.is_some() {
+                return Err("session is ending");
+            }
+            if idle_ttl.is_some() {
+                record.idle_ttl = idle_ttl;
+            }
+        } else {
+            records.insert(
+                session_id.to_owned(),
+                LifecycleRecord {
+                    public_label: public_label.map(str::to_owned),
+                    implicit,
+                    owner_transport: owner_transport.to_owned(),
+                    transport,
+                    client_kind,
+                    started_at: now,
+                    idle_ttl,
+                    in_flight: 0,
+                    pending_end: None,
+                },
+            );
+        }
+    }
+    activity()
+        .lock()
+        .unwrap()
+        .insert(session_id.to_owned(), now);
+    Ok(())
+}
+
+/// Atomically declare a lifecycle episode for one authenticated transport.
+///
+/// Unlike calling `revive_session_for_owner` and `activate_session` in two
+/// steps, this does not leave a gap where another transport can claim a
+/// recycled public label after its tombstone is cleared. Cleanup is completed
+/// before the transition, then the tombstone removal and live owner binding
+/// happen under one lock order.
+#[allow(clippy::too_many_arguments)]
+pub fn activate_or_revive_session_for_owner(
+    session_id: &str,
+    public_label: Option<&str>,
+    owner_transport: &str,
+    implicit: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    idle_ttl: Option<Duration>,
+) -> Result<bool, &'static str> {
+    if !is_trackable(session_id) {
+        return Err("session is not available to this transport");
+    }
+
+    let needs_cleanup = {
+        let ended = ended_sessions().lock().unwrap();
+        match ended.get(session_id) {
+            Some(Some(owner)) if owner != owner_transport => {
+                return Err("session is not available to this transport");
+            }
+            Some(None) if owner_transport != session_id => {
+                return Err("session is not available to this transport");
+            }
+            Some(_) => true,
+            None => false,
+        }
+    };
+    if needs_cleanup && !retry_session_cleanup(session_id).complete {
+        return Err("session cleanup is incomplete; retry end_session before revival");
+    }
+
+    let now = Instant::now();
+    let revived = {
+        let mut ended = ended_sessions().lock().unwrap();
+        let revived = match ended.get(session_id) {
+            Some(Some(owner)) if owner != owner_transport => {
+                return Err("session is not available to this transport");
+            }
+            Some(None) if owner_transport != session_id => {
+                return Err("session is not available to this transport");
+            }
+            Some(_) => true,
+            None => false,
+        };
+
+        let mut records = lifecycle_records().lock().unwrap();
+        if let Some(record) = records.get_mut(session_id) {
+            if record.owner_transport != owner_transport || record.pending_end.is_some() {
+                return Err("session is not available to this transport");
+            }
+            if idle_ttl.is_some() {
+                record.idle_ttl = idle_ttl;
+            }
+        } else {
+            records.insert(
+                session_id.to_owned(),
+                LifecycleRecord {
+                    public_label: public_label.map(str::to_owned),
+                    implicit,
+                    owner_transport: owner_transport.to_owned(),
+                    transport,
+                    client_kind,
+                    started_at: now,
+                    idle_ttl,
+                    in_flight: 0,
+                    pending_end: None,
+                },
+            );
+        }
+        if revived {
+            ended.remove(session_id);
+            idle_ended_implicit_sessions()
+                .lock()
+                .unwrap()
+                .remove(session_id);
+        }
+        revived
+    };
+    activity()
+        .lock()
+        .unwrap()
+        .insert(session_id.to_owned(), now);
+    Ok(revived)
+}
+
+pub fn session_snapshot(
+    session_id: &str,
+    owner_transport: &str,
+    ttl: Duration,
+) -> Option<LifecycleSessionSnapshot> {
+    let record = lifecycle_records().lock().unwrap().get(session_id)?.clone();
+    if record.owner_transport != owner_transport {
+        return None;
+    }
+    let idle = session_idle_duration(session_id).unwrap_or_default();
+    let ttl = record.idle_ttl.unwrap_or(ttl);
+    Some(LifecycleSessionSnapshot {
+        runtime_id: session_id.to_owned(),
+        public_label: record.public_label.clone(),
+        implicit: record.implicit,
+        transport: record.transport,
+        client_kind: record.client_kind,
+        owner_transport: record.owner_transport.clone(),
+        ending: record.pending_end.is_some(),
+        started_for: record.started_at.elapsed(),
+        idle,
+        idle_ttl: ttl,
+        expires_in: ttl.saturating_sub(idle),
+    })
+}
+
+fn session_owner_matches(session_id: &str, owner_transport: &str) -> bool {
+    if lifecycle_records()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .is_some_and(|record| record.owner_transport == owner_transport)
+    {
+        return true;
+    }
+    ended_sessions()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
+}
+
+/// End a lifecycle episode only when it belongs to the authenticated
+/// transport. Returns `false` for unknown and foreign ids alike so callers can
+/// provide one non-enumerating response.
+pub fn end_session_for_owner(session_id: &str, owner_transport: &str) -> bool {
+    if !session_owner_matches(session_id, owner_transport) {
+        return false;
+    }
+    end_session(session_id);
+    true
+}
+
+/// End every driver session a trusted transport adapter's session owns,
+/// keyed the way [`crate::tool::ToolRegistry::invoke_from_trusted_adapter`]
+/// keys them.
+///
+/// An in-process host (cua-spacesd's `/mcp`) names its transport sessions
+/// with public ids such as `agent-<run>` or an `Mcp-Session-Id`, but registry
+/// dispatch keys every session it owns, and so every agent cursor, by the
+/// runtime-private `__cua_runtime_<generation>:<id>`. Ending the bare id would
+/// fire the cleanup hooks for a key no cursor uses, leaving the overlay drawn
+/// until it idled out. Returns how many sessions ended; a transport that never
+/// dispatched a session-owning call ends nothing and leaves no tombstone.
+pub fn end_trusted_adapter_transport(transport_session: &str) -> usize {
+    if !is_trackable(transport_session) {
+        return 0;
+    }
+    let Ok(registry) = crate::session_authorization::configured_registry() else {
+        return 0;
+    };
+    end_sessions_for_owner(
+        &registry.runtime_session_key(transport_session),
+        SessionEndReason::Explicit,
+    )
+}
+
+pub fn list_session_snapshots(
+    owner_transport: &str,
+    ttl: Duration,
+) -> Vec<LifecycleSessionSnapshot> {
+    let mut ids = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, record)| record.owner_transport == owner_transport)
+        .map(|(id, record)| (record.started_at, id.clone()))
+        .collect::<Vec<_>>();
+    ids.sort_by_key(|(started, id)| (*started, id.clone()));
+    ids.into_iter()
+        .filter_map(|(_, id)| session_snapshot(&id, owner_transport, ttl))
+        .collect()
+}
+
+/// Trusted local-host view scoped to one runtime generation. This is not used
+/// by agent tools; the operator adapter applies redaction before serialization.
+pub fn list_session_snapshots_with_prefix(
+    runtime_prefix: &str,
+    ttl: Duration,
+) -> Vec<LifecycleSessionSnapshot> {
+    let mut records = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(id, _)| id.starts_with(runtime_prefix))
+        .map(|(id, record)| (record.started_at, id.clone(), record.clone()))
+        .collect::<Vec<_>>();
+    records.sort_by_key(|(started, id, _)| (*started, id.clone()));
+    records
+        .into_iter()
+        .map(|(_, runtime_id, record)| {
+            let idle = session_idle_duration(&runtime_id).unwrap_or_default();
+            let idle_ttl = record.idle_ttl.unwrap_or(ttl);
+            LifecycleSessionSnapshot {
+                runtime_id,
+                public_label: record.public_label,
+                implicit: record.implicit,
+                transport: record.transport,
+                client_kind: record.client_kind,
+                owner_transport: record.owner_transport,
+                ending: record.pending_end.is_some(),
+                started_for: record.started_at.elapsed(),
+                idle,
+                idle_ttl,
+                expires_in: idle_ttl.saturating_sub(idle),
+            }
+        })
+        .collect()
+}
+
+pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -> usize {
+    let ids = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, record)| record.owner_transport == owner_transport)
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    for id in &ids {
+        end_session_with_reason(id, reason);
+    }
+    ids.len()
+}
 
 fn activity() -> &'static Mutex<HashMap<String, Instant>> {
     SESSION_ACTIVITY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -210,35 +860,6 @@ fn is_trackable(id: &str) -> bool {
     !id.is_empty() && id != "default"
 }
 
-fn is_computer_action(tool_name: &str, args: &serde_json::Value) -> bool {
-    if tool_name == "page" {
-        return matches!(
-            args.get("action").and_then(serde_json::Value::as_str),
-            Some(
-                "click_element"
-                    | "insert_text"
-                    | "type_keystrokes"
-                    | "enable_javascript_apple_events"
-            )
-        );
-    }
-    crate::tool::default_capabilities_for(tool_name)
-        .iter()
-        .any(|capability| {
-            capability.starts_with("input.pointer.")
-                || capability.starts_with("input.keyboard.")
-                || matches!(
-                    capability.as_str(),
-                    "app.launch"
-                        | "app.kill"
-                        | "window.activate"
-                        | "browser.navigate"
-                        | "browser.input.click"
-                        | "browser.input.type"
-                )
-        })
-}
-
 /// Begin bounded observation for a known tool call carrying a public,
 /// caller-declared `session`. Reserved `_session_id` fallbacks and anonymous
 /// identities are deliberately ignored.
@@ -247,22 +868,57 @@ pub fn begin_tool_call(
     args: &serde_json::Value,
     known_tool: bool,
     transport: SessionTransport,
+    client_kind: SessionClientKind,
+) -> Option<SessionToolContext> {
+    begin_tool_call_with_state(tool_name, args, known_tool, transport, client_kind, None)
+}
+
+/// Begin observation with a runtime-owner-provided view of session
+/// state. Runtime owners use this seam because their mutable scope and
+/// tombstone state is keyed by a private runtime generation, while telemetry
+/// must continue to report the caller's stable public session label.
+pub fn begin_tool_call_with_state(
+    tool_name: &str,
+    args: &serde_json::Value,
+    known_tool: bool,
+    transport: SessionTransport,
+    client_kind: SessionClientKind,
+    observed_state: Option<SessionObservationState>,
 ) -> Option<SessionToolContext> {
     if !known_tool {
         return None;
     }
-    let session_id = args
-        .get("session")
-        .and_then(serde_json::Value::as_str)
-        .filter(|id| is_trackable(id))?;
+    let session_id = ["session", "_session_id"].into_iter().find_map(|key| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| is_trackable(id))
+    })?;
     let is_start = tool_name == "start_session";
     let is_end = tool_name == "end_session";
-    let revived = is_start && is_session_ended(session_id);
-    if is_session_ended(session_id) && !is_start {
+    let ended = observed_state
+        .map(|state| state.ended)
+        .unwrap_or_else(|| is_session_ended(session_id));
+    let revived = is_start && ended;
+    if ended && !is_start {
         return None;
     }
 
-    touch_session(session_id);
+    let capture_scope = if is_start {
+        args.get("capture_scope")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    } else {
+        observed_state
+            .map(|state| state.capture_scope)
+            .or_else(|| crate::capture_scope::get_session(session_id).map(|state| state.policy))
+            .unwrap_or_default()
+    };
+    let escalation_reason = (tool_name == "escalate_session")
+        .then(|| args.get("reason").cloned())
+        .flatten()
+        .and_then(|value| serde_json::from_value(value).ok());
+    let capture_modality = capture_modality_for(tool_name, args);
     if !is_end {
         if let Some(observer) = SESSION_OBSERVER.get() {
             observer.on_session_started(
@@ -275,6 +931,8 @@ pub fn begin_tool_call(
                     },
                     revived,
                     transport,
+                    client_kind,
+                    capture_scope,
                 },
             );
         }
@@ -283,8 +941,49 @@ pub fn begin_tool_call(
     SESSION_OBSERVER.get().map(|_| SessionToolContext {
         session_id: session_id.to_owned(),
         transport,
-        computer_action: is_computer_action(tool_name, args),
+        computer_action: crate::server::is_computer_action(
+            tool_name,
+            crate::server::tool_operation(tool_name, Some(args)),
+        ),
+        capture_modality,
+        escalation_reason,
     })
+}
+
+fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<CaptureModality> {
+    if let Some(kind) = args
+        .get("target")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|target| target.get("kind"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return match kind {
+            "window" => Some(CaptureModality::Window),
+            "desktop" => Some(CaptureModality::Desktop),
+            _ => None,
+        };
+    }
+    if let Some(scope) = args.get("scope").and_then(serde_json::Value::as_str) {
+        return match scope {
+            "window" => Some(CaptureModality::Window),
+            "desktop" => Some(CaptureModality::Desktop),
+            _ => None,
+        };
+    }
+    if args.get("pid").is_some_and(serde_json::Value::is_number)
+        || args
+            .get("window_id")
+            .is_some_and(serde_json::Value::is_number)
+    {
+        return Some(CaptureModality::Window);
+    }
+    match tool_name {
+        "get_window_state" => Some(CaptureModality::Window),
+        "get_desktop_state" | "get_screen_size" | "get_cursor_position" => {
+            Some(CaptureModality::Desktop)
+        }
+        _ => None,
+    }
 }
 
 /// Session ids that have already had their `session_end` fired. Dedupes the
@@ -294,14 +993,80 @@ pub fn begin_tool_call(
 /// be idempotent because the overlay Remove + recording stop must run exactly
 /// once. Growth is bounded (one short string per ended session over the
 /// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
-static ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+/// Tombstoned unnamed transport sessions whose episode ended only because the
+/// idle sweep reclaimed it. Mutated only while holding the `ENDED_SESSIONS`
+/// lock, and meaningful only while the matching tombstone exists.
+static IDLE_ENDED_IMPLICIT_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Runtime generations that have received terminal revoke-all.
+///
+/// This latch is intentionally independent of grants and public session
+/// labels. Once set, every later dispatch owned by the same runtime
+/// generation fails closed until that runtime is destroyed.
+static SUSPENDED_RUNTIME_SCOPES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-fn hooks() -> &'static Mutex<Vec<SessionEndHook>> {
-    SESSION_END_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
+fn hooks() -> &'static Mutex<HashMap<u64, RegisteredSessionEndHook>> {
+    SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn ended_sessions() -> &'static Mutex<HashSet<String>> {
-    ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+fn cleanup_progress() -> &'static Mutex<HashMap<String, SessionCleanupProgress>> {
+    SESSION_CLEANUP_PROGRESS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn revive_hooks() -> &'static Mutex<HashMap<u64, SessionReviveHook>> {
+    SESSION_REVIVE_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
+    ENDED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn idle_ended_implicit_sessions() -> &'static Mutex<HashSet<String>> {
+    IDLE_ENDED_IMPLICIT_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
+    SUSPENDED_RUNTIME_SCOPES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Terminally suspend authorization for one private runtime generation.
+///
+/// The opaque scope is generated inside Cua and is never accepted from a
+/// public tool argument.
+pub fn suspend_runtime_scope(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .insert(runtime_scope.to_owned())
+}
+
+pub fn is_runtime_scope_suspended(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .contains(runtime_scope)
+}
+
+/// Forget a suspend latch only when its owning runtime is being destroyed.
+pub fn forget_suspended_runtime_scope(runtime_scope: &str) -> bool {
+    suspended_runtime_scopes()
+        .lock()
+        .unwrap()
+        .remove(runtime_scope)
+}
+
+pub(crate) fn public_session_label(session_id: &str) -> &str {
+    let Some(rest) = session_id.strip_prefix("__cua_runtime_") else {
+        return session_id;
+    };
+    let Some((scope, public)) = rest.split_once(':') else {
+        return session_id;
+    };
+    if scope.len() == 32 && scope.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        public
+    } else {
+        session_id
+    }
 }
 
 /// Register a callback invoked with the disconnecting `session_id` whenever a
@@ -311,7 +1076,155 @@ fn ended_sessions() -> &'static Mutex<HashSet<String>> {
 /// fires once per proxy exit, but a hook should treat a clear of an unseen id
 /// as a no-op.
 pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
-    hooks().lock().unwrap().push(Box::new(hook));
+    std::mem::forget(register_scoped_session_end_hook(hook));
+}
+
+/// Register a runtime-owned cleanup hook. Dropping the returned guard removes
+/// the callback, preventing create/shutdown cycles from accumulating stale
+/// platform and browser hooks.
+pub fn register_scoped_session_end_hook(
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) -> SessionEndHookRegistration {
+    register_scoped_fallible_session_end_hook("session_state", move |session_id| {
+        hook(session_id);
+        Ok(())
+    })
+}
+
+/// Register a named cleanup hook whose failure is retained for bounded retry.
+/// A successful hook is never run twice for the same lifecycle episode.
+pub fn register_scoped_fallible_session_end_hook(
+    name: impl Into<String>,
+    hook: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+) -> SessionEndHookRegistration {
+    let id = NEXT_SESSION_END_HOOK_ID.fetch_add(1, Ordering::Relaxed);
+    hooks().lock().unwrap().insert(
+        id,
+        RegisteredSessionEndHook {
+            name: name.into(),
+            callback: Arc::new(hook),
+        },
+    );
+    SessionEndHookRegistration { id }
+}
+
+pub struct SessionEndHookRegistration {
+    id: u64,
+}
+
+impl Drop for SessionEndHookRegistration {
+    fn drop(&mut self) {
+        hooks().lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Register a runtime-owned callback for a successful explicit revival.
+/// Dropping the returned guard removes the callback.
+pub fn register_scoped_session_revive_hook(
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) -> SessionReviveHookRegistration {
+    let id = NEXT_SESSION_REVIVE_HOOK_ID.fetch_add(1, Ordering::Relaxed);
+    revive_hooks().lock().unwrap().insert(id, Arc::new(hook));
+    SessionReviveHookRegistration { id }
+}
+
+pub struct SessionReviveHookRegistration {
+    id: u64,
+}
+
+impl Drop for SessionReviveHookRegistration {
+    fn drop(&mut self) {
+        revive_hooks().lock().unwrap().remove(&self.id);
+    }
+}
+
+/// owned by the same transport. Holding the tombstone lock across callbacks
+/// orders a racing end after revival, so its cleanup cannot be followed by a
+/// late overlay resurrection.
+pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) -> bool {
+    let registered = revive_hooks()
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let ended = ended_sessions().lock().unwrap();
+    if ended.contains_key(session_id)
+        || !lifecycle_records()
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|record| {
+                record.owner_transport == owner_transport && record.pending_end.is_none()
+            })
+    {
+        return false;
+    }
+    for hook in registered {
+        hook(session_id);
+    }
+    true
+}
+
+#[doc(hidden)]
+pub fn session_end_hook_count() -> usize {
+    hooks().lock().unwrap().len()
+}
+
+/// Release process-global session storage after the standalone daemon has
+/// stopped all connection tasks and destroyed its only SDK runtime.
+#[doc(hidden)]
+pub fn release_process_state_for_shutdown() {
+    if let Some(readers) = CURSOR_OUTCOME_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(readers) = RECORDING_STATE_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_END_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_REVIVE_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(progress) = SESSION_CLEANUP_PROGRESS.get() {
+        let mut progress = progress.lock().unwrap();
+        progress.clear();
+        progress.shrink_to_fit();
+    }
+    if let Some(activity) = SESSION_ACTIVITY.get() {
+        let mut activity = activity.lock().unwrap();
+        activity.clear();
+        activity.shrink_to_fit();
+    }
+    if let Some(records) = LIFECYCLE_RECORDS.get() {
+        let mut records = records.lock().unwrap();
+        records.clear();
+        records.shrink_to_fit();
+    }
+    if let Some(ended) = ENDED_SESSIONS.get() {
+        let mut ended = ended.lock().unwrap();
+        ended.clear();
+        ended.shrink_to_fit();
+        if let Some(idle_ended) = IDLE_ENDED_IMPLICIT_SESSIONS.get() {
+            let mut idle_ended = idle_ended.lock().unwrap();
+            idle_ended.clear();
+            idle_ended.shrink_to_fit();
+        }
+    }
+    if let Some(scopes) = SUSPENDED_RUNTIME_SCOPES.get() {
+        let mut scopes = scopes.lock().unwrap();
+        scopes.clear();
+        scopes.shrink_to_fit();
+    }
 }
 
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
@@ -323,26 +1236,261 @@ pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
 /// later calls return `false`. The first fire still returns `true` when no
 /// hooks are registered.
 pub fn fire_session_end(session_id: &str) -> bool {
-    // Mark-then-fan-out under a short critical section, releasing the lock
-    // before running hooks (hooks may be slow / re-entrant and must not hold
-    // the dedupe lock).
-    {
-        let mut ended = ended_sessions().lock().unwrap();
-        if !ended.insert(session_id.to_owned()) {
-            return false; // already ended — idempotent no-op.
+    fire_session_end_for_owner(session_id, None)
+}
+
+fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -> bool {
+    let first_fire = mark_session_ended(session_id, owner_transport, SessionEndReason::Unknown);
+    if first_fire {
+        initialize_session_cleanup(session_id);
+    }
+    let _ = retry_session_cleanup(session_id);
+    first_fire
+}
+
+/// Atomically remove a live lifecycle record and install its tombstone.
+///
+/// Hooks run after this short critical section. Keeping this transition under
+/// the same lock order as dispatch admission prevents a racing first action
+/// from recreating a record immediately before or after termination.
+fn mark_session_ended(
+    session_id: &str,
+    owner_transport: Option<&str>,
+    reason: SessionEndReason,
+) -> bool {
+    activity().lock().unwrap().remove(session_id);
+    let mut ended = ended_sessions().lock().unwrap();
+    let record = lifecycle_records().lock().unwrap().remove(session_id);
+    // Only the transport's own unnamed session, reclaimed for inactivity, is
+    // recreated on its next call. Named sessions and every other end reason
+    // keep the resurrection guard until an explicit start_session.
+    let idle_implicit = reason == SessionEndReason::IdleTimeout
+        && record
+            .as_ref()
+            .is_some_and(|record| record.implicit && record.owner_transport == session_id);
+    let mut idle_ended = idle_ended_implicit_sessions().lock().unwrap();
+    if ended.contains_key(session_id) {
+        // A later explicit or transport end makes an idle end terminal.
+        if reason != SessionEndReason::IdleTimeout {
+            idle_ended.remove(session_id);
+        }
+        false
+    } else {
+        ended.insert(
+            session_id.to_owned(),
+            owner_transport
+                .map(str::to_owned)
+                .or(record.map(|record| record.owner_transport)),
+        );
+        if idle_implicit {
+            idle_ended.insert(session_id.to_owned());
+        } else {
+            idle_ended.remove(session_id);
+        }
+        true
+    }
+}
+
+fn initialize_session_cleanup(session_id: &str) {
+    crate::capture_scope::clear_session(session_id);
+    let mut registered = hooks()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, hook)| (*id, hook.clone()))
+        .collect::<Vec<_>>();
+    registered.sort_by_key(|(id, _)| *id);
+    cleanup_progress().lock().unwrap().insert(
+        session_id.to_owned(),
+        SessionCleanupProgress {
+            hooks: registered,
+            completed: HashSet::new(),
+            failures: Vec::new(),
+            running: false,
+        },
+    );
+}
+
+/// Retry only the cleanup hooks that have not yet succeeded for this ended
+/// lifecycle episode. Panics are converted to structured failures so another
+/// explicit end can retry them instead of losing cleanup state.
+pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
+    let work = {
+        let mut all = cleanup_progress().lock().unwrap();
+        let Some(progress) = all.get_mut(session_id) else {
+            return SessionCleanupReport {
+                complete: true,
+                in_progress: false,
+                failures: Vec::new(),
+            };
+        };
+        if progress.running {
+            return SessionCleanupReport {
+                complete: false,
+                in_progress: true,
+                failures: progress.failures.clone(),
+            };
+        }
+        progress.running = true;
+        progress
+            .hooks
+            .iter()
+            .filter(|(id, _)| !progress.completed.contains(id))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    let mut successes = Vec::new();
+    let mut failures = Vec::new();
+    for (id, hook) in work {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.callback)(session_id)));
+        match result {
+            Ok(Ok(())) => successes.push(id),
+            Ok(Err(error)) => failures.push(SessionCleanupFailure {
+                hook: hook.name,
+                error,
+            }),
+            Err(_) => failures.push(SessionCleanupFailure {
+                hook: hook.name,
+                error: "cleanup hook panicked".into(),
+            }),
         }
     }
-    for hook in hooks().lock().unwrap().iter() {
-        hook(session_id);
+
+    let mut all = cleanup_progress().lock().unwrap();
+    let Some(progress) = all.get_mut(session_id) else {
+        return SessionCleanupReport {
+            complete: true,
+            in_progress: false,
+            failures: Vec::new(),
+        };
+    };
+    progress.completed.extend(successes);
+    progress.failures = failures;
+    progress.running = false;
+    let complete = progress.completed.len() == progress.hooks.len();
+    let failures = progress.failures.clone();
+    if complete {
+        all.remove(session_id);
     }
-    true
+    SessionCleanupReport {
+        complete,
+        in_progress: false,
+        failures,
+    }
+}
+
+/// Inspect cleanup progress without starting another attempt.
+///
+/// Lifecycle tools use this after requesting an end so one public call runs
+/// each unfinished hook at most once. A later explicit `end_session` call is
+/// the bounded retry boundary for hooks that failed.
+pub fn session_cleanup_status(session_id: &str) -> SessionCleanupReport {
+    let all = cleanup_progress().lock().unwrap();
+    let Some(progress) = all.get(session_id) else {
+        return SessionCleanupReport {
+            complete: true,
+            in_progress: false,
+            failures: Vec::new(),
+        };
+    };
+    SessionCleanupReport {
+        complete: progress.completed.len() == progress.hooks.len(),
+        in_progress: progress.running,
+        failures: progress.failures.clone(),
+    }
+}
+
+/// Revoke every currently tracked session. This is intentionally callable by
+/// a local operator control path without requiring an authorization grant:
+/// revocation can only remove authority, never create it.
+pub fn revoke_all_sessions() -> usize {
+    let sessions: Vec<String> = activity().lock().unwrap().keys().cloned().collect();
+    for session in &sessions {
+        end_session(session);
+    }
+    sessions.len()
+}
+
+/// Revoke only sessions owned by one runtime-private namespace.
+pub fn revoke_sessions_with_prefix(prefix: &str) -> usize {
+    let sessions: Vec<String> = activity()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|session| session.starts_with(prefix))
+        .cloned()
+        .collect();
+    for session in &sessions {
+        end_session(session);
+    }
+    sessions.len()
+}
+
+/// Forget terminal tombstones owned by a runtime generation that is itself
+/// being destroyed. Live runtimes must retain tombstones until an explicit
+/// `start_session` revival; otherwise an operator revocation could be bypassed
+/// by reusing the same public session label on another transport.
+pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
+    let mut ended = ended_sessions().lock().unwrap();
+    let before = ended.len();
+    ended.retain(|session, _| !session.starts_with(prefix));
+    let forgotten = before - ended.len();
+    idle_ended_implicit_sessions()
+        .lock()
+        .unwrap()
+        .retain(|session| !session.starts_with(prefix));
+    drop(ended);
+    cleanup_progress()
+        .lock()
+        .unwrap()
+        .retain(|session, _| !session.starts_with(prefix));
+    crate::capture_scope::clear_sessions_with_prefix(prefix);
+    forgotten
 }
 
 /// Whether `fire_session_end` has already run for this `session_id`. The
 /// daemon-side authority for "this session is permanently gone"; the macOS
 /// overlay keeps its own render-side tombstone keyed on the same id.
 pub fn is_session_ended(session_id: &str) -> bool {
-    ended_sessions().lock().unwrap().contains(session_id)
+    ended_sessions().lock().unwrap().contains_key(session_id)
+}
+
+/// Whether an ended lifecycle id is the owner transport's unnamed session,
+/// reclaimed only by the idle sweep, so that transport's next
+/// session-requiring call recreates it instead of being refused. Named
+/// sessions, explicit ends, and transport exits always return `false`.
+pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
+    if session_id != owner_transport {
+        return false;
+    }
+    let ended = ended_sessions().lock().unwrap();
+    ended
+        .get(session_id)
+        .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
+        && idle_ended_implicit_sessions()
+            .lock()
+            .unwrap()
+            .contains(session_id)
+}
+
+/// Whether termination has been requested for a runtime-private lifecycle.
+///
+/// Long-running adapters may use this to relinquish held input before their
+/// dispatch guard drops. Cleanup hooks still run only after admitted work has
+/// unwound. This read-only cancellation signal neither grants authority nor
+/// revives a session; callers must use the registry's private id, not a label.
+pub fn is_session_ending(session_id: &str) -> bool {
+    // Match admission/termination lock order and observe pending termination
+    // and completed termination in one read-side critical section.
+    let ended = ended_sessions().lock().unwrap();
+    ended.contains_key(session_id)
+        || lifecycle_records()
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|record| record.pending_end.is_some())
 }
 
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
@@ -359,14 +1507,83 @@ pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
     }
-    ended_sessions().lock().unwrap().remove(session_id)
+    if !retry_session_cleanup(session_id).complete {
+        return false;
+    }
+    let mut ended = ended_sessions().lock().unwrap();
+    idle_ended_implicit_sessions()
+        .lock()
+        .unwrap()
+        .remove(session_id);
+    ended.remove(session_id).is_some()
 }
 
-/// Record activity for an explicit session id, resetting its idle-TTL clock.
-/// Called at the daemon boundary on every tool call that carries an explicit
-/// `session`. No-op for the anonymous fallback (`"default"` / empty) and for a
-/// session that has already ended (so a late in-flight call can't resurrect a
-/// reaped session's TTL entry).
+/// Owner-checked revival used by the public `start_session` tool. A public
+/// label is never proof that a new transport owns a prior episode: only the
+/// transport that ended the episode may revive it without a separate trusted
+/// host resume proof.
+pub fn revive_session_for_owner(
+    session_id: &str,
+    owner_transport: &str,
+) -> Result<bool, &'static str> {
+    if !is_trackable(session_id) {
+        return Ok(false);
+    }
+
+    // Validate ownership before running any cleanup callback. A caller that
+    // merely guesses another transport's public label must not be able to
+    // trigger work for that lifecycle episode.
+    {
+        let ended = ended_sessions().lock().unwrap();
+        let Some(ended_owner) = ended.get(session_id) else {
+            return Ok(false);
+        };
+        match ended_owner.as_deref() {
+            Some(owner) if owner != owner_transport => {
+                return Err("session is not available to this transport");
+            }
+            // Legacy tombstones did not retain ownership. Allow only the
+            // direct runtime shape where the trusted owner key and lifecycle
+            // id coincide; transport-backed callers fail closed.
+            None if owner_transport != session_id => {
+                return Err("session is not available to this transport");
+            }
+            _ => {}
+        }
+    }
+
+    if !retry_session_cleanup(session_id).complete {
+        return Err("session cleanup is incomplete; retry end_session before revival");
+    }
+
+    // Recheck after cleanup because another thread may have completed the
+    // revival while callbacks were running.
+    let mut ended = ended_sessions().lock().unwrap();
+    let Some(ended_owner) = ended.get(session_id) else {
+        return Ok(false);
+    };
+    match ended_owner.as_deref() {
+        Some(owner) if owner != owner_transport => {
+            Err("session is not available to this transport")
+        }
+        None if owner_transport != session_id => Err("session is not available to this transport"),
+        _ => {
+            ended.remove(session_id);
+            idle_ended_implicit_sessions()
+                .lock()
+                .unwrap()
+                .remove(session_id);
+            Ok(true)
+        }
+    }
+}
+
+/// Record activity for an explicit runtime-private session id, resetting its
+/// idle-TTL clock. Called at the authorized registry boundary after public
+/// arguments have been mapped into their owning runtime namespace. No-op for
+/// the anonymous fallback (`"default"` / empty) and for a session that has
+/// already ended (so a late in-flight call can't resurrect a reaped session's
+/// TTL entry).
 pub fn touch_session(session_id: &str) {
     if !is_trackable(session_id) || is_session_ended(session_id) {
         return;
@@ -375,6 +1592,20 @@ pub fn touch_session(session_id: &str) {
         .lock()
         .unwrap()
         .insert(session_id.to_owned(), Instant::now());
+}
+
+#[doc(hidden)]
+pub fn has_session_activity(session_id: &str) -> bool {
+    activity().lock().unwrap().contains_key(session_id)
+}
+
+#[doc(hidden)]
+pub fn session_idle_duration(session_id: &str) -> Option<Duration> {
+    activity()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .map(Instant::elapsed)
 }
 
 /// End a session explicitly (the `end_session` tool / `session end` CLI verb):
@@ -389,14 +1620,54 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
     if !is_trackable(session_id) {
         return;
     }
-    activity().lock().unwrap().remove(session_id);
-    let cursor_reader = CURSOR_OUTCOME_READER
+    let defer = {
+        let mut records = lifecycle_records().lock().unwrap();
+        match records.get_mut(session_id) {
+            Some(record) if record.in_flight > 0 => {
+                record.pending_end.get_or_insert(reason);
+                true
+            }
+            _ => false,
+        }
+    };
+    if defer {
+        return;
+    }
+    finish_session_end(session_id, reason);
+}
+
+fn finish_session_end(session_id: &str, reason: SessionEndReason) {
+    let first_fire = mark_session_ended(session_id, None, reason);
+    let mut cursor_readers = CURSOR_OUTCOME_READERS
         .get()
-        .and_then(|reader| reader.lock().unwrap().clone());
-    let cursor = cursor_reader.map(|reader| reader(session_id));
-    if fire_session_end(session_id) {
+        .map(|readers| {
+            readers
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, reader)| (*id, reader.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    cursor_readers.sort_by_key(|(id, _)| *id);
+    let mut fallback = None;
+    let cursor = cursor_readers.into_iter().find_map(|(_, reader)| {
+        let outcome = reader(session_id);
+        if outcome.observed {
+            Some(outcome)
+        } else {
+            fallback.get_or_insert(outcome);
+            None
+        }
+    });
+    let cursor = cursor.or(fallback);
+    if first_fire {
+        initialize_session_cleanup(session_id);
+    }
+    let _ = retry_session_cleanup(session_id);
+    if first_fire {
         if let Some(observer) = SESSION_OBSERVER.get() {
-            observer.on_session_ended(session_id, reason, cursor);
+            observer.on_session_ended(public_session_label(session_id), reason, cursor);
         }
     }
 }
@@ -409,10 +1680,47 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
 /// TTL are left untouched.
 pub fn evict_idle(ttl: Duration) -> Vec<String> {
     let now = Instant::now();
+    let lifecycle = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, record)| (id.clone(), (record.in_flight, record.idle_ttl)))
+        .collect::<HashMap<_, _>>();
     let stale: Vec<String> = {
         let map = activity().lock().unwrap();
         map.iter()
-            .filter(|(_, last)| now.duration_since(**last) >= ttl)
+            .filter(|(id, last)| {
+                let (in_flight, session_ttl) = lifecycle.get(*id).copied().unwrap_or_default();
+                now.duration_since(**last) >= session_ttl.unwrap_or(ttl) && in_flight == 0
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    for id in &stale {
+        end_session_with_reason(id, SessionEndReason::IdleTimeout);
+    }
+    stale
+}
+
+/// Runtime-scoped form of [`evict_idle`]. The namespace prefix is minted by
+/// the trusted runtime and never accepted from a tool argument.
+pub fn evict_idle_with_prefix(ttl: Duration, prefix: &str) -> Vec<String> {
+    let now = Instant::now();
+    let lifecycle = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, record)| (id.clone(), (record.in_flight, record.idle_ttl)))
+        .collect::<HashMap<_, _>>();
+    let stale: Vec<String> = {
+        let map = activity().lock().unwrap();
+        map.iter()
+            .filter(|(id, last)| {
+                let (in_flight, session_ttl) = lifecycle.get(*id).copied().unwrap_or_default();
+                id.starts_with(prefix)
+                    && now.duration_since(**last) >= session_ttl.unwrap_or(ttl)
+                    && in_flight == 0
+            })
             .map(|(id, _)| id.clone())
             .collect()
     };
@@ -431,7 +1739,7 @@ pub fn active_session_count() -> usize {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
 
     #[derive(Default)]
     struct ProbeObserver {
@@ -441,13 +1749,18 @@ mod tests {
 
     impl SessionObserver for ProbeObserver {
         fn on_session_started(&self, id: &str, observation: SessionStartObservation) {
-            self.starts.lock().unwrap().push((id.to_owned(), observation));
+            self.starts
+                .lock()
+                .unwrap()
+                .push((id.to_owned(), observation));
         }
         fn on_tool_completed(
             &self,
             _: &str,
             _: SessionTransport,
             _: bool,
+            _: Option<CaptureModality>,
+            _: Option<EscalationReason>,
             _: &crate::server::ToolCompletionObservation,
         ) {
         }
@@ -478,12 +1791,41 @@ mod tests {
     #[test]
     fn browser_mutations_are_computer_actions_but_reads_and_prepare_are_not() {
         let args = serde_json::json!({"session": "test-session"});
-        for tool_name in ["browser_navigate", "browser_click", "browser_type"] {
-            assert!(is_computer_action(tool_name, &args), "tool={tool_name}");
+        for tool_name in [
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+        ] {
+            let operation = crate::server::tool_operation(tool_name, Some(&args));
+            assert!(
+                crate::server::is_computer_action(tool_name, operation),
+                "tool={tool_name}"
+            );
         }
         for tool_name in ["get_browser_state", "browser_prepare"] {
-            assert!(!is_computer_action(tool_name, &args), "tool={tool_name}");
+            let operation = crate::server::tool_operation(tool_name, Some(&args));
+            assert!(
+                !crate::server::is_computer_action(tool_name, operation),
+                "tool={tool_name}"
+            );
         }
+        for action in ["accept", "dismiss"] {
+            let args = serde_json::json!({"action": action});
+            let operation = crate::server::tool_operation("browser_dialog", Some(&args));
+            assert!(crate::server::is_computer_action(
+                "browser_dialog",
+                operation
+            ));
+        }
+        let inspect = serde_json::json!({"action": "inspect"});
+        let operation = crate::server::tool_operation("browser_dialog", Some(&inspect));
+        assert!(!crate::server::is_computer_action(
+            "browser_dialog",
+            operation
+        ));
     }
 
     #[test]
@@ -518,10 +1860,15 @@ mod tests {
         let sid = "test-ttl-session-DDEEFF";
         touch_session(sid);
         // A huge TTL leaves it alone (just touched).
-        assert!(evict_idle(Duration::from_secs(3600)).iter().all(|s| s != sid));
+        assert!(evict_idle_with_prefix(Duration::from_secs(3600), sid)
+            .iter()
+            .all(|s| s != sid));
         // A zero TTL treats any prior activity as idle → evicts it.
-        let evicted = evict_idle(Duration::ZERO);
-        assert!(evicted.iter().any(|s| s == sid), "zero-TTL must evict a touched session");
+        let evicted = evict_idle_with_prefix(Duration::ZERO, sid);
+        assert!(
+            evicted.iter().any(|s| s == sid),
+            "zero-TTL must evict a touched session"
+        );
         assert!(is_session_ended(sid), "evicted session is ended");
     }
 
@@ -530,44 +1877,28 @@ mod tests {
         touch_session("default");
         touch_session("");
         // Neither shows up under a zero-TTL sweep (they were never inserted).
-        let evicted = evict_idle(Duration::ZERO);
+        let evicted = evict_idle_with_prefix(Duration::ZERO, "test-anonymous-never-matches");
         assert!(!evicted.iter().any(|s| s == "default" || s.is_empty()));
     }
 
     #[test]
     fn cursor_outcomes_are_fixed_categories_without_raw_values() {
-        let custom = bounded_cursor_outcome(
-            true,
-            true,
-            Some("/private/customer/cursor.svg"),
-            Some("private-brand-color"),
-            Some("private agent label"),
-            true,
-            7,
-        );
-        assert_eq!(custom.style, CursorStyleCategory::CustomIcon);
-        assert_eq!(custom.color_source, CursorColorSource::Custom);
-        assert!(custom.label_set);
+        let custom =
+            bounded_cursor_outcome(true, true, true, Some("private.customer.theme"), true, 7);
+        assert_eq!(custom.theme, CursorThemeCategory::Custom);
         assert!(custom.motion_customized);
         assert_eq!(custom.active_cursor_count, 7);
         let debug = format!("{custom:?}");
-        for forbidden in ["/private/customer", "private-brand", "private agent"] {
-            assert!(!debug.contains(forbidden), "cursor outcome leaked {forbidden}: {debug}");
-        }
-
-        let unknown = bounded_cursor_outcome(
-            false,
-            true,
-            Some("arrow"),
-            Some("#00FFFF"),
-            Some("label"),
-            true,
-            0,
+        let forbidden = "private.customer.theme";
+        assert!(
+            !debug.contains(forbidden),
+            "cursor outcome leaked {forbidden}: {debug}"
         );
-        assert_eq!(unknown.style, CursorStyleCategory::Unknown);
-        assert_eq!(unknown.color_source, CursorColorSource::Unknown);
+
+        let unknown = bounded_cursor_outcome(false, true, true, Some("cua.default"), true, 0);
+        assert_eq!(unknown.theme, CursorThemeCategory::Unknown);
         assert!(!unknown.enabled);
-        assert!(!unknown.label_set);
+        assert!(!unknown.visible);
         assert!(!unknown.motion_customized);
     }
 
@@ -578,7 +1909,388 @@ mod tests {
         end_session(sid);
         assert!(is_session_ended(sid));
         // Its TTL entry is gone, so a later sweep doesn't re-fire for it.
-        assert!(!evict_idle(Duration::ZERO).iter().any(|s| s == sid));
+        assert!(!evict_idle_with_prefix(Duration::ZERO, sid)
+            .iter()
+            .any(|s| s == sid));
+    }
+
+    #[test]
+    fn lifecycle_identity_is_scoped_to_its_transport_owner() {
+        let sid = "test-owner-scope-session-A1B2C3";
+        let owner_a = "test-owner-transport-a";
+        let owner_b = "test-owner-transport-b";
+        assert!(activate_session(
+            sid,
+            Some("shared-public-label"),
+            owner_a,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+        )
+        .is_ok());
+
+        assert!(session_snapshot(sid, owner_a, DEFAULT_SESSION_IDLE_TTL).is_some());
+        assert!(session_snapshot(sid, owner_b, DEFAULT_SESSION_IDLE_TTL).is_none());
+        assert!(activate_session(
+            sid,
+            Some("shared-public-label"),
+            owner_b,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+        )
+        .is_err());
+        assert!(begin_session_dispatch(
+            sid,
+            Some("shared-public-label"),
+            owner_b,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+        )
+        .is_err());
+        assert!(!end_session_for_owner(sid, owner_b));
+        assert!(!is_session_ended(sid));
+
+        assert!(end_session_for_owner(sid, owner_a));
+        assert!(is_session_ended(sid));
+        assert!(revive_session_for_owner(sid, owner_b).is_err());
+        assert!(is_session_ended(sid));
+        assert_eq!(revive_session_for_owner(sid, owner_a), Ok(true));
+    }
+
+    #[test]
+    fn atomic_start_cannot_transfer_an_ended_label_to_another_transport() {
+        let sid = "test-atomic-owner-revival-B1C2D3";
+        let owner_a = "test-atomic-owner-a";
+        let owner_b = "test-atomic-owner-b";
+        activate_session(
+            sid,
+            Some("recycled-label"),
+            owner_a,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(end_session_for_owner(sid, owner_a));
+
+        assert!(activate_or_revive_session_for_owner(
+            sid,
+            Some("recycled-label"),
+            owner_b,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+            None,
+        )
+        .is_err());
+        assert!(is_session_ended(sid));
+
+        assert_eq!(
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("recycled-label"),
+                owner_a,
+                false,
+                SessionTransport::McpHttp,
+                SessionClientKind::Mcp,
+                None,
+            ),
+            Ok(true)
+        );
+        assert!(session_snapshot(sid, owner_a, DEFAULT_SESSION_IDLE_TTL).is_some());
+        assert!(session_snapshot(sid, owner_b, DEFAULT_SESSION_IDLE_TTL).is_none());
+        assert!(end_session_for_owner(sid, owner_a));
+    }
+
+    #[test]
+    fn foreign_revival_does_not_run_an_owners_pending_cleanup() {
+        let sid = "test-owner-cleanup-scope-B2C3D4";
+        let owner_a = "test-owner-cleanup-transport-a";
+        let owner_b = "test-owner-cleanup-transport-b";
+        let cleanup_calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_hook = cleanup_calls.clone();
+        let _registration =
+            register_scoped_fallible_session_end_hook("owner-cleanup-test", move |ended| {
+                if ended != sid {
+                    return Ok(());
+                }
+                let call = calls_for_hook.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    Err("retry me".into())
+                } else {
+                    Ok(())
+                }
+            });
+
+        activate_session(
+            sid,
+            Some("owner-cleanup"),
+            owner_a,
+            false,
+            SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(end_session_for_owner(sid, owner_a));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
+
+        assert!(revive_session_for_owner(sid, owner_b).is_err());
+        assert_eq!(
+            cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "a foreign caller must not trigger cleanup callbacks"
+        );
+
+        assert_eq!(revive_session_for_owner(sid, owner_a), Ok(true));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn concurrent_first_dispatches_share_one_lifecycle_record() {
+        let sid = "test-concurrent-first-session-D4E5F6";
+        let owner = "test-concurrent-first-owner";
+        let barrier = Arc::new(Barrier::new(9));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                let guard = begin_session_dispatch(
+                    sid,
+                    None,
+                    owner,
+                    true,
+                    SessionTransport::McpStdio,
+                    SessionClientKind::Mcp,
+                )
+                .expect("same owner may join its implicit lifecycle");
+                barrier.wait();
+                drop(guard);
+            }));
+        }
+        barrier.wait();
+        barrier.wait();
+        assert_eq!(
+            list_session_snapshots(owner, DEFAULT_SESSION_IDLE_TTL)
+                .into_iter()
+                .filter(|snapshot| snapshot.runtime_id == sid)
+                .count(),
+            1
+        );
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert!(end_session_for_owner(sid, owner));
+    }
+
+    #[test]
+    fn end_waits_for_in_flight_dispatch_and_cleanup_runs_once() {
+        let sid = "test-in-flight-end-session-F7A8B9";
+        let owner = "test-in-flight-end-owner";
+        let cleanup_calls = Arc::new(AtomicUsize::new(0));
+        let cleanup_calls_for_hook = cleanup_calls.clone();
+        let _registration = register_scoped_session_end_hook(move |ended| {
+            if ended == sid {
+                cleanup_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let guard = begin_session_dispatch(
+            sid,
+            None,
+            owner,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+
+        activate_session(
+            sid,
+            None,
+            owner,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .expect("idempotent start must preserve the live dispatch record");
+
+        assert!(!is_session_ending(sid));
+        assert!(!end_session_for_owner(sid, "unrelated-owner"));
+        assert!(!is_session_ending(sid));
+        assert!(end_session_for_owner(sid, owner));
+        assert!(is_session_ending(sid));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
+        let snapshot = session_snapshot(sid, owner, DEFAULT_SESSION_IDLE_TTL).unwrap();
+        assert!(snapshot.ending);
+        assert!(!is_session_ended(sid));
+        assert!(!evict_idle_with_prefix(Duration::ZERO, sid)
+            .iter()
+            .any(|id| id == sid));
+
+        drop(guard);
+        assert!(is_session_ended(sid));
+        assert!(is_session_ending(sid));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
+        assert!(end_session_for_owner(sid, owner));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn trusted_idle_ttl_override_controls_snapshot_and_eviction() {
+        let sid = "test-trusted-lifecycle-ttl-A9B0C1";
+        let owner = "test-trusted-lifecycle-ttl-owner";
+        activate_session_with_ttl(
+            sid,
+            Some("trusted-ttl"),
+            owner,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::PythonSdk,
+            Duration::from_millis(1),
+        )
+        .unwrap();
+        let snapshot = session_snapshot(sid, owner, Duration::from_secs(3600)).unwrap();
+        assert!(snapshot.expires_in <= Duration::from_millis(1));
+        let operator_snapshot = list_session_snapshots_with_prefix(
+            "test-trusted-lifecycle-ttl-",
+            Duration::from_secs(3600),
+        )
+        .into_iter()
+        .find(|snapshot| snapshot.runtime_id == sid)
+        .unwrap();
+        assert!(operator_snapshot.expires_in <= Duration::from_millis(1));
+
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            evict_idle_with_prefix(Duration::from_secs(3600), sid),
+            vec![sid.to_owned()],
+            "the trusted per-session TTL must override the runtime fallback"
+        );
+    }
+
+    #[test]
+    fn partial_cleanup_retries_only_failed_hooks_then_allows_revival() {
+        let sid = "test-partial-cleanup-retry-C8D9E0";
+        let retryable_calls = Arc::new(AtomicUsize::new(0));
+        let retryable_for_hook = retryable_calls.clone();
+        let _retryable =
+            register_scoped_fallible_session_end_hook("retryable-test-hook", move |ended| {
+                if ended != sid {
+                    return Ok(());
+                }
+                let attempt = retryable_for_hook.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    Err("synthetic first-attempt failure".into())
+                } else {
+                    Ok(())
+                }
+            });
+        let successful_calls = Arc::new(AtomicUsize::new(0));
+        let successful_for_hook = successful_calls.clone();
+        let _successful = register_scoped_session_end_hook(move |ended| {
+            if ended == sid {
+                successful_for_hook.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+
+        touch_session(sid);
+        end_session(sid);
+        assert!(is_session_ended(sid));
+        assert_eq!(retryable_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(successful_calls.load(Ordering::SeqCst), 1);
+
+        let report = retry_session_cleanup(sid);
+        assert!(report.complete);
+        assert!(report.failures.is_empty());
+        assert_eq!(retryable_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            successful_calls.load(Ordering::SeqCst),
+            1,
+            "successful cleanup hooks must not run twice"
+        );
+        assert!(revive_session(sid));
+    }
+
+    #[test]
+    fn only_the_owners_unnamed_session_is_recreated_after_an_idle_end() {
+        let pid = std::process::id();
+        let implicit = format!("idle-recreate-implicit-{pid}");
+        let named = format!("idle-recreate-named-{pid}");
+        let named_owner = format!("idle-recreate-named-owner-{pid}");
+        let begin = |id: &str, label: Option<&str>, owner: &str| {
+            begin_session_dispatch(
+                id,
+                label,
+                owner,
+                label.is_none(),
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        // Fail at the idle end and at the first recreation attempt.
+        let failures = Arc::new(AtomicUsize::new(2));
+        let failures_for_hook = failures.clone();
+        let observed = implicit.clone();
+        let _hook = register_scoped_fallible_session_end_hook("idle-recreate-test", move |id| {
+            if id == observed
+                && failures_for_hook
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                        left.checked_sub(1)
+                    })
+                    .is_ok()
+            {
+                return Err("synthetic cleanup failure".into());
+            }
+            Ok(())
+        });
+
+        drop(begin(&implicit, None, &implicit).unwrap());
+        drop(begin(&named, Some("named"), &named_owner).unwrap());
+        assert_eq!(
+            evict_idle_with_prefix(Duration::ZERO, &implicit),
+            std::slice::from_ref(&implicit)
+        );
+        assert_eq!(
+            evict_idle_with_prefix(Duration::ZERO, &named),
+            std::slice::from_ref(&named)
+        );
+
+        // A named episode keeps its resurrection guard.
+        assert!(!recreates_on_next_call(&named, &named_owner));
+        assert_eq!(
+            begin(&named, Some("named"), &named_owner).err(),
+            Some("session has ended")
+        );
+        // Another transport cannot claim the unnamed id.
+        assert_eq!(
+            begin(&implicit, None, "another-transport").err(),
+            Some("session has ended")
+        );
+        // Unfinished cleanup is retried by the call and blocks recreation.
+        assert!(recreates_on_next_call(&implicit, &implicit));
+        assert_eq!(
+            begin(&implicit, None, &implicit).err(),
+            Some("session cleanup is incomplete; retry the call")
+        );
+        let guard = begin(&implicit, None, &implicit).expect("recreated after cleanup");
+        assert!(!is_session_ended(&implicit));
+        assert!(
+            session_snapshot(&implicit, &implicit, DEFAULT_SESSION_IDLE_TTL)
+                .is_some_and(|snapshot| snapshot.implicit)
+        );
+        drop(guard);
+
+        // An explicit end stays terminal until start_session.
+        end_session(&implicit);
+        assert!(!recreates_on_next_call(&implicit, &implicit));
+        assert_eq!(
+            begin(&implicit, None, &implicit).err(),
+            Some("session has ended")
+        );
+        assert!(revive_session(&implicit));
+        assert!(revive_session(&named));
     }
 
     #[test]
@@ -598,6 +2310,28 @@ mod tests {
     }
 
     #[test]
+    fn runtime_revoke_retains_tombstones_until_revival_or_runtime_teardown() {
+        let prefix = "__cua_runtime_00112233445566778899aabbccddeeff:";
+        let sid = format!("{prefix}revoked-session");
+        touch_session(&sid);
+
+        assert_eq!(revoke_sessions_with_prefix(prefix), 1);
+        assert!(is_session_ended(&sid));
+        touch_session(&sid);
+        assert!(
+            !has_session_activity(&sid),
+            "ordinary traffic must not resurrect a revoked runtime session"
+        );
+
+        assert!(revive_session(&sid));
+        touch_session(&sid);
+        assert!(has_session_activity(&sid));
+        end_session(&sid);
+        assert_eq!(forget_ended_sessions_with_prefix(prefix), 1);
+        assert!(!is_session_ended(&sid));
+    }
+
+    #[test]
     fn revive_is_noop_for_anonymous_ids() {
         // The anonymous fallback is never tracked, so there is nothing to revive.
         assert!(!revive_session("default"));
@@ -605,20 +2339,22 @@ mod tests {
     }
 
     #[test]
-    fn tool_context_requires_a_public_session_and_uses_fixed_action_classes() {
+    fn tool_context_accepts_trusted_implicit_session_and_uses_fixed_action_classes() {
         let _ = probe_observer();
         assert!(begin_tool_call(
             "click",
             &serde_json::json!({"_session_id": "private-fallback"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
-        .is_none());
+        .is_some());
         assert!(begin_tool_call(
             "click",
             &serde_json::json!({"session": "default"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .is_none());
 
@@ -627,6 +2363,7 @@ mod tests {
             &serde_json::json!({"session": "test-action-pointer-AB12"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(pointer.computer_action);
@@ -640,6 +2377,7 @@ mod tests {
             }),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(page_write.computer_action);
@@ -654,6 +2392,7 @@ mod tests {
             }),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         assert!(!page_read.computer_action);
@@ -663,23 +2402,61 @@ mod tests {
             &serde_json::json!({"session": "test-action-read-GH78"}),
             true,
             SessionTransport::Daemon,
+            SessionClientKind::Direct,
         )
         .unwrap();
         assert!(!state_read.computer_action);
+
+        let escalation = begin_tool_call(
+            "escalate_session",
+            &serde_json::json!({
+                "session": "test-action-escalate-IJ90",
+                "reason": "no_window_target",
+                "detail": "private free-form detail is not observed"
+            }),
+            true,
+            SessionTransport::Daemon,
+            SessionClientKind::TypescriptSdk,
+        )
+        .unwrap();
+        assert_eq!(
+            escalation.escalation_reason,
+            Some(EscalationReason::NoWindowTarget)
+        );
+
+        assert_eq!(
+            capture_modality_for(
+                "click",
+                &serde_json::json!({
+                    "target": {"kind": "window", "pid": 7, "window_id": 9}
+                }),
+            ),
+            Some(CaptureModality::Window)
+        );
+        assert_eq!(
+            capture_modality_for(
+                "click",
+                &serde_json::json!({
+                    "target": {"kind": "desktop", "display_id": "primary"}
+                }),
+            ),
+            Some(CaptureModality::Desktop)
+        );
     }
 
     #[test]
     fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
         let probe = probe_observer();
         let _ = set_cursor_outcome_reader(Arc::new(|_| {
-            bounded_cursor_outcome(true, true, Some("arrow"), None, None, false, 2)
+            bounded_cursor_outcome(true, true, true, Some("cua.default"), false, 2)
         }));
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(
             "start_session",
-            &serde_json::json!({"session": explicit}),
+            &serde_json::json!({"session": explicit, "capture_scope": "desktop"}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         end_session(explicit);
@@ -690,6 +2467,7 @@ mod tests {
             &serde_json::json!({"session": idle}),
             true,
             SessionTransport::McpHttp,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         end_session_with_reason(idle, SessionEndReason::IdleTimeout);
@@ -702,6 +2480,7 @@ mod tests {
             &serde_json::json!({"session": revived}),
             true,
             SessionTransport::Daemon,
+            SessionClientKind::PythonSdk,
         )
         .unwrap();
 
@@ -711,35 +2490,112 @@ mod tests {
             &serde_json::json!({"session": control}),
             true,
             SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
         )
         .unwrap();
         fire_session_end(control);
+
+        let runtime_owned = "test-observer-runtime-owned-QR78";
+        begin_tool_call_with_state(
+            "click",
+            &serde_json::json!({"session": runtime_owned}),
+            true,
+            SessionTransport::Daemon,
+            SessionClientKind::Direct,
+            Some(SessionObservationState {
+                ended: false,
+                capture_scope: CaptureScope::Window,
+            }),
+        )
+        .unwrap();
 
         let starts = probe.starts.lock().unwrap();
         assert!(starts.iter().any(|(id, observation)| {
             id == explicit
                 && observation.declaration == SessionDeclaration::StartSession
                 && !observation.revived
+                && observation.client_kind == SessionClientKind::Mcp
+                && observation.capture_scope == CaptureScope::Desktop
         }));
         assert!(starts.iter().any(|(id, observation)| {
             id == idle
                 && observation.declaration == SessionDeclaration::ImplicitFirstAction
                 && observation.transport == SessionTransport::McpHttp
         }));
-        assert!(starts.iter().any(|(id, observation)| id == revived && observation.revived));
+        assert!(starts
+            .iter()
+            .any(|(id, observation)| id == revived && observation.revived));
+        assert!(starts.iter().any(|(id, observation)| {
+            id == runtime_owned
+                && observation.declaration == SessionDeclaration::ImplicitFirstAction
+                && observation.capture_scope == CaptureScope::Window
+        }));
         drop(starts);
 
         let ends = probe.ends.lock().unwrap();
         assert!(ends.iter().any(|(id, reason, cursor)| {
-            id == explicit && *reason == SessionEndReason::Explicit
+            id == explicit
+                && *reason == SessionEndReason::Explicit
                 && cursor.is_some_and(|value| {
-                    value.style == CursorStyleCategory::BuiltinArrow
-                        && value.active_cursor_count == 2
+                    value.theme == CursorThemeCategory::Default && value.active_cursor_count == 2
                 })
         }));
-        assert!(ends.iter().any(|(id, reason, _)| {
-            id == idle && *reason == SessionEndReason::IdleTimeout
-        }));
+        assert!(ends
+            .iter()
+            .any(|(id, reason, _)| { id == idle && *reason == SessionEndReason::IdleTimeout }));
         assert!(!ends.iter().any(|(id, _, _)| id == control));
+    }
+
+    /// cua-spacesd's `/mcp` ends a run by its public transport id, while the
+    /// registry keyed the run's sessions (and cursors) by the runtime-private
+    /// id. The end must reach those keys, including labelled sessions the
+    /// run owns, and must not touch another run.
+    #[test]
+    fn trusted_adapter_transport_end_reaches_runtime_scoped_sessions() {
+        let registry = crate::session_authorization::configured_registry().unwrap();
+        let transport = "agent-test-trusted-end-7f3a";
+        let other = "agent-test-trusted-end-other-7f3a";
+        let scoped = registry.runtime_session_key(transport);
+        let labelled = registry.runtime_session_key("test-trusted-end-label-7f3a");
+        let other_scoped = registry.runtime_session_key(other);
+        let ended = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = ended.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            seen.lock().unwrap().push(id.to_owned());
+        });
+        for (id, label, owner) in [
+            (&scoped, None, &scoped),
+            (&labelled, Some("test-trusted-end-label-7f3a"), &scoped),
+            (&other_scoped, None, &other_scoped),
+        ] {
+            drop(
+                begin_session_dispatch(
+                    id,
+                    label,
+                    owner,
+                    label.is_none(),
+                    SessionTransport::McpHttp,
+                    SessionClientKind::Mcp,
+                )
+                .unwrap(),
+            );
+        }
+
+        assert_eq!(end_trusted_adapter_transport(transport), 2);
+        let ended = ended.lock().unwrap().clone();
+        assert!(ended.contains(&scoped), "{ended:?}");
+        assert!(ended.contains(&labelled), "{ended:?}");
+        assert!(!ended.contains(&other_scoped), "{ended:?}");
+        assert!(is_session_ended(&scoped) && is_session_ended(&labelled));
+        assert!(!is_session_ended(&other_scoped));
+        assert!(!is_session_ended(transport), "the bare id is not a session");
+
+        // A transport that never owned a session ends nothing.
+        assert_eq!(
+            end_trusted_adapter_transport("agent-test-never-seen-7f3a"),
+            0
+        );
+        assert_eq!(end_trusted_adapter_transport("default"), 0);
+        end_session(&other_scoped);
     }
 }

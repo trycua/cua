@@ -27,6 +27,7 @@ final class LumeMCPServer {
 
         let transport = StdioTransport()
         try await mcpServer?.start(transport: transport)
+        TelemetryClient.shared.recordMCPSessionStarted()
         await mcpServer?.waitUntilCompleted()
     }
 
@@ -37,7 +38,7 @@ final class LumeMCPServer {
                 return ListTools.Result(tools: [])
             }
             return await MainActor.run {
-                ListTools.Result(tools: self.toolDefinitions)
+                ListTools.Result(tools: Self.toolDefinitions)
             }
         }
 
@@ -314,11 +315,40 @@ final class LumeMCPServer {
 
     // MARK: - Tool Definitions
 
-    private var toolDefinitions: [Tool] {
+    /// The tool list, also emitted by `lume dump-docs --type mcp` for the
+    /// generated reference (no server needed).
+    nonisolated static var toolDefinitions: [Tool] {
+        toolSchemas.map { tool in
+            var tool = tool
+            tool.annotations = toolAnnotations(tool.name)
+            return tool
+        }
+    }
+
+    /// MCP behavior hints per tool (clients use them to decide what needs
+    /// confirmation). Unknown tools get no hints.
+    nonisolated static func toolAnnotations(_ name: String) -> Tool.Annotations {
+        switch name {
+        case "check_for_update":
+            return .init(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true)
+        case "lume_list_vms", "lume_get_vm":
+            return .init(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
+        case "lume_run_vm", "lume_stop_vm", "lume_clone_vm", "lume_create_vm":
+            return .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
+        case "lume_delete_vm", "lume_resize_disk":
+            return .init(readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false)
+        case "lume_exec":
+            return .init(readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static var toolSchemas: [Tool] {
         [
             Tool(
                 name: "check_for_update",
-                description: "Check whether a newer Lume release is available on GitHub. Read-only; never installs. Mirrors `lume check-update --json`.",
+                description: "Check the saved stable/nightly Lume channel for a release on GitHub. Returns current and selected channels. Read-only; never installs. Mirrors `lume check-update --json`.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -372,6 +402,11 @@ final class LumeMCPServer {
                         "no_display": .object([
                             "type": .string("boolean"),
                             "description": .string("Run headless without VNC window (default: true)")
+                        ]),
+                        "vnc": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("enabled"), .string("disabled")]),
+                            "description": .string("VNC server policy. 'disabled' starts no VNC listener and reports a null vncUrl (default: enabled)")
                         ]),
                         "storage": .object([
                             "type": .string("string"),
@@ -527,7 +562,7 @@ final class LumeMCPServer {
                         ]),
                         "keep_backup": .object([
                             "type": .string("boolean"),
-                            "description": .string("Keep the rollback backup after a successful resize. Default false.")
+                            "description": .string("Keep the rollback backup after a successful resize; cannot be combined with no_backup. Default false.")
                         ]),
                         "dry_run": .object([
                             "type": .string("boolean"),
@@ -543,46 +578,62 @@ final class LumeMCPServer {
     // MARK: - Tool Call Handler
 
     private func handleToolCall(_ params: CallTool.Parameters) async -> CallTool.Result {
+        let startedAt = Date()
+        let result: CallTool.Result
         do {
             switch params.name {
             case "lume_list_vms":
-                return try await handleListVMs(params.arguments)
+                result = try await handleListVMs(params.arguments)
             case "lume_get_vm":
-                return try await handleGetVM(params.arguments)
+                result = try await handleGetVM(params.arguments)
             case "lume_run_vm":
-                return try await handleRunVM(params.arguments)
+                result = try await handleRunVM(params.arguments)
             case "lume_stop_vm":
-                return try await handleStopVM(params.arguments)
+                result = try await handleStopVM(params.arguments)
             case "lume_clone_vm":
-                return try await handleCloneVM(params.arguments)
+                result = try await handleCloneVM(params.arguments)
             case "lume_delete_vm":
-                return try await handleDeleteVM(params.arguments)
+                result = try await handleDeleteVM(params.arguments)
             case "lume_exec":
-                return try await handleExec(params.arguments)
+                result = try await handleExec(params.arguments)
             case "lume_create_vm":
-                return try await handleCreateVM(params.arguments)
+                result = try await handleCreateVM(params.arguments)
             case "lume_resize_disk":
-                return try await handleResizeDisk(params.arguments)
+                result = try await handleResizeDisk(params.arguments)
             case "check_for_update":
-                return try await handleCheckForUpdate(params.arguments)
+                result = try await handleCheckForUpdate(params.arguments)
             default:
-                return CallTool.Result(
+                result = CallTool.Result(
                     content: [.text("Unknown tool: \(params.name)")],
                     isError: true
                 )
             }
         } catch {
-            return CallTool.Result(
+            result = CallTool.Result(
                 content: [.text("Error: \(error.localizedDescription)")],
                 isError: true
             )
         }
+        let success = result.isError != true
+        TelemetryClient.shared.recordMCPToolCompleted(
+            toolName: params.name,
+            success: success,
+            errorClass: success ? .none : (params.name == "check_for_update" ? .unavailable : .operationError),
+            elapsed: Date().timeIntervalSince(startedAt)
+        )
+        return result
     }
 
     // MARK: - Tool Implementations
 
     private func handleCheckForUpdate(_ args: [String: Value]?) async throws -> CallTool.Result {
         let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        TelemetryClient.shared.recordUpdateChecked(
+            source: "mcp",
+            outcome: state.error != nil ? "unavailable" : (state.updateAvailable ? "available" : "up_to_date"),
+            targetVersion: state.latestVersion,
+            cacheHit: state.cacheHit
+        )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -633,6 +684,30 @@ final class LumeMCPServer {
         let noDisplay = args?["no_display"]?.boolValue ?? true
         let clipboard = args?["clipboard"]?.boolValue ?? false
 
+        let vncPolicy: VNCPolicy
+        if let requested = args?["vnc"]?.stringValue {
+            guard let policy = VNCPolicy(rawValue: requested) else {
+                return CallTool.Result(
+                    content: [
+                        .text("Error: 'vnc' must be 'enabled' or 'disabled', got '\(requested)'")
+                    ],
+                    isError: true)
+            }
+            vncPolicy = policy
+        } else {
+            vncPolicy = .enabled
+        }
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: noDisplay ? .none : .vnc,
+            vncPort: 0,
+            vncPassword: nil
+        ) {
+            return CallTool.Result(
+                content: [.text("Error: \(VMError.vncDisabledConflict(option).localizedDescription)")],
+                isError: true)
+        }
+
         var sharedDirectories: [SharedDirectory] = []
         if let sharedDir = args?["shared_dir"]?.stringValue {
             // Expand ~ to home directory
@@ -649,7 +724,9 @@ final class LumeMCPServer {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     storage: storage,
-                    clipboard: clipboard
+                    clipboard: clipboard,
+                    vncPolicy: vncPolicy,
+                    telemetryTransport: .mcpStdio
                 )
             } catch {
                 Logger.error(
@@ -827,7 +904,8 @@ final class LumeMCPServer {
             display: "1920x1080",
             ipsw: ipsw,
             storage: storage,
-            unattendedConfig: unattendedConfig
+            unattendedConfig: unattendedConfig,
+            telemetryTransport: .mcpStdio
         )
 
         var response = "VM '\(name)' creation started. Status: provisioning."

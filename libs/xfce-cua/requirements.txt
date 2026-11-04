@@ -1,0 +1,2 @@
+# Pin released dependencies so the container can be reproduced from its tag.
+cua-driver==0.12.4

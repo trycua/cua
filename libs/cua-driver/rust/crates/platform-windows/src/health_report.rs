@@ -44,9 +44,9 @@ impl HealthCheckProvider for WindowsHealthProvider {
 
     async fn run_check(&self, name: &str) -> CheckEntry {
         match name {
-            NAME_BINARY_VERSION => check_binary_version(),
+            NAME_BINARY_VERSION => CheckEntry::binary_version(),
             NAME_PLATFORM_SUPPORTED => check_platform_supported(),
-            NAME_SESSION_ACTIVE => check_session_active(),
+            NAME_SESSION_ACTIVE => CheckEntry::session_active(),
             NAME_BUNDLE_IDENTITY => skip_not_applicable(NAME_BUNDLE_IDENTITY),
             NAME_TCC_ACCESSIBILITY => skip_not_applicable(NAME_TCC_ACCESSIBILITY),
             NAME_TCC_SCREEN_RECORDING => skip_not_applicable(NAME_TCC_SCREEN_RECORDING),
@@ -62,13 +62,6 @@ impl HealthCheckProvider for WindowsHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-pub(crate) fn check_binary_version() -> CheckEntry {
-    CheckEntry::pass(
-        NAME_BINARY_VERSION,
-        format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
-    )
-}
-
 pub(crate) fn check_platform_supported() -> CheckEntry {
     // The Windows build is gated behind `cfg(target_os = "windows")`,
     // so reaching this code path already implies a supported platform.
@@ -83,10 +76,6 @@ pub(crate) fn check_platform_supported() -> CheckEntry {
         architecture: Some(arch.to_owned()),
         ..Default::default()
     })
-}
-
-pub(crate) fn check_session_active() -> CheckEntry {
-    CheckEntry::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
 }
 
 /// Standard "this category does not exist on Windows" entry. Used for
@@ -153,8 +142,8 @@ fn probe_d3d11_device() -> Result<(), String> {
     use windows::Win32::Graphics::{
         Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0},
         Direct3D11::{
-            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_SDK_VERSION,
         },
     };
     let mut device: Option<ID3D11Device> = None;
@@ -189,7 +178,10 @@ fn probe_d3d11_device() -> Result<(), String> {
 fn ver_string() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("cmd").args(["/c", "ver"]).output().ok()?;
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "ver"])
+            .output()
+            .ok()?;
         if !output.status.success() {
             return None;
         }
@@ -218,35 +210,9 @@ fn arch_label() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
+    use cua_driver_core::health_report::HealthReportTool;
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
-
-    #[test]
-    fn binary_version_always_passes() {
-        let entry = check_binary_version();
-        assert_eq!(entry.status, CheckStatus::Pass);
-        assert!(entry.message.contains("cua-driver "));
-    }
-
-    #[test]
-    fn session_active_passes() {
-        let entry = check_session_active();
-        assert_eq!(entry.status, CheckStatus::Pass);
-    }
-
-    #[test]
-    fn tcc_and_bundle_are_skipped_with_canonical_message() {
-        for name in [
-            NAME_TCC_ACCESSIBILITY,
-            NAME_TCC_SCREEN_RECORDING,
-            NAME_BUNDLE_IDENTITY,
-        ] {
-            let entry = skip_not_applicable(name);
-            assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
-            assert_eq!(entry.message, "not applicable on Windows");
-        }
-    }
 
     // End-to-end through the dispatcher: every Windows canonical name
     // appears in the response, in declared order. Run on every host so
@@ -283,6 +249,7 @@ mod tests {
             .iter()
             .map(|c| (c["name"].as_str().unwrap(), c))
             .collect();
+        assert_eq!(by_name[NAME_SESSION_ACTIVE]["status"], "pass");
         for name in [
             NAME_TCC_ACCESSIBILITY,
             NAME_TCC_SCREEN_RECORDING,

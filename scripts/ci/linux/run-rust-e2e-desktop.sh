@@ -61,7 +61,8 @@ case "${ENVIRONMENT}" in
     ;;
 esac
 
-if [[ "${CUA_E2E_HARNESS_FILTER:-}" == *tauri* && ! -e /dev/dri/renderD128 ]]; then
+effective_harness_filter="${CUA_E2E_HARNESS_FILTER:-electron,tauri}"
+if [[ ",${effective_harness_filter}," == *,tauri,* && ! -e /dev/dri/renderD128 ]]; then
   echo "Tauri/WebKitGTK validation requires a representative DRM render node" >&2
   exit 2
 fi

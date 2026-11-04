@@ -5,8 +5,10 @@
 //! - `overlay::run_on_main_thread()` — called from `main()` on the main thread
 //! - `overlay::send_command(cmd)` — called from tool implementations
 
-pub mod state;
 pub mod overlay;
+/// System cursor shape reporting (what the OS draws, not what Cua draws).
+pub mod shape;
+pub mod state;
 
 // Re-export the legacy per-instance cursor state (used by tools for multi-cursor tracking).
 pub use state::{CursorRegistry, CursorState};

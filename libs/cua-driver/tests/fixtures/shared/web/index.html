@@ -72,13 +72,15 @@
              aria-label="txt-input" placeholder="type here"
              autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
+      <input type="number" id="number-input" data-cua-id="number-input"
+             aria-label="number-input" value="42" autofocus />
     </div>
   </fieldset>
 
   <fieldset>
     <legend>keyboard_task</legend>
     <div class="row">
-      <input type="text" id="keyboard-input" data-cua-id="keyboard-input" autofocus
+      <input type="text" id="keyboard-input" data-cua-id="keyboard-input"
              aria-label="keyboard-input" placeholder="keyboard input"
              autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="keyboard-status" data-cua-id="keyboard-status">key_state=none</span>
@@ -142,6 +144,14 @@
   </fieldset>
 
   <fieldset>
+    <legend>child_window</legend>
+    <div class="row">
+      <button id="btn-open-child-window" data-cua-id="btn-open-child-window">Open child window</button>
+      <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
     <legend>checkable_controls</legend>
     <div class="row">
       <label><input type="checkbox" id="chk-agreed" data-cua-id="chk-agreed" /> I agree</label>
@@ -179,13 +189,6 @@
     <h3 id="section-target" data-cua-id="section-target">SECTION_TARGET_MARKER_v1</h3>
   </fieldset>
 
-  <fieldset>
-    <legend>child_window</legend>
-    <div class="row">
-      <button id="btn-open-child-window" data-cua-id="btn-open-child-window">Open child window</button>
-      <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
-    </div>
-  </fieldset>
   </main>
 
   <script>
@@ -220,7 +223,7 @@
   });
 
   $('keyboard-input').addEventListener('keydown', e => {
-    if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') {
       $('keyboard-status').textContent = 'key_state=hotkey';
     } else if (e.key === 'Enter') {
       const value = $('keyboard-input').value;
@@ -322,6 +325,26 @@
       window.__CUA_E2E_FIXTURE_JOURNAL_URL || '';
     if (!journalUrl) return;
 
+    const collapsedLayout = element => {
+      const style = getComputedStyle(element);
+      const root = document.documentElement.getBoundingClientRect();
+      return {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        readyState: document.readyState,
+        rootRect: { x: root.x, y: root.y, width: root.width, height: root.height },
+        scrollStyle: {
+          display: style.display,
+          visibility: style.visibility,
+          position: style.position,
+          width: style.width,
+          height: style.height,
+          overflowY: style.overflowY,
+        },
+      };
+    };
+
     let queued = false;
     const publish = () => {
       queued = false;
@@ -330,6 +353,15 @@
         const entry = { text: (element.textContent || '').trim() };
         if ('value' in element) entry.value = element.value;
         if ('checked' in element) entry.checked = element.checked;
+        if (element.dataset.cuaId === 'scroll-tall') {
+          // Scroll-event mirrors can lag the actual DOM offset.
+          entry.scrollTop = element.scrollTop;
+          entry.clientHeight = element.clientHeight;
+          // A fixed-height scroller with no height means the page has no
+          // layout; record what the host renderer reports so the harness
+          // can explain the collapse.
+          if (element.clientHeight === 0) entry.layout = collapsedLayout(element);
+        }
         state[element.dataset.cuaId] = entry;
       });
       if (window.cuaE2E?.publishFixtureState) {

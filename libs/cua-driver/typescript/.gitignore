@@ -1,0 +1,5 @@
+dist/
+node_modules/
+src/native/*.dylib
+src/native/*.so
+src/native/*.dll

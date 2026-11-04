@@ -54,3 +54,6 @@ lume config telemetry reset-id
 process. A normal uninstall preserves the preference and pseudonymous installation
 ID so a reinstall is recognized as returning. `uninstall.sh --purge` deletes
 the ID, markers, configuration, cache, and VMs.
+
+See [Telemetry and privacy](../../docs/content/docs/reference/lume/telemetry.mdx)
+for the exact schema-v3 events, integrity controls, and excluded data.

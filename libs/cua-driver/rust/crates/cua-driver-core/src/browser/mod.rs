@@ -1,8 +1,7 @@
 //! Platform-agnostic browser-tool v1 core.
 //!
-//! Five typed tools — `get_browser_state` (strictly read-only),
-//! `browser_prepare`, `browser_navigate`, `browser_click`,
-//! `browser_type` — over an exact-or-refused binding model:
+//! Typed browser inspection, preparation, navigation, input, dialog, upload,
+//! and download tools over an exact-or-refused binding model:
 //!
 //! - The native entrypoint is `pid + window_id`. Browser target ids,
 //!   tab ids, and page refs (`p<snapshot>:<index>`) are opaque,
@@ -36,15 +35,18 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
-pub mod approval;
+mod adapter_support;
 pub mod binding;
 pub mod cdp_ws;
+pub mod download;
 pub mod engine;
 mod grant;
+mod keyed_gates;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod mutation;
 pub mod platform;
+pub mod pointer;
 mod prepare;
 mod reconnect;
 pub mod refusal;
@@ -56,12 +58,17 @@ pub mod types;
 #[cfg(test)]
 mod v2_tests;
 
+pub use adapter_support::{
+    fetch_json_version_ws_url, is_firefox, loopback_websocket_port, parse_devtools_active_port,
+    BrowserCursorTracker,
+};
 pub use engine::BrowserEngine;
 pub use platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareAuthorization, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
-    PrepareSideEffects, PrepareStrategy,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    IsolatedBrowserProcess, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
+    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+    PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{
@@ -73,3 +80,48 @@ pub use types::{
     EndpointOwnershipMethod, EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof,
     NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+
+pub(crate) fn session_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "string",
+        "description": format!(
+            "{} Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+            cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
+        )
+    })
+}
+
+pub(crate) fn required_session_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "string",
+        "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs."
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_session_schema_keeps_naming_and_capability_guidance_together() {
+        let schema = session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("browser session description");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("Browser targets, tabs, and refs"));
+    }
+
+    #[test]
+    fn required_browser_session_schema_does_not_suggest_omission() {
+        let schema = required_session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("required browser session description");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("requires the label"));
+        assert!(!description.contains("Omit it"));
+    }
+}

@@ -17,26 +17,27 @@
 //!    handshake → connection.seat events → seat.bind(capabilities) →
 //!    device.frame + emulate events.
 //! 4. Public API sends commands over a crossbeam-channel and blocks
-//!    until the worker reports the request was flushed to the EIS
-//!    server.
+//!    until EIS acknowledges the preceding input through ei_connection.sync.
 //!
 //! Persistence: ashpd `PersistMode::ExplicitlyRevoked` keeps the user's consent
-//! until they revoke it in desktop settings. The restore token is stored at
-//! `~/.config/cua-driver/libei-persistent.token` and reused across daemon
-//! restarts.
+//! until they revoke it in desktop settings. The restore token is stored via
+//! [`super::portal::RestoreToken::RemoteDesktopInput`] and reused across
+//! daemon restarts.
 //!
-//! Coordinates: ei_pointer_absolute uses LOGICAL PIXELS inside an
-//! announced ei_device.Region — collected between device creation and
-//! the first device.Done event. Multi-monitor: pick the region
-//! containing the target (x, y).
+//! Coordinates: ei_pointer_absolute takes desktop-layout positions that must
+//! lie inside an announced ei_device.Region — collected between device creation
+//! and the first device.Done event. Multi-monitor: the region containing the
+//! target (x, y) selects the device; the point is sent unchanged.
 
+use super::region_route::{route_absolute, RegionRect};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::thread;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use xkbcommon::xkb;
+
+use super::portal::RestoreToken;
 
 /// Buttons the public API exposes. Mapped to evdev codes in the worker
 /// thread so the libei surface only sees evdev integers.
@@ -50,9 +51,9 @@ pub enum Button {
 impl Button {
     fn to_evdev(self) -> u32 {
         match self {
-            Button::Left => 0x110,    // BTN_LEFT
-            Button::Right => 0x111,   // BTN_RIGHT
-            Button::Middle => 0x112,  // BTN_MIDDLE
+            Button::Left => 0x110,   // BTN_LEFT
+            Button::Right => 0x111,  // BTN_RIGHT
+            Button::Middle => 0x112, // BTN_MIDDLE
         }
     }
 }
@@ -137,6 +138,7 @@ enum Cmd {
         to_x: f64,
         to_y: f64,
         steps: u32,
+        duration_ms: u64,
         button: Button,
         reply: Sender<anyhow::Result<()>>,
     },
@@ -146,7 +148,8 @@ enum Cmd {
 static TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 
 fn tx() -> anyhow::Result<&'static Sender<Cmd>> {
-    TX.get().ok_or_else(|| anyhow::anyhow!("libei worker not started; call ensure_started() first"))
+    TX.get()
+        .ok_or_else(|| anyhow::anyhow!("libei worker not started; call ensure_started() first"))
 }
 
 fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
@@ -159,41 +162,6 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
                 anyhow::anyhow!("libei worker reply channel closed")
             }
         })?
-}
-
-fn restore_token_path() -> Option<PathBuf> {
-    let base = dirs::config_dir()?;
-    Some(base.join("cua-driver").join("libei-persistent.token"))
-}
-
-fn read_restore_token() -> Option<String> {
-    let path = restore_token_path()?;
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-}
-
-fn write_restore_token(token: &str) -> anyhow::Result<()> {
-    let path = restore_token_path()
-        .ok_or_else(|| anyhow::anyhow!("no config dir available for libei restore_token"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("failed to create {} for restore_token: {e}", parent.display())
-        })?;
-    }
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| {
-            anyhow::anyhow!("failed to open libei restore_token at {}: {e}", path.display())
-        })?;
-    file.write_all(token.as_bytes()).map_err(|e| {
-        anyhow::anyhow!("failed to write libei restore_token to {}: {e}", path.display())
-    })
 }
 
 /// Spawn the libei worker thread (idempotent — safe to call from every
@@ -250,7 +218,13 @@ pub fn wait_keyboard_ready() -> anyhow::Result<()> {
 pub fn click(x: f64, y: f64, button: Button) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::Click { x, y, button, reply: tx_r })
+    tx()?
+        .send(Cmd::Click {
+            x,
+            y,
+            button,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -260,7 +234,8 @@ pub fn click(x: f64, y: f64, button: Button) -> anyhow::Result<()> {
 pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::MoveAbsolute { x, y, reply: tx_r })
+    tx()?
+        .send(Cmd::MoveAbsolute { x, y, reply: tx_r })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -269,7 +244,12 @@ pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
 pub fn scroll(dx: f64, dy: f64) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::Scroll { dx, dy, reply: tx_r })
+    tx()?
+        .send(Cmd::Scroll {
+            dx,
+            dy,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -279,7 +259,11 @@ pub fn scroll(dx: f64, dy: f64) -> anyhow::Result<()> {
 pub fn type_text(text: &str) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::TypeText { text: text.to_string(), reply: tx_r })
+    tx()?
+        .send(Cmd::TypeText {
+            text: text.to_string(),
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -289,7 +273,11 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 pub fn press_key(keycode: u32) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::PressKey { keycode, reply: tx_r })
+    tx()?
+        .send(Cmd::PressKey {
+            keycode,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -343,6 +331,7 @@ pub fn drag(
     to_x: f64,
     to_y: f64,
     steps: u32,
+    duration_ms: u64,
     button: Button,
 ) -> anyhow::Result<()> {
     ensure_started()?;
@@ -354,6 +343,7 @@ pub fn drag(
             to_x,
             to_y,
             steps,
+            duration_ms,
             button,
             reply: tx_r,
         })
@@ -398,8 +388,8 @@ enum PortalKeepAlive {
 fn worker(rx: Receiver<Cmd>) -> anyhow::Result<()> {
     // Phase 1 — acquire an EIS context (plus, on the portal path, a keep-alive
     // that owns the ashpd RemoteDesktop session + its tokio runtime).
-    let (context, _portal_keepalive) = open_eis_context()
-        .map_err(|e| anyhow::anyhow!("failed to obtain EIS connection: {e}"))?;
+    let (context, _portal_keepalive) =
+        open_eis_context().map_err(|e| anyhow::anyhow!("failed to obtain EIS connection: {e}"))?;
 
     // Phase 2 — handshake. The reis API requires we call context.handshake()
     // and flush before the event loop starts polling.
@@ -446,7 +436,8 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
 
     let (fd, proxy, session) = rt.block_on(async {
-        let proxy = RemoteDesktop::new()
+        let connection = super::portal::fresh_session_connection().await?;
+        let proxy = RemoteDesktop::with_connection(connection)
             .await
             .map_err(|e| anyhow::anyhow!("portal RemoteDesktop proxy unreachable: {e}. Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde."))?;
         let session = proxy
@@ -457,7 +448,7 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         let mut select_opts = SelectDevicesOptions::default()
             .set_devices(BitFlags::<DeviceType>::from(DeviceType::Keyboard) | DeviceType::Pointer)
             .set_persist_mode(PersistMode::ExplicitlyRevoked);
-        if let Some(tok) = read_restore_token() {
+        if let Some(tok) = RestoreToken::RemoteDesktopInput.read() {
             select_opts = select_opts.set_restore_token(Some(tok.as_str()));
         }
 
@@ -481,7 +472,7 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         // skip the dialog for the lifetime of the persistence grant
         // until the user explicitly revokes the grant in desktop settings.
         if let Some(tok) = started.restore_token() {
-            let _ = write_restore_token(tok);
+            let _ = RestoreToken::RemoteDesktopInput.write(tok);
         }
 
         let fd = proxy
@@ -494,7 +485,14 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
     let stream = UnixStream::from(fd);
     let ctx = reis::ei::Context::new(stream)
         .map_err(|e| anyhow::anyhow!("reis ei::Context::new failed: {e}"))?;
-    Ok((ctx, PortalKeepAlive::Portal { _rt: rt, _proxy: proxy, _session: session }))
+    Ok((
+        ctx,
+        PortalKeepAlive::Portal {
+            _rt: rt,
+            _proxy: proxy,
+            _session: session,
+        },
+    ))
 }
 
 // ── calloop dispatch ────────────────────────────────────────────────────
@@ -563,6 +561,16 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
             pending = still;
         }
 
+        state.pending_sync.retain(|_, (reply, sent)| {
+            if sent.elapsed() < std::time::Duration::from_secs(5) {
+                return true;
+            }
+            let _ = reply.send(Err(anyhow::anyhow!(
+                "EIS did not acknowledge input within 5s; delivery is unknown"
+            )));
+            false
+        });
+
         // The handle_command path may have queued frame() requests; flush
         // them once per loop iteration so the EIS server sees them.
         if let Some(ctx) = state.context.as_ref() {
@@ -576,6 +584,8 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
 #[derive(Default)]
 struct EisState {
     context: Option<reis::ei::Context>,
+    connection: Option<reis::ei::Connection>,
+    pending_sync: HashMap<reis::ei::Callback, (Sender<anyhow::Result<()>>, std::time::Instant)>,
     seats: HashMap<reis::ei::Seat, SeatData>,
     devices: HashMap<reis::ei::Device, DeviceData>,
     sequence: u32,
@@ -599,29 +609,6 @@ struct EisState {
 #[derive(Default)]
 struct SeatData {
     capabilities: HashMap<String, u64>,
-}
-
-/// One announced ei_device::Region — a single monitor's pixel rectangle
-/// inside the seat's logical coordinate space. Multi-monitor sessions
-/// announce one Region per output; we route each absolute (x, y) to the
-/// region containing it so the cursor lands on the correct monitor.
-#[derive(Clone, Copy, Debug)]
-struct RegionRect {
-    offset_x: f32,
-    offset_y: f32,
-    width: f32,
-    height: f32,
-}
-
-impl RegionRect {
-    fn contains(&self, x: f64, y: f64) -> bool {
-        let xf = x as f32;
-        let yf = y as f32;
-        xf >= self.offset_x
-            && xf < self.offset_x + self.width
-            && yf >= self.offset_y
-            && yf < self.offset_y + self.height
-    }
 }
 
 #[derive(Default)]
@@ -693,17 +680,25 @@ impl EisState {
                     handshake.finish();
                 }
             }
-            Event::Connection(_conn, ev) => match ev {
-                reis::ei::connection::Event::Seat { seat } => {
-                    self.seats.insert(seat, SeatData::default());
+            Event::Callback(callback, reis::ei::callback::Event::Done { .. }) => {
+                if let Some((reply, _)) = self.pending_sync.remove(&callback) {
+                    let _ = reply.send(Ok(()));
                 }
-                // The EIS server pings to check liveness; failing to answer
-                // makes it drop the connection. Mirror reis's examples.
-                reis::ei::connection::Event::Ping { ping } => {
-                    ping.done(0);
+            }
+            Event::Connection(conn, ev) => {
+                self.connection = Some(conn);
+                match ev {
+                    reis::ei::connection::Event::Seat { seat } => {
+                        self.seats.insert(seat, SeatData::default());
+                    }
+                    // The EIS server pings to check liveness; failing to answer
+                    // makes it drop the connection. Mirror reis's examples.
+                    reis::ei::connection::Event::Ping { ping } => {
+                        ping.done(0);
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             Event::Seat(seat, ev) => {
                 let data = self.seats.entry(seat.clone()).or_default();
                 match ev {
@@ -751,9 +746,16 @@ impl EisState {
                         data.device_type = Some(device_type);
                     }
                     reis::ei::device::Event::Interface { object } => {
-                        data.interfaces.insert(object.interface().to_owned(), object);
+                        data.interfaces
+                            .insert(object.interface().to_owned(), object);
                     }
-                    reis::ei::device::Event::Region { offset_x, offset_y, width, hight, scale: _ } => {
+                    reis::ei::device::Event::Region {
+                        offset_x,
+                        offset_y,
+                        width,
+                        hight,
+                        scale: _,
+                    } => {
                         // reis 0.7 keeps the misspelled "hight" field name
                         // for ABI compatibility — see the protocol comment.
                         if width > 0 && hight > 0 {
@@ -868,8 +870,7 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
-        const DEVICE_QUIET_PERIOD: std::time::Duration =
-            std::time::Duration::from_millis(200);
+        const DEVICE_QUIET_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
         if self
             .last_device_event
             .is_none_or(|last| last.elapsed() < DEVICE_QUIET_PERIOD)
@@ -895,17 +896,36 @@ impl EisState {
 
     fn handle_command(&mut self, cmd: Cmd) {
         let result = self.run_command(&cmd);
-        // Send the reply on whichever channel this command carries.
-        match cmd {
-            Cmd::WaitReady { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Click { reply, .. } => { let _ = reply.send(result); }
-            Cmd::MoveAbsolute { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Scroll { reply, .. } => { let _ = reply.send(result); }
-            Cmd::TypeText { reply, .. } => { let _ = reply.send(result); }
-            Cmd::PressKey { reply, .. } => { let _ = reply.send(result); }
-            Cmd::KeySequence { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Drag { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Shutdown => {}
+        let needs_sync = !matches!(cmd, Cmd::WaitReady { .. });
+        let reply = match cmd {
+            Cmd::WaitReady { reply, .. }
+            | Cmd::Click { reply, .. }
+            | Cmd::MoveAbsolute { reply, .. }
+            | Cmd::Scroll { reply, .. }
+            | Cmd::TypeText { reply, .. }
+            | Cmd::PressKey { reply, .. }
+            | Cmd::KeySequence { reply, .. }
+            | Cmd::Drag { reply, .. } => reply,
+            Cmd::Shutdown => return,
+        };
+        if result.is_ok() && needs_sync {
+            if let (Some(connection), Some(context)) = (&self.connection, &self.context) {
+                // A socket flush is not delivery. Hold the caller's focus guard
+                // until EIS acknowledges all preceding input frames.
+                let callback = connection.sync(1);
+                if let Err(error) = context.flush() {
+                    let _ = reply.send(Err(error.into()));
+                    return;
+                }
+                self.pending_sync
+                    .insert(callback, (reply, std::time::Instant::now()));
+            } else {
+                let _ = reply.send(Err(anyhow::anyhow!(
+                    "EIS connection unavailable for input acknowledgement"
+                )));
+            }
+        } else {
+            let _ = reply.send(result);
         }
     }
 
@@ -917,12 +937,13 @@ impl EisState {
                 })?;
             }
             Cmd::Click { x, y, button, .. } => {
-                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
+                let device = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
-                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let ptr_abs =
+                    require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
 
-                ptr_abs.motion_absolute(rel_x, rel_y);
+                ptr_abs.motion_absolute(*x as f32, *y as f32);
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
                 device.frame(serial, event_time_us());
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
@@ -934,56 +955,67 @@ impl EisState {
                 to_x,
                 to_y,
                 steps,
+                duration_ms,
                 button,
                 ..
             } => {
-                let (device, from_rx, from_ry) = self.pointer_device_for(*from_x, *from_y)?;
+                let device = self.pointer_device_for(*from_x, *from_y)?;
                 let serial = self.last_serial;
                 let ptr_abs =
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
-                // Map the drag end into the SAME device's region (a single EIS
-                // emulation session can't span devices). Fall back to the start
-                // region's offset when no region of this device contains the end
-                // (single-region device, or a point just off-screen) — this is
-                // correct only within one region, but avoids the cross-monitor
-                // mis-mapping of blindly reusing the start offset.
-                let (to_rx, to_ry) =
-                    self.region_local_on(&device, *to_x, *to_y).unwrap_or_else(|| {
-                        let off_x = *from_x as f32 - from_rx;
-                        let off_y = *from_y as f32 - from_ry;
-                        (*to_x as f32 - off_x, *to_y as f32 - off_y)
-                    });
+                // A single EIS emulation session can't span devices: the end
+                // must lie in a region of the device the start resolved to.
+                let regions = self
+                    .devices
+                    .get(&device)
+                    .map(|d| d.regions.as_slice())
+                    .unwrap_or_default();
+                route_absolute([((), regions)], *to_x, *to_y)?;
+                let (from_rx, from_ry) = (*from_x as f32, *from_y as f32);
+                let (to_rx, to_ry) = (*to_x as f32, *to_y as f32);
 
                 ptr_abs.motion_absolute(from_rx, from_ry);
                 device.frame(serial, event_time_us());
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
                 device.frame(serial, event_time_us());
+                if let Some(context) = self.context.as_ref() {
+                    let _ = context.flush();
+                }
                 // Bound the interpolation: run_command executes synchronously in
                 // the worker loop, so a huge step count would block EIS event
                 // processing (incl. Ping) and balloon the unflushed request queue.
                 let n = (*steps).max(1).min(500);
+                let delay = drag_step_delay(*duration_ms, n);
                 for s in 1..=n {
                     let t = s as f32 / n as f32;
                     let ix = from_rx + (to_rx - from_rx) * t;
                     let iy = from_ry + (to_ry - from_ry) * t;
                     ptr_abs.motion_absolute(ix, iy);
                     device.frame(serial, event_time_us());
+                    if let Some(context) = self.context.as_ref() {
+                        let _ = context.flush();
+                    }
+                    if !delay.is_zero() {
+                        crate::interaction::pause(delay);
+                    }
                 }
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
                 device.frame(serial, event_time_us());
             }
             Cmd::MoveAbsolute { x, y, .. } => {
-                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
+                let device = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
-                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let ptr_abs =
+                    require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
 
-                ptr_abs.motion_absolute(rel_x, rel_y);
+                ptr_abs.motion_absolute(*x as f32, *y as f32);
                 device.frame(serial, event_time_us());
             }
             Cmd::Scroll { dx, dy, .. } => {
-                let device = self.device_with_interface("ei_scroll")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_scroll").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let scroll = require_device_interface::<reis::ei::Scroll>(&self.devices, &device)?;
 
@@ -999,16 +1031,20 @@ impl EisState {
                 // support needs an xkb keymap, like reis's type-text example).
                 if let Some(device) = self.device_with_interface("ei_text") {
                     let serial = self.last_serial;
-                    let text_iface = require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
+                    let text_iface =
+                        require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
                     text_iface.utf8(text);
                     device.frame(serial, event_time_us());
                 } else {
                     use reis::ei::keyboard::KeyState;
                     let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
-                        anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                        anyhow::anyhow!(
+                            "no EIS keyboard device negotiated yet — wait for handshake"
+                        )
                     })?;
                     let serial = self.last_serial;
-                    let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+                    let kb =
+                        require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
                     let shift_code = self.keymap_shift.unwrap_or(42);
                     let mut skipped = 0usize;
                     for ch in text.chars() {
@@ -1049,8 +1085,9 @@ impl EisState {
                 }
             }
             Cmd::PressKey { keycode, .. } => {
-                let device = self.device_with_interface("ei_keyboard")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
 
@@ -1060,8 +1097,9 @@ impl EisState {
                 device.frame(serial, event_time_us());
             }
             Cmd::KeySequence { transitions, .. } => {
-                let device = self.device_with_interface("ei_keyboard")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
 
@@ -1086,49 +1124,29 @@ impl EisState {
         Ok(())
     }
 
-    /// Pick a pointer device whose announced Region contains `(x, y)`,
-    /// and translate the absolute screen coordinates into the device's
-    /// region-local pixel coordinates.
-    ///
-    /// Multi-monitor seats announce one Region per output; routing each
-    /// (x, y) by containment is what lets a click on monitor #2 actually
-    /// land on monitor #2. When no device's region contains the point —
-    /// e.g. coords just past the edge of an output, or a session with
-    /// a single device that hasn't announced any regions yet — we fall
-    /// back to the first pointer device with the raw coordinates, which
-    /// matches the pre-multi-monitor behaviour.
-    fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<(reis::ei::Device, f32, f32)> {
-        // Absolute motion needs the device that actually carries
-        // ei_pointer_absolute — Mutter/KWin split the relative and absolute
-        // pointers onto separate devices, and only one of them accepts an
-        // absolute warp.
-        for (device, data) in self.devices.iter() {
-            if !data.resumed || !data.interfaces.contains_key("ei_pointer_absolute") {
-                continue;
-            }
-            for region in &data.regions {
-                if region.contains(x, y) {
-                    let rel_x = x as f32 - region.offset_x;
-                    let rel_y = y as f32 - region.offset_y;
-                    return Ok((device.clone(), rel_x, rel_y));
-                }
-            }
+    /// Pick the absolute-pointer device whose announced Region contains
+    /// `(x, y)`. The region only selects the device: coordinates are
+    /// desktop-layout positions and are sent to EIS unchanged. When regions
+    /// were announced but none contains the point this is an error, since EIS
+    /// would silently drop the motion. Only when no region was announced at all
+    /// does it fall back to the first absolute-pointer device.
+    fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<reis::ei::Device> {
+        // Mutter/KWin split the relative and absolute pointers onto separate
+        // devices, and only the absolute one accepts an absolute warp.
+        let candidates = self
+            .devices
+            .iter()
+            .filter(|(_, data)| data.resumed && data.interfaces.contains_key("ei_pointer_absolute"))
+            .map(|(device, data)| (device, data.regions.as_slice()));
+        if let Some(device) = route_absolute(candidates, x, y)? {
+            return Ok(device.clone());
         }
-        // Fallback: first absolute-pointer device, raw coords (single-region).
-        let device = self.device_with_interface("ei_pointer_absolute")
-            .ok_or_else(|| anyhow::anyhow!("no EIS absolute-pointer device negotiated yet — wait for handshake"))?;
-        Ok((device, x as f32, y as f32))
-    }
-
-    /// Region-local coordinates for absolute `(x, y)` within one of `device`'s
-    /// announced regions, or `None` when no region of that device contains the
-    /// point. Used to map a drag endpoint into the same device the drag start
-    /// resolved to (a single EIS emulation session can't span devices).
-    fn region_local_on(&self, device: &reis::ei::Device, x: f64, y: f64) -> Option<(f32, f32)> {
-        let data = self.devices.get(device)?;
-        data.regions.iter().find(|r| r.contains(x, y)).map(|r| {
-            (x as f32 - r.offset_x, y as f32 - r.offset_y)
-        })
+        self.device_with_interface("ei_pointer_absolute")
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no EIS absolute-pointer device negotiated yet — wait for handshake"
+                )
+            })
     }
 
     /// The negotiated device that exposes `iface` (e.g. `ei_pointer_absolute`,
@@ -1140,13 +1158,10 @@ impl EisState {
     fn device_with_interface(&self, iface: &str) -> Option<reis::ei::Device> {
         self.devices
             .iter()
-            .filter(|(_, data)| {
-                data.resumed && data.interfaces.contains_key(iface)
-            })
+            .filter(|(_, data)| data.resumed && data.interfaces.contains_key(iface))
             .max_by_key(|(_, data)| data.resumed_serial.unwrap_or(0))
             .map(|(d, _)| d.clone())
     }
-
 }
 
 /// Map a character to a US-layout evdev keycode + whether Shift is needed.
@@ -1254,11 +1269,184 @@ fn device_interface<T: reis::Interface>(
     devices: &HashMap<reis::ei::Device, DeviceData>,
     device: &reis::ei::Device,
 ) -> Option<T> {
-    devices.get(device)?
+    devices
+        .get(device)?
         .interfaces
         .get(T::NAME)?
         .clone()
         .downcast()
+}
+
+fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
+    let frames = u64::from(steps.max(1).min(500));
+    std::time::Duration::from_micros(
+        duration_ms
+            .min(10_000)
+            .saturating_mul(1_000)
+            .checked_div(frames)
+            .unwrap_or(0),
+    )
+}
+
+#[cfg(test)]
+pub(super) mod local_eis {
+    use super::*;
+    use reis::enumflags2::BitFlags;
+    use reis::handshake::EisHandshaker;
+    use reis::request::{DeviceCapability, EisRequest, EisRequestConverter};
+    use reis::PendingRequestResult;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub(in crate::wayland) enum Emitted {
+        Motion(String, f32, f32),
+        Button(u32, bool),
+        Scroll(f32, f32),
+    }
+
+    const DEVICES: [(&str, &[u32]); 2] = [("wide", &[0, 3840]), ("far", &[10_000])];
+
+    type Log = Arc<Mutex<Vec<Emitted>>>;
+
+    struct Server {
+        ctx: reis::eis::Context,
+        handshaker: Option<EisHandshaker>,
+        converter: Option<EisRequestConverter>,
+        devices: Vec<reis::request::Device>,
+        log: Log,
+    }
+
+    impl Server {
+        fn pump(&mut self) {
+            if self.ctx.read().is_err() {
+                return;
+            }
+            while let Some(PendingRequestResult::Request(request)) = self.ctx.pending_request() {
+                if let Some(handshaker) = self.handshaker.as_mut() {
+                    if let Some(resp) = handshaker.handle_request(request).unwrap() {
+                        let converter = EisRequestConverter::new(&self.ctx, resp, 1);
+                        let _ = converter.handle().add_seat(
+                            Some("seat"),
+                            DeviceCapability::PointerAbsolute
+                                | DeviceCapability::Button
+                                | DeviceCapability::Scroll,
+                        );
+                        self.converter = Some(converter);
+                        self.handshaker = None;
+                    }
+                    continue;
+                }
+                let converter = self.converter.as_mut().unwrap();
+                converter.handle_request(request).unwrap();
+                let requests: Vec<_> = std::iter::from_fn(|| converter.next_request()).collect();
+                for request in requests {
+                    self.record(request);
+                }
+            }
+            let _ = self.ctx.flush();
+        }
+
+        fn record(&mut self, request: EisRequest) {
+            let mut log = self.log.lock().unwrap();
+            match request {
+                EisRequest::Bind(bind) => {
+                    for (name, offsets) in DEVICES {
+                        let device = bind.seat.add_device(
+                            Some(name),
+                            reis::eis::device::DeviceType::Virtual,
+                            BitFlags::from(DeviceCapability::PointerAbsolute)
+                                | DeviceCapability::Button
+                                | DeviceCapability::Scroll,
+                            |device| {
+                                for &x in offsets {
+                                    device.device().region(x, 0, 3840, 2160, 1.0);
+                                }
+                            },
+                        );
+                        device.resumed();
+                        self.devices.push(device);
+                    }
+                }
+                EisRequest::PointerMotionAbsolute(m) => log.push(Emitted::Motion(
+                    m.device.name().unwrap_or_default().to_owned(),
+                    m.dx_absolute,
+                    m.dy_absolute,
+                )),
+                EisRequest::Button(b) => log.push(Emitted::Button(
+                    b.button,
+                    b.state == reis::eis::button::ButtonState::Press,
+                )),
+                EisRequest::ScrollDelta(s) => log.push(Emitted::Scroll(s.dx, s.dy)),
+                _ => {}
+            }
+        }
+    }
+
+    struct Fixture {
+        log: Log,
+        gate: Mutex<()>,
+    }
+
+    fn install() -> &'static Fixture {
+        use std::os::unix::net::UnixStream;
+        static FIXTURE: OnceLock<Fixture> = OnceLock::new();
+        FIXTURE.get_or_init(|| {
+            let log = Log::default();
+            let (tx, rx) = bounded::<Cmd>(64);
+            assert!(TX.set(tx).is_ok(), "real libei worker already started");
+            let (client_end, server_end) = UnixStream::pair().unwrap();
+            let mut client = reis::ei::Context::new(client_end).unwrap();
+            let ctx = reis::eis::Context::new(server_end).unwrap();
+            let handshaker = EisHandshaker::new(&ctx, 1);
+            let mut server = Server {
+                ctx,
+                handshaker: Some(handshaker),
+                converter: None,
+                devices: Vec::new(),
+                log: log.clone(),
+            };
+            thread::spawn(move || {
+                let mut state = EisState::default();
+                let _ = client.handshake();
+                let _ = client.flush();
+                loop {
+                    server.pump();
+                    let _ = state.handle_eis_readable(&mut client);
+                    let resumed = state.devices.values().filter(|d| d.resumed).count();
+                    if resumed == DEVICES.len() {
+                        match rx.try_recv() {
+                            Ok(Cmd::Shutdown)
+                            | Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                            Ok(cmd) => state.handle_command(cmd),
+                            Err(_) => {}
+                        }
+                    }
+                    state
+                        .pending_sync
+                        .retain(|_, (_, sent)| sent.elapsed().as_secs() < 5);
+                    thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            Fixture {
+                log,
+                gate: Mutex::new(()),
+            }
+        })
+    }
+
+    /// Run `f` against a local EIS server and return what the server received
+    /// from it. A trailing barrier motion guarantees events from commands that
+    /// failed early are not still in flight when the log is read.
+    pub(in crate::wayland) fn record<R>(f: impl FnOnce() -> R) -> (R, Vec<Emitted>) {
+        let fixture = install();
+        let _gate = fixture.gate.lock().unwrap_or_else(|e| e.into_inner());
+        fixture.log.lock().unwrap().clear();
+        let result = f();
+        move_absolute(1.0, 1.0).unwrap();
+        let mut events = std::mem::take(&mut *fixture.log.lock().unwrap());
+        assert!(matches!(events.pop(), Some(Emitted::Motion(_, x, y)) if x == 1.0 && y == 1.0));
+        (result, events)
+    }
 }
 
 #[cfg(test)]
@@ -1285,6 +1473,14 @@ mod tests {
     }
 
     #[test]
+    fn drag_duration_is_distributed_across_motion_frames() {
+        let delay = drag_step_delay(500, 30);
+        assert_eq!(delay, std::time::Duration::from_micros(16_666));
+        assert!(delay.saturating_mul(30) <= std::time::Duration::from_millis(500));
+        assert_eq!(drag_step_delay(0, 30), std::time::Duration::from_millis(0));
+    }
+
+    #[test]
     fn key_sequence_preserves_transition_order_and_assigns_frames() {
         let transitions = [
             KeyTransition::Press(29),
@@ -1307,5 +1503,84 @@ mod tests {
                 (KeyTransition::Release(29), 3),
             ]
         );
+    }
+
+    use local_eis::{record, Emitted};
+
+    fn motion(device: &str, x: f32, y: f32) -> Emitted {
+        Emitted::Motion(device.into(), x, y)
+    }
+
+    const LEFT: u32 = 0x110;
+
+    #[test]
+    fn click_on_second_monitor_sends_layout_coordinate_unchanged() {
+        let (result, events) = record(|| click(6237.0, 1014.0, Button::Left));
+        result.unwrap();
+        assert_eq!(
+            events,
+            vec![
+                motion("wide", 6237.0, 1014.0),
+                Emitted::Button(LEFT, true),
+                Emitted::Button(LEFT, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn click_routes_to_the_device_owning_the_region() {
+        let (result, events) = record(|| click(11_000.0, 50.0, Button::Left));
+        result.unwrap();
+        assert_eq!(events[0], motion("far", 11_000.0, 50.0));
+    }
+
+    #[test]
+    fn move_sends_layout_coordinate_unchanged_and_origin_literally() {
+        let (result, events) = record(|| move_absolute(6237.0, 1014.0));
+        result.unwrap();
+        assert_eq!(events, vec![motion("wide", 6237.0, 1014.0)]);
+
+        let (result, events) = record(|| move_absolute(0.0, 0.0));
+        result.unwrap();
+        assert_eq!(events, vec![motion("wide", 0.0, 0.0)]);
+    }
+
+    #[test]
+    fn drag_across_regions_of_one_device_holds_button_over_unchanged_endpoints() {
+        let (result, events) = record(|| drag(0.0, 0.0, 6237.0, 1014.0, 4, 0, Button::Left));
+        result.unwrap();
+        assert_eq!(events.first(), Some(&motion("wide", 0.0, 0.0)));
+        assert_eq!(events[1], Emitted::Button(LEFT, true));
+        assert_eq!(events[events.len() - 2], motion("wide", 6237.0, 1014.0));
+        assert_eq!(events.last(), Some(&Emitted::Button(LEFT, false)));
+        assert_eq!(events.len(), 2 + 1 + 4 + 1 - 1);
+    }
+
+    #[test]
+    fn drag_endpoint_outside_selected_device_fails_before_any_event() {
+        let (result, events) = record(|| drag(100.0, 100.0, 11_000.0, 100.0, 4, 0, Button::Left));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "libei: (11000, 100) lies outside every announced pointer region"
+        );
+        assert_eq!(events, vec![]);
+    }
+
+    #[test]
+    fn pointer_commands_outside_every_region_fail_before_any_event() {
+        let (result, events) = record(|| {
+            (
+                click(8000.0, 100.0, Button::Left),
+                move_absolute(8000.0, 100.0),
+                drag(8000.0, 100.0, 100.0, 100.0, 4, 0, Button::Left),
+            )
+        });
+        for r in [result.0, result.1, result.2] {
+            assert_eq!(
+                r.unwrap_err().to_string(),
+                "libei: (8000, 100) lies outside every announced pointer region"
+            );
+        }
+        assert_eq!(events, vec![]);
     }
 }

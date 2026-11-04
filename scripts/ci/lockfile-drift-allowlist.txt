@@ -1,0 +1,4 @@
+# Lockfiles whose drift scripts/ci/check-lockfiles.sh reports as a warning
+# instead of failing, one repository-relative path per line. Keep this empty:
+# an entry only flags that path for its owner, and the check fails once a
+# listed lockfile is clean, so the entry is removed with the fix.

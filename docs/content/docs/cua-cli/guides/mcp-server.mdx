@@ -1,0 +1,96 @@
+---
+title: Connect an agent over MCP
+description: 'Serve Spaces, sandbox, computer and skills tools to an AI client with cua mcp or cua daemon mcp, and grant only the permissions it needs.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua mcp` is an MCP server, over stdio, that gives an AI client the Spaces tools
+plus sandbox, computer and skills tools. `cua daemon mcp` is the same server
+running through `cua daemon` (started if needed), so several agents can share
+Spaces, streams and sandboxes. To control the machine the agent itself runs on,
+use [Cua Driver](/cua-driver/quickstart) instead.
+
+```bash skip="third-party-cli"
+claude mcp add cua -- cua daemon mcp
+claude mcp add cua -- cua mcp --sandbox dev --permissions sandbox:readonly,computer:all
+```
+
+`cua connect setup` adds this entry for the agents it detects. `--sandbox`
+(`CUA_SANDBOX`) sets the default sandbox for the computer tools, and each call
+can pass its own `sandbox`. Every tool is listed in
+[MCP tools](/cua-cli/reference/mcp-tools).
+
+## Supported agents
+
+`cua connect setup --agents <id>` installs the cua skills and adds the `cua`
+server to these user-level configs. It keeps your other servers and comments,
+and `cua connect remove` takes out only what cua added for Cua Spaces: the `cua`
+server and the Cua Spaces skills. Cua Driver's `cua-driver` server and skill stay
+(`--include-cua-driver` removes them too), and `cua connect remove --dry-run` lists
+exactly what it would remove.
+
+| Agent | id | Skills | MCP config |
+|-------|----|--------|------------|
+| Claude Code | `claude-code` | `~/.claude/skills` | `~/.claude.json` |
+| OpenAI Codex | `codex` | `~/.agents/skills` | `~/.codex/config.toml` |
+| Cursor | `cursor` | `~/.agents/skills` | `~/.cursor/mcp.json` |
+| Gemini CLI | `gemini-cli` | `~/.agents/skills` | `~/.gemini/settings.json` |
+| Cline | `cline` | `~/.cline/skills` | `~/.cline/data/settings/cline_mcp_settings.json` |
+| Kiro | `kiro` | `~/.kiro/skills` | `~/.kiro/settings/mcp.json` |
+| OpenClaw | `openclaw` | `~/.agents/skills` | `~/.openclaw/openclaw.json` |
+| OpenCode | `opencode` | `~/.agents/skills` | `~/.config/opencode/opencode.json` |
+| Pi | `pi` | `~/.agents/skills` | none (Pi has no MCP) |
+| Windsurf (Devin Desktop) | `windsurf` | `~/.agents/skills` | `~/.config/devin/mcp_config.json` |
+| GitHub Copilot CLI | `copilot-cli` | `~/.agents/skills` | `~/.copilot/mcp-config.json` |
+| Amp | `amp` | `~/.agents/skills` | `~/.config/amp/settings.json` |
+| Goose | `goose` | `~/.agents/skills` | `~/.config/goose/config.yaml` |
+| Zed | `zed` | `~/.agents/skills` | `~/.config/zed/settings.json` |
+| VS Code (Copilot agent mode) | `vscode` | `~/.agents/skills` | `mcp.json` in the Code user folder |
+| Google Antigravity | `antigravity` | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` |
+| Hermes Agent (Nous Research) | `hermes` | `~/.hermes/skills` | `~/.hermes/config.yaml` (`mcp_servers`) |
+| T3 Code | `t3code` | `~/.agents/skills` | Codex's `~/.codex/config.toml` (`mcp_servers`): T3 Code runs Codex |
+
+Agent home overrides are honored (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+`HERMES_HOME`, ...). On Windows, Hermes lives in `%LOCALAPPDATA%\hermes`.
+Start a new Hermes session (or run `/reload-mcp`) to load the server.
+
+## Permissions
+
+`--permissions` (`CUA_MCP_PERMISSIONS`) takes a comma-separated list of
+`group:action` strings and groups. The server lists only the tools you grant and
+refuses the rest.
+
+| Group | Expands to |
+|-------|-----------|
+| `all` | Everything. |
+| `spaces:all`, `spaces:readonly` | Every Spaces tool, or the read-only ones (`list_spaces`, `download`, `agent_status`, ...). |
+| `sandbox:all` | `sandbox:list`, `create`, `delete`, `start`, `stop`, `restart`, `suspend`, `get`, `view` |
+| `sandbox:readonly` | `sandbox:list`, `sandbox:get` |
+| `computer:all` | `computer:screenshot`, `click`, `type`, `key`, `scroll`, `drag`, `hotkey`, `clipboard`, `file`, `shell`, `window`, `accessibility` |
+| `computer:readonly` | `computer:screenshot` |
+| `skills:all`, `skills:readonly` | `skills:list`, `read`, `record`, `delete`, or only `list` and `read` |
+
+<Callout type="warn">
+  Only an empty list grants everything. An unknown permission is skipped with a
+  warning; if nothing valid remains no tools are registered, so a typo fails
+  closed.
+</Callout>
+
+## Choose a grant
+
+`computer:shell`, `computer:file`, `spaces:space_bash` and `spaces:teleport_app`
+run commands, touch files or use your app sessions in the target.
+`sandbox:delete` and `spaces:delete_space` destroy sandboxes.
+
+| Intent | Grant |
+|--------|-------|
+| Look, not touch | `sandbox:readonly,computer:readonly,spaces:readonly` |
+| Drive a UI without a shell | `computer:screenshot,computer:click,computer:type,computer:key,computer:scroll` |
+| Automate one sandbox | `computer:all` with `--sandbox <name>` |
+| Spaces agent | `spaces:all` |
+
+Computer-tool coordinates are in the pixel space of the last
+`computer_screenshot` (capped at 1200 px on the long edge). Spaces tools that
+need cua-spacesd return `capability_missing` on images without it; see
+[Use Spaces from an agent](/spaces/guides/connect-your-agent#what-your-agent-can-do).

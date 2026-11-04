@@ -2,17 +2,10 @@
 Computer handler factory and interface definitions.
 
 This module provides a factory function to create computer handlers from different
-computer interface types, supporting both the ComputerHandler protocol and the
-Computer library interface.
+computer interface types, supporting the AsyncComputerHandler protocol, cua-sandbox
+``Sandbox`` instances, and dicts of callables. To control the local machine,
+use cua-driver (its SDK or MCP server).
 """
-
-try:
-    from computer import Computer as cuaComputer
-
-    from .cua import cuaComputerHandler
-except ImportError:
-    cuaComputer = None  # type: ignore[assignment,misc]
-    cuaComputerHandler = None  # type: ignore[assignment]
 
 try:
     from cua_sandbox import Sandbox as cuaSandbox
@@ -24,14 +17,17 @@ from .custom import CustomComputerHandler
 from .sandbox import SandboxComputerHandler
 
 
+def _is_sandbox_like(computer) -> bool:
+    return cuaSandbox is not None and isinstance(computer, cuaSandbox)
+
+
 def is_agent_computer(computer):
-    """Check if the given computer is a ComputerHandler or Cua Computer."""
+    """Check if the given computer is a ComputerHandler, cua-sandbox Sandbox or dict."""
     return (
         isinstance(computer, AsyncComputerHandler)
-        or (cuaComputer is not None and isinstance(computer, cuaComputer))
-        or (cuaSandbox is not None and isinstance(computer, cuaSandbox))
-        or (isinstance(computer, dict))
-    )  # and "screenshot" in computer)
+        or _is_sandbox_like(computer)
+        or isinstance(computer, dict)
+    )
 
 
 async def make_computer_handler(computer):
@@ -39,8 +35,8 @@ async def make_computer_handler(computer):
     Create a computer handler from a computer interface.
 
     Args:
-        computer: Either a ComputerHandler instance, Computer instance,
-                  Sandbox instance, or dict of functions
+        computer: Either a ComputerHandler instance, a cua-sandbox ``Sandbox``
+                  instance, or dict of functions
 
     Returns:
         ComputerHandler: A computer handler instance
@@ -50,11 +46,7 @@ async def make_computer_handler(computer):
     """
     if isinstance(computer, AsyncComputerHandler):
         return computer
-    if cuaComputer is not None and isinstance(computer, cuaComputer):
-        computer_handler = cuaComputerHandler(computer)
-        await computer_handler._initialize()
-        return computer_handler
-    if cuaSandbox is not None and isinstance(computer, cuaSandbox):
+    if _is_sandbox_like(computer):
         return SandboxComputerHandler(computer)
     if isinstance(computer, dict):
         return CustomComputerHandler(computer)

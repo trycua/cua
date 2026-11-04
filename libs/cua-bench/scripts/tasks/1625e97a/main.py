@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 1625e97a-b9b2-4e00-bacc-389cab5e5640."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 kΩ series resistor across the 5V output to indicate when the supply is active. Add a 1 kΩ minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.''',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="""Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 kΩ series resistor across the 5V output to indicate when the supply is active. Add a 1 kΩ minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.""",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_votage regulator_circuit/kicad_votage regulator_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_votage regulator_circuit/kicad_votage regulator_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

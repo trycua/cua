@@ -25,7 +25,7 @@ pub const TERMINAL_WM_CLASS_SUBSTRINGS: &[&str] = &[
     "iterm",
     "kitty",
     "konsole",
-    "terminal",   // catches "Terminal", "xfce4-terminal-window", etc.
+    "terminal", // catches "Terminal", "xfce4-terminal-window", etc.
     "tilix",
     "wezterm",
     "xterm",
@@ -50,7 +50,7 @@ pub const TERMINAL_PROCESS_NAMES: &[&str] = &[
 /// Returns `true` if `process_name` is a known terminal emulator
 /// binary name.
 pub fn is_terminal_process_name(process_name: &str) -> bool {
-    TERMINAL_PROCESS_NAMES.iter().any(|n| *n == process_name)
+    TERMINAL_PROCESS_NAMES.contains(&process_name)
 }
 
 /// Returns `true` if either the instance or class field of `WM_CLASS`
@@ -91,25 +91,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_names_match_documented_terminals() {
-        for n in TERMINAL_PROCESS_NAMES {
+    fn known_terminal_process_names_match() {
+        // Literal names, not the helper's own table: Ghostty was the report's
+        // primary regression.
+        for n in ["ghostty", "alacritty", "kitty", "konsole", "xterm"] {
             assert!(
                 is_terminal_process_name(n),
-                "documented terminal process {n:?} must match"
+                "terminal process {n:?} must match"
             );
         }
     }
 
     #[test]
     fn rejects_non_terminal_process_names() {
-        for n in [
-            "firefox",
-            "code",
-            "chrome",
-            "nautilus",
-            "gedit",
-            "",
-        ] {
+        for n in ["firefox", "code", "chrome", "nautilus", "gedit", ""] {
             assert!(
                 !is_terminal_process_name(n),
                 "non-terminal {n:?} must not match"
@@ -124,11 +119,13 @@ mod tests {
             ("alacritty", "Alacritty"),
             ("kitty", "kitty"),
             ("ghostty", "Ghostty"),
+            ("Ghostty", ""),
+            ("", "ghostty"),
             ("Konsole", "konsole"),
             ("gnome-terminal-server", "Gnome-terminal"),
             ("xterm", "XTerm"),
             ("tilix", "Tilix"),
-            ("iterm", "iTerm"),  // hypothetical port, but the substring matters
+            ("iterm", "iTerm"), // hypothetical port, but the substring matters
         ] {
             assert!(
                 wm_class_matches_terminal(instance, class),
@@ -152,15 +149,5 @@ mod tests {
                 "WM_CLASS=({instance:?}, {class:?}) must not match a terminal"
             );
         }
-    }
-
-    #[test]
-    fn ghostty_matches() {
-        // Spot-check Ghostty across casing / field positions — that was
-        // the report's primary regression.
-        assert!(wm_class_matches_terminal("ghostty", "Ghostty"));
-        assert!(wm_class_matches_terminal("Ghostty", ""));
-        assert!(wm_class_matches_terminal("", "ghostty"));
-        assert!(is_terminal_process_name("ghostty"));
     }
 }

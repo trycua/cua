@@ -68,7 +68,6 @@ impl Tool for GetConfigTool {
         // response reflects whatever set_config (or a direct JSON edit)
         // last wrote.
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
-        let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
         ToolResult::text("cua-driver-rs configuration").with_structured(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             // Maintainer E2E builds set this at compile time so the
@@ -77,15 +76,16 @@ impl Tool for GetConfigTool {
             // sharing its package version.
             "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "macos",
-            // capture_mode is a per-call param; capture_scope is a global
-            // setting that gates get_desktop_state.
+            // capture_mode is deprecated; capture_scope is retired from
+            // persistent config. Actions select a target per call.
             "max_image_dimension": max_image_dimension,
-            "capture_scope": capture_scope,
             "agent_cursor": {
                 "enabled": cursor_enabled,
             },
+            "cursor": cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry,
+            "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }
 }

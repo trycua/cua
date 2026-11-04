@@ -19,12 +19,15 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use indexmap::IndexMap;
 use serde::Serialize;
 use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::SemanticDocument;
-use super::types::{BindingQuality, ProcessFingerprint, Rect};
+use super::types::{
+    BindingQuality, EndpointAccessClass, EndpointTransport, ProcessFingerprint, Rect,
+};
 
 /// Browser action kinds proven for one semantic page ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -32,6 +35,9 @@ use super::types::{BindingQuality, ProcessFingerprint, Rect};
 pub enum BrowserActionKind {
     Click,
     Type,
+    Upload,
+    Pointer,
+    Scroll,
 }
 
 impl BrowserActionKind {
@@ -39,6 +45,9 @@ impl BrowserActionKind {
         match self {
             Self::Click => "click",
             Self::Type => "type",
+            Self::Upload => "upload",
+            Self::Pointer => "pointer",
+            Self::Scroll => "scroll",
         }
     }
 }
@@ -187,6 +196,10 @@ pub struct TabRecord {
     pub cdp_target_id: String,
     pub title: String,
     pub url: String,
+    /// Native-window selection proof captured at bind time. `None` means the
+    /// selected tab could not be proven without activating or foregrounding a
+    /// page, so the public `active` field must be JSON null.
+    pub active: Option<bool>,
     pub generation: u64,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
@@ -200,11 +213,15 @@ pub struct TargetRecord {
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
+    pub endpoint_transport: EndpointTransport,
+    pub endpoint_access_class: EndpointAccessClass,
     /// CDP connection generation that minted this capability. Zero denotes
     /// the legacy/non-grant route.
     pub generation: u64,
-    /// Internal transport owner for a grant-backed existing-profile route.
-    pub grant_transport_session: Option<String>,
+    /// Internal transport owner that proved an existing-profile grant or a
+    /// driver-owned browser lifecycle. The public session remains the target
+    /// namespace and is checked independently.
+    pub transport_session: Option<String>,
     pub fingerprint: ProcessFingerprint,
     pub native_title: String,
     pub native_bounds: Rect,
@@ -212,7 +229,7 @@ pub struct TargetRecord {
     /// CDP browser window id, or None for the exact single-page embedded route.
     pub cdp_window_id: Option<i64>,
     pub quality: BindingQuality,
-    pub tabs: HashMap<String, TabRecord>,
+    pub tabs: IndexMap<String, TabRecord>,
 }
 
 #[derive(Default)]
@@ -244,19 +261,18 @@ pub fn format_ref(snapshot_id: u64, index: u32) -> String {
 
 pub struct BrowserStore {
     inner: Mutex<HashMap<String, SessionTargets>>,
-    next_id: AtomicU64,
 }
 
 impl BrowserStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
         }
     }
 
     fn next(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        static NEXT_BROWSER_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_BROWSER_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Mint a target id and insert the record under `session`.
@@ -459,8 +475,10 @@ mod tests {
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
+            endpoint_transport: EndpointTransport::LegacyJsonVersion,
+            endpoint_access_class: EndpointAccessClass::EmbeddedApplication,
             generation: 0,
-            grant_transport_session: None,
+            transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,
                 start_time: Some(1),
@@ -471,7 +489,7 @@ mod tests {
             cdp_target_id: "CDP1".into(),
             cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
-            tabs: HashMap::new(),
+            tabs: IndexMap::new(),
         }
     }
 
@@ -509,6 +527,7 @@ mod tests {
                     cdp_target_id: "CDP1".into(),
                     title: "Example".into(),
                     url: "https://example.test".into(),
+                    active: Some(true),
                     generation: 0,
                     snapshots: HashMap::from([(
                         snap_id,
@@ -568,6 +587,17 @@ mod tests {
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
         let err = store.get_target("sess-b", &tid).unwrap_err();
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
+    }
+
+    #[test]
+    fn page_refs_do_not_alias_across_runtime_owned_stores() {
+        let (_store_a, _target_a, _tab_a, ref_a) = store_with_ref();
+        let (store_b, target_b, tab_b, ref_b) = store_with_ref();
+        assert_ne!(ref_a, ref_b);
+        let error = store_b
+            .resolve_ref("sess-a", &target_b, &tab_b, &ref_a)
+            .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRefStale);
     }
 
     #[test]

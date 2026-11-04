@@ -1,0 +1,98 @@
+name: "Perf: cua channel"
+
+# The coordinator-to-Space channel (exec round trips, file throughput,
+# streamed stdout) against a Linux VM Space on this runner (QEMU with KVM),
+# through the running `cua daemon`, checked against the committed baseline
+# for this runner (libs/cua/bench/channel/baselines/ci-ubuntu-24.04-kvm-lane.json):
+# a latency above 2x its baseline or a throughput below half of it fails
+# the run (shared hosted runners; by hand the default is 1.5x). The LAN baselines (two machines, the mesh) and the Mac
+# same-host baseline are measured by hand with bench/channel/run.sh; see its
+# README.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      record:
+        description: "Record this run as the runner's new baseline (an artifact to commit) instead of checking"
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - "libs/cua/bench/channel/**"
+      - "libs/cua-spacesd/crates/cua-spacesd-server/src/bulk.rs"
+      - "libs/cua/crates/cua-spacesd-client/src/bulk.rs"
+      - "libs/cua/crates/cua-vmm/src/bulk.rs"
+      - "libs/images/linux/files/udev/71-cua-bulk-lane.rules"
+      - ".github/workflows/perf-cua-channel.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-cua-channel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  channel:
+    name: channel (QEMU/KVM, same host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          shared-key: perf-cua-channel
+      - name: Check script self-test
+        run: python3 libs/cua/bench/channel/check.py --self-test
+      - name: QEMU and KVM
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends genisoimage qemu-utils qemu-system-x86 ovmf
+          sudo chmod 666 /dev/kvm
+      - name: Build cua and channel_bench
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-cli
+          cargo build --locked --release -p cua-sdk --example channel_bench
+      - name: Build cua-spacesd (the guest end of the bulk lane)
+        working-directory: libs/cua-spacesd
+        run: cargo build --locked --release -p cua-spacesd --bin cua-spacesd
+      - name: Measure and check
+        working-directory: libs/cua/bench/channel
+        env:
+          CUA: ${{ github.workspace }}/libs/cua/target/release/cua
+          BENCH: ${{ github.workspace }}/libs/cua/target/release/examples/channel_bench
+          # The published image's cua-spacesd predates the bulk lane: this
+          # tree's replaces it, with the image's udev rule for the lane's disk.
+          OVERLAY_SPACESD: ${{ github.workspace }}/libs/cua-spacesd/target/release/cua-spacesd
+          UDEV_RULE: ${{ github.workspace }}/libs/images/linux/files/udev/71-cua-bulk-lane.rules
+          OUT: ${{ runner.temp }}/channel
+          RECORD: ${{ inputs.record && '1' || '0' }}
+          # Shared hosted runners: 2x the baseline, not 1.5x.
+          FACTOR: "2"
+        run: |
+          export CUA_HOME="$RUNNER_TEMP/cua-home"
+          "$CUA" daemon start
+          trap '"$CUA" daemon stop || true' EXIT
+          bash run.sh baselines/ci-ubuntu-24.04-kvm-lane.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: perf-cua-channel
+          path: ${{ runner.temp }}/channel

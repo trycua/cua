@@ -27,26 +27,20 @@
 //! selector which `objc2-foundation 0.2.2` does not bind natively — we
 //! hand-roll the binding in [`apple_event`] via `extern_methods!`.
 
+use std::collections::HashSet;
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration,
-};
-use objc2_foundation::{
-    NSAppleEventDescriptor, NSArray, NSDictionary, NSError, NSString, NSURL,
-};
+use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_foundation::{NSAppleEventDescriptor, NSArray, NSDictionary, NSError, NSString, NSURL};
 
 /// FourCharCode helper — packs a 4-byte ASCII tag into a `u32` the same way
 /// Apple's CoreServices headers do (`kCoreEventClass = 'aevt'` etc).
 const fn fourcc(s: &[u8; 4]) -> u32 {
-    ((s[0] as u32) << 24)
-        | ((s[1] as u32) << 16)
-        | ((s[2] as u32) << 8)
-        | (s[3] as u32)
+    ((s[0] as u32) << 24) | ((s[1] as u32) << 16) | ((s[2] as u32) << 8) | (s[3] as u32)
 }
 
 const K_CORE_EVENT_CLASS: u32 = fourcc(b"aevt"); // kCoreEventClass
@@ -79,6 +73,7 @@ pub struct OpenConfig {
 /// `open(...)` call returns `Err(LaunchError::Timeout)` instead of hanging
 /// the calling thread forever.
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
+const COMPLETION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Errors returned by the NSWorkspace launch helpers.
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +82,10 @@ pub enum LaunchError {
     Cocoa(String),
     #[error("NSWorkspace launch returned no NSRunningApplication and no NSError")]
     NoApp,
-    #[error("NSWorkspace launch did not complete within {:?}", COMPLETION_TIMEOUT)]
+    #[error(
+        "NSWorkspace launch callback did not complete within {:?}, and no matching running application was observed",
+        COMPLETION_TIMEOUT
+    )]
     Timeout,
     #[error("invalid url: {0}")]
     BadUrl(String),
@@ -119,8 +117,12 @@ pub fn open_application(
     let ws = unsafe { NSWorkspace::sharedWorkspace() };
     let url = resolve_application_url(&ws, app_url)?;
     let config = build_configuration(cfg);
+    let reconciliation = Reconciliation::new(cfg);
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<CompletionResult>(1);
+    // NSWorkspace may invoke its completion on another thread; retain atomic
+    // callback ownership even though objc2 does not mark the retained app Send.
+    #[allow(clippy::arc_with_non_send_sync)]
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
@@ -129,14 +131,10 @@ pub fn open_application(
         ?app_url, "calling openApplicationAtURL");
 
     unsafe {
-        ws.openApplicationAtURL_configuration_completionHandler(
-            &url,
-            &config,
-            Some(&block),
-        );
+        ws.openApplicationAtURL_configuration_completionHandler(&url, &config, Some(&block));
     }
 
-    wait_for_completion(rx)
+    wait_for_completion(rx, reconciliation)
 }
 
 /// Launch the application bundle at `app_url` and hand it `urls` via
@@ -155,6 +153,7 @@ pub fn open_urls_with_application(
     let ws = unsafe { NSWorkspace::sharedWorkspace() };
     let url = resolve_application_url(&ws, app_url)?;
     let config = build_configuration(cfg);
+    let reconciliation = Reconciliation::new(cfg);
 
     let ns_urls: Vec<Retained<NSURL>> = urls
         .iter()
@@ -163,6 +162,9 @@ pub fn open_urls_with_application(
     let ns_array = NSArray::from_vec(ns_urls);
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<CompletionResult>(1);
+    // NSWorkspace may invoke its completion on another thread; retain atomic
+    // callback ownership even though objc2 does not mark the retained app Send.
+    #[allow(clippy::arc_with_non_send_sync)]
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
@@ -179,7 +181,7 @@ pub fn open_urls_with_application(
         );
     }
 
-    wait_for_completion(rx)
+    wait_for_completion(rx, reconciliation)
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -292,6 +294,75 @@ fn file_or_app_url(s: &str) -> Result<Retained<NSURL>, LaunchError> {
 
 type CompletionResult = Result<Retained<NSRunningApplication>, LaunchError>;
 
+/// Actual-process fallback for daemons where LaunchServices accepts the
+/// request but never delivers the completion block. A bundle id is required
+/// because it is the only stable identity shared by the request and
+/// `NSRunningApplication`.
+struct Reconciliation {
+    bundle_id: Option<String>,
+    pids_before_request: HashSet<i32>,
+    require_new_pid: bool,
+}
+
+impl Reconciliation {
+    fn new(cfg: &OpenConfig) -> Self {
+        let bundle_id = cfg.apple_event_bundle_id.clone();
+        let pids_before_request = bundle_id
+            .as_deref()
+            .map(running_pids_for_bundle)
+            .unwrap_or_default();
+        Self {
+            bundle_id,
+            pids_before_request,
+            require_new_pid: cfg.creates_new_instance,
+        }
+    }
+
+    fn running_application(&self) -> Option<Retained<NSRunningApplication>> {
+        let bundle_id = self.bundle_id.as_deref()?;
+        running_application_for_bundle(bundle_id, &self.pids_before_request, self.require_new_pid)
+    }
+}
+
+fn running_pids_for_bundle(bundle_id: &str) -> HashSet<i32> {
+    let bundle_id = NSString::from_str(bundle_id);
+    let running =
+        unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id) };
+    let mut pids = HashSet::new();
+    unsafe {
+        for index in 0..running.count() {
+            let app = running.objectAtIndex(index);
+            let pid = app.processIdentifier();
+            if pid > 0 && !app.isTerminated() {
+                pids.insert(pid);
+            }
+        }
+    }
+    pids
+}
+
+fn running_application_for_bundle(
+    bundle_id: &str,
+    pids_before_request: &HashSet<i32>,
+    require_new_pid: bool,
+) -> Option<Retained<NSRunningApplication>> {
+    let current_pids = running_pids_for_bundle(bundle_id);
+    reconciliation_pid(&current_pids, pids_before_request, require_new_pid).and_then(|pid| unsafe {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+    })
+}
+
+fn reconciliation_pid(
+    current_pids: &HashSet<i32>,
+    pids_before_request: &HashSet<i32>,
+    require_new_pid: bool,
+) -> Option<i32> {
+    current_pids
+        .iter()
+        .copied()
+        .find(|pid| !require_new_pid || !pids_before_request.contains(pid))
+}
+
 /// Build the `(NSRunningApplication?, NSError?) -> Void` completion block.
 ///
 /// Sends exactly one result through `tx`. Late completions (after timeout)
@@ -318,7 +389,7 @@ fn make_completion_block(
                 }
             };
             // Take the sender out so the channel closes after one send.
-            let sender = tx.lock().ok().and_then(|mut g| g.take());
+            let sender = tx.lock().ok().and_then(|mut guard| guard.take());
             if let Some(s) = sender {
                 let _ = s.send(result);
             }
@@ -326,15 +397,135 @@ fn make_completion_block(
     )
 }
 
-/// Block on `rx` for up to `COMPLETION_TIMEOUT`. Returns `Err(Timeout)` if
-/// the completion handler never fires (wedged LaunchServices).
+/// Wait for either the completion callback or actual process registration.
+///
+/// LaunchServices can accept an `openApplication...` request and register an
+/// `NSRunningApplication` without delivering the callback to a background
+/// daemon. Treating the callback as the sole success signal turns that state
+/// into a false 30-second timeout. Poll the authoritative running-app state
+/// while retaining the callback as the preferred source of Cocoa errors.
 fn wait_for_completion(
     rx: std::sync::mpsc::Receiver<CompletionResult>,
+    reconciliation: Reconciliation,
 ) -> Result<Retained<NSRunningApplication>, LaunchError> {
-    match rx.recv_timeout(COMPLETION_TIMEOUT) {
-        Ok(r) => r,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(LaunchError::Timeout),
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(LaunchError::NoApp),
+    wait_for_launch_signal(rx, COMPLETION_TIMEOUT, COMPLETION_POLL_INTERVAL, || {
+        reconciliation.running_application()
+    })
+}
+
+fn wait_for_launch_signal<T>(
+    rx: std::sync::mpsc::Receiver<Result<T, LaunchError>>,
+    timeout: Duration,
+    poll_interval: Duration,
+    mut reconcile: impl FnMut() -> Option<T>,
+) -> Result<T, LaunchError> {
+    let deadline = Instant::now() + timeout;
+    let mut callback_disconnected = false;
+
+    loop {
+        if !callback_disconnected {
+            match rx.try_recv() {
+                Ok(result) => return result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    callback_disconnected = true;
+                }
+            }
+        }
+
+        if let Some(running) = reconcile() {
+            return Ok(running);
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(LaunchError::Timeout);
+        }
+        let wait = poll_interval.min(deadline.saturating_duration_since(now));
+
+        if callback_disconnected {
+            std::thread::sleep(wait);
+            continue;
+        }
+
+        match rx.recv_timeout(wait) {
+            Ok(result) => return result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                callback_disconnected = true;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reconciliation_pid, wait_for_launch_signal, LaunchError};
+    use std::collections::HashSet;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn missing_callback_reconciles_registered_process() {
+        let (_tx, rx) = mpsc::sync_channel(1);
+        let mut polls = 0;
+        let result = wait_for_launch_signal(
+            rx,
+            Duration::from_millis(100),
+            Duration::from_millis(1),
+            || {
+                polls += 1;
+                (polls == 3).then_some(4242)
+            },
+        );
+
+        assert_eq!(result.unwrap(), 4242);
+    }
+
+    #[test]
+    fn queued_callback_error_wins_over_process_reconciliation() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(Err(LaunchError::Cocoa("denied".to_owned())))
+            .unwrap();
+
+        let result = wait_for_launch_signal(
+            rx,
+            Duration::from_millis(100),
+            Duration::from_millis(1),
+            || Some(4242),
+        );
+
+        assert!(matches!(result, Err(LaunchError::Cocoa(message)) if message == "denied"));
+    }
+
+    #[test]
+    fn no_callback_or_process_returns_precise_bounded_timeout() {
+        let (_tx, rx) = mpsc::sync_channel::<Result<i32, LaunchError>>(1);
+        let result = wait_for_launch_signal(
+            rx,
+            Duration::from_millis(5),
+            Duration::from_millis(1),
+            || None,
+        );
+
+        assert!(matches!(result, Err(LaunchError::Timeout)));
+    }
+
+    #[test]
+    fn new_instance_reconciliation_rejects_preexisting_pid() {
+        let before = HashSet::from([100]);
+        assert_eq!(
+            reconciliation_pid(&HashSet::from([100]), &before, true),
+            None
+        );
+        assert_eq!(
+            reconciliation_pid(&HashSet::from([100, 200]), &before, true),
+            Some(200)
+        );
+        assert_eq!(
+            reconciliation_pid(&HashSet::from([100]), &before, false),
+            Some(100)
+        );
     }
 }
 
@@ -344,8 +535,8 @@ fn wait_for_completion(
 /// is not exposed by `objc2-foundation 0.2.2`.
 mod apple_event {
     use super::{
-        NSAppleEventDescriptor, NSString, Retained, K_AE_OPEN_APPLICATION,
-        K_ANY_TRANSACTION_ID, K_AUTO_GENERATE_RETURN_ID, K_CORE_EVENT_CLASS,
+        NSAppleEventDescriptor, NSString, Retained, K_AE_OPEN_APPLICATION, K_ANY_TRANSACTION_ID,
+        K_AUTO_GENERATE_RETURN_ID, K_CORE_EVENT_CLASS,
     };
     use objc2::msg_send_id;
     use objc2::rc::Allocated;
@@ -354,13 +545,11 @@ mod apple_event {
     /// Build an `aevt/oapp` AppleEvent addressed to the bundle id `bid`.
     pub fn open_application_event(bid: &str) -> Retained<NSAppleEventDescriptor> {
         let target_string = NSString::from_str(bid);
-        let target: Retained<NSAppleEventDescriptor> = unsafe {
-            NSAppleEventDescriptor::descriptorWithBundleIdentifier(&target_string)
-        };
+        let target: Retained<NSAppleEventDescriptor> =
+            unsafe { NSAppleEventDescriptor::descriptorWithBundleIdentifier(&target_string) };
 
         unsafe {
-            let alloc: Allocated<NSAppleEventDescriptor> =
-                NSAppleEventDescriptor::alloc();
+            let alloc: Allocated<NSAppleEventDescriptor> = NSAppleEventDescriptor::alloc();
             // initWithEventClass:eventID:targetDescriptor:returnID:transactionID:
             let event: Retained<NSAppleEventDescriptor> = msg_send_id![
                 alloc,
@@ -374,4 +563,3 @@ mod apple_event {
         }
     }
 }
-

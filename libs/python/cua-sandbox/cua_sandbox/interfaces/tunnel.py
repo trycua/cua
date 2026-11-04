@@ -28,15 +28,18 @@ from cua_sandbox.transport.base import Transport
 class TunnelInfo:
     """A single forwarded port."""
 
-    def __init__(self, host: str, port: int, sandbox_port: int) -> None:
+    def __init__(
+        self, host: str, port: int, sandbox_port: int, *, url: Optional[str] = None
+    ) -> None:
         self.host = host
         self.port = port  # host-side port
         self.sandbox_port = sandbox_port  # original port inside sandbox
+        self._url = url
         self._closer: Optional[object] = None  # Callable[[TunnelInfo], Coroutine]
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return self._url or f"http://{self.host}:{self.port}"
 
     async def close(self) -> None:
         """Close this tunnel (no-op if already closed or inside a context manager)."""
@@ -62,10 +65,16 @@ class _TunnelContext:
         return self._open().__await__()
 
     async def _open(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:
-        for p in self._ports:
-            info = await self._t.forward_tunnel(p)
-            info._closer = self._close_one
-            self._infos.append(info)
+        opened: List[TunnelInfo] = []
+        try:
+            for p in self._ports:
+                info = await self._t.forward_tunnel(p)
+                info._closer = self._close_one
+                self._infos.append(info)
+                opened.append(info)
+        except BaseException:
+            await asyncio.gather(*(info.close() for info in opened), return_exceptions=True)
+            raise
         return self._result()
 
     def _result(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:

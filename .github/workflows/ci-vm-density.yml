@@ -1,0 +1,144 @@
+name: "CI: VM density"
+
+# VM density on one host (cua_vmm::density): accounting that counts shared
+# snapshot memory once, the admission cap (CUA_VM_MAX_RSS_FRACTION), the vCPU
+# overcommit (CUA_VM_VCPU_OVERCOMMIT), free page reporting, the `rollout`
+# profile, and measured capacity in placement.
+#
+#   pull_request  the unit tests of that logic (Linux and macOS).
+#   nightly       on a KVM runner: the opt-in QEMU density tests
+#                 (cua-daemon/tests/qemu_density.rs) and the density bench
+#                 (libs/cua/bench/spaces-startup/bench.sh vm-density) checked
+#                 against its committed baseline (bench guard).
+#   dispatch      both (and a pull request labelled ci:vm-density).
+#
+# HVF (a Mac) has no hosted runner with nested virtualization: run the same
+# test and bench there by hand (libs/cua/bench/spaces-startup/README.md);
+# baseline/macos-*.json holds a Mac's numbers.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "libs/cua/crates/cua-vmm/src/density.rs"
+      - "libs/cua/crates/cua-vmm/src/qemu/**"
+      - "libs/cua/crates/cua-cluster/src/**"
+      - "libs/cua/crates/cua-sandbox-core/src/profile.rs"
+      - "libs/cua/crates/cua-daemon/tests/qemu_density.rs"
+      - "libs/cua/crates/cua-daemon/tests/qemu_resize.rs"
+      - "libs/cua/bench/spaces-startup/**"
+      - ".github/workflows/ci-vm-density.yml"
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-vm-density-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  unit:
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-vmm
+      - name: Accounting, admission, QEMU arguments, profiles, placement
+        run: >
+          cargo test --locked -p cua-vmm --lib -- density:: qemu::
+          && cargo test --locked -p cua-sandbox-core --lib profile
+          && cargo test --locked -p cua-cluster
+      - name: Bench scripts parse
+        run: bash -n bench/spaces-startup/bench.sh && python3 -m py_compile bench/spaces-startup/sample_host.py
+
+  kvm:
+    name: nightly KVM (density tests + bench guard)
+    # Also on a pull request labelled ci:vm-density.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          shared-key: libs-cua-qemu-tests
+      - name: QEMU, KVM and the Linux reference disk
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends genisoimage qemu-utils qemu-system-x86 ovmf
+          sudo chmod 666 /dev/kvm
+          cd libs/images
+          linux/build-spacesd-linux.sh amd64
+          ./build.sh linux --tag e2e --outputs rootfs,disk --out "$HOME/.cache/cua-images-e2e"
+          ls -la "$HOME/.cache/cua-images-e2e/linux/amd64/"
+      - name: Density and resize tests (real VMs)
+        working-directory: libs/cua
+        env:
+          CUA_VMM_TEST_QEMU: "1"
+        run: |
+          export CUA_VMM_TEST_DISK="$HOME/.cache/cua-images-e2e/linux/amd64/disk.img"
+          cargo test --locked -p cua-daemon --test qemu_density -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p cua-daemon --test qemu_resize -- --ignored --nocapture
+      - name: Build the CLI and rollout_bench
+        if: ${{ !cancelled() }}
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-cli --bin cua
+          cargo build --locked --release -p cua-sdk --example rollout_bench
+      - name: Density bench and guard
+        if: ${{ !cancelled() }}
+        working-directory: libs/cua
+        run: |
+          export CUA_HOME="$RUNNER_TEMP/cua-home" CUA="$PWD/target/release/cua"
+          export ROLLOUT_BENCH="$PWD/target/release/examples/rollout_bench"
+          export IMAGE="disk:$HOME/.cache/cua-images-e2e/linux/amd64/disk.img"
+          export OUT="$RUNNER_TEMP/vmd" VMD_LABEL=gha-kvm VMD_PROFILE=rollout VMD_MAX=96
+          bash bench/spaces-startup/bench.sh vm-density
+          bash bench/spaces-startup/bench.sh guard "$OUT/vm-density-gha-kvm.jsonl" \
+            bench/spaces-startup/baseline/linux-kvm-gha-ubuntu-24.04.json
+      - name: Summary
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/vmd/vm-density-gha-kvm.jsonl"
+          [ -f "$f" ] && { echo '```json'; grep '"summary"' "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: vm-density-kvm
+          path: ${{ runner.temp }}/vmd

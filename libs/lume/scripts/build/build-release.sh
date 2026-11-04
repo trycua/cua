@@ -24,6 +24,7 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 if [ -d ".build/release/lume_lume.bundle" ]; then
   cp -rf .build/release/lume_lume.bundle "$APP_BUNDLE/Contents/Resources/"
 fi
+cp -f ./resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 # Stamp Info.plist with version from VERSION file
 VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0")

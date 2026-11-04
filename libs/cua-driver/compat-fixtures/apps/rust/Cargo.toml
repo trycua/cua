@@ -1,0 +1,10 @@
+[package]
+name = "cua-driver-previous-release-rust-app"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cua-driver-sdk = { path = "../../../rust/crates/cua-driver-sdk" }
+
+[workspace]

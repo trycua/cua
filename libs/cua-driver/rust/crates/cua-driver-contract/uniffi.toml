@@ -1,0 +1,2 @@
+[bindings.python]
+cdylib_name = "cua_driver_sdk"

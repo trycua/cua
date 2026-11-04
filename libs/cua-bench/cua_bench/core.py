@@ -9,11 +9,16 @@ from typing import Any, Optional
 
 @dataclass
 class Task:
-    """Represents a single task to be executed."""
+    """One task variant, as returned by the ``@cb.tasks_config`` function."""
 
+    #: The instruction the agent receives.
     description: str
+    #: A stable identifier for the variant (optional; the index is used otherwise).
     task_id: Optional[str] = None
+    #: Variant-specific values your setup, solve and evaluate functions read.
     metadata: Optional[dict] = None
+    #: The sandbox: ``{"provider": "native", "setup_config": {...}}`` (see
+    #: ``DesktopSetupConfig``). ``native`` (the default) is the only provider.
     computer: Optional[dict] = None
 
 
@@ -47,12 +52,22 @@ def make(env_name: str, *, split: str = "train") -> Any:
 
 
 def interact(env_path: str, task_id: int = 0) -> None:
-    """Run an environment interactively with simplified output.
+    """Open a task's sandbox, run its setup, wait for Enter, then evaluate.
+
+    The programmatic sibling of ``cb interact`` (which has more options).
 
     Args:
-        env_path: Path to the environment directory
-        task_id: Task ID to run (default: 0)
+        env_path: Path to the environment directory (or its main.py)
+        task_id: Task variant to run (default: 0)
     """
+    import asyncio
+
+    asyncio.run(_interact(env_path, task_id))
+
+
+async def _interact(env_path: str, task_id: int = 0) -> None:
+    import asyncio
+
     # ANSI colors
     GREEN = "\033[92m"
     GREY = "\033[90m"
@@ -66,27 +81,24 @@ def interact(env_path: str, task_id: int = 0) -> None:
 
     # If env_path is a file, use the parent directory
     if Path(env_path).is_file():
-        env_path = Path(env_path).parent
+        env_path = str(Path(env_path).parent)
 
+    env = None
     try:
-        # Create environment with interactive settings
         env = make(env_path)
         env.headless = False
         env.print_actions = True
 
-        # Run task setup
         _t0 = time.perf_counter()
-        _screenshot, _task_cfg = env.reset(task_id=task_id)
+        await env.reset(task_id=task_id)
         _elapsed = time.perf_counter() - _t0
 
-        # Yield control to user
         print(f"{GREEN}✓ Setup complete in {_elapsed:.2f}s{RESET}")
         print(f"{GREY}Press Enter to close...{RESET}")
-        input()
+        await asyncio.get_running_loop().run_in_executor(None, input)
 
-        # Run task evaluation
-        if hasattr(env, "evaluate_task_fn") and env.evaluate_task_fn:
-            result = env.evaluate()
+        if env.evaluate_task_fn:
+            result = await env.evaluate()
             print(f"{GREEN}✓ Evaluation result: {result}{RESET}")
         else:
             print(f"{GREY}✓ Evaluation not implemented{RESET}")
@@ -96,5 +108,5 @@ def interact(env_path: str, task_id: int = 0) -> None:
 
         traceback.print_exc()
     finally:
-        if "env" in locals():
-            env.close()
+        if env is not None:
+            await env.close()

@@ -1,0 +1,1 @@
+{"id": "inf-1", "instruction": "Switch on Bluetooth.", "config": [], "evaluator": {"func": "infeasible"}}

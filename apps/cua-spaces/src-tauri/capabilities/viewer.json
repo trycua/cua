@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "viewer",
+  "description": "Space desktop windows, PiP mirrors, and per-window stream clients (win-*, winone-*): core IPC so the viewer can read its configuration, mint media tickets (open_space_stream) and drive window commands.",
+  "windows": [
+    "space-*",
+    "pip-*",
+    "win-*",
+    "winone-*"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

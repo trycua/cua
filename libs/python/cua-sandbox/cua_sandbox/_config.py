@@ -1,7 +1,4 @@
-"""Global configuration — configure(api_key, base_url).
-
-Auth priority: per-call > configure() > ~/.cua/credentials > CUA_API_KEY env var.
-"""
+"""Process-wide configuration for the legacy API-key helpers."""
 
 from __future__ import annotations
 
@@ -9,27 +6,21 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+_DEFAULT_BASE_URL = "https://api.cua.ai"
+
 
 @dataclass
 class _Config:
     api_key: Optional[str] = None
-    base_url: str = "https://api.cua.ai"
+    base_url: str = _DEFAULT_BASE_URL
 
 
 _global_config = _Config()
 
 
-def configure(
-    *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-) -> None:
-    """Set global configuration for the CUA SDK.
-
-    Args:
-        api_key: API key for cloud sandboxes.
-        base_url: Base URL for the CUA cloud API.
-    """
+def configure(*, api_key: Optional[str] = None, base_url: Optional[str] = None) -> None:
+    """Set global configuration for the legacy ``login()`` and ``whoami()``
+    helpers."""
     if api_key is not None:
         _global_config.api_key = api_key
     if base_url is not None:
@@ -37,15 +28,14 @@ def configure(
 
 
 def get_api_key(override: Optional[str] = None) -> Optional[str]:
-    """Resolve API key with priority: override > configure() > credentials file > env."""
+    """Resolve a legacy API key with per-call configuration taking priority."""
     if override:
         return override
     if _global_config.api_key:
         return _global_config.api_key
-    # Try credentials file
-    cred = _read_credentials_key()
-    if cred:
-        return cred
+    credential = _read_credentials_key()
+    if credential:
+        return credential
     return os.environ.get("CUA_API_KEY")
 
 
@@ -54,11 +44,13 @@ def get_base_url() -> str:
 
 
 def _read_credentials_key() -> Optional[str]:
-    """Read API key from ~/.cua/credentials if it exists."""
-    cred_path = os.path.join(os.path.expanduser("~"), ".cua", "credentials")
+    """Read a legacy API key from ``$CUA_HOME/credentials`` when present."""
+    from cua_sandbox._paths import cua_home
+
+    credential_path = cua_home() / "credentials"
     try:
-        with open(cred_path) as f:
-            for line in f:
+        with open(credential_path) as credential_file:
+            for line in credential_file:
                 line = line.strip()
                 if line.startswith("api_key="):
                     return line[len("api_key=") :]

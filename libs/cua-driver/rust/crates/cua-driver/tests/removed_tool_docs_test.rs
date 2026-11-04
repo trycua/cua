@@ -111,14 +111,7 @@ fn maintained_guidance_does_not_advertise_removed_tools() {
         driver_root.join("scripts/install.ps1"),
     ];
     collect_docs(&rust_root.join("Skills/cua-driver"), &mut files);
-    collect_docs(
-        &repo_root.join("docs/content/docs/reference/cua-driver"),
-        &mut files,
-    );
-    collect_docs(
-        &repo_root.join("docs/content/docs/how-to-guides/driver"),
-        &mut files,
-    );
+    collect_docs(&repo_root.join("docs/content/docs/cua-driver"), &mut files);
 
     let mut failures = Vec::new();
     for path in files.into_iter().filter(|path| path.is_file()) {

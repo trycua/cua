@@ -9,8 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[derive(Default)]
 struct State {
     pkce_ok: bool,
-    challenge: Option<String>,
-    redirect: Option<String>,
+    /// Each browser attempt's PKCE challenge, by its redirect URI (every
+    /// attempt has its own listener port), as a real issuer keeps per-request state.
+    attempts: std::collections::HashMap<String, String>,
     refreshes: u32,
     revoked: bool,
     refresh_dead: bool,
@@ -102,8 +103,11 @@ async fn issuer(state: Arc<Mutex<State>>) -> String {
                             let u = url::Url::parse(&format!("http://x{target}")).unwrap();
                             let q: std::collections::HashMap<String, String> =
                                 u.query_pairs().into_owned().collect();
-                            g.challenge = q.get("code_challenge").cloned();
-                            g.redirect = q.get("redirect_uri").cloned();
+                            if let (Some(r), Some(c)) =
+                                (q.get("redirect_uri"), q.get("code_challenge"))
+                            {
+                                g.attempts.insert(r.clone(), c.clone());
+                            }
                             if g.pkce_ok {
                                 (200, json!({}))
                             } else {
@@ -118,8 +122,8 @@ async fn issuer(state: Arc<Mutex<State>>) -> String {
                         ("POST", "/token") => match form(&body, "grant_type").as_deref() {
                             Some("authorization_code") => {
                                 let v = form(&body, "code_verifier").unwrap_or_default();
-                                if Some(cua_auth::pkce_challenge(&v)) != g.challenge
-                                    || form(&body, "redirect_uri") != g.redirect
+                                let r = form(&body, "redirect_uri").unwrap_or_default();
+                                if Some(&cua_auth::pkce_challenge(&v)) != g.attempts.get(&r)
                                     || form(&body, "code").as_deref() != Some("code-1")
                                 {
                                     (400, json!({"error": "invalid_grant"}))
@@ -369,7 +373,7 @@ async fn a_browser_sign_in_that_cannot_be_saved_says_so_on_the_page_too() {
     let (redirect, state) = redirect_of(&p);
     let s2 = s.clone();
     let done = tokio::spawn(async move { s2.finish_login(p).await });
-    let r = reqwest::get(format!("{redirect}?code=c&state={state}"))
+    let r = reqwest::get(format!("{redirect}?code=code-1&state={state}"))
         .await
         .unwrap();
     let (status, page) = (r.status().as_u16(), r.text().await.unwrap());
@@ -378,8 +382,35 @@ async fn a_browser_sign_in_that_cannot_be_saved_says_so_on_the_page_too() {
     // Never "You're signed in" for a session the app then reports as lost.
     assert_eq!(status, 500);
     assert!(page.contains("couldn't be saved"), "{page}");
+    assert!(page.contains("Sign-in couldn't be saved"), "{page}");
     assert!(!page.contains("You're signed in"), "{page}");
     assert!(s.credentials().is_err() || s.credentials().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_browser_sign_in_the_issuer_fails_says_it_did_not_finish() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st).await;
+    let d = tempfile::tempdir().unwrap();
+    let s = Arc::new(session(&url, d.path()));
+    let p = s.begin_login(Flow::Browser).await.unwrap();
+    let (redirect, state) = redirect_of(&p);
+    let s2 = s.clone();
+    let done = tokio::spawn(async move { s2.finish_login(p).await });
+    let r = reqwest::get(format!(
+        "{redirect}?error=server_error&error_description=boom&state={state}"
+    ))
+    .await
+    .unwrap();
+    let page = r.text().await.unwrap();
+    let e = done.await.unwrap().unwrap_err();
+    assert!(e.to_string().contains("boom"), "{e}");
+    assert!(page.contains("Sign-in didn't finish"), "{page}");
+    assert!(!page.contains("You're signed in"), "{page}");
+    assert!(s.credentials().unwrap().is_none());
 }
 
 #[tokio::test]
@@ -395,7 +426,7 @@ async fn a_browser_sign_in_saves_before_the_page_says_signed_in() {
     let (redirect, state) = redirect_of(&p);
     let s2 = s.clone();
     let done = tokio::spawn(async move { s2.finish_login(p).await });
-    let r = reqwest::get(format!("{redirect}?code=c&state={state}"))
+    let r = reqwest::get(format!("{redirect}?code=code-1&state={state}"))
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 200);
@@ -466,7 +497,7 @@ async fn an_earlier_tab_still_signs_in_after_a_retry() {
     let (a, b) = (s.clone(), s.clone());
     let first_done = tokio::spawn(async move { a.finish_login(first).await });
     let retry_done = tokio::spawn(async move { b.finish_login(retry).await });
-    let r = reqwest::get(format!("{r1}?code=c&state={s1}"))
+    let r = reqwest::get(format!("{r1}?code=code-1&state={s1}"))
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 200);

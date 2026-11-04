@@ -17,6 +17,7 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+pub(crate) mod kwin_layout;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -1825,8 +1826,25 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
             niri::desktop_snapshot().map(|snapshot| (snapshot.frame.width, snapshot.frame.height)),
         );
     }
-    hyprland::is_session()
-        .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    if hyprland::is_session() {
+        return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
+    }
+    kwin_logical_frame()
+}
+
+/// KWin's pointer input is logical while its screenshots are physical. Return
+/// its logical frame so a screenshot pixel and a pointer coordinate agree.
+/// `None` on any other compositor; a KWin that cannot report a usable layout
+/// is an error rather than a silent return to the mismatched physical frame.
+fn kwin_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
+    match kwin_layout::query() {
+        Ok(None) => None,
+        Ok(Some(outputs)) => Some(kwin_layout::bounding_frame(&outputs)),
+        Err(error) => {
+            tracing::debug!("KWin layout query unavailable: {error:#}");
+            None
+        }
+    }
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as

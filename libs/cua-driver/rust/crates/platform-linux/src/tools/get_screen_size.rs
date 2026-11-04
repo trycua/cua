@@ -54,6 +54,16 @@ impl Tool for GetScreenSizeTool {
                 let (frame, monitors) = crate::wayland::niri::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
+            if crate::wayland::is_wayland() {
+                // KWin: logical layout, so these match desktop capture and input.
+                if let Some(outputs) = crate::wayland::kwin_layout::query().ok().flatten() {
+                    let (width, height) = crate::wayland::kwin_layout::bounding_frame(&outputs)?;
+                    let scale = outputs
+                        .first()
+                        .map_or(1.0, crate::wayland::kwin_layout::output_scale);
+                    return Ok((width, height, scale, None));
+                }
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing

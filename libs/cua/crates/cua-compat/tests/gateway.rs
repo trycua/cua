@@ -314,6 +314,10 @@ async fn files_round_trip_and_signed_urls() {
         w,
         json!([{"name": "x.txt", "type": "file", "path": "/tmp/x.txt"}])
     );
+    // Written as root, not as the agent's own user.
+    let name = g.mock.created.lock().await[0].name.clone();
+    let owner = g.mock.state(&name).await.unwrap().file_owner("/tmp/x.txt");
+    assert_eq!(owner.as_deref(), Some("root"));
     // A signed URL carries neither the sandbox id nor the token.
     let token = sb["envdAccessToken"].as_str().unwrap();
     let sig = format!(

@@ -7,8 +7,12 @@ import { firstMessage, newPendingId, useAgents, useBridge, useFeatureRecorder, u
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
 import { useConnectors } from "@/hooks/use-connectors";
+import type { AskRepo } from "@/lib/ask-first-repo";
 import { getDriver } from "@/lib/prepare/store";
 import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
+
+/** The job as the agent is told it: the repo the person picked is a line of it, said once in plain words. */
+export const withRepo = (prompt: string, repo?: { url: string } | null) => (repo ? `${prompt.trim()}\n\nRepo: ${repo.url}` : prompt);
 
 /** Task and Space pairs whose thread already has the task's job. */
 const posted = new Set<string>();
@@ -22,7 +26,7 @@ const posted = new Set<string>();
  * (`retry(task, where)`).
  */
 export function useStartTask(): {
-  start: (job: { prompt: string; agent: string; where: TaskWhere }) => void;
+  start: (job: { prompt: string; agent: string; where: TaskWhere; model?: string; repo?: AskRepo | null }) => void;
   retry: (task: AskTask, where?: TaskWhere) => void;
 } {
   const navigate = useNavigate();
@@ -61,13 +65,20 @@ export function useStartTask(): {
           if (place?.queued) {
             // The job (and anything typed meanwhile) waited in the Space's thread: send it now.
             resolveQueue(pendingId, spaceId);
+            // The picked model goes with the agent when it joins (adding it before the first message names it).
+            const t = askTask(id);
+            if (t?.model && host && canSummon()) {
+              const first = firstMessage(core, await summonInput(spaceId), t.agent, "");
+              if (first?.handle) await host.call("thread.agentAdd", { spaceId, name: first.handle, harness: first.harness || t.agent, model: t.model }).catch(() => null);
+            }
             await flushQueue(pendingId, send(spaceId, await summonInput(spaceId)));
             updateAskTask(id, { inSpace: true });
             return;
           }
         }
-        const prompt = askTask(id)?.prompt ?? "";
-        if (place && (await summonIn(spaceId, askTask(id)?.agent ?? "", prompt))) {
+        const task = askTask(id);
+        const prompt = withRepo(task?.prompt ?? "", task?.repo);
+        if (place && (await summonIn(spaceId, task?.agent ?? "", prompt, task?.model))) {
           updateAskTask(id, { inSpace: true });
           return;
         }
@@ -77,7 +88,7 @@ export function useStartTask(): {
           posted.add(`${id}\u0000${spaceId}`);
           await postToSpaceThread(host, spaceId, prompt);
         }
-        const started = await startRun({ spaceId, agent: askTask(id)?.agent ?? "", prompt });
+        const started = await startRun({ spaceId, agent: task?.agent ?? "", prompt, ...(task?.model ? { model: task.model } : {}) });
         updateAskTask(id, { runId: started.run_id });
       } catch (e) {
         updateAskTask(id, { error: e instanceof Error ? e.message : String(e), pendingId: null });
@@ -85,7 +96,7 @@ export function useStartTask(): {
     })();
 
   return {
-    start: ({ prompt, agent, where }) => {
+    start: ({ prompt, agent, where, model, repo }) => {
       const target = taskTarget(where);
       // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
       // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
@@ -93,13 +104,21 @@ export function useStartTask(): {
       const prep = preparing?.state;
       if (preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux") {
         const spaceId = prep.homeSpaceId;
-        const task = addAskTask({ prompt: prompt.trim(), agent, os: "linux", spaceId, pendingId: spaceId ? null : prep.pendingId, onHost: false });
+        const task = addAskTask({ prompt: prompt.trim(), agent, os: "linux", spaceId, pendingId: spaceId ? null : prep.pendingId, onHost: false, ...(model ? { model } : {}), ...(repo ? { repo } : {}) });
         record("ask_first_task_started");
-        preparing.send({ id: task.id, text: prompt.trim(), agent });
+        preparing.send({ id: task.id, text: withRepo(prompt, repo), agent, model: model ?? null, repo: repo?.url ?? null });
         void navigate({ to: "/spaces/$spaceId", params: { spaceId: spaceId ?? prep.pendingId! } });
         return;
       }
-      const task = addAskTask({ prompt: prompt.trim(), agent, os: whereOs(where), spaceId: target.kind === "space" ? target.spaceId : null, onHost: target.kind === "host" });
+      const task = addAskTask({
+        prompt: prompt.trim(),
+        agent,
+        os: whereOs(where),
+        spaceId: target.kind === "space" ? target.spaceId : null,
+        onHost: target.kind === "host",
+        ...(model ? { model } : {}),
+        ...(repo ? { repo } : {}),
+      });
       record("ask_first_task_started");
       // Straight to the Space: the one picked or the one being made (its page follows the create); this Mac opens the task's page.
       const go = (spaceId: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } });
@@ -113,7 +132,7 @@ export function useStartTask(): {
           if (decodeURIComponent(router.state.location.pathname) === `/spaces/${pendingId}`) void navigate({ to: "/spaces/$spaceId", params: { spaceId }, replace: true });
         };
         // The job shows in the Space's thread at once, queued until the Space is ready.
-        const first = canSummon() ? firstMessage(core, { members: [], people: [], canAdd: true, connectors }, agent, prompt) : null;
+        const first = canSummon() ? firstMessage(core, { members: [], people: [], canAdd: true, connectors }, agent, withRepo(prompt, repo)) : null;
         if (first?.handle) enqueue(pendingId, first.text);
         run(task.id, target, { pendingId, onCreated, queued: Boolean(first?.handle) });
         go(pendingId);

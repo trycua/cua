@@ -5,13 +5,16 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ArrowUpIcon, CheckIcon, ChevronDownIcon, LaptopIcon, MonitorIcon } from "lucide-react";
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 
-import { firstMessage, useBridge, useSession, type Space, type SpaceOs } from "@/bridge";
+import type { ModelsView, Space, SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
+import type { ModelSelection, PickedModel } from "@/lib/ask-first-model";
+import type { AskRepo } from "@/lib/ask-first-repo";
 import { cn } from "@/lib/utils";
 
-import { agentName, CLAUDE_CODE_URL, offeredAgents } from "./task-agents";
+import { ModelPicker } from "./model-picker";
+import { RepoChip } from "./repo-chip";
 
 export type { TaskWhere } from "@/lib/ask-first";
 
@@ -83,19 +86,23 @@ function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode;
   );
 }
 
-const pickerButton = "flex h-12 items-center gap-2.5 rounded-lg px-3 text-[14px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]";
+const whereButton = "flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]";
 
 /**
- * Home's box: the job in your own words, who does it and where it runs.
- * Enter starts it (Shift+Enter for a new line).
+ * Home's box, like the first prompt of a chat app: the job in your own words,
+ * then one row under it with the model, an optional repo and where it runs.
+ * Enter starts it (Shift+Enter for a new line). Which coding app runs the job
+ * follows the model.
  */
 export function AskBox({
   text,
   onText,
-  agent,
-  onAgent,
-  installed,
-  mostUsed,
+  view,
+  selected,
+  onPickModel,
+  onConnect,
+  repo,
+  onRepo,
   where,
   onWhere,
   whereOpen,
@@ -109,12 +116,15 @@ export function AskBox({
 }: {
   text: string;
   onText: (t: string) => void;
-  /** Who does it; null when no agent is on this computer (the picker offers to install Claude Code). */
-  agent: string | null;
-  onAgent: (a: string) => void;
-  /** Harness ids found on this computer: the only ones offered. */
-  installed: ReadonlySet<string>;
-  mostUsed: string | null;
+  /** The connected models (`connectors.models`); null before they are read. */
+  view: ModelsView | null;
+  /** The model it will use. */
+  selected: ModelSelection | null;
+  onPickModel: (p: PickedModel) => void;
+  /** Opens Connections (to connect a provider, or reconnect the one named). */
+  onConnect: (provider?: string) => void;
+  repo: AskRepo | null;
+  onRepo?: (r: AskRepo | null) => void;
   where: TaskWhere;
   onWhere: (w: TaskWhere) => void;
   /** The Where picker held open (it reopens when "Use this Mac?" is declined). */
@@ -133,13 +143,8 @@ export function AskBox({
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
-  const ready = text.trim().length > 0 && !busy && agent !== null;
-  const session = useSession();
-  // The agent reads as the @mention the thread will show, and where as a Space.
-  const { core } = useBridge();
-  const handle = agent ? (firstMessage(core, { members: [], people: [], canAdd: true, connectors: { apps: [], keys: { keys: [] }, shellKeys: [], auto: false, off: [], busy: [], failures: [] } }, agent, "")?.handle ?? null) : null;
-  const agentNote = (id: string) => (id === mostUsed ? "You use it most" : "On this computer");
-  const offered = offeredAgents(installed);
+  const ready = text.trim().length > 0 && !busy && selected !== null;
+  const label = whereSpaceLabel(where);
   return (
     <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
       <textarea
@@ -153,43 +158,13 @@ export function AskBox({
           }
         }}
         rows={compact ? 1 : 3}
-        aria-label="What do you want to do?"
-        placeholder="Describe the job in your own words, or paste a link to an issue or pull request"
+        aria-label="What should it do?"
+        placeholder="What should it do?"
         className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <Picker
-          title="Who does it"
-          trigger={
-            <button type="button" className={pickerButton} data-picker="who">
-              <AppMark agent={agent ?? "claude-code"} size={24} />
-              {agent === null ? (
-                <span data-ask-install="">Install Claude Code</span>
-              ) : handle ? (
-                <span data-ask-mention={handle} className="font-medium text-brand-strong">
-                  @{handle}
-                </span>
-              ) : (
-                <span>{agentName(agent)}</span>
-              )}
-              <ChevronDownIcon className="size-4 text-muted-foreground" />
-            </button>
-          }
-          footer={offered.length ? "It works on the new computer, signed in the way it is on this one." : "Cua finds Claude Code once it's installed. Then pick it here."}
-        >
-          {offered.length ? (
-            offered.map((a) => <PickerRow key={a.id} icon={<AppMark agent={a.id} size={28} />} title={a.name} note={agentNote(a.id)} selected={a.id === agent} onSelect={() => onAgent(a.id)} />)
-          ) : (
-            <PickerRow
-              icon={<AppMark agent="claude-code" size={28} />}
-              title="Install Claude Code"
-              note="No coding agent is on this computer yet"
-              selected={false}
-              onSelect={() => void session.openExternal(CLAUDE_CODE_URL).catch(() => {})}
-            />
-          )}
-        </Picker>
-        <span className="px-1 text-[14px] text-muted-foreground">in</span>
+        <ModelPicker view={view} selected={selected} onPick={onPickModel} onConnect={onConnect} />
+        <RepoChip repo={repo} onRepo={onRepo} />
         <WherePicker
           where={where}
           onWhere={onWhere}
@@ -198,19 +173,19 @@ export function AskBox({
           kinds={kinds}
           spaces={spaces}
           trigger={
-            <button type="button" className={pickerButton} data-picker="where">
+            <button type="button" className={whereButton} data-picker="where">
               {where.kind === "new" ? (
-                <OsIcon os={where.os} className="size-4 text-muted-foreground" />
+                <OsIcon os={where.os} className="size-3.5" />
               ) : where.kind === "this-mac" ? (
-                <LaptopIcon className="size-4 text-muted-foreground" />
+                <LaptopIcon className="size-3.5" />
               ) : (
-                <MonitorIcon className="size-4 text-muted-foreground" />
+                <MonitorIcon className="size-3.5" />
               )}
-              <span className="max-w-80 truncate" data-ask-where="">
-                {whereSpaceLabel(where).title}
-                {whereSpaceLabel(where).detail ? <span className="ml-1.5 text-muted-foreground">{whereSpaceLabel(where).detail}</span> : null}
+              <span className="max-w-64 truncate" data-ask-where="">
+                {label.title}
+                {label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
               </span>
-              <ChevronDownIcon className="size-4 text-muted-foreground" />
+              <ChevronDownIcon className="size-3.5 text-muted-foreground" />
             </button>
           }
         />
@@ -220,7 +195,7 @@ export function AskBox({
           disabled={!ready}
           onClick={onSubmit}
           aria-label="Start"
-          className={cn("flex size-12 items-center justify-center rounded-full transition-colors", ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground")}
+          className={cn("flex size-10 items-center justify-center rounded-full transition-colors", ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground")}
         >
           <ArrowUpIcon className="size-5" />
         </button>

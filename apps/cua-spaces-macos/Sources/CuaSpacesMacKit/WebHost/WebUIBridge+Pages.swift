@@ -560,6 +560,9 @@ extension WebUIBridge {
             guard let harness = args["harness"] as? String, !harness.isEmpty else { throw Failure.badArgs("harness: string") }
             out["name"] = name
             out["agent"] = harness
+            if let model = args["model"] as? String, !model.isEmpty { out["model"] = model }
+            if let standby = args["standby"] as? Bool { out["standby"] = standby }
+            if let brief = args["brief"] as? String, !brief.isEmpty { out["brief"] = brief }
             return ("agent_add", out)
         case "thread.agentRemove":
             // Member names are unique per machine: the tool takes the name.

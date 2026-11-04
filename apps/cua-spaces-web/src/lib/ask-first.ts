@@ -56,6 +56,10 @@ export interface AskTask {
    * this device's user. The first message the person sends resumes it.
    */
   imported?: ImportedChat;
+  /** The model the person picked (its id), when they did. */
+  model?: string;
+  /** The repo the task starts from, when one was chosen. */
+  repo?: { url: string; label: string };
 }
 
 /** Which of the agent's own chats a task continues. */

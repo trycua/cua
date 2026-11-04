@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
-import { useAgentChats, useSpaces, type AgentRunSummary } from "@/bridge";
+import { modelsView, useAgentChats, useBridge, useSpaces, type AgentRunSummary } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
+import { useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
-import { currentWhere, mostUsedAgent, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { currentWhere, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { rememberModel, resolveModel, usePickedModel } from "@/lib/ask-first-model";
+import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
-import { agentName, chooseAgent } from "./task-agents";
-import { useInstalledAgents } from "./use-installed-agents";
+import { agentName } from "./task-agents";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
@@ -21,8 +24,6 @@ import { useWhereOptions } from "./where-options";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { usePrepare } from "@/lib/prepare/store";
-
-const NONE: ReadonlySet<string> = new Set();
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -50,25 +51,30 @@ export function AskFirstHome() {
   const listed = useListedSpaces(spaces);
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
-  // Only agents on this computer are offered (the agent setup's detection, which skips files Cua wrote).
-  const installed = useInstalledAgents() ?? NONE;
-  const mostUsed = mostUsedAgent(tasks);
+  const navigate = useNavigate();
+  const { core } = useBridge();
+  // The model: the last one picked while it is still connected, else the quick one the host names. The coding
+  // app that runs the job follows the model.
+  const connectors = useConnectors();
+  const models = useMemo(() => (core ? modelsView(core, connectors.input) : null), [core, connectors.input]);
+  const picked = usePickedModel();
+  const selected = resolveModel(models, picked);
+  const { current: repo } = useRepos();
   const [text, setText] = useState("");
-  const [agent, setAgent] = useState<string | null>(null);
-  const chosenAgent = chooseAgent(agent, mostUsed, installed);
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
-  const [picked, setWhere] = useState<TaskWhere | null>(null);
+  const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
   // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
-  const pick = useWherePick(chosenAgent ? agentName(chosenAgent) : "Your agent");
-  const where = currentWhere(picked, kinds, pickable);
+  const pick = useWherePick(selected ? agentName(selected.harness) : "Your agent");
+  const where = currentWhere(pickedWhere, kinds, pickable);
   const submit = (prompt = text, w = where) => {
-    if (!prompt.trim() || !chosenAgent) return;
-    start({ prompt, agent: chosenAgent, where: w });
+    if (!prompt.trim() || !selected) return;
+    start({ prompt, agent: selected.harness, where: w, model: selected.model.id, repo });
     setText("");
   };
+  const connect = () => void navigate({ to: "/settings/connections" });
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -86,10 +92,11 @@ export function AskFirstHome() {
         <AskBox
           text={text}
           onText={setText}
-          agent={chosenAgent}
-          onAgent={setAgent}
-          installed={installed}
-          mostUsed={mostUsed}
+          view={models}
+          selected={selected}
+          onPickModel={rememberModel}
+          onConnect={connect}
+          repo={repo}
           where={where}
           onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
           whereOpen={whereOpen}

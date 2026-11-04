@@ -182,12 +182,13 @@ pub(crate) struct FrameSequence {
 #[cfg(test)]
 impl CropSource for FrameSequence {
     fn capture(&mut self, x: i64, y: i64, w: usize, h: usize) -> Option<GrayImage> {
-        let i = if self.frame_ms == 0 {
-            let i = self.index.min(self.frames.len() - 1);
-            self.index += 1;
-            i
-        } else {
-            ((self.slept / self.frame_ms) as usize).min(self.frames.len() - 1)
+        let i = match self.slept.checked_div(self.frame_ms) {
+            Some(frame) => (frame as usize).min(self.frames.len() - 1),
+            None => {
+                let i = self.index.min(self.frames.len() - 1);
+                self.index += 1;
+                i
+            }
         };
         self.frames[i].crop(x, y, w, h)
     }

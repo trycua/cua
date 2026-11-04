@@ -182,14 +182,11 @@ pub unsafe fn reveal_scroll(
     while let Some((container, role)) = candidates.next() {
         let outcome = reveal_in(container, &role, window, direction, distance);
         CFRelease(container as CFTypeRef);
-        match outcome {
-            Some(outcome) => {
-                for (rest, _) in candidates {
-                    CFRelease(rest as CFTypeRef);
-                }
-                return Some(outcome);
+        if let Some(outcome) = outcome {
+            for (rest, _) in candidates {
+                CFRelease(rest as CFTypeRef);
             }
-            None => {}
+            return Some(outcome);
         }
     }
     None

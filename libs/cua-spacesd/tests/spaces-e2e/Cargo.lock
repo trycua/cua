@@ -2331,6 +2331,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "icu_normalizer",
  "image",
  "indexmap",
  "jsonschema",

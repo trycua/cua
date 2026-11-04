@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider, setFlagOverride, type HostStatus } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
-import { PickUpWhereYouLeftOff } from "@/components/ask-first/pick-up";
+import { PickUpWhereYouLeftOff, ReadyScreen } from "@/components/first-run-new/first-run-new";
+import { readyView } from "@/lib/first-run-new";
 import { addImportedTask, askTask, resetAskTasks, type AskTask } from "@/lib/ask-first";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -58,6 +59,21 @@ describe("Pick up where you left off", () => {
     );
     await new Promise((r) => setTimeout(r, 50));
     expect(q("[data-pick-up]")).toBeNull();
+  });
+});
+
+describe("the new setup's Ready screen", () => {
+  it("offers the recent chats under the command, and Continue in Cua hands the task on", async () => {
+    const picked: AskTask[] = [];
+    const view = readyView({ os: "macos", agent: "claude-code", computers: ["this"] });
+    render(
+      <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={await testCore()}>
+        <ReadyScreen view={view} agent="claude-code" place="this Mac" onDone={() => {}} onContinueChat={(t) => picked.push(t)} />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(document.querySelectorAll("[data-new-run=ready] [data-pick-up-row]").length).toBe(3));
+    fireEvent.click(document.querySelectorAll<HTMLElement>("[data-pick-up-continue]")[0]!);
+    expect(picked[0]!.imported).toMatchObject({ sessionId: KETTLE.id });
   });
 });
 

@@ -19,32 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional, Sequence, Union
-
-if TYPE_CHECKING:
-    from cua_sandbox.pool import Pool
-
-
-@dataclass(frozen=True)
-class CloudOptions:
-    """Options for Cua Cloud sandboxes. Cua Cloud has ended: passing
-    ``cloud=`` to ``Sandbox.create`` or ``Sandbox.ephemeral`` raises
-    :class:`~cua_sandbox._ended.CloudEnded`, and the class goes away in the
-    next minor release.
-
-    * ``warm``: keep one sandbox of this image ready.
-    * ``max_pool_size``: most sandboxes of this image at once.
-    * ``claim_ttl``: how long the sandbox outlived the process.
-    * ``pool``: claim from this existing pool.
-    * ``apply``: with ``pool``, update the pool's template.
-    """
-
-    warm: Optional[bool] = None
-    max_pool_size: Optional[int] = None
-    claim_ttl: Union[float, timedelta, None] = None
-    pool: "Pool | str | None" = None
-    apply: bool = False
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 
 @dataclass(frozen=True)

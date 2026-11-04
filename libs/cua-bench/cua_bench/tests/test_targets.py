@@ -1,21 +1,17 @@
-"""Hermetic tests: execution target resolution and batch-to-claims sizing.
+"""Hermetic tests: execution target resolution.
 
 One flag set (``--on``, ``--kind``, ``--runtime``) picks the location, the
-kind and the engine, the same as every cua surface. ``--on`` is
-``local``/``cloud`` (``fleet`` is gone); ``--kind`` is ``container``/``vm``;
-``--runtime`` is the engine (``gvisor``, ``runc``, ``qemu``, ``lume``,
-``kubevirt``) and implies its kind.
+kind and the engine, the same as every cua surface. ``--on`` is ``local``
+(``cloud`` ended and fails); ``--kind`` is ``container``/``vm``; ``--runtime``
+is the engine (``gvisor``, ``runc``, ``qemu``, ``lume``) and implies its kind.
 """
 
 import pytest
+
 from cua_bench.targets import (
-    CloudEnded,
-    EnvSpec,
     Target,
     TargetError,
-    parse_duration_s,
     parse_memory_mb,
-    plan_claims,
     resolve_env_spec,
     resolve_target,
 )
@@ -35,14 +31,13 @@ def native(os_type="linux", **setup):
 class TestResolveTarget:
     def test_defaults_to_local(self):
         t = resolve_target(environ={})
-        assert (t.on, t.kind, t.runtime, t.concurrency, t.warm) == ("local", None, None, 4, False)
-        assert not t.cloud
+        assert (t.on, t.kind, t.runtime, t.concurrency) == ("local", None, None, 4)
 
-    def test_fleet_is_not_a_location(self):
+    def test_an_unknown_location_is_rejected(self):
         with pytest.raises(TargetError, match="--on must be one of local, cloud"):
-            resolve_target("fleet", environ={})
+            resolve_target("azure", environ={})
         with pytest.raises(TargetError, match="from CUA_DEFAULT_ON"):
-            resolve_target(environ={"CUA_DEFAULT_ON": "fleet"})
+            resolve_target(environ={"CUA_DEFAULT_ON": "azure"})
 
     def test_cli_flags(self):
         import argparse
@@ -55,9 +50,20 @@ class TestResolveTarget:
         assert parser.parse_args(["--on", "cloud"]).on == "cloud"
         assert parser.parse_args(["--kind", "vm"]).kind == "vm"
         assert parser.parse_args(["--runtime", "qemu"]).runtime == "qemu"
-        # argparse rejects a location that is not local/cloud.
+        # argparse rejects a location that is not one of the choices.
         with pytest.raises(SystemExit):
-            parser.parse_args(["--on", "fleet"])
+            parser.parse_args(["--on", "azure"])
+
+    def test_hetzner_is_your_own_cloud(self):
+        import argparse
+
+        from cua_bench.cli.commands.run import add_target_args
+
+        parser = argparse.ArgumentParser()
+        add_target_args(parser)
+        assert parser.parse_args(["--on", "hetzner"]).on == "hetzner"
+        t = resolve_target("hetzner", environ={})
+        assert (t.on, t.contrib) == ("hetzner", True)
 
     def test_env_fallbacks(self):
         t = resolve_target(
@@ -75,27 +81,18 @@ class TestResolveTarget:
         assert (t.on, t.kind, t.runtime) == ("local", "vm", "qemu")
 
     def test_resources(self):
-        t = resolve_target(
-            "local", cpu="2", memory="4G", concurrency=8, warm=True, claim_ttl="20m", environ={}
-        )
-        assert (t.cpu, t.memory_mb, t.concurrency, t.warm, t.claim_ttl_s) == (
-            2,
-            4096,
-            8,
-            True,
-            1200,
-        )
+        t = resolve_target("local", cpu="2", memory="4G", concurrency=8, environ={})
+        assert (t.cpu, t.memory_mb, t.concurrency) == (2, 4096, 8)
 
     @pytest.mark.parametrize(
         "kwargs",
         [
-            {"on": "azure"},  # not a location (aws and gcp are your own cloud)
-            {"runtime": "kubevirt"},  # a cloud engine, invalid on the default local
+            {"on": "azure"},  # not a location (aws, gcp and hetzner are your own cloud)
+            {"runtime": "kubevirt"},  # not an engine
             {"kind": "gvisor"},  # gvisor is an engine, not a kind
             {"cpu": "0"},
             {"cpu": "two"},
             {"concurrency": 0},
-            {"claim_ttl": "10s"},
             {"memory": "12"},
         ],
     )
@@ -108,8 +105,6 @@ class TestResolveTarget:
         assert parse_memory_mb("512M") == 512
         assert parse_memory_mb(2048) == 2048
         assert parse_memory_mb(None) is None
-        assert parse_duration_s("1h") == 3600
-        assert parse_duration_s(90) == 90
 
 
 class TestResolveEnvSpec:
@@ -123,12 +118,12 @@ class TestResolveEnvSpec:
             warnings.simplefilter("always")
             spec = resolve_env_spec(
                 {"provider": "simulated", "setup_config": {"os_type": "win11", "width": 800}},
-                Target(on="cloud"),
+                Target(),
                 environ={},
             )
         assert (spec.provider, spec.os_type, spec.kind) == ("native", "linux", "container")
         assert spec.simulated and spec.needs_sandbox and spec.width == 800
-        assert spec.backend("cloud") == "cloud-gvisor"
+        assert spec.backend("local") == "local-gvisor"
         assert any("simulated provider was removed" in str(w.message) for w in caught)
         # Once per process.
         with warnings.catch_warnings(record=True) as again:
@@ -166,23 +161,14 @@ class TestResolveEnvSpec:
             "sdk/default:docker",
         )
         assert spec.backend("local") == "local-gvisor"
-        assert spec.backend("cloud") == "cloud-gvisor"
-
-    def test_same_image_ref_on_both_targets(self):
-        comp = native(image=IMG)
-        local = resolve_env_spec(comp, Target(on="local"))
-        cloud = resolve_env_spec(comp, Target(on="cloud"))
-        assert local.image == cloud.image == IMG
-        assert local.pool_key == cloud.pool_key
 
     def test_image_precedence(self):
         assert resolve_env_spec(native(image="task/img"), Target(image=IMG)).image == IMG
         assert resolve_env_spec(native(image="task/img"), Target()).image == "task/img"
 
     def test_windows_is_a_vm_with_builtin_image(self):
-        spec = resolve_env_spec(native("win11"), Target(on="cloud"))
+        spec = resolve_env_spec(native("win11"), Target())
         assert (spec.os_type, spec.kind, spec.image) == ("windows", "vm", None)
-        assert spec.backend("cloud") == "cloud-kubevirt"
         assert spec.backend("local") == "local-qemu"
 
     def test_kind_precedence(self):
@@ -195,11 +181,10 @@ class TestResolveEnvSpec:
         spec = resolve_env_spec(native(), Target(on="local", kind="vm", runtime="qemu"))
         assert (spec.kind, spec.runtime, spec.backend("local")) == ("vm", "qemu", "local-qemu")
 
-    def test_server_port_is_part_of_the_pool_key(self):
+    def test_server_port_is_parsed_and_range_checked(self):
         plain = resolve_env_spec(native(image=IMG), Target())
         served = resolve_env_spec(native(image=IMG, server_port="8000"), Target())
-        assert served.server_port == 8000
-        assert plain.pool_key != served.pool_key
+        assert (plain.server_port, served.server_port) == (None, 8000)
         with pytest.raises(TargetError):
             resolve_env_spec(native(server_port=70000), Target())
 
@@ -213,10 +198,8 @@ class TestResolveEnvSpec:
         with pytest.raises(TargetError, match="setup_config.kinds now"):
             resolve_env_spec(native(runtimes=["vm"]), Target())
 
-    def test_macos_is_local_only(self):
+    def test_macos_runs_on_lume(self):
         assert resolve_env_spec(native("macos"), Target()).backend("local") == "local-lume"
-        with pytest.raises(TargetError, match="--on local"):
-            resolve_env_spec(native("macos"), Target(on="cloud"))
 
     def test_unknown_provider(self):
         with pytest.raises(TargetError):
@@ -229,32 +212,6 @@ class TestResolveEnvSpec:
 
         spec = resolve_env_spec(Computer(), Target())
         assert (spec.image, spec.width, spec.height) == (IMG, 800, 600)
-
-
-class TestPlanClaims:
-    def spec(self, image=IMG, provider="native"):
-        return EnvSpec(provider=provider, os_type="linux", kind="container", image=image)
-
-    def test_batch_sizes_one_pool_to_concurrency(self):
-        jobs = [(f"j{i}", self.spec()) for i in range(10)]
-        (plan,) = plan_claims(jobs, concurrency=4)
-        assert (plan.tasks, plan.max_pool_size) == (10, 4)
-        assert plan.job_ids == [f"j{i}" for i in range(10)]
-
-    def test_small_batch_never_oversizes(self):
-        (plan,) = plan_claims([("a", self.spec()), ("b", self.spec())], concurrency=8)
-        assert plan.max_pool_size == 2
-
-    def test_one_pool_per_image(self):
-        jobs = [
-            ("a", self.spec()),
-            ("b", self.spec("other/img")),
-            ("c", self.spec()),
-        ]
-        plans = {p.spec.image: p for p in plan_claims(jobs, concurrency=3)}
-        assert set(plans) == {IMG, "other/img"}
-        assert (plans[IMG].tasks, plans[IMG].max_pool_size) == (2, 2)
-        assert (plans["other/img"].tasks, plans["other/img"].max_pool_size) == (1, 1)
 
 
 class TestVariantSelection:
@@ -329,21 +286,3 @@ class TestVariantSelection:
     def test_image_forms(self, image, expected):
         s = self.spec({"os_type": "linux"}, Target(image=image))
         assert (s.os_type, s.os_version, s.image, s.kind) == expected
-
-    def test_pool_key_separates_kinds_and_versions(self):
-        a = self.spec({}, Target(kind="container"))
-        b = self.spec({}, Target(kind="vm"))
-        c = self.spec({}, Target(image="macos:tahoe"))
-        d = self.spec({}, Target(image="macos:sequoia"))
-        assert len({a.pool_key, b.pool_key, c.pool_key, d.pool_key}) == 4
-
-
-class TestPoolImages:
-    def test_pool_images_end_with_cua_cloud(self):
-        with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
-            resolve_env_spec({"provider": "native"}, Target(image="pool:bench-p"))
-
-    def test_the_fleet_prefix_ends_with_cua_cloud_too(self):
-        with pytest.warns(DeprecationWarning, match="use pool:old"):
-            with pytest.raises(CloudEnded):
-                resolve_env_spec({"provider": "native"}, Target(image="fleet:old"))

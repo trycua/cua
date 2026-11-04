@@ -73,13 +73,15 @@ impl HealthCheckProvider for MacosHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-/// True when this daemon is neither embedded in a host app nor inside
-/// CuaDriver.app: it relaunched itself disclaimed, as its own responsible
-/// process (CUA-1777).
+/// True when this daemon is neither embedded in a host app nor running from
+/// inside an app bundle: a bare binary relaunches itself disclaimed, as its
+/// own responsible process with no usable WindowServer connection (CUA-1777).
+/// Any `.app/Contents/MacOS/` executable counts as bundled: CuaDriver.app and
+/// hosts that link the driver in-process, such as Cua Spacesd.app (the macOS
+/// Space image's daemon). A real invalid connection is still caught by the
+/// runtime 1002 detector, which `windowserver_connection_entry` checks first.
 pub fn is_unbundled(embedded: bool, exe_path: &str) -> bool {
-    !embedded
-        && !(exe_path.contains("/CuaDriver.app/Contents/MacOS/")
-            || exe_path.contains("/CuaDriverLocal.app/Contents/MacOS/"))
+    !embedded && !exe_path.contains(".app/Contents/MacOS/")
 }
 
 fn check_windowserver_connection() -> CheckEntry {
@@ -177,7 +179,7 @@ fn standalone_bundle_identity(bid: Option<String>, exe: String) -> CheckEntry {
     };
     let hint = "This bundle check does not identify the app or executable macOS attributes \
                 this process's permission request to. For standalone CuaDriver, start the \
-                daemon inside CuaDriver.app with `open -n -g -a CuaDriver --args serve` and \
+                daemon inside CuaDriver.app with `cua-driver permissions grant` and \
                 connect via `cua-driver mcp`. For an embedded or linked driver, use the \
                 host's launch and permission setup instead.";
 
@@ -422,6 +424,14 @@ mod tests {
             false,
             "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
         ));
+        // A host app that links the driver in-process (the macOS image's daemon).
+        assert!(!is_unbundled(
+            false,
+            "/Applications/Cua Spacesd.app/Contents/MacOS/cua-spacesd"
+        ));
+        // Not a bundle: a path that merely mentions an app, or a bare binary.
+        assert!(is_unbundled(false, "/tmp/Foo.app/cua-driver"));
+        assert!(is_unbundled(false, "/usr/local/bin/cua-spacesd"));
     }
 
     #[test]
@@ -429,7 +439,7 @@ mod tests {
         let seen = windowserver_connection_entry(false, true);
         assert_eq!(seen.status, CheckStatus::Fail);
         assert!(seen.message.contains("1002"));
-        assert!(seen.hint.unwrap().contains("open -n -g -a CuaDriver"));
+        assert!(seen.hint.unwrap().contains("cua-driver permissions grant"));
         assert_eq!(
             windowserver_connection_entry(true, false).status,
             CheckStatus::Fail

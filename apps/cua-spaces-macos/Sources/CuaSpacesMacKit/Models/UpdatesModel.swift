@@ -166,14 +166,18 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
     public nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) { tell("not_found") }
 
-    /// The silent path (`automaticallyDownloadsUpdates`): Sparkle never asks
-    /// the user driver, and installs on quit. Taking the install here makes
-    /// that update "downloaded" too, with the immediate install as Restart.
+    /// The silent path (`automaticallyDownloadsUpdates`): the update is
+    /// downloaded and the page offers "Restart to update" through
+    /// `immediateInstallHandler`. Returning false leaves Sparkle in charge of
+    /// the install, so the update is also applied when the app quits. Returning
+    /// true would promise that the app installs it, and only the click does:
+    /// users who never click (the app lives in the menu bar and notch) stayed
+    /// on the old version for ever (CUA-3065).
     public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                                     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         let version = item.displayVersionString
         MainActor.assumeIsolated { driver.silentlyDownloaded(version: version, install: immediateInstallHandler) }
-        return true
+        return false
     }
 
     /// A cycle that ended with nothing to show clears a pending "checking".
@@ -242,7 +246,7 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
 
     /// Opens `bundle` again once this process has exited, then quits.
-    private static func relaunch(_ bundle: URL) {
+    static func relaunch(_ bundle: URL) {
         let pid = ProcessInfo.processInfo.processIdentifier
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -399,7 +403,10 @@ public final class UpdatesModel {
         self.info = info
         self.channel = channel
         updater?.channels = appAboutAllowedChannels(channel: channel)
-        updater?.onChange = { [weak self] in self?.revision += 1 }
+        updater?.onChange = { [weak self] in
+            self?.revision += 1
+            self?.installWhenReady()
+        }
         // Do people update: what each check found, and installs (the Tauri
         // app records the same words).
         updater?.onUpdateEvent = { [weak self] event in self?.record(event) }
@@ -442,6 +449,36 @@ public final class UpdatesModel {
 
     /// "Restart to update": installs the downloaded update and restarts.
     public func installUpdate() { updater?.installNow() }
+
+    /// The update entry of both menus and the menu bar badge, from the one state.
+    /// Nil in a build with no updater (a development build).
+    public var menuItem: UpdateMenuItem? {
+        updater == nil ? nil : UpdateMenuItem.make(updateState)
+    }
+
+    /// An install asked for before the download finished.
+    private var installQueued = false
+
+    /// What a click on the menu entry does: check, or install (now when the
+    /// update is downloaded, else as soon as it is).
+    public func perform(_ action: UpdateMenuItem.Action) {
+        switch action {
+        case .check: checkNow()
+        case .install:
+            if updateState.status == .downloaded { installUpdate() } else { installQueued = true }
+        case .none: break
+        }
+    }
+
+    private func installWhenReady() {
+        switch updater?.state.status {
+        case .downloaded where installQueued:
+            installQueued = false
+            updater?.installNow()
+        case .idle, .error: installQueued = false
+        default: break
+        }
+    }
 
     static func dateText(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)

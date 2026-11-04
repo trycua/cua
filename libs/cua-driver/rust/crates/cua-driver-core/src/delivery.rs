@@ -48,6 +48,40 @@ impl DeliveryMode {
     }
 }
 
+/// Environment variable an operator sets when starting the daemon to allow a
+/// brief foreground step (trycua/cua#5478). Off by default.
+pub const BRIEF_FOREGROUND_ENV: &str = "CUA_DRIVER_ALLOW_BRIEF_FOREGROUND";
+
+/// Whether the operator allowed a brief foreground step for actions that
+/// cannot finish in the background.
+///
+/// When it is on, a tool whose background attempt hits a known platform limit
+/// (today: a macOS drag-and-drop session in a native window) repeats only that
+/// step in the foreground, then hands the frontmost app and the pointer back,
+/// and says so in its result. It is read from the daemon's environment, which
+/// the agent can't change, and a call that passes `delivery_mode:"background"`
+/// explicitly is never escalated.
+pub fn brief_foreground_allowed() -> bool {
+    brief_foreground_flag(std::env::var(BRIEF_FOREGROUND_ENV).ok().as_deref())
+}
+
+/// Parse [`BRIEF_FOREGROUND_ENV`]: only `1`, `true`, `yes` or `on`
+/// (case-insensitive) turn it on.
+pub fn brief_foreground_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+/// Whether the call itself asked for background delivery by name, which opts
+/// it out of the brief foreground step.
+pub fn background_requested_explicitly(args: &Value) -> bool {
+    args.get("delivery_mode")
+        .and_then(Value::as_str)
+        .is_some_and(|mode| mode.eq_ignore_ascii_case("background"))
+}
+
 /// The `suggestion` every background refusal carries.
 pub const FOREGROUND_RETRY_SUGGESTION: &str =
     "Retry this action with delivery_mode:\"foreground\".";
@@ -103,6 +137,35 @@ pub fn background_unavailable_result_with_suggestion(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn brief_foreground_is_off_unless_explicitly_enabled() {
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some("maybe"),
+        ] {
+            assert!(!super::brief_foreground_flag(off), "{off:?}");
+        }
+        for on in ["1", "true", "TRUE", " yes ", "on"] {
+            assert!(super::brief_foreground_flag(Some(on)), "{on:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_background_opts_out_of_the_brief_foreground_step() {
+        use serde_json::json;
+        assert!(super::background_requested_explicitly(
+            &json!({"delivery_mode": "Background"})
+        ));
+        assert!(!super::background_requested_explicitly(&json!({})));
+        assert!(!super::background_requested_explicitly(
+            &json!({"delivery_mode": "foreground"})
+        ));
+    }
+
     use super::*;
 
     #[test]

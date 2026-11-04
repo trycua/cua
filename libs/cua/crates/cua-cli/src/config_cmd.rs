@@ -26,17 +26,23 @@ pub enum ConfigCmd {
     #[command(after_help = "Examples:
   cua config get default.on")]
     Get {
-        /// Setting (`default.on`, `default.kind`, `default.runtime`).
+        /// Setting (`default.on`, `default.kind`, `default.runtime`,
+        /// `pool.auto`, `pool.memory_percent`, `pool.warm`; `cua config
+        /// list` shows them all).
         key: String,
     },
     /// Write a setting to the config file.
     #[command(after_help = "Examples:
   # Create sandboxes in your AWS account unless --on says otherwise
   cua config set default.on aws
-  # Back to this machine
+  # Back to this computer
   cua config set default.on local
   # Prefer VMs when the image offers both
-  cua config set default.kind vm")]
+  cua config set default.kind vm
+  # A dedicated host: keep 8 Linux desktops ready to claim
+  cua config set pool.warm ghcr.io/trycua/linux:24.04-slim=8
+  # Only explicit pools on this machine
+  cua config set pool.auto off")]
     Set {
         /// Setting.
         key: String,

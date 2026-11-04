@@ -11,7 +11,7 @@ fn enabled_home() -> Home {
     h
 }
 
-const NOTICE: &str = "Cua collects anonymous usage data";
+const NOTICE: &str = "Cua collects usage data to help improve it";
 
 #[tokio::test]
 async fn notice_once_then_events_that_show_last_prints_without_arguments() {

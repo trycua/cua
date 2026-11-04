@@ -11,8 +11,8 @@ Usage:
     cb prune --runs --older-than 30  # Delete runs older than 30 days
 
 Sandboxes come from the cua SDK since cua-bench 0.3 (local ones are released
-when a run ends; `cb env gc` collects idle cloud pools), so ``--docker`` only
-prints how to find containers an older cua-bench left behind.
+when a run ends), so ``--docker`` only prints how to find containers an older
+cua-bench left behind.
 """
 
 from ._help import examples

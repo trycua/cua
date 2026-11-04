@@ -450,7 +450,12 @@ impl Tool for DragTool {
                                     button,
                                     true,
                                     observe,
-                                )
+                                )?;
+                                // Hold the front until AppKit finishes the
+                                // drop: restoring the previous app while the
+                                // session is still open cancels it.
+                                await_drag_session_end(pid);
+                                Ok(())
                             },
                         )
                         .map(|()| false);
@@ -542,6 +547,13 @@ impl Tool for DragTool {
             )
         };
         match result {
+            Ok(Ok(true))
+                if cua_driver_core::delivery::brief_foreground_allowed()
+                    && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
+            {
+                self.brief_foreground_drag(&args, pid, wid, prior_front)
+                    .await
+            }
             Ok(Ok(true)) => drag_and_drop_session_result(pid, wid, changes.result_suffix()),
             Ok(Ok(false)) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
@@ -573,6 +585,76 @@ impl Tool for DragTool {
 }
 
 impl DragTool {
+    /// The operator allowed a brief foreground step (trycua/cua#5478) and the
+    /// background drag started a native drag-and-drop session, which macOS
+    /// tracks with the real pointer. Repeat only this drag in the foreground,
+    /// which fronts the window, drives the pointer, then hands the frontmost
+    /// app and the pointer back. Check both and report the step in the result.
+    async fn brief_foreground_drag(
+        &self,
+        args: &Value,
+        pid: i32,
+        wid: u32,
+        prior_front: Option<i32>,
+    ) -> ToolResult {
+        let pointer_before = tokio::task::spawn_blocking(pointer_location)
+            .await
+            .ok()
+            .flatten();
+        tracing::info!(
+            pid,
+            window_id = wid,
+            ?prior_front,
+            "drag: background drop impossible (drag-and-drop session); \
+             operator allowed a brief foreground step"
+        );
+        let mut foreground_args = args.clone();
+        foreground_args["delivery_mode"] = serde_json::json!("foreground");
+        let mut result = self.invoke(foreground_args).await;
+
+        // The foreground drag leaves the pointer on the drop point (after the
+        // drop has finished, see `await_drag_session_end`); this step promised
+        // to hand it back, so put it where the user left it.
+        if let Some((x, y)) = pointer_before {
+            let _ =
+                tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
+                    .await;
+        }
+        let pointer_after = tokio::task::spawn_blocking(pointer_location)
+            .await
+            .ok()
+            .flatten();
+        let front_after = apps::frontmost_pid();
+        let restored_frontmost = prior_front.is_none() || front_after == prior_front;
+        let restored_pointer = match (pointer_before, pointer_after) {
+            (Some((bx, by)), Some((ax, ay))) => Some((bx - ax).hypot(by - ay) <= 1.0),
+            _ => None,
+        };
+        tracing::info!(
+            pid,
+            window_id = wid,
+            restored_frontmost,
+            ?restored_pointer,
+            failed = result.is_error == Some(true),
+            "drag: brief foreground step finished"
+        );
+
+        let step = brief_foreground_step(restored_frontmost, restored_pointer);
+        let note = brief_foreground_note(restored_frontmost, restored_pointer);
+        let mut structured = result
+            .structured_content
+            .take()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(fields) = structured.as_object_mut() {
+            fields.insert("foreground_step".to_owned(), step);
+        }
+        result.structured_content = Some(structured);
+        result
+            .content
+            .insert(0, cua_driver_core::protocol::Content::text(note));
+        result
+    }
+
     /// Background drag in an Electron window through its main process
     /// ([`crate::input::electron_drag`]). Refuses when the app's inspector
     /// is unavailable (for example the inspector fuse is off).
@@ -688,6 +770,58 @@ impl DragTool {
     }
 }
 
+/// Wait (up to 2 s) until `pid` shows no drag image, so a drag-and-drop
+/// session started by a foreground drag has finished dropping, then let AppKit
+/// settle briefly. A drag that started no session returns almost at once.
+fn await_drag_session_end(pid: i32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !drag_image_windows(pid).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
+}
+
+/// Current hardware pointer location in global display points.
+fn pointer_location() -> Option<(f64, f64)> {
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let location = CGEvent::new(source).ok()?.location();
+    Some((location.x, location.y))
+}
+
+/// Structured record of a brief foreground step, for the agent and the log.
+fn brief_foreground_step(restored_frontmost: bool, restored_pointer: Option<bool>) -> Value {
+    serde_json::json!({
+        "used": true,
+        "reason": "drag_and_drop_session",
+        "allowed_by": cua_driver_core::delivery::BRIEF_FOREGROUND_ENV,
+        "background_attempt": "no_drop",
+        "restored_frontmost": restored_frontmost,
+        "restored_pointer": restored_pointer,
+    })
+}
+
+fn brief_foreground_note(restored_frontmost: bool, restored_pointer: Option<bool>) -> String {
+    let mut note = String::from(
+        "Brief foreground step: the background drag started a macOS drag-and-drop session, \
+         which follows the real pointer, so the driver repeated this one drag in the \
+         foreground because the operator allowed it. The window came forward and the \
+         pointer moved for the drag only.",
+    );
+    note.push_str(if restored_frontmost {
+        " The previous frontmost app is back in front."
+    } else {
+        " The previous frontmost app did NOT come back to the front; tell the user."
+    });
+    note.push_str(match restored_pointer {
+        Some(true) => " The pointer is back where it was.",
+        Some(false) => " The pointer did NOT return to where it was; tell the user.",
+        None => " The pointer position could not be checked.",
+    });
+    note
+}
+
 /// `kCGDraggingWindowLevel`: AppKit shows the image of a live (or sliding
 /// back) drag-and-drop session in a window of the source app at this level.
 const DRAGGING_WINDOW_LEVEL: i32 = 500;
@@ -765,6 +899,27 @@ mod tests {
             assert_eq!(structured["code"], "window_id_required");
             assert_eq!(structured["effect"], "refused");
         }
+    }
+
+    #[test]
+    fn brief_foreground_step_reports_what_was_restored() {
+        let step = super::brief_foreground_step(true, Some(true));
+        assert_eq!(step["used"], true);
+        assert_eq!(step["reason"], "drag_and_drop_session");
+        assert_eq!(step["allowed_by"], "CUA_DRIVER_ALLOW_BRIEF_FOREGROUND");
+        assert_eq!(step["restored_frontmost"], true);
+        assert_eq!(step["restored_pointer"], true);
+        let unknown = super::brief_foreground_step(false, None);
+        assert_eq!(unknown["restored_frontmost"], false);
+        assert!(unknown["restored_pointer"].is_null());
+
+        let note = super::brief_foreground_note(true, Some(true));
+        assert!(note.contains("Brief foreground step"));
+        assert!(note.contains("frontmost app is back"));
+        assert!(note.contains("pointer is back"));
+        let failed = super::brief_foreground_note(false, Some(false));
+        assert!(failed.contains("did NOT come back"));
+        assert!(failed.contains("did NOT return"));
     }
 
     #[test]

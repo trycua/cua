@@ -47,6 +47,7 @@ are exempt because their generator's check owns them. The lanes:
 | `windows`, `lume` | shell blocks on a disposable Windows or macOS machine | nightly |
 | `terraform` | `terraform init` and `validate` | PR |
 | `swift`, `kotlin` | the block compiles against `libs/cua/swift` or `libs/cua/kotlin` (statements wrapped in a function; nothing runs) | PR (`docs-compile-lanes.yml`) |
+| `rust` | the block type-checks (`cargo check`) against `libs/cua/crates/cua-sdk`; a block without `fn main` is wrapped in an async function returning `Result` | PR (`docs-compile-lanes.yml`) |
 | `excerpt` | the block is byte-identical to `source="<path>#<region>"` in a sample CI builds | every PR (`docs:check-blocks`) |
 
 Run the Python and container lanes with

@@ -18,6 +18,8 @@ export interface SystemNote {
   title: string;
   body: string;
   route?: string;
+  /** An image shown with it: a file name in the web build's directory (`cua-key-128.png`). */
+  icon?: string;
 }
 
 export interface SystemServices {
@@ -38,4 +40,6 @@ export interface SystemServices {
   /** The global shortcut (macOS), registered again if the system refused it
    * before; absent or null where the shell has none. */
   globalShortcut?: () => { label: string; registered: boolean } | null;
+  /** Settings, General, Change: the keys to use instead (an Electron accelerator); throws when another app holds them. Absent where there is no shortcut. */
+  setGlobalShortcut?: (accelerator: string) => { label: string; registered: boolean };
 }

@@ -37,8 +37,11 @@ Homebrew `rust` comes earlier.
 
 ## Config notes
 
-- `tsconfig.json` must include `src/bridge/**` with `"types": ["vite/client", "node"]` (or keep the
-  `/// <reference types="vite/client" />` in `core/index.ts`). The bridge
+- `tsconfig.json` must include `src/bridge/**` with `"types": ["vite/client", "node"]`.
+  Any other package that typechecks `core/index.ts` (the Electron app's
+  tests do) lists `vite/client` in its own `types` and has `vite` as its own
+  devDependency: a triple-slash reference would resolve from this package's
+  `node_modules`, which that package's CI does not install. The bridge
   compiles cleanly under `strict` and `noUncheckedIndexedAccess`.
 - Vite needs no special config. `wasm-bindgen --target web` loads
   `core_bg.wasm` through `new URL(..., import.meta.url)`, which Vite emits

@@ -93,7 +93,7 @@ async function preview(message, files, expectedVersion) {
 
 async function main() {
   const [major, minor, patch] = manifest[packagePath].split('.').map(Number);
-  const swift = [`${packagePath}/Sources/CuaSpacesMacKit/Views/OnboardingView.swift`];
+  const swift = [`${packagePath}/Sources/CuaSpacesMacKit/Views/MainWindow.swift`];
   await preview('fix(spaces-macos): keep the onboarding window in front', swift,
     `${major}.${minor}.${patch + 1}`);
   await preview('feat(spaces-macos): add a menu bar Space switcher', swift,

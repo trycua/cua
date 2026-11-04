@@ -361,17 +361,18 @@ pub fn initialize_result() -> Value {
 /// Goose uses in its `ComputerController` extension and Open
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
+    // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
-        ("AX (Accessibility)", "MACOS.md (permissions)")
+        ("AX", "")
     } else if cfg!(target_os = "windows") {
         (
-            "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
+            "UIA",
+            ", WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
         )
     } else {
         (
             "AT-SPI",
-            "LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
+            ", LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
         )
     };
 
@@ -400,7 +401,7 @@ fn agent_instructions() -> String {
 
 1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`.
 2. Read narrowly: `get_window_state` with `query:"Save"`. Re-read with `since:"latest"`.
-3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
+3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixels only for surfaces missing from the tree.
 4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: stops at the first failure, returns what changed.{script_line}
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
@@ -410,7 +411,7 @@ Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.nex
 
 `start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.{permission_line}
 
-Details: `skill://cua-driver/SKILL.md` and {platform_skill_pointer}."#
+Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}."#
     )
 }
 
@@ -531,6 +532,23 @@ mod agent_instruction_tests {
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
         );
+    }
+
+    #[test]
+    fn instructions_point_at_get_guide_and_keep_the_skill_resource() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("`get_guide({topic})`"));
+        for topic in crate::guide::topic_names()
+            .into_iter()
+            .filter(|topic| *topic != "overview")
+        {
+            assert!(
+                instructions.contains(topic),
+                "instructions should name the {topic} topic"
+            );
+        }
+        assert!(instructions.contains("`skill://cua-driver/SKILL.md`"));
+        assert!(instructions.split_whitespace().count() <= 200);
     }
 
     #[test]

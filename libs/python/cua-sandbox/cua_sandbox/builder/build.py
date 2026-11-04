@@ -427,9 +427,9 @@ async def resolve_backing_disk(image: Image) -> Path:
     the published disk instead of a separately built base. Images with no
     registry counterpart fall back to the local base build.
     """
-    from cua_sandbox.image import cloud_registry_image
+    from cua_sandbox.image import registry_image
 
-    ref = cloud_registry_image(image)
+    ref = registry_image(image)
     if ref is not None:
         from cua_sandbox._sdk import local_runtime, native
 

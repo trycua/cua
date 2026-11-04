@@ -14,6 +14,8 @@ rego = ["dep:regorus"]
 # offered unless the operator turns it off at runtime. Without this feature
 # the tool is not offered at all.
 script = ["dep:rquickjs"]
+# OS credential-store history key provider (Linux Secret Service, Windows Credential Manager).
+keyring = ["dep:keyring"]
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
@@ -44,6 +46,7 @@ futures-util = "0.3"
 uuid = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
+indexmap = "2"
 url = "2.5"
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }
@@ -52,6 +55,7 @@ coset = { workspace = true }
 ciborium = { workspace = true }
 time = { workspace = true }
 getrandom = { workspace = true }
+keyring = { version = "4.1.6", default-features = false, features = ["v1"], optional = true }
 fs2 = { workspace = true }
 hmac = { workspace = true }
 # Validate the raw wire payload; serde permits some shapes the schema rejects.
@@ -76,3 +80,11 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+# `fast_path_standalone` lets the std-only fast_path checks compile alone
+# with `rustc --test` (no workspace build needed); see fast_path/mod.rs.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fast_path_standalone)"] }

@@ -84,7 +84,11 @@ frontmost is true'`). Mutating it is not.
 application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
 frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
 for a known application-menu path. With the app in the background it resolves
-the whole path without opening a menu and never activates the app; if macOS
+the whole path without opening a menu and never activates the app. Both the
+app's focused and main window must identify the requested window before menu
+lookup and again before dispatch; a sibling or unreadable context is refused
+with `window_not_key`. A requested window ID alone does not bind the app-wide
+menu. The tool does not silently change documents to satisfy this check. If macOS
 keeps the item unavailable to a background app it refuses with
 `background_unavailable` (then, if the user allows it, `bring_to_front` first).
 One exception: a disabled Save (the ⌘S item) of a document window is saved
@@ -92,10 +96,21 @@ through the app's scripting interface instead, still in the background, and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
 A Save is verified on disk. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
-background key events never reach an app's menus; no keys are sent. macOS asks
-the user once to allow Cua Driver to control the app (Automation) the first
-time a scripting route runs; when that is off, the call refuses and nothing is
-saved.
+background key events never reach an app's menus; no keys are sent. By default,
+macOS may prompt for Automation consent on first use; unanswered prompts can
+recur. Denied consent refuses the scripting action.
+
+For unattended use, start `cua-driver serve --no-automation-prompts` before
+connecting `cua-driver mcp --socket <path>`. MCP's auto-started daemon does not
+enable this protection, and the flag is serve-only. Only explicitly granted
+Automation targets may receive scripting actions: background Save (including
+hotkeys), Finder rename, browser Apple Events JavaScript and browser quit for
+JavaScript setup, and Safari select updates. Ungranted or unknown consent
+refuses immediately with `automation_consent_required`, naming the app and
+System Settings > Privacy & Security > Automation; no scripting action or
+keyboard fallback is sent. Grant consent with the user's authorization before
+retrying. This does not suppress Accessibility/Screen Recording onboarding or
+other unrelated OS prompts. Omit the flag to preserve prompt-on-first-use behavior.
 With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
@@ -238,10 +253,11 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
-   recommended form: goes through LaunchServices so TCC attributes
-   the process to CuaDriver.app). `cua-driver serve &` also works;
-   the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
+2. Start the daemon with `cua-driver permissions grant` (the
+   recommended form: it launches the installed CuaDriver.app by its
+   exact path through LaunchServices, so TCC attributes the process to
+   that app). `cua-driver serve &` also works;
+   the CLI auto-relaunches the installed app by path when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
 3. Run `cua-driver permissions status --json`. This
@@ -293,7 +309,7 @@ Verify with the daemon running:
 
 ```bash
 cua-driver --version
-open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
 cua-driver status
 cua-driver doctor
 cua-driver permissions status --json   # read-only, never prompts
@@ -382,7 +398,7 @@ Limits:
   consent, can still appear.
 
 After the MDM installs the profile, restart the daemon (`cua-driver stop`, then
-`open -n -g -a CuaDriver --args serve`) and run
+`cua-driver permissions grant`) and run
 `cua-driver permissions status --json`. Expect `accessibility: true`.
 
 #### (b) Operator-authorized hosts: approve through the host's screen sharing
@@ -515,7 +531,7 @@ display over SSH for this first run.
    logged: `cua_vnc.py click X Y "CuaDriver: Accessibility"`.
 4. Take another screenshot and confirm that the dialog is gone or the switch is on.
 5. If macOS offers **Quit & Reopen** for CuaDriver, accept it, then restart the
-   daemon (`open -n -g -a CuaDriver --args serve`).
+   daemon (`cua-driver permissions grant`).
 6. If macOS asks for an administrator password or Touch ID, that credential
    belongs to the owner: stop and ask them to enter it. Only when they gave you
    a disposable VM's password for this task, put it in an environment variable
@@ -529,7 +545,7 @@ lines of the approval log: which prompts you approved, when, and on which host.
 
 Send these steps in plain words:
 
-1. Run `open -n -g -a CuaDriver --args serve`, then `cua-driver permissions grant`.
+1. Run `cua-driver permissions grant`.
 2. In the **CuaDriver Permissions** window, click **Open System Settings**.
 3. Under **Privacy & Security**, switch **CuaDriver** on under **Accessibility**
    and under **Screen & System Audio Recording**. Add
@@ -954,6 +970,7 @@ starting point for new browser workflows.
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop. Follow [Install and approve permissions](#install-and-approve-permissions): approve it yourself only when the owner authorized that for this task, otherwise tell the user to grant it in System Settings                       |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` (see [Install and approve permissions](#install-and-approve-permissions)) |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
+| `automation_consent_required` | With `serve --no-automation-prompts`, Automation consent is not explicitly granted for the named app; no scripting action was sent | With the user's authorization, grant access in System Settings > Privacy & Security > Automation |
 | `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
 | `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input or an editing surface (spreadsheet grid, document canvas: `AXLayoutArea`, `AXScrollArea`, `AXTable`, `AXCell`, `AXGroup`; not in Finder/Dock); keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 

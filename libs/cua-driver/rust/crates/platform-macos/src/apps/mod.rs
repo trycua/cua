@@ -166,13 +166,11 @@ fn list_running_apps_from_process_table() -> Vec<AppInfo> {
         // unreadable; either way there is nothing to act on.
         .filter_map(|pid| path_of_pid(pid).map(|path| (pid, path)))
         .collect();
-    // `active` has the same staleness exposure as the running list:
-    // `NSWorkspace.frontmostApplication` is maintained by the same
-    // notification machinery. So AppKit's answer is used only when the kernel
-    // agrees that pid is still alive, and the fallback is the window server's
-    // own front-to-back order — which the Space evidence showed to be accurate
-    // when the app list was not (`list_space_windows` over rcdp reported
-    // reality while `list_apps` did not).
+    // The front pid is used only when the kernel agrees it is still alive,
+    // and the fallback is the window server's own front-to-back order — which
+    // the Space evidence showed to be accurate when the app list was not
+    // (`list_space_windows` over rcdp reported reality while `list_apps` did
+    // not).
     let front = frontmost_pid().filter(|p| live.contains(p)).or_else(|| {
         crate::windows::visible_windows()
             .into_iter()
@@ -645,6 +643,8 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
 
 /// Mirror of Swift's `AppLauncher.locate(name:)`.
 ///
+/// 0. an absolute path to an existing `.app` bundle (the `launch_path`
+///    `list_apps` reports) is used as given;
 /// 1. filesystem lookup by bundle filename in the canonical roots
 ///    (system first so /Applications wins over ~/Applications);
 /// 2. LaunchServices bundle-id lookup, in case the caller passed a
@@ -655,6 +655,13 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
 ///    integration tests; can be added if we hit a non-English-name app
 ///    in the wild.
 pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
+    let as_path = std::path::Path::new(name.trim_end_matches('/'));
+    if as_path.is_absolute()
+        && as_path.extension().is_some_and(|ext| ext == "app")
+        && as_path.is_dir()
+    {
+        return Some(AppLocator::Path(as_path.to_string_lossy().into_owned()));
+    }
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {
@@ -674,6 +681,9 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
         if std::path::Path::new(&path).is_dir() {
             return Some(AppLocator::Path(path));
         }
+    }
+    if app_name.eq_ignore_ascii_case("Finder.app") {
+        return resolve_bundle_id_to_locator("com.apple.finder");
     }
     // Fallback: maybe caller passed a bundle id as `name`. Use the
     // Cryptex-safe locator (carries the bundle id, never the lossy
@@ -923,17 +933,15 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
     })
 }
 
-/// Return the pid of the current frontmost application via
-/// `NSWorkspace.shared.frontmostApplication`. `None` if there isn't one
-/// (rare — e.g. screensaver).
+/// Return the pid of the process WindowServer has frontmost now. `None` if
+/// there isn't one (rare — e.g. screensaver).
+///
+/// Not `NSWorkspace.frontmostApplication`: AppKit updates that value only when
+/// this process's main run loop delivers activation notices. A daemon without
+/// the cursor overlay (`serve --no-overlay`, `mcp --direct`) runs no such loop,
+/// so it kept the app that was in front at its first read (#5045).
 pub fn frontmost_pid() -> Option<i32> {
-    use objc2_app_kit::NSWorkspace;
-    unsafe {
-        let ws = NSWorkspace::sharedWorkspace();
-        let app = ws.frontmostApplication()?;
-        let pid: i32 = app.processIdentifier();
-        Some(pid)
-    }
+    crate::input::skylight::front_process_pid()
 }
 
 /// Re-activate the app with `pid` via
@@ -1195,6 +1203,30 @@ mod tests {
     }
 
     #[test]
+    fn locate_by_name_accepts_absolute_app_bundle_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Zz Path Only Fixture.app");
+        std::fs::create_dir(&bundle).unwrap();
+        let expected = bundle.to_string_lossy().into_owned();
+        assert!(matches!(
+            super::locate_by_name(&expected),
+            Some(super::AppLocator::Path(p)) if p == expected
+        ));
+        // A trailing slash (as shells and Finder add) resolves to the same bundle.
+        assert!(matches!(
+            super::locate_by_name(&format!("{expected}/")),
+            Some(super::AppLocator::Path(p)) if p == expected
+        ));
+        // A missing bundle is still "not installed".
+        let missing = dir
+            .path()
+            .join("Missing.app")
+            .to_string_lossy()
+            .into_owned();
+        assert!(super::locate_by_name(&missing).is_none());
+    }
+
+    #[test]
     fn installed_app_running_as_accessory_reports_live_state() {
         // The #3060 shape: CuaDriver.app ships LSUIElement=true, so its live
         // process runs as Accessory and never enters the Regular list.
@@ -1293,6 +1325,14 @@ mod tests {
         assert_eq!(merged[0].pid, 0);
         assert!(merged[1].running);
         assert_eq!(merged[1].pid, 42);
+    }
+
+    #[test]
+    fn finder_is_located_by_name_outside_the_app_roots() {
+        let (_, bundle_id) = super::locate_by_name("Finder")
+            .expect("Finder ships with every macOS")
+            .app_ref_and_bundle_id();
+        assert_eq!(bundle_id.as_deref(), Some("com.apple.finder"));
     }
 
     #[test]

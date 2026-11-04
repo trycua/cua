@@ -628,13 +628,65 @@ fn append_platform_probes(report: &mut Report) {
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-/// Run every probe and return the aggregated report.
-pub fn run() -> Report {
-    assemble(
+/// Run every probe and return the aggregated report. `fix` also repairs what
+/// can be repaired safely: on macOS it makes LaunchServices forget every other
+/// copy of the app (no files are deleted).
+pub fn run(fix: bool) -> Report {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut report = assemble(
         home_dir().as_deref(),
         &crate::telemetry::status(),
         append_platform_probes,
-    )
+    );
+    #[cfg(target_os = "macos")]
+    append_install_hygiene_probes(&mut report, fix);
+    #[cfg(not(target_os = "macos"))]
+    let _ = fix;
+    report
+}
+
+/// macOS: other copies of the app that macOS can launch instead of the
+/// installed one, and permission rows tied to another path or version.
+#[cfg(target_os = "macos")]
+fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
+    use crate::duplicate_copies as copies;
+
+    let active = PathBuf::from(crate::bundle::app_bundle_path());
+    let bundle_id = crate::bundle::bundle_id();
+    let (registered, indexed_only): (Vec<_>, Vec<_>) =
+        copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .partition(|copy| copy.registered);
+    let fixed = if fix && !registered.is_empty() {
+        let outcomes = copies::unregister(&registered, &copies::run_program);
+        // What LaunchServices still has registered after the fix.
+        let remaining: Vec<_> = copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .filter(|copy| copy.registered)
+            .collect();
+        Some((outcomes, remaining))
+    } else {
+        None
+    };
+    report.push(copies::duplicate_probe(
+        &active,
+        crate::bundle::app_name(),
+        &registered,
+        &indexed_only,
+        fixed
+            .as_ref()
+            .map(|(outcomes, remaining)| (outcomes.as_slice(), remaining.as_slice())),
+    ));
+
+    let executable = active
+        .join("Contents/MacOS")
+        .join(crate::bundle::cli_name());
+    let rows = home_dir()
+        .ok_or_else(|| "HOME is not set".to_owned())
+        .and_then(|home| copies::read_tcc_rows(&home, &copies::run_program));
+    report.push(copies::permission_row_probe(&executable, rows, |bundle| {
+        copies::bundle_version_of(bundle, &copies::run_program)
+    }));
 }
 
 /// The cross-platform probes over explicit host inputs, then `platform`'s.

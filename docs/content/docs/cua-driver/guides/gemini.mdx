@@ -1,28 +1,15 @@
 ---
 title: Computer use with Gemini
-description: Build a Gemini 4 Argon agent that works in native desktop apps through Cua Driver while you keep using your computer.
+description: Use Gemini 4 Argon with Cua Driver through Antigravity, or from your own agent loop on the Gemini API.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
-import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
-
-This guide shows how to build a Gemini agent that operates real desktop apps
-on your computer while you keep working. Cua Driver reads each app through its
-accessibility tree and screenshots, and sends clicks and keystrokes to that app
-in the background, so the agent works while you keep working.
-
-We had early access to Gemini 4 Argon (`gemini-4-argon`) and recorded the demos
-below on the public model with Cua Driver 0.35.2.
-
-You can connect Gemini to Cua Driver in two ways:
-
-- **Path A: Antigravity.** Add Cua Driver as an MCP server and let the
-  Antigravity agent use it. No code.
-- **Path B: your own agent loop.** Use the `google-genai` SDK and the Cua Driver
-  SDK to turn Cua Driver's tools into Gemini function declarations. About 150
-  lines of Python or TypeScript.
-
-## See it work
+Two ways to use Gemini 4 Argon (`gemini-4-argon`) with Cua Driver: add Cua Driver
+to Antigravity and write no code, or call the Gemini API from your own agent
+loop. Both need Cua Driver 0.35.2 or later on a Mac (check with
+`cua-driver --version`) with the permissions from the
+[Quickstart](/cua-driver/quickstart) granted. Windows and Linux use the same MCP
+server and SDKs: change "macOS apps" in the system instruction below to your
+platform.
 
 In each recording, Gemini works in the Mac apps on the left while a person
 types a long message into a chat app on the right with a real keyboard. The bar
@@ -63,55 +50,19 @@ were typed. The middle of each clip is sped up.
   keystrokes reached the chat app.
 </VideoDemo>
 
-## Before you begin
-
-You need:
-
-- A Mac with macOS 14 or later. For Windows and Linux, see
-  [Next steps](#next-steps).
-- For Path A, Antigravity. Gemini 4 Argon in Antigravity is available to
-  Google AI Ultra subscribers.
-- For Path B, a Gemini API key from
-  [Google AI Studio](https://aistudio.google.com/apikey) on a paid tier
-  (Gemini 4 Argon is not on the free tier), and Python 3.10 or later or
-  Node.js 20 or later.
-
-### Install Cua Driver
-
-**1. Install Cua Driver and start its background service:**
-
-```bash test="cli-shape" id="gemini-install"
-/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-open -n -g -a CuaDriver --args serve
-cua-driver permissions grant
-```
-
-When macOS asks, choose **Open System Settings** and turn on **CuaDriver**
-under **Accessibility** and **Screen & System Audio Recording**.
-
-**2. Check the result:**
-
-```bash test="cli-shape" id="gemini-check"
-cua-driver --version
-cua-driver permissions status
-```
-
-The version should be 0.35.2 or later, and both **Accessibility** and
-**Screen Recording** should show as granted.
-
-## Path A: Antigravity with Cua Driver
+## With Antigravity, no code
 
 [Antigravity](https://antigravity.google/docs/home) runs agents on Gemini and
-supports local MCP servers. These steps use the Antigravity CLI, `agy`. The
-Antigravity desktop app and IDE read the same MCP configuration.
-
-**1. Install the Antigravity CLI:**
+supports local MCP servers. Gemini 4 Argon in Antigravity is available to Google
+AI Ultra subscribers. These steps use the Antigravity CLI, `agy`; the desktop
+app and IDE read the same MCP configuration.
 
 ```bash skip="host-install"
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
-**2. Add Cua Driver as an MCP server:**
+Add Cua Driver as an MCP server. This writes it to
+`~/.gemini/config/mcp_config.json`.
 
 ```bash skip="third-party-cli"
 agy mcp add cua-driver "$(command -v cua-driver)" mcp
@@ -123,12 +74,8 @@ NAME        TYPE   STATUS   COMMAND/URL
 cua-driver  stdio  enabled  /Users/you/.local/bin/cua-driver mcp
 ```
 
-This writes the server to `~/.gemini/config/mcp_config.json`. To edit that file
-yourself instead, `cua-driver mcp-config --client antigravity` prints the entry
-to paste.
-
-**3. Let the agent use Cua Driver's tools without asking each time.** Add an
-allow rule to `~/.gemini/antigravity-cli/settings.json`:
+To approve Cua Driver's tools once instead of on every call, add an allow rule
+to `~/.gemini/antigravity-cli/settings.json`:
 
 ```json test="config" id="gemini-agy-settings"
 {
@@ -138,10 +85,8 @@ allow rule to `~/.gemini/antigravity-cli/settings.json`:
 }
 ```
 
-Without the rule, Antigravity asks you to approve each tool call.
-
-**4. Start `agy`, choose Gemini 4 Argon as the model, and give it a task.**
-Name the tools you want it to use, and say that someone is using the computer:
+Start `agy`, choose Gemini 4 Argon, and give it a task. Name the tools you want
+and say that someone is using the computer:
 
 ```text output
 Use only the cua-driver tools. In Contacts, open Daniel Reyes and add this note
@@ -149,149 +94,67 @@ to his card: "Met at the Design Systems Meetup booth." Save the card. Work in
 the background; I'm using the computer.
 ```
 
-To run a task without the interactive interface, use print mode:
+To run without the interactive interface, use print mode. Antigravity cannot
+ask you to approve a tool in print mode, so it denies any tool your allow list
+does not cover, such as shell commands.
 
 ```bash skip="third-party-cli"
 agy -p "Use only the cua-driver tools. List the windows that are open right now."
 ```
 
-In print mode, Antigravity can't ask you to approve a tool, so it denies any
-tool your allow list doesn't cover, such as shell commands.
+## From your own agent loop
 
-## Path B: build your own loop
-
-To control the prompt, the tool set, and the loop yourself, call the Gemini
-[Interactions API](https://ai.google.dev/gemini-api/docs/interactions) and
-connect to Cua Driver from your own process.
+To control the prompt, the tool set, and the loop, call the Gemini
+[Interactions API](https://ai.google.dev/gemini-api/docs/interactions) from your
+own process and run each tool call through Cua Driver. You need a Gemini API key
+from [Google AI Studio](https://aistudio.google.com/apikey) on a paid tier
+(Gemini 4 Argon is not on the free tier), and Python 3.10+ or Node.js 20+.
 
 ![The agent loop: your script sends Gemini the task and Cua Driver's tool declarations, runs each function call through Cua Driver, and sends the result back until Gemini answers.](https://github.com/user-attachments/assets/bdfff431-0f7f-440c-867a-2905fbda4a98)
 
-**1. Install the two SDKs and export your key:**
+The loop has three parts:
 
-<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
-  <Tab value="Python">
-
-```bash skip="host-install"
-pip install google-genai "cua-driver>=0.35.2"
-export GEMINI_API_KEY="YOUR_API_KEY"
-```
-
-  </Tab>
-  <Tab value="TypeScript">
-
-```bash skip="host-install"
-npm install @google/genai "@trycua/cua-driver@>=0.35.2" tsx
-export GEMINI_API_KEY="YOUR_API_KEY"
-```
-
-  </Tab>
-</Tabs>
-
-**2. Write the agent.** The loop has three parts:
-
-- **Tool declarations.** `list_tools_json()` returns each Cua Driver tool with
-  a JSON Schema, which Gemini accepts as a function declaration unchanged.
+- **Tool declarations.** `list_tools_json()` returns each tool with a JSON
+  Schema, which Gemini accepts as a function declaration unchanged.
 - **Tool calls.** `call_tool(name, arguments_json)` runs one tool and returns a
   summary, structured details such as window IDs and element tokens, and
   screenshots.
-- **Results.** Each result goes back to Gemini as a `function_result` with
-  text and image parts. Include the structured details: the window IDs and
-  element tokens the model needs for its next call are there, not in the
-  summary.
+- **Results.** Send each result back as a `function_result` with text and image
+  parts. Include the structured details: the window IDs and element tokens the
+  model needs next are there, not in the summary.
 
-The script connects to the Cua Driver service you started with
-`CuaDriver.connect(None)`. The service holds the macOS permissions, so the
-terminal you run the script from doesn't need them, and it draws the agent's
-own cursor on screen so you can follow what the agent does.
-
-<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
-  <Tab value="Python">
+`CuaDriver.connect(None)` attaches to the Cua Driver service you started. That
+service holds the macOS permissions, so the terminal that runs the script does
+not need them, and it draws the agent's own cursor on screen. This Python
+version uses `pip install google-genai "cua-driver>=0.35.2"` and
+`GEMINI_API_KEY`. The TypeScript SDK has the same calls (`listToolsJson`,
+`callTool`) with `@google/genai` and `@trycua/cua-driver`.
 
 ```python skip="no-runner"
-"""A Gemini agent that operates desktop apps in the background with Cua Driver.
-
-    pip install google-genai "cua-driver>=0.35.2"
-    export GEMINI_API_KEY=...
-    python gemini_cua_agent.py "Add each person in signups.pdf (open in Preview) to Contacts"
-"""
-
-import argparse
-import asyncio
-import json
-import os
-import time
+import asyncio, json, os, time
 
 from cua_driver import CuaDriver
 from google import genai
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-4-argon")
 
-# A focused subset of Cua Driver's tools. launch_app and invoke_menu are left
-# out because both can bring an app to the front. Batch tools are added when
-# the installed Cua Driver offers them.
-TOOLS = [
-    "list_apps",
-    "list_windows",
-    "get_window_state",
-    "click",
-    "type_text",
-    "set_value",
-    "press_key",
-    "hotkey",
-    "scroll",
-    "verify_state",
-    "run_steps",
-    "run_script",
-]
+# launch_app and invoke_menu are left out because both can bring an app to the front.
+TOOLS = {"list_apps", "list_windows", "get_window_state", "click", "type_text",
+         "set_value", "press_key", "hotkey", "scroll", "verify_state",
+         "run_steps", "run_script"}
 
 SYSTEM_INSTRUCTION = """\
-You operate macOS apps through Cua Driver tools while the user keeps working
-on the same computer.
-
-- Stay in the background. Don't bring windows to the front, and keep the
-  default background delivery for every action.
-- Find the apps you need with list_apps and list_windows.
-- Before acting on a window, call get_window_state(pid, window_id) and use the
-  element_token values from that snapshot. Take a fresh snapshot after any
-  change; old tokens go stale.
-- Prefer accessibility actions (element_token, set_value) over pixel
-  coordinates.
-- Check the result of each change in a fresh snapshot before moving on.
-- When the task is done, reply with a short summary and call no more tools.
-"""
+You operate macOS apps through Cua Driver tools while the user keeps working on
+the same computer. Stay in the background: do not bring windows to the front.
+Before acting on a window, call get_window_state(pid, window_id) and use the
+element_token values from that snapshot; take a fresh snapshot after any change.
+Prefer accessibility actions over pixel coordinates. When the task is done,
+reply with a short summary and call no more tools."""
 
 TIMEOUT_S = 20 * 60  # One Gemini call can take several minutes.
 
 
-def to_function(tool: dict) -> dict:
-    """Map one Cua Driver tool to a Gemini function declaration."""
-    return {
-        "type": "function",
-        "name": tool["name"],
-        "description": tool["description"],
-        "parameters": tool["inputSchema"],
-    }
-
-
-def to_result(call, result) -> dict:
-    """Map a Cua Driver ToolResult to a Gemini function_result input."""
-    content = [{"type": "text", "text": result.text or "ok"}]
-    if result.structured_json:  # window IDs, element tokens and other details
-        content.append({"type": "text", "text": result.structured_json})
-    content += [
-        {"type": "image", "mime_type": image.mime_type, "data": image.data_base64}
-        for image in result.images
-    ]
-    return {
-        "type": "function_result",
-        "name": call.name,
-        "call_id": call.id,
-        "result": content,
-        "is_error": result.is_error,
-    }
-
-
-async def run(task: str, max_turns: int, thinking_level: str) -> str:
+async def run(task: str, max_turns: int = 200) -> str:
     client = genai.Client()
     driver = CuaDriver.connect(None)  # the Cua Driver service started earlier
     session = f"gemini-{int(time.time())}"
@@ -300,26 +163,26 @@ async def run(task: str, max_turns: int, thinking_level: str) -> str:
         return await driver.call_tool(name, json.dumps(args))
 
     try:
-        # Show this session's agent cursor while it works.
         await call_tool("start_session", {"session": session})
         await call_tool("set_agent_cursor_enabled", {"session": session, "enabled": True})
 
         catalog = json.loads(await driver.list_tools_json())["tools"]
-        tools = [to_function(t) for t in catalog if t["name"] in TOOLS]
+        tools = [
+            {"type": "function", "name": t["name"], "description": t["description"],
+             "parameters": t["inputSchema"]}
+            for t in catalog if t["name"] in TOOLS
+        ]
         takes_session = {
             t["name"] for t in catalog if "session" in t["inputSchema"].get("properties", {})
         }
-
         request = dict(
-            model=MODEL,
-            tools=tools,
-            system_instruction=SYSTEM_INSTRUCTION,
-            generation_config={"thinking_level": thinking_level, "max_output_tokens": 65536},
+            model=MODEL, tools=tools, system_instruction=SYSTEM_INSTRUCTION,
+            generation_config={"thinking_level": "low", "max_output_tokens": 65536},
             timeout=TIMEOUT_S,
         )
         interaction = await client.aio.interactions.create(input=task, **request)
 
-        for turn in range(1, max_turns + 1):
+        for _ in range(max_turns):
             calls = [s for s in interaction.steps or [] if s.type == "function_call"]
             if not calls:
                 return interaction.output_text or ""
@@ -329,12 +192,17 @@ async def run(task: str, max_turns: int, thinking_level: str) -> str:
                 args = dict(call.arguments)
                 if call.name in takes_session:
                     args["session"] = session
-                started = time.monotonic()
                 result = await call_tool(call.name, args)
-                status = "error" if result.is_error else "ok"
-                print(f"[{turn}] {call.name} {json.dumps(call.arguments)[:100]} -> {status} "
-                      f"({time.monotonic() - started:.1f}s)")
-                results.append(to_result(call, result))
+                content = [{"type": "text", "text": result.text or "ok"}]
+                if result.structured_json:  # window IDs, element tokens and other details
+                    content.append({"type": "text", "text": result.structured_json})
+                content += [
+                    {"type": "image", "mime_type": i.mime_type, "data": i.data_base64}
+                    for i in result.images
+                ]
+                results.append({"type": "function_result", "name": call.name,
+                                "call_id": call.id, "result": content,
+                                "is_error": result.is_error})
 
             interaction = await client.aio.interactions.create(
                 input=results, previous_interaction_id=interaction.id, **request
@@ -345,223 +213,41 @@ async def run(task: str, max_turns: int, thinking_level: str) -> str:
         await driver.shutdown()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("task")
-    parser.add_argument("--max-turns", type=int, default=200)
-    parser.add_argument("--thinking-level", default="low", choices=["low", "medium", "high"])
-    args = parser.parse_args()
-    print(asyncio.run(run(args.task, args.max_turns, args.thinking_level)))
-
-
-if __name__ == "__main__":
-    main()
+print(asyncio.run(run("Add each person in signups.pdf (open in Preview) to Contacts")))
 ```
 
-  </Tab>
-  <Tab value="TypeScript">
+Open the apps the task needs before you run it. Keep working in another app
+while it runs.
 
-```ts skip="no-runner"
-// A Gemini agent that operates desktop apps in the background with Cua Driver.
-//
-//   npm install @google/genai "@trycua/cua-driver@>=0.35.2" tsx
-//   export GEMINI_API_KEY=...
-//   npx tsx gemini-cua-agent.ts "Add each person in signups.pdf (open in Preview) to Contacts"
-
-import { GoogleGenAI } from "@google/genai";
-import { CuaDriver } from "@trycua/cua-driver";
-
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-4-argon";
-
-// launch_app and invoke_menu are left out because both can bring an app to
-// the front. Batch tools are used when the installed Cua Driver offers them.
-const TOOLS = new Set([
-  "list_apps", "list_windows", "get_window_state",
-  "click", "type_text", "set_value", "press_key", "hotkey", "scroll",
-  "verify_state", "run_steps", "run_script",
-]);
-
-const SYSTEM_INSTRUCTION = `You operate macOS apps through Cua Driver tools while the user keeps working on the same computer.
-- Stay in the background. Don't bring windows to the front, and keep the default background delivery.
-- Find the apps you need with list_apps and list_windows.
-- Before acting on a window, call get_window_state(pid, window_id) and use element_token values from that snapshot.
-- Prefer accessibility actions (element_token, set_value) over pixel coordinates.
-- Check each change in a fresh snapshot. When done, reply with a short summary and call no more tools.`;
-
-const TIMEOUT_MS = 20 * 60 * 1000; // One Gemini call can take several minutes.
-
-async function run(task: string, maxTurns = 200): Promise<string> {
-  const ai = new GoogleGenAI({});
-  const driver = CuaDriver.connect(undefined); // the Cua Driver service started earlier
-  const session = `gemini-${Math.floor(Date.now() / 1000)}`;
-  const callTool = (name: string, args: object) => driver.callTool(name, JSON.stringify(args));
-
-  try {
-    // Show this session's agent cursor while it works.
-    await callTool("start_session", { session });
-    await callTool("set_agent_cursor_enabled", { session, enabled: true });
-
-    const catalog = JSON.parse(await driver.listToolsJson()).tools as Array<{
-      name: string; description: string; inputSchema: { properties?: object };
-    }>;
-    const takesSession = new Set(
-      catalog.filter((t) => "session" in (t.inputSchema.properties ?? {})).map((t) => t.name),
-    );
-    const tools = catalog
-      .filter((t) => TOOLS.has(t.name))
-      .map((t) => ({
-        type: "function" as const,
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema,
-      }));
-
-    const request = {
-      model: MODEL,
-      tools,
-      system_instruction: SYSTEM_INSTRUCTION,
-      generation_config: { thinking_level: "low" as const, max_output_tokens: 65536 },
-    };
-    let interaction = await ai.interactions.create(
-      { ...request, input: task }, { timeout: TIMEOUT_MS },
-    );
-
-    for (let turn = 1; turn <= maxTurns; turn++) {
-      const calls = (interaction.steps ?? []).filter((s) => s.type === "function_call");
-      if (calls.length === 0) return interaction.output_text ?? "";
-
-      const results = [];
-      for (const call of calls) {
-        const args = { ...call.arguments, ...(takesSession.has(call.name) ? { session } : {}) };
-        const result = await callTool(call.name, args);
-        console.log(`[${turn}] ${call.name} ${JSON.stringify(call.arguments).slice(0, 100)} -> ${result.isError ? "error" : "ok"}`);
-        results.push({
-          type: "function_result" as const,
-          name: call.name,
-          call_id: call.id,
-          is_error: result.isError,
-          result: [
-            { type: "text" as const, text: result.text || "ok" },
-            // window IDs, element tokens and other details
-            ...(result.structuredJson ? [{ type: "text" as const, text: result.structuredJson }] : []),
-            ...result.images.map((image) => ({
-              type: "image" as const,
-              mime_type: image.mimeType,
-              data: image.dataBase64,
-            })),
-          ],
-        });
-      }
-      interaction = await ai.interactions.create(
-        { ...request, input: results, previous_interaction_id: interaction.id },
-        { timeout: TIMEOUT_MS },
-      );
-    }
-    return `Stopped after ${maxTurns} turns.`;
-  } finally {
-    await callTool("end_session", { session });
-    await driver.shutdown();
-    // shutdown() drains the runtime; this releases the native handle.
-    (driver as unknown as { uniffiDestroy(): void }).uniffiDestroy();
-  }
-}
-
-console.log(await run(process.argv[2] ?? "List the apps that are running."));
-```
-
-  </Tab>
-</Tabs>
-
-<Callout>
-  `CuaDriver.create()` loads Cua Driver into your own process instead. On macOS
-  that runtime can't draw the agent cursor and needs its own permission grants.
-  A coming release makes `create()` connect to the service automatically on
-  macOS ([#5090](https://github.com/trycua/cua/pull/5090)); until then, use
-  `connect()` as shown.
-</Callout>
-
-**3. Open the apps and run it.** The script expects the apps it works in to be
-open already. For example, with a PDF of sign-ups open in Preview and Contacts
-open:
-
-```bash skip="no-runner"
-python gemini_cua_agent.py "signups.pdf is open in Preview. Add each person in \
-its table to Contacts as a new contact with their name, company and email. \
-Contacts is already open. Work in the background: I'm typing in another app, so \
-don't bring any window to the front. When you're done, tell me what you added."
-```
-
-Keep working in another app while it runs. Each line the script prints is one
-Cua Driver call. These lines are from the Ledger run above:
-
-```text output
-[1] list_windows {"app": "Ledger"} -> ok (0.0s)
-[2] get_window_state {"window_id": 842, "pid": 16196} -> ok (0.2s)
-[3] run_steps {"window_id": 842, "observe": {"since": null, "include_screenshot": false}, "steps": [{"tool": "set_ -> ok (5.8s)
-[4] run_steps {"window_id": 842, "steps": [{"tool": "set_value", "args": {"element_token": "s00000002:1", "value": -> ok (5.8s)
-```
-
-When Gemini answers without calling a tool, the script prints that answer and
-stops.
-
-## Settings for Gemini 4 Argon
-
-These follow Google's
-[Gemini 4 Argon guidance](https://ai.google.dev/gemini-api/docs/latest-model).
-For Google's built-in computer use tool, see the
-[computer use reference](https://ai.google.dev/gemini-api/docs/computer-use).
+Settings that follow Google's
+[Gemini 4 Argon guidance](https://ai.google.dev/gemini-api/docs/latest-model):
 
 - **Use `thinking_level`, not `thinking_budget`.** Argon accepts `low`,
   `medium`, and `high`. Most UI steps are routine, so `low` keeps the loop
-  responsive; raise it when a task needs real planning, such as reconciling
-  two documents.
+  responsive. Raise it when a task needs real planning.
 - **Set `max_output_tokens` to 65,536.** A low limit can stop the model before
-  it finishes thinking. For outputs past 64K tokens, see
-  [Long Decode](https://ai.google.dev/gemini-api/docs/long-decode).
+  it finishes thinking.
 - **Allow long HTTP timeouts.** Google recommends at least 15 minutes per
-  request; the examples use 20. Give the whole task its own wall-clock budget
-  instead of a short per-call limit.
+  request. Give the whole task its own wall-clock budget instead of a short
+  per-call limit.
 - **Leave out sampling parameters.** Argon ignores `temperature`, `top_p`, and
   `top_k`.
 - **Pass thought signatures back unchanged.** With `previous_interaction_id`,
-  the server keeps the conversation, including thoughts and their signatures.
-  If you keep history yourself (`store=False`), resend every model step
-  exactly as you received it, `thought_signature` included.
+  the server keeps them. If you keep history yourself (`store=False`), resend
+  every model step exactly as you received it.
 
-## Tips
+Tips for long tasks:
 
-- **Watch context on long tasks.** With `previous_interaction_id`, every
-  snapshot stays in the conversation. A large window such as a Keynote
-  document can return tens of thousands of tokens per snapshot, so a long task
-  can reach the 1M-token input limit. For long tasks, keep history yourself,
-  drop old snapshots and screenshots, and keep the model's steps unchanged.
-- **Keep observations lean.** When the agent only needs fresh element tokens,
-  it can call `get_window_state` with `include_screenshot: false`.
-- **Prefer accessibility actions.** `set_value` and clicks by `element_token`
-  work on background windows and don't depend on pixel coordinates.
-- **Batch steps.** `run_steps` and `run_script` run several actions in one tool
-  call, which cuts round trips to Gemini.
-- **Offer a focused tool set.** Cua Driver has more than 50 tools. The examples
-  offer about a dozen for desktop work. Add the `browser_*` tools when the task
-  is in a web page.
-- **Keep risky actions supervised.** Run unattended agents in a separate macOS
-  user account or a [virtual machine](/cua-driver/guides/vms-and-remote), and
-  keep purchases, messages, deletions, and credentials out of unattended
-  tasks.
+- With `previous_interaction_id`, every snapshot stays in the conversation, and
+  a large window can return tens of thousands of tokens per snapshot. For long
+  tasks, keep history yourself and drop old snapshots and screenshots.
+- Call `get_window_state` with `include_screenshot: false` when the agent only
+  needs fresh element tokens.
+- Offer about a dozen tools, not all 50. Add the `browser_*` tools when the
+  task is in a web page.
+- Run unattended agents in a separate macOS user account or a
+  [VM](/cua-driver/guides/vms-and-remote), and keep purchases, messages,
+  deletions, and credentials out of unattended tasks.
 
-## Next steps
-
-- **Windows and Linux.** Cua Driver runs on Windows 10 and 11 and on x86_64
-  Linux desktops (X11 or XWayland, with AT-SPI 2), with the same MCP server and
-  SDKs. See the [Quickstart](/cua-driver/quickstart) for the install steps,
-  and change "macOS apps" in the system instruction to your platform.
-- **Shared computers for teams.** [Cua Spaces](https://cua.ai/spaces) gives
-  your team and its agents shared computers that everyone can watch, so an
-  agent can work on a computer other than your own.
-- **Reference.**
-  - [Use the SDK](/cua-driver/guides/use-the-sdk) and the
-    [MCP tool reference](/cua-driver/reference/mcp-tools)
-  - [Antigravity MCP configuration](https://antigravity.google/docs/mcp)
-  - [Gemini Interactions API](https://ai.google.dev/gemini-api/docs/interactions),
-    [function calling](https://ai.google.dev/gemini-api/docs/function-calling),
-    and [computer use](https://ai.google.dev/gemini-api/docs/computer-use)
+For Google's built-in computer use tool, see the
+[computer use reference](https://ai.google.dev/gemini-api/docs/computer-use).

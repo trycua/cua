@@ -10,7 +10,7 @@
 //!   QEMU backend boots `ImageSource::Oci` refs.
 //! * [`detect`] — classify a reference (containerDisk, rootfs, Lume, other macOS).
 //! * [`resolve`] — the one resolver: reference + backend + arch to a pinned
-//!   variant (`ResolvedImage`), used by every SDK, the daemon and cua-fleet.
+//!   variant (`ResolvedImage`), used by every SDK and the daemon.
 //! * [`canonical`] — `ghcr.io/trycua/{linux,windows,macos}`, their tiers
 //!   (`-slim`, full, `-xcode`), Omarchy and their aliases.
 //! * [`catalog`] — the shared image catalog (`libs/images/sandbox-images.json`).
@@ -33,6 +33,7 @@ pub mod catalog;
 pub mod containerdisk;
 pub mod detect;
 pub mod digest;
+pub mod dockerfile;
 pub mod error;
 pub mod layout;
 pub mod manifest;
@@ -52,4 +53,5 @@ pub use error::{ImageError, InvalidArgument, Result};
 pub use layout::{PackedImage, push_multiarch};
 pub use registry::{ManifestSource, RegistryClient};
 pub use resolve::{Backend, ResolvedImage, Variant, resolve};
+pub use rootfs::RootfsLayerResolver;
 pub use spec::ImageResource;

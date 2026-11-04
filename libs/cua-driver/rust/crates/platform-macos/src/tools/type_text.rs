@@ -571,7 +571,7 @@ const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
-// The daemon transport has a 120-second request deadline. Character synthesis
+// The daemon transport has a 150-second reply deadline. Character synthesis
 // is synchronous and costs at least one 8ms key-down gap plus either the
 // requested delay or an 8ms key-up gap per character. Keep the complete
 // scheduled synthesis sleeps + read-back estimate within 100 seconds, reserving
@@ -1257,9 +1257,13 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    Ok(await_typed_delivery(before, text, deadline, || {
-        read_axvalue_bound(pid, element_ptr_and_idx, window_id)
-    }))
+    Ok(await_typed_delivery(
+        before,
+        text,
+        deadline,
+        || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+        || target_in_web_area(pid, element_ptr_and_idx, window_id),
+    ))
 }
 
 fn await_typed_delivery(
@@ -1267,6 +1271,7 @@ fn await_typed_delivery(
     text: &str,
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
+    is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
     let mut best_partial = None;
     loop {
@@ -1285,6 +1290,9 @@ fn await_typed_delivery(
             }
         }
         if std::time::Instant::now() >= deadline {
+            if best_partial == Some(0) && is_web() {
+                best_partial = None;
+            }
             return (false, best_partial);
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
@@ -2086,6 +2094,7 @@ mod tests {
                 reads += 1;
                 values.pop_front().flatten()
             },
+            || false,
         );
         assert_eq!(delivery, (true, Some(text.chars().count())));
         assert_eq!(reads, 2, "completion must wait past the prefix readback");
@@ -2098,8 +2107,74 @@ mod tests {
             "BEGIN-payload-END",
             std::time::Instant::now(),
             || Some("BEGIN".to_owned()),
+            || false,
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    #[test]
+    fn delivery_unchanged_web_is_unverifiable() {
+        for web in [true, false] {
+            assert_eq!(
+                await_typed_delivery(
+                    Some(""),
+                    "hello",
+                    std::time::Instant::now(),
+                    || Some(String::new()),
+                    || web,
+                ),
+                (false, if web { None } else { Some(0) }),
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_web_keeps_polling_and_preserves_positive_progress() {
+        for complete in [true, false] {
+            let mut reads = 0;
+            let result = await_typed_delivery(
+                Some(""),
+                "hello",
+                std::time::Instant::now() + std::time::Duration::from_millis(30),
+                || {
+                    reads += 1;
+                    Some(
+                        if reads == 1 {
+                            ""
+                        } else if complete {
+                            "hello"
+                        } else {
+                            "he"
+                        }
+                        .to_owned(),
+                    )
+                },
+                || panic!("positive progress must not probe ancestry"),
+            );
+            assert!(reads >= 2);
+            assert_eq!(
+                result,
+                if complete {
+                    (true, Some(5))
+                } else {
+                    (false, Some(2))
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_unreadable_does_not_probe_ancestry() {
+        assert_eq!(
+            await_typed_delivery(
+                Some(""),
+                "hello",
+                std::time::Instant::now(),
+                || None,
+                || panic!("unreadable values must not probe ancestry"),
+            ),
+            (false, None),
+        );
     }
 
     #[test]

@@ -17,15 +17,13 @@ cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
-zeroize = { workspace = true }
-getrandom = { workspace = true }
 sha2 = { workspace = true }
 # tiny-skia for cursor rendering (shared cross-platform)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
-keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
+cua-driver-core = { path = "../cua-driver-core", features = ["keyring"] }
 # X11 background input + window enumeration + MIT-SHM capture
 x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm", "res"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
@@ -89,16 +87,16 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.
 url = "2"
-# PipeWire client for the ScreenCast per-window capture path — dequeues
-# frames from the node id returned by `open_pipe_wire_remote`. Pinned to
-# 0.8 (last well-documented release; 0.10 had docs.rs build failures in
-# mid-2026). Needs libpipewire-0.3 headers at build time — gated behind
-# the `portal-capture` feature.
-pipewire = { version = "0.8", optional = true }
-# Companion to pipewire 0.8 — needed to construct the SPA_PARAM_EnumFormat
-# pod (SPA_VIDEO_FORMAT_BGRx at announced width/height) we hand to
-# `Stream::connect`. Same `portal-capture` gating as `pipewire`.
-libspa = { version = "0.8", optional = true }
+# PipeWire types and constants for the ScreenCast video route, which dequeues
+# frames from the node id returned by `open_pipe_wire_remote`. libpipewire
+# itself is loaded at runtime (`wayland::libpipewire`), so builds need its
+# headers but the binary does not link it. Gated behind `portal-capture`.
+pipewire-sys = { version = "0.10", optional = true }
+libloading = { version = "0.8", optional = true }
+# SPA pods, format parsing and buffer types (header-only, compiled in): builds
+# the SPA_PARAM_EnumFormat pod (raw BGRx/BGRA/RGBx/RGBA at announced
+# width/height) handed to `pw_stream_connect`. Same `portal-capture` gating.
+libspa = { version = "0.10", optional = true }
 # Pure-Rust libei/libeis bindings for the GNOME/KDE input path (handshake
 # → seat → device → pointer_absolute/button/scroll/keyboard/text). API is
 # documented as "incomplete and subject to change" — budget for churn on
@@ -114,16 +112,16 @@ calloop = { version = "0.14", optional = true }
 # re-exports this same major version; pinning explicitly prevents
 # duplicate-crate hazards.
 enumflags2 = { version = "0.7", optional = true }
-# Keymap fallback path for libei keyboard input when the EIS server does
-# NOT advertise `ei_text` (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
-# Mirrors the reis `type-text.rs` example's keycode reverse-mapping.
-xkbcommon = { version = "0.9", optional = true }
 # Bounded MPSC command/reply channel for the persistent virtual-pointer
 # owner thread. EventQueue<State> is !Send, so the persistent device must
 # live on its own thread; crossbeam gives us a Send sender and synchronous
 # reply channels that preserve the "tool call blocks until compositor
 # roundtripped" contract the X11 path provides.
 crossbeam-channel = "0.5"
+# Resolves text against the compositor's XKB keymap: niri text input and the
+# libei keymap fallback when the EIS server does NOT advertise `ei_text`
+# (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
+xkbcommon = "0.9"
 # Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
 # ScreenCast and RemoteDesktop `restore_token`s so users see the consent
 # dialog only once per install, not once per process.
@@ -142,13 +140,14 @@ portal-input = [
     "dep:reis",
     "dep:calloop",
     "dep:enumflags2",
-    "dep:xkbcommon",
 ]
-# PipeWire-backed per-window ScreenCast capture keeps its newer system-header
-# requirement and remains enabled by Nix/modern desktop builds.
+# PipeWire-backed ScreenCast capture (the full-desktop video route for
+# KDE/KWin and other compositors without wlr-screencopy) keeps its newer
+# system-header requirement and remains enabled by Nix/modern desktop builds.
 portal-capture = [
     "ashpd/screencast",
-    "dep:pipewire",
+    "dep:pipewire-sys",
+    "dep:libloading",
     "dep:libspa",
 ]
 # Backward-compatible full desktop feature used by the Nix package.
@@ -156,7 +155,6 @@ portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-uuid = { workspace = true }
 tempfile = "3"
 # Used by the `screenshot_cascade` example to surface the
 # `tracing::debug!` lines emitted by each tier of the dispatch as it

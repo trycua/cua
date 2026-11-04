@@ -55,22 +55,25 @@ describe("relay.usage", () => {
   it.skipIf(!wasmBuilt)("the row and the notice are the core's words", async () => {
     const core = await testCore();
     const free = relayUsageView(core, demoRelayUsage())!;
-    expect(free).toMatchObject({ label: "Relay usage", line: "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", plan: "Free plan", notice: null });
+    expect(free).toMatchObject({ label: "Remote use", line: "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month", plan: "Free plan", notice: null });
     expect(free.planCard).toMatchObject({ plan: "free", label: "Free plan", primary: { label: "Get Pro", url: "https://app.cua.ai/buy/pro?from=app_plan_card" }, secondary: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_plan_card" } });
     const past = relayUsageView(core, { ...demoRelayUsage(), hoursUsed: 20.24, softLimitReached: true, reasons: ["hours"], team: { id: "acme", seats: 3 } })!;
-    expect(past.line).toBe("Live sessions 1 of 2 · Relay hours 20.2 of 20 this month · Team pool, 3 seats");
+    expect(past.line).toBe("Live sessions 1 of 2 · Remote hours 20.2 of 20 this month · Team pool, 3 seats");
     expect(past.notice).toEqual({
-      text: "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.",
+      text: "You're using 20.2 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.",
       upgrade: "Upgrade",
       upgradeUrl: "https://app.cua.ai/buy/pro?from=app_meter",
       dismiss: "Dismiss",
       dismissKey: "2026-10:hours",
       level: "limit",
+      // For usage data (CUA-1881): which cap, which plan.
+      kind: "hours",
+      plan: "free",
     });
     expect(relayUsageView(noCore, demoRelayUsage())).toBeNull();
   });
 
-  it("reads once for every screen, again every 5 minutes, and drops it when signed out", async () => {
+  it("reads once for every screen, again every minute, and drops it when signed out", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const demo = createDemoAdapter({ latencyMs: 0 });
     const call = vi.fn(demo.call);

@@ -233,6 +233,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -646,6 +674,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -2176,6 +2232,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -2379,6 +2463,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -2984,6 +3096,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -3705,6 +3845,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -3952,6 +4120,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -4578,6 +4774,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -5196,6 +5420,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },

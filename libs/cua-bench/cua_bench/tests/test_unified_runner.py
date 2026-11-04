@@ -46,9 +46,8 @@ class FakeShell:
 
 
 class FakeSandbox:
-    def __init__(self, name, pool):
+    def __init__(self, name):
         self.name = name
-        self.pool_name = pool
         self.files = FakeFiles()
         self.shell = FakeShell(self.files)
 
@@ -110,7 +109,7 @@ class FakeSDK:
                 sdk.peak = max(sdk.peak, sdk.live)
                 try:
                     await asyncio.sleep(sdk.delay)
-                    yield FakeSandbox(f"sandbox-{len(sdk.calls)}", None)
+                    yield FakeSandbox(f"sandbox-{len(sdk.calls)}")
                 finally:
                     sdk.live -= 1
                     sdk.released += 1
@@ -140,11 +139,9 @@ class TestAdapter:
 
     def test_kwargs_carry_the_sizing_and_the_location(self):
         spec = EnvSpec(provider="native", image=IMG)
-        kw = sandboxes.ephemeral_kwargs(spec, Target(on="local", cpu=2, memory_mb=2048, warm=True))
+        kw = sandboxes.ephemeral_kwargs(spec, Target(on="local", cpu=2, memory_mb=2048))
         # The SDK sizes local containers and VMs from cpu/memory_mb itself.
         assert kw["on"] == "local" and kw["memory_mb"] == 2048 and kw["cpu"] == 2
-        for pool_option in ("max_pool_size", "warm", "claim_ttl", "progress"):
-            assert pool_option not in kw
 
     def test_explain_pull_error_names_the_registry(self):
         spec = EnvSpec(provider="native", image=IMG)
@@ -159,7 +156,7 @@ class TestAdapter:
             "RuntimeError: 401 Unauthorized"
         )
 
-    def test_cloud_targets_and_pool_images_end_with_cua_cloud(self):
+    def test_a_cloud_target_ends_with_cua_cloud(self):
         from cua_bench.targets import CloudEnded
 
         async def go(spec, target):
@@ -169,8 +166,6 @@ class TestAdapter:
         spec = EnvSpec(provider="native", image=IMG)
         with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
             asyncio.run(go(spec, Target(on="cloud")))
-        with pytest.raises(CloudEnded):
-            asyncio.run(go(EnvSpec(provider="native", pool="bench-p"), Target(on="local")))
 
 
 # ── Batch runner ────────────────────────────────────────────────────────────
@@ -233,8 +228,8 @@ class Recorder:
     def __init__(self):
         self.events = []
 
-    def plan(self, target, jobs, plans):
-        self.events.append(("plan", [(p.tasks, p.max_pool_size) for p in plans]))
+    def plan(self, target, jobs):
+        self.events.append(("plan", len(jobs)))
 
     def started(self, job, index, total):
         self.events.append(("started", job.session_id))
@@ -266,11 +261,11 @@ class TestBatchRunner:
         assert {c["image"].ref for c in fake_sdk.calls} == {IMG}
         assert fake_sdk.peak <= 2  # never more sandboxes than concurrency
         assert fake_sdk.released == 3  # every sandbox released
-        assert ("plan", [(3, 2)]) in recorder.events
+        assert ("plan", 3) in recorder.events
 
         by_variant = {r.variant: r for r in results}
         assert by_variant[0].status == by_variant[1].status == "completed"
-        assert by_variant[0].reward == 1.0 and by_variant[0].pool is None
+        assert by_variant[0].reward == 1.0
         assert by_variant[2].status == "failed" and "boom in evaluate" in by_variant[2].error
 
         v0 = tmp_path / "out" / "write_env_v0"
@@ -361,10 +356,10 @@ def test_build_jobs_resolves_specs(task_dir, tmp_path, monkeypatch):
     from cua_bench.cli.commands import run as run_cmd
 
     args = SimpleNamespace(dataset_path=str(task_dir.parent), task_filter=None, max_variants=2)
-    jobs = run_cmd.build_jobs(args, "r1", tmp_path / "out", Target(on="cloud"), "dataset")
-    assert [(j.variant, j.spec.image, j.spec.backend("cloud")) for j in jobs] == [
-        (0, IMG, "cloud-gvisor"),
-        (1, IMG, "cloud-gvisor"),
+    jobs = run_cmd.build_jobs(args, "r1", tmp_path / "out", Target(on="local"), "dataset")
+    assert [(j.variant, j.spec.image, j.spec.backend("local")) for j in jobs] == [
+        (0, IMG, "local-gvisor"),
+        (1, IMG, "local-gvisor"),
     ]
     assert jobs[0].session_id == "task-r1-write_env-v0"
 

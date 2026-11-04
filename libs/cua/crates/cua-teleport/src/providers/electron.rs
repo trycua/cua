@@ -270,7 +270,7 @@ impl ExportProvider for ElectronProvider {
     ) -> Result<()> {
         let dir = self.source_dir(app.platform).ok_or_else(|| {
             TeleportError::Provider(format!(
-                "no {} profile found on this machine",
+                "no {} profile found on this computer",
                 self.app.display
             ))
         })?;

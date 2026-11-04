@@ -17,6 +17,10 @@ struct CaptureProvider {
 
 #[async_trait]
 impl ToolProvider for CaptureProvider {
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
+    }
+
     fn tools_list(&self) -> Value {
         json!({"tools": []})
     }

@@ -15,10 +15,10 @@
 //! required before a capture ID can authorize or drive any production action.
 //! Target-specific bounds and coordinate semantics must be revalidated there.
 //!
-//! TTL cleanup is bounded and lazy: [`CaptureRegistry::prune_expired`] scans at
-//! most `max_captures` entries and drops expired PNG references. Registry size
-//! metrics call it automatically. An eventual runtime owner must call it from
-//! its maintenance/metrics path if no store or lookup traffic is occurring.
+//! TTL cleanup is bounded and lazy: [`CaptureService::prune_expired`] scans at
+//! most `max_captures` entries and drops expired PNG references. An eventual
+//! runtime owner must call it from its maintenance/metrics path if no store or
+//! lookup traffic is occurring.
 
 use image::{ImageDecoder, Limits};
 use sha2::{Digest, Sha256};
@@ -436,13 +436,13 @@ pub struct PruneOutcome {
     pub encoded_bytes_released: usize,
 }
 
-pub struct CaptureRegistration {
-    pub png_bytes: Vec<u8>,
-    pub target: CaptureTarget,
-    pub encoded_dimensions: EncodedScreenshotDimensions,
-    pub native_action_dimensions: NativeActionDimensions,
-    pub screenshot_to_action: ScreenshotToActionTransform,
-    pub binding: CaptureBinding,
+struct CaptureRegistration {
+    png_bytes: Vec<u8>,
+    target: CaptureTarget,
+    encoded_dimensions: EncodedScreenshotDimensions,
+    native_action_dimensions: NativeActionDimensions,
+    screenshot_to_action: ScreenshotToActionTransform,
+    binding: CaptureBinding,
 }
 
 pub struct CapturePublication {
@@ -606,54 +606,6 @@ impl PerceptionCapture {
     }
 }
 
-/// A capture atomically removed from the registry for one action attempt.
-///
-/// The action transform and native action dimensions are exposed only through
-/// this consumed form, preventing action integrations from accidentally using
-/// a reusable perception read. Failed actions must acquire a fresh capture.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct ActionCapture(StoredCapture);
-
-#[allow(dead_code)]
-impl ActionCapture {
-    pub fn id(&self) -> CaptureId {
-        self.0.id
-    }
-
-    pub fn png_bytes(&self) -> Arc<[u8]> {
-        self.0.png_bytes.clone()
-    }
-
-    pub fn digest(&self) -> ContentDigest {
-        self.0.digest
-    }
-
-    pub fn target(&self) -> &CaptureTarget {
-        &self.0.target
-    }
-
-    pub fn encoded_dimensions(&self) -> EncodedScreenshotDimensions {
-        self.0.encoded_dimensions
-    }
-
-    pub fn native_action_dimensions(&self) -> NativeActionDimensions {
-        self.0.native_action_dimensions
-    }
-
-    pub fn screenshot_to_action(&self) -> ScreenshotToActionTransform {
-        self.0.screenshot_to_action
-    }
-
-    pub fn created_at(&self) -> Duration {
-        self.0.created_at
-    }
-
-    pub fn expires_at(&self) -> Duration {
-        self.0.expires_at
-    }
-}
-
 struct RegistryInner {
     captures: HashMap<CaptureId, StoredCapture>,
     insertion_order: VecDeque<CaptureId>,
@@ -663,20 +615,15 @@ struct RegistryInner {
     next_sequence: u64,
 }
 
-pub struct CaptureRegistry {
+struct CaptureRegistry {
     config: CaptureRegistryConfig,
     clock: Arc<dyn MonotonicClock>,
     namespace: [u8; 16],
     inner: Mutex<RegistryInner>,
 }
 
-#[allow(dead_code)]
 impl CaptureRegistry {
-    pub fn new(config: CaptureRegistryConfig) -> Result<Self, CaptureStoreError> {
-        Self::with_clock(config, Arc::new(SystemMonotonicClock::new()))
-    }
-
-    pub fn with_clock(
+    fn with_clock(
         config: CaptureRegistryConfig,
         clock: Arc<dyn MonotonicClock>,
     ) -> Result<Self, CaptureStoreError> {
@@ -696,7 +643,7 @@ impl CaptureRegistry {
         })
     }
 
-    pub fn store(&self, registration: CaptureRegistration) -> Result<CaptureId, CaptureStoreError> {
+    fn store(&self, registration: CaptureRegistration) -> Result<CaptureId, CaptureStoreError> {
         registration.target.validate()?;
         if registration.png_bytes.len() > self.config.max_total_bytes {
             return Err(CaptureStoreError::CaptureTooLarge);
@@ -772,46 +719,15 @@ impl CaptureRegistry {
     }
 
     /// Read immutable screenshot material without making it action-capable.
-    pub fn read_for_perception(
-        &self,
-        id: CaptureId,
-        binding: &CaptureBinding,
-        target: &CaptureTarget,
-    ) -> Result<PerceptionCapture, CaptureLookupError> {
-        self.resolve_capture(id, binding, target, false)
-            .map(PerceptionCapture)
-    }
-
-    fn read_for_perception_bound(
+    fn read_for_perception(
         &self,
         id: CaptureId,
         binding: &CaptureBinding,
     ) -> Result<PerceptionCapture, CaptureLookupError> {
         let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, id);
-            self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
-        }
-        let capture = inner.captures.get(&id).ok_or_else(|| {
-            if inner.expired_ids.contains(&id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
-        }
-        Ok(PerceptionCapture(capture.clone()))
+        let mut inner = self.lock_inner();
+        self.resolve_locked(&mut inner, id, binding, now)
+            .map(|capture| PerceptionCapture(capture.clone()))
     }
 
     fn admit_action(
@@ -819,29 +735,8 @@ impl CaptureRegistry {
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
         let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&request.capture_id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, request.capture_id);
-            self.remember_expired(&mut inner, request.capture_id);
-            return Err(CaptureLookupError::Expired.into());
-        }
-        let capture = inner.captures.get(&request.capture_id).ok_or_else(|| {
-            if inner.expired_ids.contains(&request.capture_id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != request.binding {
-            return Err(CaptureLookupError::GenerationMismatch.into());
-        }
+        let mut inner = self.lock_inner();
+        let capture = self.resolve_locked(&mut inner, request.capture_id, &request.binding, now)?;
         if capture.target != request.target {
             return Err(CaptureLookupError::TargetMismatch.into());
         }
@@ -877,96 +772,58 @@ impl CaptureRegistry {
         Ok(admission)
     }
 
-    /// Atomically remove and return the capture for exactly one action attempt.
-    pub fn consume_for_action(
-        &self,
-        id: CaptureId,
-        binding: &CaptureBinding,
-        target: &CaptureTarget,
-    ) -> Result<ActionCapture, CaptureLookupError> {
-        self.resolve_capture(id, binding, target, true)
-            .map(ActionCapture)
-    }
-
-    fn resolve_capture(
-        &self,
-        id: CaptureId,
-        binding: &CaptureBinding,
-        target: &CaptureTarget,
-        consume: bool,
-    ) -> Result<StoredCapture, CaptureLookupError> {
+    fn retire(&self, id: CaptureId, binding: &CaptureBinding) -> Result<(), CaptureLookupError> {
         let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, id);
-            self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
-        }
-        let capture = inner.captures.get(&id).ok_or_else(|| {
-            if inner.expired_ids.contains(&id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
-        }
-        if capture.target != *target {
-            return Err(CaptureLookupError::TargetMismatch);
-        }
-        let capture = capture.clone();
-        if consume {
-            self.remove_capture(&mut inner, id);
-        }
-        Ok(capture)
-    }
-
-    pub fn retire(
-        &self,
-        id: CaptureId,
-        binding: &CaptureBinding,
-    ) -> Result<(), CaptureLookupError> {
-        let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner
-            .captures
-            .get(&id)
-            .is_some_and(|capture| capture.expires_at <= now)
-        {
-            self.remove_capture(&mut inner, id);
-            self.remember_expired(&mut inner, id);
-            return Err(CaptureLookupError::Expired);
-        }
-        let capture = inner.captures.get(&id).ok_or_else(|| {
-            if inner.expired_ids.contains(&id) {
-                CaptureLookupError::Expired
-            } else {
-                CaptureLookupError::Unknown
-            }
-        })?;
-        if capture.binding != *binding {
-            return Err(CaptureLookupError::GenerationMismatch);
-        }
+        let mut inner = self.lock_inner();
+        self.resolve_locked(&mut inner, id, binding, now)?;
         self.remove_capture(&mut inner, id);
         Ok(())
     }
 
-    pub fn retire_session(&self, binding: &CaptureBinding) -> usize {
+    /// The one lookup every read, admission, and retirement shares. Refusal
+    /// order: an expired entry (tombstoned on first sight) or tombstone
+    /// reports `Expired`, a missing entry `Unknown`, then a foreign binding
+    /// `GenerationMismatch`.
+    fn resolve_locked<'a>(
+        &self,
+        inner: &'a mut RegistryInner,
+        id: CaptureId,
+        binding: &CaptureBinding,
+        now: Duration,
+    ) -> Result<&'a StoredCapture, CaptureLookupError> {
+        if inner
+            .captures
+            .get(&id)
+            .is_some_and(|capture| capture.expires_at <= now)
+        {
+            self.remove_capture(inner, id);
+            self.remember_expired(inner, id);
+            return Err(CaptureLookupError::Expired);
+        }
+        let capture = inner.captures.get(&id).ok_or_else(|| {
+            if inner.expired_ids.contains(&id) {
+                CaptureLookupError::Expired
+            } else {
+                CaptureLookupError::Unknown
+            }
+        })?;
+        if capture.binding != *binding {
+            return Err(CaptureLookupError::GenerationMismatch);
+        }
+        Ok(capture)
+    }
+
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, RegistryInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn retire_session(&self, binding: &CaptureBinding) -> usize {
         self.retire_matching(|capture| capture.binding == *binding)
     }
 
-    pub fn retire_runtime(&self, runtime_generation: u64) -> usize {
+    fn retire_runtime(&self, runtime_generation: u64) -> usize {
         self.retire_matching(|capture| capture.binding.runtime_generation == runtime_generation)
     }
 
@@ -975,34 +832,10 @@ impl CaptureRegistry {
     /// Work is bounded by `max_captures`. The returned byte count is the sum of
     /// encoded PNG lengths removed from the registry; independently cloned
     /// perception results may keep their own immutable references alive.
-    pub fn prune_expired(&self) -> PruneOutcome {
+    fn prune_expired(&self) -> PruneOutcome {
         let now = self.clock.now();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut inner = self.lock_inner();
         self.prune_expired_locked(&mut inner, now)
-    }
-
-    pub fn len(&self) -> usize {
-        self.prune_expired();
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .captures
-            .len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn total_bytes(&self) -> usize {
-        self.prune_expired();
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .total_bytes
     }
 
     fn retire_matching(&self, matches: impl Fn(&StoredCapture) -> bool) -> usize {
@@ -1173,7 +1006,7 @@ impl CaptureService {
         id: CaptureId,
         binding: &CaptureBinding,
     ) -> Result<PerceptionCapture, CaptureLookupError> {
-        self.registry.read_for_perception_bound(id, binding)
+        self.registry.read_for_perception(id, binding)
     }
 
     pub fn admit_action(
@@ -1205,7 +1038,7 @@ impl CaptureService {
             return Some("capture_binding_failed");
         };
         self.registry
-            .read_for_perception_bound(id, &binding)
+            .read_for_perception(id, &binding)
             .err()
             .map(|error| error.wire_code())
     }
@@ -1307,6 +1140,14 @@ mod tests {
         }
     }
 
+    fn clocked(config: CaptureRegistryConfig) -> (CaptureService, Arc<ManualClock>) {
+        let clock = Arc::new(ManualClock::default());
+        (
+            CaptureService::with_clock(config, clock.clone()).unwrap(),
+            clock,
+        )
+    }
+
     fn binding(runtime: u64, session: &str, generation: u64) -> CaptureBinding {
         CaptureBinding::new(runtime, Arc::<str>::from(session), generation).unwrap()
     }
@@ -1320,6 +1161,26 @@ mod tests {
         .unwrap()
     }
 
+    /// A 2x2 identity-mapped capture published for `session` at `generation`.
+    fn publication(
+        png_bytes: Vec<u8>,
+        target: CaptureTarget,
+        session: &str,
+        generation: u64,
+    ) -> CapturePublication {
+        CapturePublication {
+            png_bytes,
+            target,
+            encoded_dimensions: EncodedScreenshotDimensions::new(2, 2).unwrap(),
+            native_action_dimensions: NativeActionDimensions::new(2, 2).unwrap(),
+            screenshot_to_action: ScreenshotToActionTransform::identity(),
+            session_id: Arc::from(session),
+            session_generation: generation,
+        }
+    }
+
+    /// Registry-level registration, used only where a test needs captures
+    /// owned by a runtime generation other than the service's own.
     fn registration(
         png_bytes: Vec<u8>,
         target: CaptureTarget,
@@ -1352,60 +1213,68 @@ mod tests {
         }
     }
 
+    fn unknown_id() -> CaptureId {
+        CaptureId {
+            namespace: [0; 16],
+            sequence: 99,
+        }
+    }
+
     #[test]
     fn stores_immutable_png_metadata_and_never_reuses_ids() {
-        let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
-        let owner = binding(1, "session-a", 1);
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let owner = service.binding("session-a", 1).unwrap();
         let target = CaptureTarget::Window {
             pid: 7,
             window_id: 9,
         };
         let bytes = png(2, 2, 42);
         let expected_digest = Sha256::digest(&bytes);
-        let first = registry
-            .store(registration(bytes.clone(), target.clone(), owner.clone()))
+        let first = service
+            .publish(publication(bytes.clone(), target.clone(), "session-a", 1))
             .unwrap();
-        let capture = registry
-            .read_for_perception(first, &owner, &target)
-            .unwrap();
+        let capture = service.read_for_perception(first, &owner).unwrap();
         assert_eq!(capture.png_bytes().as_ref(), bytes.as_slice());
         assert_eq!(capture.digest().as_bytes(), expected_digest.as_slice());
+        assert_eq!(capture.target(), &target);
         assert_eq!(
             capture.encoded_dimensions(),
             EncodedScreenshotDimensions::new(2, 2).unwrap()
         );
 
-        registry.retire(first, &owner).unwrap();
-        let second = registry.store(registration(bytes, target, owner)).unwrap();
+        service.retire_capture(first, &owner).unwrap();
+        let second = service
+            .publish(publication(bytes, target, "session-a", 1))
+            .unwrap();
         assert_ne!(first, second);
     }
 
     #[test]
     fn rejects_invalid_png_dimensions_target_and_transform_before_storage() {
-        let registry = CaptureRegistry::new(config(4, 10_000)).unwrap();
-        let owner = binding(1, "session-a", 1);
+        let service = CaptureService::new(config(4, 10_000)).unwrap();
         let target = CaptureTarget::PrimaryDesktop;
-        let mut invalid_png = registration(b"not a png".to_vec(), target.clone(), owner.clone());
         assert_eq!(
-            registry.store(invalid_png),
+            service.publish(publication(
+                b"not a png".to_vec(),
+                target.clone(),
+                "session-a",
+                1
+            )),
             Err(CaptureStoreError::InvalidPng)
         );
-
-        invalid_png = registration(png(3, 2, 1), target, owner.clone());
         assert_eq!(
-            registry.store(invalid_png),
+            service.publish(publication(png(3, 2, 1), target, "session-a", 1)),
             Err(CaptureStoreError::InvalidEncodedDimensions)
         );
-
         let invalid_target = CaptureTarget::Window {
             pid: 0,
             window_id: 9,
         };
         assert_eq!(
-            registry.store(registration(png(2, 2, 1), invalid_target, owner)),
+            service.publish(publication(png(2, 2, 1), invalid_target, "session-a", 1)),
             Err(CaptureStoreError::InvalidTarget)
         );
-        assert_eq!(registry.len(), 0);
+        assert_eq!(service.retire_runtime(), 0, "nothing was stored");
         assert_eq!(
             ScreenshotToActionTransform::new(f64::NAN, 0.0, 0.0, 1.0, 0.0, 0.0),
             Err(CaptureStoreError::InvalidTransform)
@@ -1419,22 +1288,21 @@ mod tests {
     #[test]
     fn rejects_pngs_before_decode_when_dimensions_or_allocation_exceed_limits() {
         let bytes = png(2, 2, 1);
-        let owner = binding(1, "session-a", 1);
         let target = CaptureTarget::PrimaryDesktop;
 
         let mut dimension_config = config(2, 10_000);
         dimension_config.max_encoded_width = 1;
-        let registry = CaptureRegistry::new(dimension_config).unwrap();
+        let service = CaptureService::new(dimension_config).unwrap();
         assert_eq!(
-            registry.store(registration(bytes.clone(), target.clone(), owner.clone())),
+            service.publish(publication(bytes.clone(), target.clone(), "session-a", 1)),
             Err(CaptureStoreError::PngDecodeLimitExceeded)
         );
 
         let mut allocation_config = config(2, 10_000);
         allocation_config.max_decoded_bytes = 8;
-        let registry = CaptureRegistry::new(allocation_config).unwrap();
+        let service = CaptureService::new(allocation_config).unwrap();
         assert_eq!(
-            registry.store(registration(bytes, target, owner)),
+            service.publish(publication(bytes, target, "session-a", 1)),
             Err(CaptureStoreError::PngDecodeLimitExceeded)
         );
     }
@@ -1455,269 +1323,402 @@ mod tests {
 
     #[test]
     fn downscaled_capture_keeps_encoded_and_native_action_dimensions_distinct() {
-        let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
-        let owner = binding(1, "session-a", 1);
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let owner = service.binding("session-a", 1).unwrap();
         let target = CaptureTarget::PrimaryDesktop;
-        let transform = ScreenshotToActionTransform::new(2.0, 0.0, 0.0, 3.0, 0.0, 0.0).unwrap();
-        let id = registry
-            .store(CaptureRegistration {
-                png_bytes: png(2, 2, 1),
-                target: target.clone(),
-                encoded_dimensions: EncodedScreenshotDimensions::new(2, 2).unwrap(),
+        let id = service
+            .publish(CapturePublication {
                 native_action_dimensions: NativeActionDimensions::new(4, 6).unwrap(),
-                screenshot_to_action: transform,
-                binding: owner.clone(),
+                screenshot_to_action: ScreenshotToActionTransform::new(
+                    2.0, 0.0, 0.0, 3.0, 0.0, 0.0,
+                )
+                .unwrap(),
+                ..publication(png(2, 2, 1), target.clone(), "session-a", 1)
             })
             .unwrap();
 
-        let capture = registry.consume_for_action(id, &owner, &target).unwrap();
         assert_eq!(
-            capture.encoded_dimensions(),
+            service
+                .read_for_perception(id, &owner)
+                .unwrap()
+                .encoded_dimensions(),
             EncodedScreenshotDimensions::new(2, 2).unwrap()
         );
+        let mut request = action_request(id, owner, target, (4, 6));
+        request.screenshot_x = 1.0;
+        request.screenshot_y = 1.0;
+        let admission = service.admit_action(request).unwrap();
+        assert_eq!((admission.action_x, admission.action_y), (2.0, 3.0));
         assert_eq!(
-            capture.native_action_dimensions(),
+            admission.native_action_dimensions,
             NativeActionDimensions::new(4, 6).unwrap()
         );
-        assert_eq!(capture.screenshot_to_action().apply(1.0, 1.0), (2.0, 3.0));
     }
 
     #[test]
     fn rejects_transform_that_overflows_across_encoded_extent() {
-        let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
-        let mut capture = registration(
-            png(3, 2, 1),
-            CaptureTarget::PrimaryDesktop,
-            binding(1, "session-a", 1),
-        );
-        capture.encoded_dimensions = EncodedScreenshotDimensions::new(3, 2).unwrap();
-        capture.screenshot_to_action =
-            ScreenshotToActionTransform::new(f64::MAX, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let capture = CapturePublication {
+            encoded_dimensions: EncodedScreenshotDimensions::new(3, 2).unwrap(),
+            screenshot_to_action: ScreenshotToActionTransform::new(
+                f64::MAX,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+            )
+            .unwrap(),
+            ..publication(png(3, 2, 1), CaptureTarget::PrimaryDesktop, "session-a", 1)
+        };
         assert_eq!(
-            registry.store(capture),
+            service.publish(capture),
             Err(CaptureStoreError::InvalidTransformExtent)
         );
     }
 
     #[test]
-    fn lookup_errors_are_specific_and_action_consumption_is_atomic() {
-        let registry = CaptureRegistry::new(config(4, 10_000)).unwrap();
-        let owner = binding(1, "session-a", 1);
-        let target = CaptureTarget::PrimaryDesktop;
-        let id = registry
-            .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+    fn perception_read_refusals_are_specific() {
+        let service = CaptureService::new(config(4, 10_000)).unwrap();
+        let owner = service.binding("session-a", 1).unwrap();
+        let id = service
+            .publish(publication(
+                png(2, 2, 1),
+                CaptureTarget::PrimaryDesktop,
+                "session-a",
+                1,
+            ))
             .unwrap();
-        let unknown = CaptureId {
-            namespace: [0; 16],
-            sequence: 99,
-        };
         assert_eq!(
-            registry
-                .read_for_perception(unknown, &owner, &target)
+            service
+                .read_for_perception(unknown_id(), &owner)
                 .unwrap_err(),
             CaptureLookupError::Unknown
         );
         assert_eq!(
-            registry
-                .read_for_perception(id, &binding(1, "session-a", 2), &target)
+            service
+                .read_for_perception(id, &service.binding("session-a", 2).unwrap())
                 .unwrap_err(),
             CaptureLookupError::GenerationMismatch
         );
-        assert_eq!(
-            registry
-                .read_for_perception(
-                    id,
-                    &owner,
-                    &CaptureTarget::Window {
-                        pid: 7,
-                        window_id: 9,
-                    },
-                )
-                .unwrap_err(),
-            CaptureLookupError::TargetMismatch
-        );
-        registry.consume_for_action(id, &owner, &target).unwrap();
-        assert_eq!(
-            registry
-                .consume_for_action(id, &owner, &target)
-                .unwrap_err(),
-            CaptureLookupError::Unknown
-        );
+        assert!(service.read_for_perception(id, &owner).is_ok());
     }
 
     #[test]
     fn unknown_expired_session_runtime_target_replacement_eviction_and_resize_refuse_dispatch() {
         let dispatched = AtomicU64::new(0);
-        let attempt = |registry: &CaptureRegistry, request: CaptureActionRequest| {
-            let result = registry.admit_action(request);
+        let attempt = |service: &CaptureService, request: CaptureActionRequest| {
+            let result = service.admit_action(request);
             if result.is_ok() {
                 dispatched.fetch_add(1, Ordering::SeqCst);
             }
             result
         };
-        let owner = binding(11, "session-a", 3);
         let target = CaptureTarget::Window {
             pid: 42,
             window_id: 7,
         };
-
-        let registry = CaptureRegistry::new(config(8, 100_000)).unwrap();
-        let unknown = CaptureId {
-            namespace: [0; 16],
-            sequence: 99,
+        let publish = |service: &CaptureService, value: u8| {
+            service
+                .publish(publication(
+                    png(2, 2, value),
+                    target.clone(),
+                    "session-a",
+                    3,
+                ))
+                .unwrap()
         };
+
+        let service = CaptureService::new(config(8, 100_000)).unwrap();
+        let owner = service.binding("session-a", 3).unwrap();
         assert_eq!(
             attempt(
-                &registry,
-                action_request(unknown, owner.clone(), target.clone(), (2, 2))
+                &service,
+                action_request(unknown_id(), owner.clone(), target.clone(), (2, 2))
             )
             .unwrap_err(),
             CaptureActionError::Lookup(CaptureLookupError::Unknown)
         );
 
-        for (wrong_binding, expected) in [
-            (
-                binding(11, "session-b", 3),
-                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
-            ),
-            (
-                binding(12, "session-a", 3),
-                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
-            ),
+        for wrong_binding in [
+            service.binding("session-b", 3).unwrap(),
+            binding(service.runtime_generation() + 1, "session-a", 3),
         ] {
-            let id = registry
-                .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
-                .unwrap();
+            let id = publish(&service, 1);
             assert_eq!(
                 attempt(
-                    &registry,
+                    &service,
                     action_request(id, wrong_binding, target.clone(), (2, 2))
                 )
                 .unwrap_err(),
-                expected
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)
             );
-            registry.retire(id, &owner).unwrap();
+            service.retire_capture(id, &owner).unwrap();
         }
 
-        let id = registry
-            .store(registration(png(2, 2, 2), target.clone(), owner.clone()))
-            .unwrap();
+        let id = publish(&service, 2);
         assert_eq!(
             attempt(
-                &registry,
+                &service,
                 action_request(id, owner.clone(), CaptureTarget::PrimaryDesktop, (2, 2))
             )
             .unwrap_err(),
             CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)
         );
-        registry.retire(id, &owner).unwrap();
+        service.retire_capture(id, &owner).unwrap();
 
-        let replaced = registry
-            .store(registration(png(2, 2, 3), target.clone(), owner.clone()))
-            .unwrap();
-        registry.retire(replaced, &owner).unwrap();
-        let _replacement = registry
-            .store(registration(png(2, 2, 4), target.clone(), owner.clone()))
-            .unwrap();
+        let replaced = publish(&service, 3);
+        service.retire_capture(replaced, &owner).unwrap();
+        let _replacement = publish(&service, 4);
         assert_eq!(
             attempt(
-                &registry,
+                &service,
                 action_request(replaced, owner.clone(), target.clone(), (2, 2))
             )
             .unwrap_err(),
             CaptureActionError::Lookup(CaptureLookupError::Unknown)
         );
 
-        let resized = registry
-            .store(registration(png(2, 2, 5), target.clone(), owner.clone()))
-            .unwrap();
+        let resized = publish(&service, 5);
         assert_eq!(
             attempt(
-                &registry,
+                &service,
                 action_request(resized, owner.clone(), target.clone(), (3, 2))
             )
             .unwrap_err(),
             CaptureActionError::NativeActionFrameMismatch
         );
 
-        let evicting = CaptureRegistry::new(config(1, 100_000)).unwrap();
-        let evicted = evicting
-            .store(registration(png(2, 2, 6), target.clone(), owner.clone()))
-            .unwrap();
-        let _newest = evicting
-            .store(registration(png(2, 2, 7), target.clone(), owner.clone()))
-            .unwrap();
+        let evicting = CaptureService::new(config(1, 100_000)).unwrap();
+        let evicting_owner = evicting.binding("session-a", 3).unwrap();
+        let evicted = publish(&evicting, 6);
+        let _newest = publish(&evicting, 7);
         assert_eq!(
             attempt(
                 &evicting,
-                action_request(evicted, owner.clone(), target.clone(), (2, 2))
+                action_request(evicted, evicting_owner, target.clone(), (2, 2))
             )
             .unwrap_err(),
             CaptureActionError::Lookup(CaptureLookupError::Unknown)
         );
 
-        let clock = Arc::new(ManualClock::default());
-        let expiring = CaptureRegistry::with_clock(config(2, 100_000), clock.clone()).unwrap();
-        let expired = expiring
-            .store(registration(png(2, 2, 8), target.clone(), owner.clone()))
-            .unwrap();
+        let (expiring, clock) = clocked(config(2, 100_000));
+        let expiring_owner = expiring.binding("session-a", 3).unwrap();
+        let expired = publish(&expiring, 8);
         clock.advance(Duration::from_secs(10));
         assert_eq!(
-            attempt(&expiring, action_request(expired, owner, target, (2, 2))).unwrap_err(),
+            attempt(
+                &expiring,
+                action_request(expired, expiring_owner, target.clone(), (2, 2))
+            )
+            .unwrap_err(),
             CaptureActionError::Lookup(CaptureLookupError::Expired)
         );
         assert_eq!(dispatched.load(Ordering::SeqCst), 0);
     }
 
     #[test]
-    fn encoded_pixel_edges_are_half_open_and_refuse_without_consuming() {
-        let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
-        let owner = binding(1, "edge", 1);
+    fn refusal_precedence_when_several_conditions_fail() {
+        let (service, clock) = clocked(config(8, 100_000));
+        let owner = service.binding("owner", 1).unwrap();
+        let stranger = service.binding("stranger", 1).unwrap();
+        let target = CaptureTarget::Window {
+            pid: 42,
+            window_id: 7,
+        };
+        let publish = || {
+            service
+                .publish(publication(png(2, 2, 1), target.clone(), "owner", 1))
+                .unwrap()
+        };
+
+        // Expired beats a foreign binding, both on first sight of the live
+        // entry and afterwards from its tombstone.
+        let read = publish();
+        clock.advance(Duration::from_secs(10));
+        for _ in 0..2 {
+            assert_eq!(
+                service.read_for_perception(read, &stranger).unwrap_err(),
+                CaptureLookupError::Expired
+            );
+        }
+        let retired = publish();
+        clock.advance(Duration::from_secs(10));
+        for _ in 0..2 {
+            assert_eq!(
+                service.retire_capture(retired, &stranger),
+                Err(CaptureLookupError::Expired)
+            );
+        }
+        let admitted = publish();
+        clock.advance(Duration::from_secs(10));
+        for _ in 0..2 {
+            assert_eq!(
+                service
+                    .admit_action(action_request(
+                        admitted,
+                        stranger.clone(),
+                        target.clone(),
+                        (2, 2)
+                    ))
+                    .unwrap_err(),
+                CaptureActionError::Lookup(CaptureLookupError::Expired)
+            );
+        }
+
+        // Live capture: every refusal below leaves it readable by its owner.
+        let id = publish();
+        let still_live = || assert!(service.read_for_perception(id, &owner).is_ok());
+
+        // Generation beats target.
+        assert_eq!(
+            service
+                .admit_action(action_request(
+                    id,
+                    stranger.clone(),
+                    CaptureTarget::PrimaryDesktop,
+                    (2, 2)
+                ))
+                .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)
+        );
+        still_live();
+
+        // Target beats native frame.
+        assert_eq!(
+            service
+                .admit_action(action_request(
+                    id,
+                    owner.clone(),
+                    CaptureTarget::PrimaryDesktop,
+                    (3, 2)
+                ))
+                .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)
+        );
+        still_live();
+
+        // Native frame beats an out-of-bounds screenshot point.
+        let mut request = action_request(id, owner.clone(), target.clone(), (3, 2));
+        request.screenshot_x = 2.0;
+        assert_eq!(
+            service.admit_action(request).unwrap_err(),
+            CaptureActionError::NativeActionFrameMismatch
+        );
+        still_live();
+
+        // Retirement refuses a foreign binding without removing the capture.
+        assert_eq!(
+            service.retire_capture(id, &stranger),
+            Err(CaptureLookupError::GenerationMismatch)
+        );
+        still_live();
+    }
+
+    #[test]
+    fn mapped_point_overflow_refuses_without_consuming() {
+        // Storage validates the transform only at the pixel-centre corners
+        // (x <= width - 1), while admission accepts fractional points up to the
+        // exclusive width. A huge finite scale passes storage yet overflows for
+        // an admitted point between the last pixel centre and the edge.
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let owner = service.binding("session-a", 1).unwrap();
         let target = CaptureTarget::PrimaryDesktop;
-        let id = registry
-            .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+        let id = service
+            .publish(CapturePublication {
+                screenshot_to_action: ScreenshotToActionTransform::new(
+                    f64::MAX,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                )
+                .unwrap(),
+                ..publication(png(2, 2, 1), target.clone(), "session-a", 1)
+            })
+            .unwrap();
+        let at = |x: f64, y: f64| {
+            let mut request = action_request(id, owner.clone(), target.clone(), (2, 2));
+            request.screenshot_x = x;
+            request.screenshot_y = y;
+            service.admit_action(request)
+        };
+
+        let refusal = at(1.5, 0.5).unwrap_err();
+        assert_eq!(refusal, CaptureActionError::InvalidMappedPoint);
+        assert_eq!(refusal.wire_code(), "capture_coordinate_invalid");
+        assert!(service.read_for_perception(id, &owner).is_ok());
+        assert_eq!(
+            service.predict_action_refusal(&serde_json::json!({
+                "capture_id": id.to_string(),
+                "_session_id": "session-a",
+            })),
+            None
+        );
+
+        // An out-of-bounds point that would also overflow reports the point.
+        assert_eq!(
+            at(2.0, 0.5).unwrap_err(),
+            CaptureActionError::InvalidScreenshotPoint
+        );
+
+        let admission = at(0.5, 0.5).unwrap();
+        assert_eq!(
+            (admission.action_x, admission.action_y),
+            (0.5 * f64::MAX, 0.5)
+        );
+    }
+
+    #[test]
+    fn encoded_pixel_edges_are_half_open_and_refuse_without_consuming() {
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let owner = service.binding("edge", 1).unwrap();
+        let target = CaptureTarget::PrimaryDesktop;
+        let id = service
+            .publish(publication(png(2, 2, 1), target.clone(), "edge", 1))
             .unwrap();
         let mut request = action_request(id, owner.clone(), target.clone(), (2, 2));
         request.screenshot_x = 2.0;
         assert_eq!(
-            registry.admit_action(request).unwrap_err(),
+            service.admit_action(request).unwrap_err(),
             CaptureActionError::InvalidScreenshotPoint
         );
-        assert!(registry.read_for_perception(id, &owner, &target).is_ok());
+        assert!(service.read_for_perception(id, &owner).is_ok());
 
         let mut request = action_request(id, owner.clone(), target.clone(), (2, 2));
         request.screenshot_y = 2.0;
         assert_eq!(
-            registry.admit_action(request).unwrap_err(),
+            service.admit_action(request).unwrap_err(),
             CaptureActionError::InvalidScreenshotPoint
         );
-        assert!(registry.read_for_perception(id, &owner, &target).is_ok());
+        assert!(service.read_for_perception(id, &owner).is_ok());
 
         let mut request = action_request(id, owner, target, (2, 2));
         request.screenshot_x = 2.0 - f64::EPSILON;
         request.screenshot_y = 2.0 - f64::EPSILON;
-        assert!(registry.admit_action(request).is_ok());
+        assert!(service.admit_action(request).is_ok());
     }
 
     #[test]
     fn bounded_maintenance_releases_expired_png_without_lookup_or_store() {
-        let clock = Arc::new(ManualClock::default());
-        let registry = CaptureRegistry::with_clock(config(2, 10_000), clock.clone()).unwrap();
-        let owner = binding(1, "session-a", 1);
-        let target = CaptureTarget::PrimaryDesktop;
-        let id = registry
-            .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+        let (service, clock) = clocked(config(2, 10_000));
+        let owner = service.binding("session-a", 1).unwrap();
+        let id = service
+            .publish(publication(
+                png(2, 2, 1),
+                CaptureTarget::PrimaryDesktop,
+                "session-a",
+                1,
+            ))
             .unwrap();
-        let bytes = registry
-            .read_for_perception(id, &owner, &target)
-            .unwrap()
-            .png_bytes();
+        let bytes = service.read_for_perception(id, &owner).unwrap().png_bytes();
         let weak_bytes = Arc::downgrade(&bytes);
         let byte_len = bytes.len();
         drop(bytes);
         clock.advance(Duration::from_secs(10));
         assert_eq!(
-            registry.prune_expired(),
+            service.prune_expired(),
             PruneOutcome {
                 captures_removed: 1,
                 encoded_bytes_released: byte_len,
@@ -1725,68 +1726,106 @@ mod tests {
         );
         assert!(weak_bytes.upgrade().is_none());
         assert_eq!(
-            registry
-                .read_for_perception(id, &owner, &target)
-                .unwrap_err(),
+            service.read_for_perception(id, &owner).unwrap_err(),
             CaptureLookupError::Expired
         );
-        assert!(registry.is_empty());
-        assert_eq!(registry.total_bytes(), 0);
+        assert_eq!(service.retire_runtime(), 0, "pruning left nothing behind");
     }
 
     #[test]
     fn count_and_byte_limits_evict_oldest_deterministically() {
         let sample = png(2, 2, 1);
         let byte_limit = sample.len() * 2;
-        let registry = CaptureRegistry::new(config(2, byte_limit)).unwrap();
-        let owner = binding(1, "session-a", 1);
-        let target = CaptureTarget::PrimaryDesktop;
-        let first = registry
-            .store(registration(sample.clone(), target.clone(), owner.clone()))
-            .unwrap();
-        let second = registry
-            .store(registration(sample.clone(), target.clone(), owner.clone()))
-            .unwrap();
-        let third = registry
-            .store(registration(sample, target.clone(), owner.clone()))
-            .unwrap();
-        assert_eq!(registry.len(), 2);
-        assert_eq!(registry.total_bytes(), byte_limit);
-        assert_eq!(
-            registry
-                .read_for_perception(first, &owner, &target)
-                .unwrap_err(),
-            CaptureLookupError::Unknown
-        );
-        assert!(registry
-            .read_for_perception(second, &owner, &target)
-            .is_ok());
-        assert!(registry.read_for_perception(third, &owner, &target).is_ok());
+        for (name, limits) in [
+            ("count", config(2, 100_000)),
+            ("bytes", config(4, byte_limit)),
+        ] {
+            let service = CaptureService::new(limits).unwrap();
+            let owner = service.binding("session-a", 1).unwrap();
+            let store = || {
+                service
+                    .publish(publication(
+                        sample.clone(),
+                        CaptureTarget::PrimaryDesktop,
+                        "session-a",
+                        1,
+                    ))
+                    .unwrap()
+            };
+            let (first, second, third) = (store(), store(), store());
+            assert_eq!(
+                service.read_for_perception(first, &owner).unwrap_err(),
+                CaptureLookupError::Unknown,
+                "{name} limit evicts the oldest"
+            );
+            assert!(
+                service.read_for_perception(second, &owner).is_ok(),
+                "{name}"
+            );
+            assert!(service.read_for_perception(third, &owner).is_ok(), "{name}");
+            assert_eq!(service.retire_runtime(), 2, "{name}");
+        }
     }
 
     #[test]
     fn session_and_runtime_cleanup_are_generation_exact() {
-        let registry = CaptureRegistry::new(config(4, 10_000)).unwrap();
+        // One registry holding captures from two runtime generations: the
+        // storage seam a single runtime-owned service cannot construct.
+        let registry =
+            CaptureRegistry::with_clock(config(4, 10_000), Arc::new(ManualClock::default()))
+                .unwrap();
         let target = CaptureTarget::PrimaryDesktop;
         let first = binding(1, "same-label", 1);
         let second = binding(1, "same-label", 2);
         let other_runtime = binding(2, "same-label", 1);
-        registry
-            .store(registration(png(2, 2, 1), target.clone(), first.clone()))
-            .unwrap();
-        registry
-            .store(registration(png(2, 2, 2), target.clone(), second.clone()))
-            .unwrap();
-        registry
-            .store(registration(png(2, 2, 3), target.clone(), other_runtime))
-            .unwrap();
+        let store = |value: u8, owner: &CaptureBinding| {
+            registry
+                .store(registration(
+                    png(2, 2, value),
+                    target.clone(),
+                    owner.clone(),
+                ))
+                .unwrap()
+        };
+        let first_id = store(1, &first);
+        let second_id = store(2, &second);
+        let other_id = store(3, &other_runtime);
+        let reads = |id, owner: &CaptureBinding| registry.read_for_perception(id, owner).is_ok();
 
         assert_eq!(registry.retire_session(&first), 1);
-        assert_eq!(registry.len(), 2);
+        assert!(!reads(first_id, &first));
+        assert!(reads(second_id, &second));
+        assert!(reads(other_id, &other_runtime));
+
         assert_eq!(registry.retire_runtime(1), 1);
-        assert_eq!(registry.len(), 1);
+        assert!(!reads(second_id, &second));
+        assert!(reads(other_id, &other_runtime));
+
         assert_eq!(registry.retire_runtime(2), 1);
-        assert!(registry.is_empty());
+        assert!(!reads(other_id, &other_runtime));
+        assert_eq!(registry.retire_runtime(2), 0);
+
+        // The service retires only its own runtime generation.
+        let service = CaptureService::new(config(4, 10_000)).unwrap();
+        let own = service
+            .publish(publication(png(2, 2, 4), target.clone(), "same-label", 1))
+            .unwrap();
+        let foreign = binding(service.runtime_generation() + 1, "same-label", 1);
+        let foreign_id = service
+            .registry
+            .store(registration(png(2, 2, 5), target, foreign.clone()))
+            .unwrap();
+        assert_eq!(service.retire_runtime(), 1);
+        assert_eq!(
+            service
+                .read_for_perception(own, &service.binding("same-label", 1).unwrap())
+                .unwrap_err(),
+            CaptureLookupError::Unknown
+        );
+        assert!(service
+            .registry
+            .read_for_perception(foreign_id, &foreign)
+            .is_ok());
     }
 
     #[test]
@@ -1913,24 +1952,26 @@ mod tests {
 
     #[test]
     fn poisoned_registry_and_session_locks_recover_without_panicking_or_underflowing() {
-        let registry = Arc::new(CaptureRegistry::new(config(2, 10_000)).unwrap());
-        let id = registry
-            .store(registration(
+        let service = Arc::new(CaptureService::new(config(2, 10_000)).unwrap());
+        let owner = service.binding("poisoned", 1).unwrap();
+        let id = service
+            .publish(publication(
                 png(2, 2, 1),
                 CaptureTarget::PrimaryDesktop,
-                binding(1, "poisoned", 1),
+                "poisoned",
+                1,
             ))
             .unwrap();
-        let poisoned_registry = registry.clone();
+        let poisoned_registry = service.clone();
         assert!(std::thread::spawn(move || {
-            let mut inner = poisoned_registry.inner.lock().unwrap();
+            let mut inner = poisoned_registry.registry.inner.lock().unwrap();
             inner.total_bytes = 0;
             panic!("poison registry lock");
         })
         .join()
         .is_err());
-        assert_eq!(registry.retire(id, &binding(1, "poisoned", 1)), Ok(()));
-        assert_eq!(registry.total_bytes(), 0);
+        assert_eq!(service.retire_capture(id, &owner), Ok(()));
+        assert_eq!(service.registry.lock_inner().total_bytes, 0);
 
         let service = Arc::new(CaptureService::new(config(2, 10_000)).unwrap());
         let poisoned_sessions = service.clone();

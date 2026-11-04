@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The first run on this host (`onboarding.get`, `onboarding.complete`, only
-// the Electron shell's: the SwiftUI app draws its own first run natively).
+// The first run on this host (`onboarding.get`, `onboarding.complete`, as
+// the SwiftUI host answers them: both shells show the web UI's onboarding).
 // The page runs the app core's flow (`routes/onboarding`) and asks here
 // whether it is due; finishing saves `onboarding.json` as the Swift app's
 // OnboardingModel.finish does, asks for Local Network access while someone
@@ -25,6 +25,13 @@ export function onboardingMethods(ctx: BridgeContext): Handlers {
       // network (vmnet), so ask while someone is here.
       ctx.model.host.requestLocalNetwork();
       if (typeof args.launchAtLogin === "boolean") parts().loginItem.set(args.launchAtLogin);
+      ctx.model.changed("settings");
+      return parts().onboarding.read();
+    },
+    // Settings, About, "Reset & Show": the first run is forgotten (`onboarding.json`);
+    // the page clears its own state (`bridge/onboarding-reset.ts`).
+    "onboarding.reset": () => {
+      parts().onboarding.reset();
       ctx.model.changed("settings");
       return parts().onboarding.read();
     },

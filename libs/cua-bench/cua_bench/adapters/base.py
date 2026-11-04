@@ -171,7 +171,7 @@ class BenchAdapter:
     ports: tuple[int, ...] = ()
     #: How a task starts clean: a fresh sandbox (default), the benchmark's own
     #: reset endpoint, or a snapshot restore inside the guest.
-    reset: Literal["fresh-claim", "server", "snapshot"] = "fresh-claim"
+    reset: Literal["fresh-sandbox", "server", "snapshot"] = "fresh-sandbox"
     #: driver: agents act through cua-driver (sb.mouse/keyboard); native: the
     #: adapter translates cb actions into the benchmark's API (``act``).
     action_mode: Literal["driver", "native", "both"] = "driver"
@@ -332,7 +332,6 @@ class BenchAdapter:
 def unmet_requirements(
     requires: "list[str] | tuple[str, ...] | frozenset",
     *,
-    cloud: bool,
     environ: Mapping[str, str],
     has_kvm: bool,
 ) -> list[str]:
@@ -340,10 +339,10 @@ def unmet_requirements(
     problems = []
     for word in sorted(requires or ()):
         word = REQUIREMENT_ALIASES.get(word, word)
-        if word == "kvm" and not cloud and not has_kvm:
+        if word == "kvm" and not has_kvm:
             problems.append(
                 "needs KVM for local VMs (/dev/kvm is missing): run on a Linux host with "
-                "virtualization enabled, or use --on cloud"
+                "virtualization enabled"
             )
         elif word.startswith("env:"):
             name = word[4:]

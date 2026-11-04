@@ -27,13 +27,13 @@ def _info(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**fields)
 
 
-def _pool_spec() -> EnvSpec:
-    # `--image pool:<name>`: no image on the spec; the pool's template has it.
-    return EnvSpec(provider="native", pool="cua-e2e-named")
+def _bare_spec() -> EnvSpec:
+    # No image on the spec (the built-in image): the SDK reports what ran.
+    return EnvSpec(provider="native")
 
 
-def test_a_named_pool_claim_records_the_template_digest():
-    facts = image_facts(SimpleNamespace(image_info=_info()), _pool_spec())
+def test_the_sdk_reported_image_is_recorded_with_its_digest():
+    facts = image_facts(SimpleNamespace(image_info=_info()), _bare_spec())
     assert facts == {
         "kind": "container",
         "runtime": None,
@@ -44,9 +44,9 @@ def test_a_named_pool_claim_records_the_template_digest():
     }
 
 
-def test_an_unresolved_template_records_the_reference_without_a_digest():
+def test_an_unresolved_image_records_the_reference_without_a_digest():
     info = _info(reference="registry.example.com/team/private:1", pinned_ref="", digest="")
-    facts = image_facts(SimpleNamespace(image_info=info), _pool_spec())
+    facts = image_facts(SimpleNamespace(image_info=info), _bare_spec())
     assert facts["image_ref"] == "registry.example.com/team/private:1"
     assert facts["image_digest"] is None
 

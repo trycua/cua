@@ -24,8 +24,6 @@ use std::{
     time::Duration,
 };
 
-const POOL: &str = "cua-e2e-refs";
-
 /// A local runtime that only records instances.
 #[derive(Default)]
 struct Instances(Mutex<HashMap<String, InstanceStatus>>);
@@ -191,7 +189,7 @@ async fn suite(daemon: bool) {
         sbx.get("space://local/box".into()).await.unwrap().id,
         "local:box"
     );
-    let p = parse_sandbox_ref(format!("fleet:{POOL}:box")).unwrap();
+    let p = parse_sandbox_ref("space://cloud/box".into()).unwrap();
     assert_eq!(
         (p.location.as_deref(), p.name.as_str(), p.id.as_str()),
         (Some("cloud"), "box", "cloud:box")
@@ -199,7 +197,7 @@ async fn suite(daemon: bool) {
 
     // Cua Cloud has ended: a cloud ref parses, then fails with the one
     // message wherever it is used.
-    for cloud in ["cloud:box", &format!("fleet:{POOL}:box")] {
+    for cloud in ["cloud:box", "space://cloud/box"] {
         let e = sbx.get(cloud.into()).await.unwrap_err();
         assert!(
             e.to_string().contains("Cua Cloud has ended"),

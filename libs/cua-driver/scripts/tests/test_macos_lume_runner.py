@@ -346,6 +346,37 @@ def _guest_seed_assignment(name: str) -> str:
     return match.group("body")
 
 
+def test_tcc_guest_seed_waits_for_tccd_lock() -> None:
+    text = SEED_TCC_GUEST.read_text(encoding="utf-8")
+    assert re.search(r'^TCC_SQLITE=\(/usr/bin/sqlite3 -cmd "\.timeout \d+"\)$', text, re.MULTILINE)
+    # Every TCC.db access goes through the busy-timeout invocation.
+    assert re.search(r'sqlite3 "\$\{TCC_DB\}"', text) is None
+    assert _guest_seed_assignment("SQL").lstrip().startswith("BEGIN IMMEDIATE;")
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="needs the sqlite3 CLI")
+def test_tcc_guest_seed_sqlite_invocation_outlasts_a_held_write_lock(tmp_path: Path) -> None:
+    db = tmp_path / "TCC.db"
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("CREATE TABLE access(service TEXT)")
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO access VALUES ('held')")
+    seed = subprocess.Popen(
+        ["sqlite3", "-cmd", ".timeout 30000", str(db), "BEGIN IMMEDIATE; INSERT INTO access VALUES ('seeded'); COMMIT;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(1.0)
+    assert seed.poll() is None, "the seed gave up while the lock was held"
+    holder.execute("COMMIT")
+    holder.close()
+    _, stderr = seed.communicate(timeout=30)
+    assert seed.returncode == 0, stderr
+    with sqlite3.connect(db) as conn:
+        assert {row[0] for row in conn.execute("SELECT service FROM access")} == {"held", "seeded"}
+
+
 def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -> None:
     sql_body = _guest_seed_assignment("SQL")
     verify_sql = _guest_seed_assignment("VERIFY_SQL")

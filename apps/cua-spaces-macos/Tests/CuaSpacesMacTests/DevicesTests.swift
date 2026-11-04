@@ -66,9 +66,9 @@ struct DevicesTests {
         await m.refresh()
         #expect(announced.count == 2, "a device asks once per launch")
         #expect(m.view.thisDevice.kind == .enrolled)
-        #expect(m.thisDeviceText(m.view.thisDevice) == "Enrolled until Feb 8, 2027")
+        #expect(m.thisDeviceText(m.view.thisDevice) == "Trusted until Feb 8, 2027")
         let studio = m.view.rows.first { $0.id == "dev_studio" }!
-        #expect(m.rowDetail(studio) == "Linux \u{b7} Enrolled \u{b7} re-verify in 12 days \u{b7} Last seen 3 hours ago")
+        #expect(m.rowDetail(studio) == "Linux, Trusted, check again in 12 days, last seen 3 hours ago")
         #expect(m.view.recent.first?.text == "MacBook Pro opened build-box")
     }
 
@@ -82,7 +82,7 @@ struct DevicesTests {
         #expect(presence.asked.isEmpty, "Approve needs the whole code")
         m.setCode("k7qxm2rp")
         await m.approve()
-        #expect(presence.asked == ["approve \u{201c}Work laptop\u{201d} for your Cua account"])
+        #expect(presence.asked == ["add \u{201c}Work laptop\u{201d} to your Cua account"])
         #expect(fixture.calls.isEmpty, "no presence, no relay call")
         #expect(m.approvalView?.error == "Approval was cancelled")
         #expect(m.approvalView?.busy == false)
@@ -123,7 +123,7 @@ struct DevicesTests {
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"])
         m.openApproval(deviceId: "dev_old", in: .settings)
-        #expect(m.approvalView?.denyLabel == "Not Now")
+        #expect(m.approvalView?.denyLabel == "Not now")
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"], "Not Now calls nothing")
         #expect(m.approval == nil)
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Approve by ID")
+        #expect(m.approvalView?.approveLabel == "Add machine")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()
@@ -228,6 +228,7 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func rename(id: String, name: String) async throws { try await fixture.rename(id: id, name: name) }
     func revoke(id: String) async throws { try await fixture.revoke(id: id) }
     func confirmMachine(id: String) async throws { try await fixture.confirmMachine(id: id) }
+    func renameMachine(id: String, name: String) async throws { try await fixture.renameMachine(id: id, name: name) }
     func createPairingCode(team: String?) async throws -> PairingCode { try await fixture.createPairingCode(team: team) }
     func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
     func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }
@@ -252,8 +253,8 @@ struct RelayUsageTests {
         let (m, _) = model(FixtureDevices())
         await m.readRelayUsage()
         let view = try #require(m.relayUsageView)
-        #expect(view.label == "Relay usage")
-        #expect(view.line == "Live sessions 1 of 2 \u{b7} Relay hours 6.5 of 20 this month")
+        #expect(view.label == "Remote use")
+        #expect(view.line == "Live sessions 1 of 2 \u{b7} Remote hours 6.5 of 20 this month")
         #expect(view.plan == "Free plan")
         #expect(m.relayNotice == nil)
     }
@@ -264,21 +265,66 @@ struct RelayUsageTests {
         let (m, defaults) = model(fixture)
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You've used your free relay allowance for this month. Your Spaces keep working. Pro gives you more.")
+        #expect(notice.text == "You're using 2 of 2 live sessions and 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.level == "limit")
         m.dismissRelayNotice()
         #expect(m.relayNotice == nil)
-        #expect(defaults.string(forKey: DevicesModel.relayNoticeDismissedKey) == "2026-10:hours")
+        #expect(defaults.string(forKey: DevicesModel.relayNoticeDismissedKey) == "2026-10:hours,sessions")
         // Kept across launches; another reason shows it again.
         let again = DevicesModel(devices: fixture, presence: FixturePresence(), defaults: defaults)
         again.signedIn = true
         await again.readRelayUsage()
         #expect(again.relayNotice == nil)
-        fixture.usage?.reasons = ["sessions", "hours"]
+        fixture.usage?.liveSessions = 1
+        fixture.usage?.reasons = ["hours"]
         await again.readRelayUsage()
-        #expect(again.relayNotice?.dismissKey == "2026-10:hours,sessions")
+        #expect(again.relayNotice?.dismissKey == "2026-10:hours")
+    }
+
+    @Test func aRefusedSessionShowsTheSentenceWithUpgradeUntilDismissed() async throws {
+        let (m, _) = model(FixtureDevices())
+        m.noteRefusal("timed out")
+        #expect(m.relayNotice == nil)
+        m.noteRefusal("relay: You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        let notice = try #require(m.relayNotice)
+        #expect(notice.text == "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        #expect(notice.upgrade == "Upgrade")
+        #expect(notice.upgradeUrl?.hasSuffix("/buy/teams?from=plan_limit") == true)
+        m.dismissRelayNotice()
+        #expect(m.relayNotice == nil)
+    }
+
+    /// CUA-1881: a refused create shown is `cua_plan_limit_shown` at
+    /// `app_create`; Upgrade is `cua_upgrade_link_opened` and opens the page
+    /// with `?from=app_create`. With usage data off, nothing is recorded.
+    @Test func aRefusalShownAndItsUpgradeAreUsageEventsWithFrom() async throws {
+        let (m, _) = model(FixtureDevices())
+        let telemetry = FixtureTelemetry()
+        m.telemetry = telemetry
+        m.noteRefusal("relay: You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.", surface: "app_create")
+        let notice = try #require(m.relayNotice)
+        #expect(notice.kind == "sessions")
+        #expect(notice.plan == "free")
+        m.recordNoticeShown(notice)
+        let url = try #require(m.openUpgrade(notice))
+        #expect(url.absoluteString.hasSuffix("/buy/pro?from=app_create"))
+        #expect(telemetry.recorded == [
+            .planLimitShown(surface: "app_create", kind: "sessions", plan: "free"),
+            .upgradeLinkOpened(surface: "app_create", kind: "sessions", plan: "free"),
+        ])
+        // The plan card's link says where it was opened.
+        let card = try #require(m.openPlanLink("https://app.cua.ai/billing?from=app_plan_card"))
+        #expect(card.absoluteString == "https://app.cua.ai/billing?from=app_plan_card")
+        #expect(telemetry.recorded.contains(.upgradeLinkOpened(surface: "app_plan_card", kind: "none", plan: "unknown")))
+
+        let off = FixtureTelemetry()
+        off.current.enabled = false
+        m.telemetry = off
+        m.recordNoticeShown(notice)
+        _ = m.openUpgrade(notice)
+        #expect(off.recorded.isEmpty)
     }
 
     @Test func atEightyPercentOfHoursAFreePlanGetsAHeadsUpThatWaitsForLiveSessions() async throws {
@@ -292,7 +338,7 @@ struct RelayUsageTests {
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
         #expect(notice.level == "warn")
-        #expect(notice.text == "You've used 16.5 of 20 relay hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
+        #expect(notice.text == "You've used 16.5 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.dismissKey == "2026-10:warn")
     }

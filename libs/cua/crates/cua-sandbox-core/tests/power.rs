@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use cua_sandbox_core::{
-    Error, FleetState, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
-    LocalStartSpec, LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
+    Error, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec,
+    LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
     ProviderCapabilities, ProviderCreate, ProviderInstance, ProviderKind, Result, RunKind,
     RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status, StopReason,
 };
@@ -208,22 +208,6 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     }
     assert!(rt.calls().is_empty());
 
-    // A cloud claim has no per-claim power.
-    sbx.state()
-        .save(&SandboxState::Fleet(FleetState {
-            name: "claim".into(),
-            runtime_type: "fleet".into(),
-            pool_name: "pool".into(),
-            status: "running".into(),
-            created_at: String::new(),
-            extra: Default::default(),
-        }))
-        .unwrap();
-    assert_eq!(sbx.power_control("claim"), None);
-    assert!(matches!(
-        sbx.power_on("claim").await,
-        Err(Error::CloudEnded)
-    ));
     // No such sandbox.
     assert_eq!(sbx.power_control("nope"), None);
     assert!(matches!(
@@ -375,6 +359,29 @@ async fn the_watch_finds_a_stop_nobody_listed() {
         sbx.stop_reason("box").map(|r| r.words()).as_deref(),
         Some("exited with code 1")
     );
+}
+
+#[tokio::test]
+async fn one_sandbox_can_be_looked_at_for_an_unasked_stop() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("box", "runc")).unwrap();
+    sbx.state().save(&local("other", "runc")).unwrap();
+    rt.set("box", InstanceStatus::Running);
+    rt.set("other", InstanceStatus::Running);
+    // Running: nothing to say, and nothing recorded.
+    assert_eq!(sbx.unasked_stop("box").await, None);
+    assert_eq!(sbx.unasked_stop("missing").await, None);
+    let killed = StopReason {
+        exit_code: 137,
+        out_of_memory: false,
+    };
+    rt.exit("box", killed);
+    // Only the one asked about is looked at, and it is recorded as stopped.
+    assert_eq!(sbx.unasked_stop("box").await, Some(killed));
+    assert_eq!(sbx.stop_reason("box"), Some(killed));
+    assert_eq!(sbx.stop_reason("other"), None);
+    // Already recorded as stopped: it is not an unasked stop again.
+    assert_eq!(sbx.unasked_stop("box").await, None);
 }
 
 #[tokio::test]

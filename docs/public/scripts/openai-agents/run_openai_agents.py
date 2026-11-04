@@ -10,7 +10,8 @@
 
 The sandbox runs on this machine by default. Set CUA_ON to "aws", "gcp" or
 "modal" to run it in your own cloud account instead (connect it first with
-`cua cloud connect`; see https://cua.ai/docs/cua-sdk/guides/your-cloud).
+`cua cloud connect`; see
+https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud).
 
 The application API key remains on the controller. Only the restricted
 environment key is copied into the sandbox, and its temporary file is

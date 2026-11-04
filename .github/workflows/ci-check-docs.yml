@@ -29,7 +29,7 @@ on:
       - "libs/images/sandbox-images.json"
       - "libs/images/bench/*/lock.json"
       - "docs/content/docs/cua-sdk/quickstart.mdx"
-      - "docs/content/docs/start-here/sandbox-images.mdx"
+      - "docs/content/docs/cua-sdk/guides/images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
   # Run every native check on demand, e.g. to produce the native Windows Driver
@@ -130,10 +130,12 @@ jobs:
       run:
         shell: bash
     steps:
-      # The generators read release tags to record the documented version.
+      # The generators read release tags to record the documented version, so
+      # they need history and tags but not every old file's contents.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       # The cua SDK generators build cua-sdk, cua-spaces-ffi and cua-bindgen
       # in debug; with the restored cache that fills the hosted runner's disk
@@ -159,7 +161,7 @@ jobs:
       # cache key matches. Pull requests never save.
       - uses: dtolnay/rust-toolchain@stable
         if: matrix.library == 'cua-driver'
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         if: matrix.library == 'cua-driver'
         with:
           workspaces: "libs/cua-driver/rust -> target"
@@ -181,7 +183,7 @@ jobs:
       - name: Install the pinned nightly for rustdoc JSON (this job only)
         if: matrix.library == 'cua-rust'
         run: rustup toolchain install nightly-2026-09-20 --profile minimal
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         with:
           workspaces: |

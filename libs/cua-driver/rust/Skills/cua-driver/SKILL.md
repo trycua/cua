@@ -1,7 +1,7 @@
 ---
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
-version: 0.36.0 # x-release-please-version
+version: 0.38.0 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -92,6 +92,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 | LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |
 | Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                                                                                                       |
+| Any refusal, `unverifiable` or `suspected_noop`           | Read `hint` and make `next_call`; [Refusals and hints](WORKFLOW.md#refusals-and-hints)                                                                              |
 
 ## Consult recent Cua activity only for continuation
 
@@ -122,3 +123,4 @@ Load on demand; do not reabsorb these into this file:
 - [BROWSER.md](BROWSER.md): exact page binding and typed browser actions; only when the requested method permits them.
 - [RECORDING.md](RECORDING.md): capture lifecycle, artifact checks, replay limits.
 - [EMBEDDING.md](EMBEDDING.md): trusted application-host integration, not routine GUI operation.
+- `get_guide({topic})`: an MCP tool that returns the drag, browser, permissions, batching and menus sections of these files on demand, with no skill install or resource read. `overview` returns this file.

@@ -1,6 +1,6 @@
 # cua-bench
 
-Run computer-use benchmark datasets on local sandboxes.
+Run computer-use benchmark datasets on sandboxes.
 
 Cua Cloud has ended; `--on cloud` now fails with a pointer to [the notice](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
@@ -40,7 +40,7 @@ dataset (every task and variant). It runs in the foreground with per-variant sta
 | --- | --- |
 | `--on local` | Where. `local`: sandboxes on this machine through the cua SDK. `cloud` is removed (Cua Cloud has ended). Default: `CUA_DEFAULT_ON`, then `cua config set default.on`, then `local`. |
 | `--kind auto\|container\|vm` | What kind. `auto` (default): Linux runs as a container unless the task or the image's variant index says VM; Windows, macOS and Android are VM-only. Default: `CUA_DEFAULT_KIND`, then `default.kind`. |
-| `--runtime auto\|gvisor\|runc\|qemu\|lume\|kubevirt` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
+| `--runtime auto\|gvisor\|runc\|qemu\|lume` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
 | `--image REF` | Image for every task: an OS alias (`linux`, `windows`, `macos:tahoe`), `ghcr.io/trycua/<os>`, any registry ref or a digest. Otherwise the task's `setup_config.image`, then `CUA_BENCH_IMAGE`, then the canonical image for the OS. |
 | `--cpu`, `--memory` | Resources per sandbox (`--memory 4G`). |
 | `-j`, `--max-parallel` | Variants at once. |
@@ -67,7 +67,7 @@ exports traces (aguvis-stage-1, gui-r1).
 - `trajectory.json` is an ATIF-v1.8 trajectory (Harbor's format) with screenshots under
   `imgs/`.
 - `summary.json` adds `pass_at_k` (with `--attempts`), `stats` and a `targets` breakdown.
-  New keys are additive; `schema_version` is 1.
+  New keys are additive; `schema_version` is 2.
 
 ### Datasets
 

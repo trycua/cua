@@ -46,7 +46,7 @@ pub async fn session_token(_store: &Store) -> Result<Option<String>, CuaError> {
 pub struct LoginOptions {
     /// Do not open a browser (print the URL only).
     pub no_browser: bool,
-    /// Device code flow (for a machine without a local browser).
+    /// Device code flow (for a computer without a local browser).
     pub remote: bool,
     /// Force a flow: `pkce` / `browser` or `device` (`CUA_AUTH_FLOW`).
     pub flow: Option<String>,
@@ -77,7 +77,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
             } else {
                 line(
                     out,
-                    "Open the URL above in a browser on this machine to continue.",
+                    "Open the URL above in a browser on this computer to continue.",
                 );
             }
         }
@@ -100,6 +100,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
     // Activation funnel: a sign-in from the CLI (browser or device code)
     // counts like one in the Spaces app's first run.
     cua_telemetry::global().capture_step("signed_in", cua_telemetry::Outcome::Ok);
+    link_usage(&s).await;
     let who = match (&id.username, &id.email) {
         (Some(u), Some(e)) if u != e => format!(" as {u} ({e})"),
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),
@@ -109,9 +110,87 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
     Ok(0)
 }
 
+/// Links this install's usage data to the signed-in account when the
+/// Spaces API offers an account id (CUA-1881), and prints the one-time
+/// notice when this machine saw only the older "anonymous" notice. Best
+/// effort: a sign-in never fails or waits long on it.
+async fn link_usage(s: &cua_auth::Session) {
+    let t = cua_telemetry::global();
+    if !t.is_enabled() {
+        return;
+    }
+    t.mark_account_checked();
+    if let Some(me) = fetch_me(s).await {
+        offer_account(&me);
+    }
+}
+
+/// `GET /v1/me` for the signed-in session, within a few seconds; none when
+/// signed out, offline or slow.
+async fn fetch_me(s: &cua_auth::Session) -> Option<cua_host::spaces_api::ApiMe> {
+    let budget = std::time::Duration::from_secs(5);
+    let token = tokio::time::timeout(budget, s.access_token(false))
+        .await
+        .ok()?
+        .ok()?;
+    let api = SpacesApiClient::current().ok()?;
+    tokio::time::timeout(budget, api.me(&token))
+        .await
+        .ok()?
+        .ok()
+}
+
+/// How often a signed-in machine's CLI asks the Spaces API for the account
+/// id again ([`refresh_usage_link`]).
+pub const ACCOUNT_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// A CLI that was signed in before the server offered linking (or before
+/// this release) links too: at most every [`ACCOUNT_CHECK_EVERY`] per
+/// machine, in the background of a command, it asks `GET /v1/me` for the
+/// account id and hands it to telemetry. It never prints: the next command
+/// shows the one-time notice when it is due ([`cua_telemetry::Telemetry::show_notice_if_needed`]).
+/// Nothing happens while usage data is off, signed out, or on a server
+/// without `analytics_id` (that unlinks, as a sign-in would).
+pub async fn refresh_usage_link() {
+    refresh_usage_link_with(cua_telemetry::global(), &session()).await;
+}
+
+/// [`refresh_usage_link`] on `t` for `s`; returns whether it asked.
+pub async fn refresh_usage_link_with(t: &cua_telemetry::Telemetry, s: &cua_auth::Session) -> bool {
+    if !t.account_check_due(ACCOUNT_CHECK_EVERY) || !matches!(s.credentials(), Ok(Some(_))) {
+        return false;
+    }
+    t.mark_account_checked();
+    if let Some(me) = fetch_me(s).await {
+        t.offer_account(me.analytics_id.as_deref());
+    }
+    true
+}
+
+/// Hands the account id `GET /v1/me` answered with (or its absence) to
+/// telemetry, then shows the linking notice if it is due.
+fn offer_account(me: &cua_host::spaces_api::ApiMe) {
+    let t = cua_telemetry::global();
+    t.offer_account(me.analytics_id.as_deref());
+    t.show_notice_if_needed();
+}
+
 /// `cua auth logout`.
 pub async fn logout(out: &mut dyn Write) -> Result<i32, CuaError> {
+    // Agents this computer connected to Spaces with `cua join` stop at once.
+    let removed = crate::member_cmd::forget_this_computer().await;
+    if !removed.is_empty() {
+        line(
+            out,
+            format!(
+                "Removed the agents this computer connected to Spaces: {}.",
+                removed.join(", ")
+            ),
+        );
+    }
     let (existed, revoked) = session().logout().await.map_err(auth_err)?;
+    // Signed out: usage data goes back to a new anonymous install id.
+    let _ = cua_telemetry::global().forget_account();
     if !existed {
         line(out, "Not logged in.");
         return Ok(0);
@@ -160,7 +239,7 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         );
     }
     let Some(c) = c else {
-        line(out, "Not logged in. Run 'cua auth login'.");
+        util::hint_line(out, "Not logged in. Run 'cua auth login'.");
         return Ok(1);
     };
     if c.expires().map_err(auth_err)? <= chrono::Utc::now() {
@@ -199,7 +278,7 @@ pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         if json {
             util::json_line(out, &serde_json::json!({"authenticated": false}));
         } else {
-            line(out, "Not logged in. Run 'cua auth login'.");
+            util::hint_line(out, "Not logged in. Run 'cua auth login'.");
         }
         return Ok(1);
     };
@@ -226,7 +305,10 @@ pub async fn whoami_with(
     // failure (offline, a server error, no Teams routes yet) only costs the
     // plan and team count.
     let me = match api.me(token).await {
-        Ok(me) => Some(me),
+        Ok(me) => {
+            offer_account(&me);
+            Some(me)
+        }
         Err(e @ (E::Unauthenticated(_) | E::PermissionDenied(_))) => {
             return Err(CuaError::Unauthenticated(format!(
                 "your Cua sign-in is no longer valid ({e}); run 'cua auth login' again"
@@ -314,6 +396,48 @@ mod tests {
         let mut out = Vec::new();
         let r = whoami_with(api, token, json, &mut out).await;
         (r, String::from_utf8(out).unwrap())
+    }
+
+    fn telemetry(home: &std::path::Path, off: bool) -> cua_telemetry::Telemetry {
+        cua_telemetry::Telemetry::builder()
+            .env(move |k| match k {
+                "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                "DO_NOT_TRACK" if off => Some("1".into()),
+                _ => None,
+            })
+            .home(home)
+            .sink(std::sync::Arc::new(cua_telemetry::sink::MemorySink::new()))
+            .product("cli", "0.1.0")
+            .foreground()
+            .build()
+    }
+
+    fn signed_out(dir: &std::path::Path) -> cua_auth::Session {
+        // Nothing listens on port 9 on loopback; a file store, never the keychain.
+        cua_auth::Session::new(
+            cua_auth::Oidc::new("http://127.0.0.1:9", "cua-cli"),
+            Store::File(dir.join("credentials.json")),
+        )
+    }
+
+    /// CUA-1881: the background refresh never asks (or writes anything)
+    /// with usage data off, or signed out.
+    #[tokio::test]
+    async fn the_usage_link_refresh_respects_the_switch_and_the_session() {
+        let home = tempfile::tempdir().unwrap();
+        let off = telemetry(home.path(), true);
+        assert!(!refresh_usage_link_with(&off, &signed_out(home.path())).await);
+        let dir = home.path().join("telemetry");
+        assert!(!dir.join(cua_telemetry::link::CHECKED_FILE).exists());
+        assert!(!dir.join(cua_telemetry::link::ACCOUNT_FILE).exists());
+
+        let on = telemetry(home.path(), false);
+        assert!(!refresh_usage_link_with(&on, &signed_out(home.path())).await);
+        assert!(
+            !dir.join(cua_telemetry::link::CHECKED_FILE).exists(),
+            "signed out: not asked"
+        );
+        assert_eq!(on.link_state(), cua_telemetry::LinkState::NotOffered);
     }
 
     #[test]

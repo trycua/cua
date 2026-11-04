@@ -7,17 +7,16 @@ use crate::error::{Error, Result};
 use crate::id::{Provider, SpaceId, authority};
 use crate::operator::{ControlServerDisplay, OperatorDisplay};
 use crate::registry::{Credential, Registry, cua_home};
+use crate::space::{Gateway, Space, SpaceInfo, SpacePower, SpaceResize};
 use crate::space::{ServiceSource, SpaceService};
-use crate::space::{Space, SpaceInfo, SpacePower};
-use cua_fleet::FleetClient;
 use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sandbox_core::{CreateOptions, LocalRuntime, PortTarget, Probe, ProviderKind, Sandboxes};
-use cua_spaces_contract::inputs::FleetRuntime;
 use cua_spacesd_client::{ConnectOptions, SpacesdClient, pb};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 /// Default time allowed for the `GetCapabilities` handshake.
@@ -39,16 +38,12 @@ pub struct SpaceCreate {
     pub runtime: Runtime,
     /// Name. Default `space-<hex>`.
     pub name: Option<String>,
-    /// vCPUs. Local default 2; Cua Cloud: 1-64
-    /// ([`cua_fleet::FLEET_ABSOLUTE_CPUS`]; most accounts run 1-8), default
-    /// the pool template's (4).
+    /// vCPUs. Local default 2.
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; Cua Cloud: 512 up to 512 GiB
-    /// ([`cua_fleet::FLEET_ABSOLUTE_MEMORY_MB`]; most accounts run 1-32
-    /// GiB), default the pool template's (4096).
+    /// Memory in MiB. Local default 4096.
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; `None` keeps the
-    /// image's size). Containers and cloud Spaces refuse it.
+    /// image's size). Containers and provider Spaces refuse it.
     pub disk_gb: Option<u32>,
     /// Readiness budget (local; default 600 s).
     pub timeout: Option<Duration>,
@@ -84,6 +79,63 @@ pub struct SpaceCreate {
     /// `auto` picks the runtime's own. `None`: no GPU. Kept with the Space
     /// (every later start applies it).
     pub gpu: Option<String>,
+    /// Keep it on your machines (`on` [`On::Auto`]): created again on
+    /// another one, with the same name, when its machine goes away
+    /// ([`crate::durable`]). Needs the cua daemon of Cua Spaces.
+    pub durable: bool,
+    /// Directories of this machine mounted into the Space (`on` local
+    /// only): a container binds them, a macOS VM shares them (under
+    /// `/Volumes/My Shared Files/<name>`, see
+    /// [`cua_vmm::lume::macos_share_path`]). Kinds that cannot mount refuse
+    /// them. A cluster job's Space gets its job directory this way.
+    pub mounts: Vec<cua_vmm::Mount>,
+    /// No desktop: only cua-spacesd runs (the one headless switch,
+    /// [`cua_sandbox_core::CreateOptions::headless`]).
+    pub headless: bool,
+    /// A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints take milliseconds and forks of them
+    /// share its pages. Other kinds (and cloud Spaces) ignore it.
+    pub forkable: bool,
+    /// Named volumes of Cua Volume mounted in the Space
+    /// ([`crate::named_volumes`]). Needs the Cua Volume extension.
+    pub volumes: Vec<crate::named_volumes::VolumeMount>,
+    /// Guest network ([`cua_sandbox_core::NetworkMode::None`]: no outbound
+    /// network; QEMU VMs on this machine or one of your machines; not with
+    /// `durable` or `reuse`). A machine whose cua cannot enforce it is
+    /// refused, never given an open Space.
+    pub network: cua_sandbox_core::NetworkMode,
+    /// Labels kept with the Space ([`SpaceInfo::labels`]; see
+    /// [`crate::registry::validate_labels`] for the limits). Applies on
+    /// every create path; a durable Space takes none.
+    pub labels: BTreeMap<String, String>,
+    /// Egress policy ([`crate::egress`]), enforced by the host the Space
+    /// runs on, outside the guest, from its first instruction. A kind or
+    /// location with no host-side point refuses it before anything is
+    /// created (see [`crate::egress`]); not with `durable`, `reuse` or a
+    /// create that does not wait.
+    pub egress: crate::egress::EgressPolicy,
+    /// Network settings ([`crate::network`]): a preset and the user's
+    /// lists. `None`: what `network` and `egress` say (`internet` when
+    /// neither says anything).
+    pub network_settings: Option<crate::network::NetworkSettings>,
+    /// Create it as a child of this Space (id or name): its network is no
+    /// more open than its parent's, and it joins the parent's tree.
+    pub parent: Option<String>,
+    /// The tree of another computer this Space joins ([`crate::overlay`]):
+    /// set by a computer that creates a child on one of your other computers,
+    /// so the new Space is a member of the same tree there. The id is
+    /// qualified with the computer the tree started on.
+    pub tree: Option<String>,
+    /// With `parent`: let its network be more open than its parent's
+    /// (recorded on the Space as who widened it and when).
+    pub widen: bool,
+    /// On a linked cloud (`on` `aws`, `hetzner`, ...): the machine type its
+    /// host must be (`c7g.xlarge`, `cax41`): a pin in the same elastic
+    /// solve. `None`: the solver picks.
+    pub instance_type: Option<String>,
+    /// On a linked cloud: the region its host must be in. `None`: any the
+    /// cloud offers.
+    pub region: Option<String>,
 }
 
 /// Where [`SpaceCreate::progress`] reports go.
@@ -137,6 +189,20 @@ impl SpaceCreated {
 }
 
 /// Options for a local Space (see [`Spaces::create`]).
+/// [`Spaces::space`]'s per-Space turn, and the last failure under it.
+#[derive(Default)]
+struct ConnectGate {
+    turn: Arc<tokio::sync::Mutex<()>>,
+    failed: std::sync::Mutex<Option<FailedConnect>>,
+}
+
+#[derive(Clone)]
+struct FailedConnect {
+    at: std::time::Instant,
+    presence: crate::dial_backoff::Presence,
+    reason: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LocalProvision {
     /// Image. Default: the canonical Linux image.
@@ -168,6 +234,20 @@ pub(crate) struct LocalProvision {
     pub spacesd: Option<bool>,
     /// A GPU option ([`SpaceCreate::gpu`]).
     pub gpu: Option<String>,
+    /// Host directories ([`SpaceCreate::mounts`]).
+    pub mounts: Vec<cua_vmm::Mount>,
+    /// No desktop ([`SpaceCreate::headless`]).
+    pub headless: bool,
+    /// A fork source ([`SpaceCreate::forkable`]).
+    pub forkable: bool,
+    /// Guest network ([`SpaceCreate::network`]).
+    pub network: cua_sandbox_core::NetworkMode,
+    /// Egress policy ([`SpaceCreate::egress`]).
+    pub egress: crate::egress::EgressPolicy,
+    /// Network settings ([`SpaceCreate::network_settings`]).
+    pub network_settings: Option<crate::network::NetworkSettings>,
+    /// The tree it joins (its root's id); `None`: its own.
+    pub network_tree: Option<String>,
 }
 
 /// A Space [`Spaces::create`] started with `wait = false`.
@@ -179,13 +259,16 @@ pub struct PendingSpace {
     pub phase: &'static str,
 }
 
+/// How long a connection made without the cua-spacesd its image publishes
+/// is kept before the next use dials again.
+const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
     home: Option<PathBuf>,
     local: Option<Arc<dyn LocalRuntime>>,
     sandboxes: Option<Sandboxes>,
-    fleet_namespace: Option<String>,
     operator_display: Option<Arc<dyn OperatorDisplay>>,
     probe_timeout: Option<Duration>,
     download_dir: Option<PathBuf>,
@@ -229,13 +312,6 @@ impl SpacesBuilder {
         self
     }
 
-    /// Ignored: Cua Cloud has ended, so Spaces never uses a Fleet client.
-    /// Kept so existing callers still compile.
-    pub fn fleet(self, fleet: FleetClient) -> Self {
-        let _ = fleet;
-        self
-    }
-
     /// Enables Local Spaces on this runtime (the daemon passes its cua-vmm
     /// adapter).
     pub fn local_runtime(mut self, runtime: Arc<dyn LocalRuntime>) -> Self {
@@ -247,14 +323,6 @@ impl SpacesBuilder {
     /// sandbox lifecycle).
     pub fn sandboxes(mut self, sandboxes: Sandboxes) -> Self {
         self.sandboxes = Some(sandboxes);
-        self
-    }
-
-    /// Base name of [`Spaces::fleet_pool_name`]. Default:
-    /// `$CUA_SPACES_NAMESPACE`, else `cua-spaces`. Cua Cloud has ended, so
-    /// no pool is claimed from.
-    pub fn fleet_namespace(mut self, ns: impl Into<String>) -> Self {
-        self.fleet_namespace = Some(ns.into());
         self
     }
 
@@ -287,9 +355,6 @@ impl SpacesBuilder {
             }
             b.build()
         });
-        let namespace = self
-            .fleet_namespace
-            .unwrap_or_else(|| default_namespace(None));
         let operator_display = self.operator_display.unwrap_or_else(|| {
             Arc::new(ControlServerDisplay::new(home.join("spaces-control.json")))
         });
@@ -312,38 +377,43 @@ impl SpacesBuilder {
                 registry: Registry::new(home),
                 has_local: self.local.is_some(),
                 sandboxes,
-                namespace,
                 operator_display,
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                connecting: Default::default(),
+                dial_backoff: Default::default(),
                 mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
+                #[cfg(feature = "spaces-hotspot")]
+                exits: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                host_ports: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                tree_hubs: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                overlay: Default::default(),
+                #[cfg(feature = "spaces-hotspot")]
+                topologies: Default::default(),
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
+                resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
+                team_facts: std::sync::Mutex::new(Default::default()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
+                reported_saves: Default::default(),
                 relay_read: tokio::sync::Mutex::new(None),
+                relay_confirmed: std::sync::atomic::AtomicBool::new(false),
+                rounds: Default::default(),
+                list_watch: Default::default(),
                 site_login: std::sync::RwLock::new(None),
+                pool: std::sync::RwLock::new(None),
+                durable: std::sync::Mutex::new(Vec::new()),
+                elastic: Default::default(),
+                pending_volumes: std::sync::Mutex::new(BTreeMap::new()),
             }),
         }
-    }
-}
-
-fn default_namespace(client_id: Option<String>) -> String {
-    if let Some(ns) = std::env::var("CUA_SPACES_NAMESPACE")
-        .ok()
-        .filter(|v| !v.is_empty())
-    {
-        return sanitize_label(&ns);
-    }
-    match client_id
-        .map(|c| sanitize_label(&c))
-        .filter(|c| !c.is_empty())
-    {
-        Some(cid) => sanitize_label(&format!("cua-spaces-{cid}")),
-        None => "cua-spaces".into(),
     }
 }
 
@@ -359,6 +429,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             m.name.clone()
         },
+        display_name: String::new(),
         provider: Provider::Relay,
         spacesd_version: m.version.clone(),
         features: vec![],
@@ -406,7 +477,20 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             String::new()
         },
+        durable: String::new(),
         stop_reason: String::new(),
+        volumes: Vec::new(),
+        labels: BTreeMap::new(),
+        expires_at_unix: 0,
+        on_expire: String::new(),
+        created_at_unix: 0,
+        egress: Default::default(),
+        egress_enforced: None,
+        network: None,
+        tree: None,
+        clipboard: Default::default(),
+        volume_setting: Default::default(),
+        sharing: None,
     }
 }
 
@@ -435,7 +519,7 @@ pub(crate) fn os_names(space: &Space) -> (String, String) {
 /// What a relay machine's cua-spacesd reported about itself at connect.
 /// Kept in `relay-reported.json` in the cua home, so a later process (the
 /// CLI, another app) lists the machine's OS without connecting first.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct ReportedFacts {
     os: String,
@@ -445,6 +529,12 @@ struct ReportedFacts {
 }
 
 const RELAY_REPORTED_FILE: &str = "relay-reported.json";
+
+#[derive(Default)]
+struct ReportedSaves {
+    dirty: AtomicBool,
+    running: AtomicBool,
+}
 
 /// What earlier processes learned from relay machines (empty when none, or
 /// unreadable).
@@ -519,28 +609,73 @@ pub(crate) struct Inner {
     pub(crate) share_consent: std::sync::RwLock<Option<Arc<dyn crate::share::ShareConsent>>>,
     has_local: bool,
     pub(crate) sandboxes: Sandboxes,
-    namespace: String,
     pub(crate) operator_display: Arc<dyn OperatorDisplay>,
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// One connect at a time per Space; callers that arrive meanwhile take
+    /// its outcome instead of dialing again.
+    connecting: std::sync::Mutex<HashMap<String, Arc<ConnectGate>>>,
     /// Mesh nodes for `relay:` Spaces ([`crate::mesh`]).
+    /// Your computers that did not answer, and when to dial them again.
+    pub(crate) dial_backoff: crate::dial_backoff::DialBackoff,
     pub(crate) mesh: crate::mesh::MeshClients,
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
+    /// The exits of running Spaces ([`crate::exit`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) exits: crate::exit::ExitTable,
+    /// Host ports published in running Spaces ([`crate::host_ports`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) host_ports: crate::host_ports::HostPortsTable,
+    /// Containers carried for their tree's VMs ([`crate::tree_hub`]).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) tree_hubs: crate::tree_hub::TreeHubTable,
+    /// The tree overlay across your computers ([`crate::overlay`]).
+    #[cfg(feature = "spaces-hotspot")]
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) overlay: crate::overlay::Table,
+    /// The topology hint last written into each running Space (a hash).
+    #[cfg(feature = "spaces-hotspot")]
+    pub(crate) topologies: tokio::sync::Mutex<BTreeMap<String, u64>>,
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
+    /// The resource sampler and its watchers ([`crate::resources`]).
+    pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    /// Team names and roles from the Spaces API ([`crate::sharing`]).
+    pub(crate) team_facts: std::sync::Mutex<crate::sharing::TeamFacts>,
     /// What each relay machine's cua-spacesd said about itself when this
     /// process last connected to it (by `relay:<id>`): the directory
     /// listing carries no OS, so without it a Mac lists as Linux.
     relay_reported: std::sync::Mutex<HashMap<String, ReportedFacts>>,
+    /// Whether `relay_reported` has changes not yet on disk, and whether a
+    /// save is running ([`Spaces::remember_reported`]).
+    reported_saves: ReportedSaves,
     /// Held across a read so only one directory read runs at a time.
     relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
+    /// The relay answered a directory read in this process (until then the
+    /// directory is the one saved by an earlier process, if any).
+    pub(crate) relay_confirmed: std::sync::atomic::AtomicBool,
+    /// The read of the account's computers [`Spaces::list_known`] runs.
+    pub(crate) rounds: crate::listing::AccountRounds,
+    /// The list's watcher, while anything subscribes
+    /// ([`Spaces::watch_list`]).
+    pub(crate) list_watch: crate::list_watch::ListWatchSlot,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
+    /// What reaches the coordinator of the account's machines (durable
+    /// Spaces; the cua daemon of Cua Spaces sets it).
+    pub(crate) pool: std::sync::RwLock<Option<Arc<dyn crate::durable::PoolRequests>>>,
+    /// Durable Spaces as last known: (name, the Space it is now).
+    pub(crate) durable: std::sync::Mutex<Vec<(String, String)>>,
+    /// The elastic pool's placements and demand ([`crate::elastic`]).
+    pub(crate) elastic: crate::elastic::ElasticState,
+    /// Named volumes of Spaces being created, until their record exists.
+    pub(crate) pending_volumes:
+        std::sync::Mutex<BTreeMap<String, Vec<crate::named_volumes::VolumeMount>>>,
 }
 
 /// The Spaces runtime: a registry of spacesd sandboxes and the operations
@@ -577,6 +712,13 @@ impl Spaces {
         &self.inner.registry
     }
 
+    /// Frees capacity this machine holds for nobody (idle warm-pool members,
+    /// VMs whose lifetime passed or whose owner is gone) so a create that
+    /// was short of CPU or memory can look again.
+    pub async fn reclaim(&self, need: cua_sandbox_core::Shortfall) -> cua_sandbox_core::Reclaimed {
+        self.inner.sandboxes.reclaim(need).await
+    }
+
     /// The sandbox manager Local Spaces are provisioned with.
     pub fn sandboxes(&self) -> &Sandboxes {
         &self.inner.sandboxes
@@ -585,12 +727,6 @@ impl Spaces {
     /// The operator display.
     pub fn operator_display(&self) -> &Arc<dyn OperatorDisplay> {
         &self.inner.operator_display
-    }
-
-    /// Base name of [`Spaces::fleet_pool_name`] (Cua Cloud has ended: no pool
-    /// is claimed from).
-    pub fn fleet_namespace(&self) -> &str {
-        &self.inner.namespace
     }
 
     // ------------------------------------------------------------ registry
@@ -613,20 +749,36 @@ impl Spaces {
         // A Space this machine provides is in the registry as a local Space,
         // and its relay machine lists it again under the host: once, as the
         // local one (CUA-1527).
-        let provided_here: std::collections::HashSet<String> =
+        let provided: Vec<cua_host::provided::ProvidedSpace> =
             cua_host::provided::load_provided(&cua_host::Host::new(self.home_dir()).paths().dir)
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|p| out.iter().any(|i| i.id == p.local_space))
-                .map(|p| p.relay_machine)
                 .collect();
+        let facts = self.team_facts();
+        let provided_here: std::collections::HashSet<String> =
+            provided.iter().map(|p| p.relay_machine.clone()).collect();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
+        // Its name on the relay is the one your other devices see: a rename
+        // there (from another device) shows here too. The name it was
+        // registered with (or its machine id, when it had none) is no
+        // rename.
+        let relay_names: Vec<(String, String)> = provided
+            .iter()
+            .filter_map(|p| {
+                let m = cache.iter().find(|m| m.id == p.relay_machine)?;
+                (!m.name.is_empty() && m.name != p.name && m.name != p.relay_machine)
+                    .then(|| (p.local_space.clone(), m.name.clone()))
+            })
+            .collect();
         for m in cache.iter() {
             if provided_here.contains(&m.id) {
                 continue;
             }
             let mut info = relay_info(m);
+            info.sharing = Some(crate::sharing::sharing_of(m, &facts));
             self.apply_reported(&mut info, m.online);
+            self.apply_volumes(&mut info);
             if !info.host.is_empty() {
                 info.host_name = cache
                     .iter()
@@ -665,6 +817,18 @@ impl Spaces {
                 out.push(info);
             }
         }
+        drop(cache);
+        #[cfg(feature = "spaces-agents")]
+        self.apply_attached_sharing(&mut out);
+        self.mark_durable(&mut out);
+        self.apply_meta(&mut out);
+        for (local, relay_name) in relay_names {
+            if let Some(info) = out.iter_mut().find(|i| i.id == local)
+                && relay_name != info.name
+            {
+                info.display_name = relay_name;
+            }
+        }
         Ok(out)
     }
 
@@ -677,6 +841,9 @@ impl Spaces {
     /// listed without the account's machines (and any listed before the
     /// sign-out are dropped). [`Self::list`] remains the cached, local read.
     pub async fn list_all(&self) -> Result<Vec<SpaceInfo>> {
+        if let Err(e) = self.durable_spaces().await {
+            tracing::debug!(error = %e, "durable Spaces not listed");
+        }
         if let Some(account) = self.relay_account()
             && let Err(e) = self.relay_machines().await
         {
@@ -684,8 +851,9 @@ impl Spaces {
                 return Err(e);
             }
             tracing::debug!("relay directory skipped: not signed in");
-            self.inner.relay_cache.lock().expect("relay cache").clear();
+            self.forget_account_computers();
         }
+        self.refresh_team_facts().await;
         self.list()
     }
 
@@ -746,11 +914,20 @@ impl Spaces {
     }
 
     /// Configures (or clears) the relay account after construction, e.g.
-    /// when `cua daemon` picks up the signed-in session. Clears the cached
-    /// directory listing.
+    /// when `cua daemon` picks up the signed-in session. The cached
+    /// directory listing becomes the one an earlier process saved for this
+    /// relay (`relay-directory.json`), unconfirmed until the relay answers.
     pub fn set_relay(&self, relay: Option<crate::relay::RelayAccount>) {
+        let saved = relay
+            .as_ref()
+            .map(|r| crate::listing::load_directory(self.home_dir(), &r.url))
+            .unwrap_or_default();
         *self.inner.relay.write().expect("relay") = relay;
-        self.inner.relay_cache.lock().expect("relay cache").clear();
+        *self.inner.relay_cache.lock().expect("relay cache") = saved;
+        self.inner
+            .relay_confirmed
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.inner.rounds.reset();
     }
 
     /// `e`, from a call on `space`, with the reason when the call failed
@@ -784,11 +961,24 @@ impl Spaces {
         self.inner.mesh.status().await
     }
 
+    /// Drops the mesh's loopback forwards and the connections they carry,
+    /// to give descriptors back when the process runs short (the daemon's
+    /// descriptor guard). Spaces over the mesh reconnect on their next
+    /// call. Returns how many forwards were dropped.
+    pub async fn shed_mesh_forwards(&self) -> usize {
+        let (n, spaces) = self.inner.mesh.shed_forwards().await;
+        let mut connections = self.inner.connections.lock().await;
+        for space in spaces {
+            connections.remove(&space);
+        }
+        n
+    }
+
     pub(crate) fn relay(&self) -> Result<crate::relay::RelayAccount> {
         self.relay_account().ok_or_else(|| {
             Error::host(
                 "cua.ai relay account",
-                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "sign in to cua.ai (`cua auth login` or the app) to list your computers",
             )
         })
     }
@@ -838,20 +1028,80 @@ impl Spaces {
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
                     "unauthenticated" => cua_host::Error::Unauthenticated(
-                        "Relay authentication failed. Sign in again to refresh your machines."
+                        "Relay authentication failed. Sign in again to refresh your computers."
                             .into(),
                     ),
                     "permission_denied" => cua_host::Error::PermissionDenied(
-                        "This device could not list relay machines. Check its account access."
+                        "This device could not list relay computers. Check its account access."
                             .into(),
                     ),
-                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                    _ => cua_host::Error::Relay("Could not refresh relay computers.".into()),
                 }));
             }
         };
         *read_at = Some(std::time::Instant::now());
-        *self.inner.relay_cache.lock().expect("relay cache") = machines.clone();
+        let changed = {
+            let mut cache = self.inner.relay_cache.lock().expect("relay cache");
+            let changed = *cache != machines;
+            *cache = machines.clone();
+            changed
+        };
+        let first = !self
+            .inner
+            .relay_confirmed
+            .swap(true, std::sync::atomic::Ordering::AcqRel);
+        // Kept for the next process: it lists these at once, before the
+        // relay answers it (`Spaces::list_known`).
+        if changed || first {
+            crate::listing::save_directory(self.home_dir(), &relay.url, &machines);
+        }
         Ok(machines)
+    }
+
+    /// Whether relay host `machine` routes Spaces of this device (they are
+    /// reached through its channel: [`crate::id::routed_authority`]).
+    fn routes_through(&self, machine: &str) -> bool {
+        let space = format!("relay:{machine}");
+        self.inner
+            .registry
+            .direct_hosts()
+            .is_ok_and(|hosts| hosts.iter().any(|h| h.space == space))
+    }
+
+    /// Whether relay machine `machine_id` is a Space one of your own hosts
+    /// provides (`on="host:<machine>"`, `on="auto"`): its directory row or
+    /// registry record names its host. Reads the directory once when this
+    /// process has not listed it yet.
+    pub(crate) async fn provided_by_a_host(&self, machine_id: &str) -> bool {
+        let known = |s: &Self| {
+            let cached = s
+                .inner
+                .relay_cache
+                .lock()
+                .expect("relay cache")
+                .iter()
+                .find(|m| m.id == machine_id)
+                .map(|m| m.host.as_deref().is_some_and(|h| !h.is_empty()));
+            let recorded = s
+                .inner
+                .registry
+                .get(&format!("relay:{machine_id}"))
+                .ok()
+                .flatten()
+                .map(|r| !r.host.is_empty());
+            match (cached, recorded) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (None, None) => None,
+                _ => Some(false),
+            }
+        };
+        if let Some(known) = known(self) {
+            return known;
+        }
+        if let Err(e) = self.relay_directory(Some(machine_id)).await {
+            tracing::debug!(machine = %machine_id, error = %e, "relay directory not read");
+        }
+        known(self).unwrap_or(false)
     }
 
     /// The listed row of `space`. Only a `relay:` id reads the directory.
@@ -884,6 +1134,12 @@ impl Spaces {
         if let Ok(id) = SpaceId::parse(space) {
             return Ok(id);
         }
+        // A durable Space's name is the Space it is now, wherever it is.
+        if let Some((_, now)) = self.durable_of(space)
+            && let Ok(id) = SpaceId::parse(&now)
+        {
+            return Ok(id);
+        }
         let records = self.inner.registry.list()?;
         let mut matches: Vec<SpaceId> = records
             .iter()
@@ -891,6 +1147,15 @@ impl Spaces {
             .filter(|(r, id)| r.name == space || id.short_name() == space)
             .map(|(_, id)| id)
             .collect();
+        // The name it was renamed to.
+        for (key, m) in self.inner.registry.all_meta() {
+            if m.display_name == space
+                && let Ok(id) = SpaceId::parse(&key)
+                && !matches.contains(&id)
+            {
+                matches.push(id);
+            }
+        }
         for m in self.inner.relay_cache.lock().expect("relay cache").iter() {
             let id = SpaceId::Relay {
                 machine_id: m.id.clone(),
@@ -936,6 +1201,14 @@ impl Spaces {
         self.add_with_service(url, token, name, None).await
     }
 
+    /// Forks `source` (a local sandbox, running or stopped, or a
+    /// checkpoint) as the local Space `name` and registers it: a QEMU fork
+    /// of a memory checkpoint maps its RAM copy-on-write, so many forks of
+    /// one checkpoint share every page they do not write.
+    pub async fn fork(&self, source: &str, name: &str) -> Result<SpaceInfo> {
+        self.fork_local(source, Some(name.to_string())).await
+    }
+
     /// [`Spaces::add`], naming the service a plain MCP URL is registered
     /// under (default `mcp`).
     pub async fn add_with_service(
@@ -947,7 +1220,7 @@ impl Spaces {
     ) -> Result<SpaceInfo> {
         let url = url.trim();
         let is_id = url.starts_with("space://")
-            || ["local:", "cloud:", "fleet:", "direct:", "relay:"]
+            || ["local:", "cloud:", "direct:", "relay:"]
                 .iter()
                 .any(|p| url.starts_with(p));
         let (id, endpoint_url) = if is_id {
@@ -1013,6 +1286,7 @@ impl Spaces {
     pub async fn remove(&self, space: &str) -> Result<SpaceInfo> {
         let id = self.resolve(space)?;
         let info = self.info(&id).ok();
+        let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());
         self.drop_connection(&id).await;
         // A Space that registered itself on the relay and is gone (its
         // machine is not connected) leaves the relay directory: otherwise
@@ -1031,8 +1305,26 @@ impl Spaces {
         {
             self.forget_relay_machine(machine_id).await?;
         }
-        // A direct host, or a Space one created, leaves the direct-host list.
+        // A Space this device attached to the relay as a machine of its own
+        // takes that machine with it (as `delete` does): `rm` must not leave
+        // a stale record the owner has to remove by hand (CUA-2841).
+        #[cfg(feature = "spaces-agents")]
+        if !matches!(id, SpaceId::Relay { .. }) {
+            let _ = self.release_attached(&id.to_string()).await;
+        }
+        // A direct host leaves the direct-host list with the Spaces it
+        // created here (nothing reaches them without it; a host that is
+        // gone leaves no rows behind), and a Space one created leaves its
+        // host's list.
         if matches!(id, SpaceId::Direct { .. }) {
+            let is_host = self
+                .inner
+                .registry
+                .direct_hosts()
+                .is_ok_and(|hosts| hosts.iter().any(|h| h.space == id.to_string()));
+            if is_host {
+                self.forget_host_spaces(&id.to_string()).await;
+            }
             let _ = self.inner.registry.forget_direct(&id.to_string());
         }
         if !self.inner.registry.remove(&id.to_string())? && !matches!(id, SpaceId::Relay { .. }) {
@@ -1042,6 +1334,7 @@ impl Spaces {
         Ok(info.unwrap_or_else(|| SpaceInfo {
             id: id.to_string(),
             name: id.short_name().into(),
+            display_name: String::new(),
             provider: id.provider(),
             spacesd_version: String::new(),
             features: vec![],
@@ -1062,7 +1355,20 @@ impl Spaces {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            durable: String::new(),
             stop_reason: String::new(),
+            volumes: Vec::new(),
+            labels: BTreeMap::new(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+            network: None,
+            tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
+            sharing: None,
         }))
     }
 
@@ -1078,9 +1384,116 @@ impl Spaces {
             e.space_dropped(self, &id.to_string()).await;
         }
         self.inner.connections.lock().await.remove(&id.to_string());
+        let _ = self
+            .inner
+            .registry
+            .set_overlay_volumes(&id.to_string(), vec![]);
     }
 
     pub(crate) fn info(&self, id: &SpaceId) -> Result<SpaceInfo> {
+        let mut info = [self.info_unlabelled(id)?];
+        self.apply_meta(&mut info);
+        let [info] = info;
+        Ok(info)
+    }
+
+    /// Fills in what is kept apart from the handshake record: labels,
+    /// when the Space was created, and its lifetime.
+    fn apply_meta(&self, infos: &mut [SpaceInfo]) {
+        let meta = self.inner.registry.all_meta();
+        let lifetimes = crate::lifetimes::all(self.home_dir());
+        for info in infos {
+            if let Some(m) = meta.get(&info.id) {
+                if !m.display_name.is_empty() {
+                    info.display_name = m.display_name.clone();
+                }
+                info.labels = m.labels.clone();
+                if m.created_at_unix > 0 {
+                    info.created_at_unix = m.created_at_unix;
+                }
+                info.egress = m.egress.clone();
+                info.clipboard = m.clipboard;
+                info.volume_setting = m.volume;
+                info.egress_enforced =
+                    (!m.egress.is_empty()).then_some(crate::egress::Enforcement::Host);
+                info.network = Some(crate::network::SpaceNetwork {
+                    settings: crate::network::settings_of(Some(m)),
+                    note: m.network_note.clone(),
+                    notice_pending: m.network_notice_pending,
+                });
+                info.tree = Some(crate::tree::TreeLink::of(m));
+            }
+            if let Some(l) = self.lifetime_of(&info.id, &lifetimes) {
+                info.expires_at_unix = l.expires_at_unix;
+                info.on_expire = l.on_expire.clone();
+            }
+        }
+    }
+
+    /// Gives Space `new` the labels and egress policy of Space `source`:
+    /// what a fork of a Space starts with. The runtime's fork carries the
+    /// policy itself (`cua_vmm::Runtime::fork`), so it is enforced from
+    /// the fork's first instruction; a fork made any other way must call
+    /// [`Spaces::set_egress`]. Its creation time and lifetime are its own.
+    /// Returns whether `source` had any.
+    pub fn inherit_meta(&self, source: &str, new: &str) -> Result<bool> {
+        let (source, new) = (self.resolve(source)?, self.resolve(new)?);
+        self.inner
+            .registry
+            .inherit_meta(&source.to_string(), &new.to_string())
+    }
+
+    /// [`Spaces::apply_meta`] for registry records (what the daemon serves):
+    /// labels, creation time and lifetime filled in.
+    pub fn fill_records(&self, records: &mut [cua_proto::daemon::v1::Space]) {
+        let meta = self.inner.registry.all_meta();
+        let lifetimes = crate::lifetimes::all(self.home_dir());
+        let tree_addrs = cua_vmm::tree::addresses();
+        for r in records {
+            r.created_at_unix = r.added_at.as_ref().map_or(0, |t| t.seconds.max(0));
+            if let Some(m) = meta.get(&r.id) {
+                if !m.display_name.is_empty() {
+                    r.display_name = m.display_name.clone();
+                }
+                r.labels = m
+                    .labels
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                if m.created_at_unix > 0 {
+                    r.created_at_unix = i64::try_from(m.created_at_unix).unwrap_or(0);
+                }
+                r.egress = (!m.egress.is_empty()).then(|| cua_proto::daemon::v1::EgressPolicy {
+                    allow: m.egress.allow.clone(),
+                    deny: m.egress.deny.clone(),
+                });
+                r.clipboard = m.clipboard.as_str().into();
+                r.volume = m.volume.as_str().into();
+                r.egress_enforced = if m.egress.is_empty() {
+                    String::new()
+                } else {
+                    crate::egress::Enforcement::Host.as_str().into()
+                };
+                r.network_settings = m.network.as_ref().map(crate::network::to_pb);
+                r.network_note = m.network_note.clone().unwrap_or_default();
+                r.network_notice_pending = m.network_notice_pending;
+                r.parent = m.parent.clone().unwrap_or_default();
+                r.root = m.root.clone().unwrap_or_default();
+                r.depth = m.depth;
+                r.origin = crate::tree::TreeLink::of(m).origin;
+            }
+            // A VM's address in its tree ([`cua_vmm::tree`]).
+            if let Some(a) = r.id.strip_prefix("local:").and_then(|n| tree_addrs.get(n)) {
+                r.tree_address = a.to_string();
+            }
+            if let Some(l) = self.lifetime_of(&r.id, &lifetimes) {
+                r.expires_at_unix = i64::try_from(l.expires_at_unix).unwrap_or(0);
+                r.on_expire = l.on_expire.clone();
+            }
+        }
+    }
+
+    fn info_unlabelled(&self, id: &SpaceId) -> Result<SpaceInfo> {
         if let SpaceId::Relay { machine_id } = id
             && let Some(m) = self
                 .inner
@@ -1092,7 +1505,9 @@ impl Spaces {
             && self.inner.registry.get(&id.to_string())?.is_none()
         {
             let mut info = relay_info(m);
+            info.sharing = Some(crate::sharing::sharing_of(m, &self.team_facts()));
             self.apply_reported(&mut info, m.online);
+            self.apply_volumes(&mut info);
             return Ok(info);
         }
         let record = self
@@ -1114,12 +1529,39 @@ impl Spaces {
             os_pretty_name,
             arch,
         };
-        let mut reported = self.inner.relay_reported.lock().expect("relay reported");
-        reported.insert(key.to_string(), facts);
-        // Best effort: the listing in this process has it either way.
-        if let Err(e) = save_reported(self.home_dir(), &reported) {
-            tracing::debug!(error = %e, "relay-reported.json not written");
+        {
+            let mut reported = self.inner.relay_reported.lock().expect("relay reported");
+            if reported.get(key) == Some(&facts) {
+                return;
+            }
+            reported.insert(key.to_string(), facts);
         }
+        // Saved off the connect path, one save at a time: a launch connects
+        // to every Space at once, and a synced write per connect held up
+        // the runtime. A change made while a save runs gets one more save.
+        let saves = &self.inner.reported_saves;
+        saves.dirty.store(true, Ordering::SeqCst);
+        if saves.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let inner = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let saves = &inner.reported_saves;
+            loop {
+                while saves.dirty.swap(false, Ordering::SeqCst) {
+                    let snapshot = inner.relay_reported.lock().expect("relay reported").clone();
+                    // Best effort: the listing in this process has it either way.
+                    if let Err(e) = save_reported(inner.registry.dir(), &snapshot) {
+                        tracing::debug!(error = %e, "relay-reported.json not written");
+                    }
+                }
+                saves.running.store(false, Ordering::SeqCst);
+                if !saves.dirty.load(Ordering::SeqCst) || saves.running.swap(true, Ordering::SeqCst)
+                {
+                    return;
+                }
+            }
+        });
     }
 
     /// A relay machine's listing, with what its cua-spacesd reported (it
@@ -1206,6 +1648,14 @@ impl Spaces {
                 .as_ref()
                 .map(|r| r.host_name.clone())
                 .unwrap_or_default(),
+            image_config: existing
+                .as_ref()
+                .map(|r| r.image_config.clone())
+                .unwrap_or_default(),
+            volumes: match existing.as_ref().map(|r| r.volumes.clone()) {
+                Some(v) if !v.is_empty() => v,
+                _ => self.take_expected_volumes(&space.id().to_string()),
+            },
             added_at: existing.and_then(|e| e.added_at).or_else(|| {
                 let d = SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
@@ -1227,20 +1677,123 @@ impl Spaces {
     /// A connected handle to a registered Space (cached; reconnects when the
     /// cached connection's health check fails).
     pub async fn space(&self, space: &str) -> Result<Space> {
-        let id = self.resolve(space)?;
+        let id = self.resolve_now(space).await?;
         let key = id.to_string();
+        if let Some(s) = self.cached_connection(&key).await {
+            return Ok(s);
+        }
+        // One connect per Space at a time, run on its own: an app polling
+        // the list gives up on a computer that does not answer and asks
+        // again before the attempt ended. The attempt goes on (a caller's
+        // deadline does not cancel it), and its outcome answers whoever
+        // asked meanwhile, so a slow computer is dialed once, not once a
+        // poll.
+        let gate = self
+            .inner
+            .connecting
+            .lock()
+            .expect("connecting")
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        let arrived = std::time::Instant::now();
+        let me = self.clone();
+        let attempt = tokio::spawn(async move {
+            let _turn = gate.turn.clone().lock_owned().await;
+            if let Some(s) = me.inner.connections.lock().await.get(&key).cloned() {
+                return Ok(s);
+            }
+            // What the relay says about the computer now: one that came
+            // back (online again, or a new session) is dialed afresh.
+            let presence = match &id {
+                SpaceId::Relay { machine_id } => me.relay_presence(machine_id),
+                _ => None,
+            };
+            if let Some(f) = gate.failed.lock().expect("gate").clone()
+                && f.at >= arrived
+                && f.presence == presence
+            {
+                return Err(Error::SpacesdNotAvailable {
+                    space: key,
+                    reason: f.reason,
+                });
+            }
+            let r = me.connect_space(id, key).await;
+            if let Err(e) = &r {
+                let reason = match e {
+                    Error::SpacesdNotAvailable { reason, .. } => reason.clone(),
+                    e => e.to_string(),
+                };
+                *gate.failed.lock().expect("gate") = Some(FailedConnect {
+                    at: std::time::Instant::now(),
+                    presence,
+                    reason,
+                });
+            }
+            r
+        });
+        attempt
+            .await
+            .map_err(|e| Error::Cancelled(format!("the connect to this Space ended: {e}")))?
+    }
+
+    /// The open connection to `key`, unless its route went stale or it can
+    /// move to the mesh now (then it is dropped, to connect again).
+    async fn cached_connection(&self, key: &str) -> Option<Space> {
+        let key = key.to_string();
         // Bound first: the cache's guard must be gone before the lock is
         // taken again below.
         let cached = self.inner.connections.lock().await.get(&key).cloned();
+        // Connected while its cua-spacesd didn't answer (the Space was still
+        // waking, as after a daemon restart): dial again, or the Space stays
+        // without spacesd until it is restarted and agents can't start there.
+        if let Some(s) = &cached
+            && s.spacesd_retry_due(SPACESD_RETRY_AFTER)
+        {
+            tracing::info!(space = %key, "no cua-spacesd answered when this connected; reconnecting");
+            self.inner.connections.lock().await.remove(&key);
+            return None;
+        }
         if let Some(s) = cached {
-            match self.inner.mesh.stale(&key, crate::mesh::policy).await {
-                None => return Ok(s),
+            let policy = |provided| {
+                if provided {
+                    crate::mesh::policy_for_provided()
+                } else {
+                    crate::mesh::policy()
+                }
+            };
+            match self.inner.mesh.stale(&key, policy).await {
+                None => match self
+                    .inner
+                    .mesh
+                    .upgrade(&key, crate::mesh::UPGRADE_CHECK)
+                    .await
+                {
+                    None => return Some(s),
+                    Some(reason) => {
+                        tracing::info!(space = %key, %reason, "moving to the mesh");
+                        self.inner.connections.lock().await.remove(&key);
+                    }
+                },
                 Some(reason) => {
                     tracing::info!(space = %key, %reason, "the mesh went away; reconnecting");
                     self.inner.connections.lock().await.remove(&key);
                 }
             }
         }
+        None
+    }
+
+    /// [`Spaces::space`] behind a type-erased future: the routed Space's
+    /// connect awaits its host's, and the erased type ends the recursion.
+    fn space_of_host(
+        &self,
+        host: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Space>> + Send + '_>> {
+        Box::pin(async move { self.space(&host).await })
+    }
+
+    async fn connect_space(&self, id: SpaceId, key: String) -> Result<Space> {
         let name = match (&id, self.inner.registry.get(&key)?) {
             (_, Some(record)) => Some(record.name),
             (SpaceId::Relay { machine_id }, None) => Some(
@@ -1260,7 +1813,43 @@ impl Spaces {
             }
         };
         let credential = self.inner.registry.credential(&key)?.unwrap_or_default();
-        let s = self.connect(&id, &credential, name.as_deref()).await?;
+        // One of your computers that the relay lists as offline, and that
+        // did not answer, is not dialed again on every poll
+        // (`crate::dial_backoff`). An online one is always dialed: its
+        // cua-spacesd may be a moment from connecting (`cua spaces start`).
+        let presence = match &id {
+            SpaceId::Relay { machine_id } => {
+                Some(self.relay_presence(machine_id)).filter(|p| matches!(p, Some((false, _))))
+            }
+            _ => None,
+        };
+        if let Some(presence) = presence
+            && let Some(reason) =
+                self.inner
+                    .dial_backoff
+                    .check(&key, presence, std::time::Instant::now())
+        {
+            return Err(Error::SpacesdNotAvailable { space: key, reason });
+        }
+        let s = match self.connect(&id, &credential, name.as_deref()).await {
+            Ok(s) => {
+                self.inner.dial_backoff.clear(&key);
+                s
+            }
+            Err(e) => {
+                if let Some(presence) = presence
+                    && !matches!(e, Error::NotFound(_) | Error::InvalidArgument(_))
+                {
+                    self.inner.dial_backoff.fail(
+                        &key,
+                        presence,
+                        e.to_string(),
+                        std::time::Instant::now(),
+                    );
+                }
+                return Err(e);
+            }
+        };
         self.refresh_record(&key, &s, &credential);
         if matches!(id, SpaceId::Relay { .. }) && self.inner.registry.get(&key)?.is_none() {
             self.remember_reported(&key, &s);
@@ -1271,6 +1860,31 @@ impl Spaces {
         Ok(s)
     }
 
+    /// What the relay's directory last said about `machine_id`: online,
+    /// and when it last connected ([`crate::dial_backoff::Presence`]).
+    fn relay_presence(&self, machine_id: &str) -> crate::dial_backoff::Presence {
+        self.inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .iter()
+            .find(|m| m.id == machine_id)
+            .map(|m| (m.online, m.connected_at))
+    }
+
+    /// [`Spaces::resolve`], first asking where a durable Space is now when
+    /// `space` is a name and the coordinator of your machines can be asked
+    /// (a durable Space's name follows it from machine to machine).
+    pub async fn resolve_now(&self, space: &str) -> Result<SpaceId> {
+        if SpaceId::parse(space).is_err()
+            && self.inner.pool.read().expect("pool").is_some()
+            && let Err(e) = self.durable_spaces().await
+        {
+            tracing::debug!(error = %e, "durable Spaces not refreshed");
+        }
+        self.resolve(space)
+    }
+
     /// Drops the cached connection so the next [`Spaces::space`] reconnects
     /// (and re-reads capabilities).
     pub async fn forget_connection(&self, space: &str) -> Result<()> {
@@ -1279,6 +1893,8 @@ impl Spaces {
         // where an agent's home may be) stays; the next connection tells
         // the extensions again.
         self.inner.connections.lock().await.remove(&id.to_string());
+        // Asked for on purpose: dial at once, whatever failed before.
+        self.inner.dial_backoff.clear(&id.to_string());
         Ok(())
     }
 
@@ -1294,7 +1910,7 @@ impl Spaces {
 
     /// Connects to a Space: its declared services, plus cua-spacesd when
     /// the image runs it. `probe` bounds the spacesd handshake. Without
-    /// a spacesd, a Local or Fleet Space (and a direct Space registered
+    /// a spacesd, a Local Space (and a direct Space registered
     /// with service URLs) is still a Space, with an empty capability set;
     /// a direct URL with neither fails with [`Error::SpacesdNotAvailable`].
     async fn connect_with(
@@ -1330,8 +1946,32 @@ impl Spaces {
                 },
             );
         }
+        let mut bulk_file: Option<std::path::PathBuf> = None;
+        let mut routed_forward: Option<Arc<cua_spacesd_client::tunnel::TcpForward>> = None;
+        // Why a relay connection fell back to the relay's HTTPS path.
+        let mut fallback: Option<String> = None;
         // How to reach the spacesd, if the target can have one.
-        let (options, gateway) = match id {
+        let (options, gateway, route): (
+            Option<ConnectOptions>,
+            Option<Gateway>,
+            Option<crate::ChannelRoute>,
+        ) = match id {
+            SpaceId::Direct { authority } if crate::id::routed_host(authority).is_some() => {
+                // Provided by a host and reached through it: a forward of
+                // its loopback port over the host's own channel.
+                let (machine, port) = crate::id::routed_host(authority).expect("routed");
+                let host = self.space_of_host(format!("relay:{machine}")).await?;
+                let fwd = host
+                    .spacesd()?
+                    .forward_tcp(cua_spacesd_client::tunnel::ForwardOptions::new(port))
+                    .await?;
+                let mut o = ConnectOptions::parse(&format!("http://{}", fwd.local_addr()))?;
+                o.token = credential.token.clone();
+                routed_forward = Some(Arc::new(fwd));
+                // Its host's connection carries it: the same transport.
+                fallback = host.fallback_reason().map(str::to_owned);
+                (Some(o), None, host.route().cloned())
+            }
             SpaceId::Direct { authority } => {
                 if credential.service_urls.is_empty() {
                     let url = credential
@@ -1343,6 +1983,7 @@ impl Spaces {
                     // A machine on a self-hosted (static-token) relay: the
                     // mesh when the relay coordinates one (pairing with the
                     // env token), the relay's HTTPS path otherwise.
+                    let mut route = Some(crate::ChannelRoute::Direct(o.endpoint.origin()));
                     if let (cua_spacesd_client::EndpointKind::Relay { machine_id }, Some(token)) =
                         (o.endpoint.kind().clone(), credential.token.as_deref())
                     {
@@ -1351,7 +1992,8 @@ impl Spaces {
                             relay: &relay_url,
                             token,
                         };
-                        if let crate::mesh::Route::Mesh(m) = crate::mesh::connect_options(
+                        route = Some(crate::ChannelRoute::Relay(relay_url.clone()));
+                        match crate::mesh::connect_options(
                             &self.inner.mesh,
                             crate::mesh::Via::Static {
                                 relay: &relay_url,
@@ -1362,21 +2004,35 @@ impl Spaces {
                         )
                         .await?
                         {
-                            tracing::info!(machine = %machine_id, "relay Space over the mesh");
-                            self.inner.mesh.note_routed(&id.to_string(), &via);
-                            o = *m;
+                            crate::mesh::Route::Mesh(m, via_mesh) => {
+                                tracing::info!(machine = %machine_id, "relay Space over the mesh");
+                                self.inner.mesh.note_routed(&id.to_string(), &via, false);
+                                o = *m;
+                                route = Some(via_mesh);
+                            }
+                            crate::mesh::Route::Relay { fallback: why } => fallback = why,
                         }
                     }
-                    (Some(o), None)
+                    (Some(o), None, route)
                 } else {
                     // Added by an MCP URL: the token belongs to that server.
-                    (None, None)
+                    (None, None, None)
                 }
             }
             // Cua Cloud has ended: a legacy `cloud:` Space cannot connect.
             SpaceId::Cloud { .. } => return Err(cua_sandbox_core::Error::CloudEnded.into()),
             SpaceId::Relay { machine_id } => {
                 let relay = self.relay()?;
+                // A Space one of your own machines provides prefers the mesh
+                // (often a LAN neighbour); others follow `CUA_MESH`.
+                // ... and so does a host whose routed Spaces ride its channel.
+                let provided =
+                    self.provided_by_a_host(machine_id).await || self.routes_through(machine_id);
+                let policy = if provided {
+                    crate::mesh::policy_for_provided()
+                } else {
+                    crate::mesh::policy()
+                };
                 // The WireGuard®-based mesh first (end to end, direct when
                 // possible); the relay's HTTPS path when the relay or the
                 // machine does not speak it yet (see `crate::mesh`).
@@ -1384,28 +2040,40 @@ impl Spaces {
                     &self.inner.mesh,
                     crate::mesh::Via::Account(&relay),
                     machine_id,
-                    crate::mesh::policy(),
+                    policy,
                 )
                 .await?
                 {
-                    crate::mesh::Route::Mesh(o) => {
-                        tracing::info!(machine = %machine_id, "relay Space over the mesh");
-                        self.inner
-                            .mesh
-                            .note_routed(&id.to_string(), &crate::mesh::Via::Account(&relay));
-                        (Some(*o), None)
+                    crate::mesh::Route::Mesh(o, route) => {
+                        tracing::info!(machine = %machine_id, route = %route.describe(), "relay Space over the mesh");
+                        self.inner.mesh.note_routed(
+                            &id.to_string(),
+                            &crate::mesh::Via::Account(&relay),
+                            provided,
+                        );
+                        (Some(*o), None, Some(route))
                     }
-                    crate::mesh::Route::Relay => {
+                    crate::mesh::Route::Relay { fallback: why } => {
+                        fallback = why;
+                        if policy.uses_mesh() {
+                            // Its driver may join the mesh a moment later:
+                            // move there once it has (`Spaces::space`).
+                            self.inner.mesh.note_fallback(
+                                &id.to_string(),
+                                &crate::mesh::Via::Account(&relay),
+                                machine_id,
+                            );
+                        }
                         let url = cua_host::RelayClient::new(&relay.url)?.machine_url(machine_id);
                         // The account token rides in `authorization` and
                         // this device's session next to it, fetched (and
                         // refreshed) per call; the relay checks both and
                         // swaps them for its signed identity assertion.
+                        let route = crate::ChannelRoute::Relay(relay.url.clone());
                         let bearer = crate::relay::RelayBearer { account: relay };
-                        let mut o =
-                            ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
+                        let mut o = ConnectOptions::parse(&url)?.gateway(Arc::new(bearer));
                         o.token = credential.token.clone();
-                        (Some(o), None)
+                        (Some(o), None, Some(route))
                     }
                 }
             }
@@ -1414,12 +2082,10 @@ impl Spaces {
                 image = sandbox
                     .image_info()
                     .map(|i| (i.reference.clone(), i.digest.clone()));
+                let placed = sandbox.placement().0;
+                let runtime = sandbox.runtime_type().to_string();
                 platform = sandbox.image_info().map(|i| {
-                    let kind = match i.variant.as_str() {
-                        "rootfs" => "container",
-                        "containerdisk" | "lume" => "vm",
-                        _ => "",
-                    };
+                    let kind = kind_of_runtime(&runtime, &i.variant, placed);
                     (kind.to_string(), i.arch.clone().unwrap_or_default())
                 });
                 for (svc, _) in sandbox
@@ -1453,20 +2119,24 @@ impl Spaces {
                     effective_token = sandbox.env_token();
                 }
                 let token = effective_token.clone();
+                bulk_file = sandbox
+                    .provider_details()
+                    .get("bulk")
+                    .map(std::path::PathBuf::from);
                 match sandbox.port(env_port) {
                     Ok(PortTarget::Addr { host, port }) => {
-                        let mut o =
-                            ConnectOptions::parse(&format!("http://{}", authority(&host, port)))?;
+                        let addr = authority(&host, port);
+                        let mut o = ConnectOptions::parse(&format!("http://{addr}"))?;
                         o.token = token;
-                        (Some(o), None)
+                        (Some(o), None, Some(crate::ChannelRoute::Local(addr)))
                     }
                     Ok(PortTarget::Url(u)) => {
                         let mut o = ConnectOptions::parse(&u)?;
                         o.token = token;
-                        (Some(o), None)
+                        (Some(o), None, Some(crate::ChannelRoute::Local(u)))
                     }
                     // The image publishes no spacesd port.
-                    Err(_) => (None, None),
+                    Err(_) => (None, None, None),
                 }
             }
         };
@@ -1495,6 +2165,12 @@ impl Spaces {
                             label.as_deref().unwrap_or(&id.to_string()),
                         ));
                     }
+                    if let SpaceId::Relay { .. } = &id
+                        && let Some(message) = crate::host_spaces::team_device_refusal(&reason)
+                    {
+                        // Refused by the team, not a Space still starting.
+                        return Err(crate::host_spaces::team_device_refused(message));
+                    }
                     if !generic_ok {
                         return Err(Error::SpacesdNotAvailable {
                             space: id.to_string(),
@@ -1508,6 +2184,14 @@ impl Spaces {
                 Err(e) => return Err(e.into()),
             },
         };
+        // A Linux VM on this machine shares a disk with its guest: large
+        // transfers go through it when the guest proves it is the same one.
+        let mut bulk_proven = None;
+        if let (Some(env), Some(file)) = (&env, bulk_file)
+            && env.attach_bulk(&file).await
+        {
+            bulk_proven = Some(file);
+        }
         let caps = match &env {
             Some(env) => env.capabilities().await?,
             None => Default::default(),
@@ -1524,11 +2208,31 @@ impl Spaces {
             });
         let token = if env.is_some() { effective_token } else { None };
         let space = Space::new(id.clone(), name, env, caps, token, gateway, services);
+        if let Some(f) = routed_forward {
+            let _ = space.inner.keepalive.set(f);
+        }
+        if let Some(route) = route.filter(|_| space.has_spacesd()) {
+            if route.transport() == crate::Transport::RelayHttps
+                && let Some(reason) = fallback
+            {
+                space.set_fallback_reason(reason);
+            }
+            space.set_route(route);
+        }
+        if let Some(file) = bulk_proven {
+            space.set_bulk_path(file);
+        }
         if let Some((reference, digest)) = image {
             space.set_image(reference, digest);
         }
         if let Some((kind, arch)) = platform {
             space.set_platform(kind, arch);
+        }
+        if let Ok(Some(record)) = self.inner.registry.get(&id.to_string())
+            && !record.image_config.is_empty()
+            && let Ok(config) = serde_json::from_str(&record.image_config)
+        {
+            space.set_image_config(config);
         }
         if let Some((endpoint, reason)) = unavailable {
             space.set_spacesd_unavailable(endpoint, reason);
@@ -1562,7 +2266,10 @@ impl Spaces {
         let mut last = None;
         for _ in 0..max_attempts {
             match self.connect(id, credential, name).await {
-                Ok(s) if s.has_spacesd() => return Ok(s),
+                Ok(s) if s.has_spacesd() => {
+                    wait_serving(&s, deadline).await;
+                    return Ok(s);
+                }
                 Ok(_) => last = Some("cua-spacesd did not answer yet".to_string()),
                 Err(e @ Error::Env(cua_spacesd_client::Error::Unauthenticated(_))) => {
                     return Err(e);
@@ -1634,9 +2341,113 @@ impl Spaces {
     /// dropping the returned future (a closed request) does the same.
     pub async fn create(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::progress::{Phase, Progress, report};
-        refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
+        crate::registry::validate_labels(&opts.labels)?;
+        // Secure Spaces and Child Spaces are experiments: until they are on, a
+        // create asks for no more than the old lists and no parent.
+        crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
+        if opts.parent.is_some()
+            && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
+        {
+            return Err(Error::invalid(
+                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
+            ));
+        }
+        // The network it gets: what it asks, no more open than its parent.
+        // Every path below carries the resolved settings.
+        let network = self.create_network(&opts)?;
+        opts.network_settings = Some(network.settings.clone());
+        let egress = opts.egress.clone();
+        if !egress.is_empty() {
+            // Checked before anything is created; the runtime refuses a
+            // kind it cannot enforce one on, also before anything exists.
+            crate::egress::check(&egress)?;
+            if opts.durable || opts.reuse {
+                return Err(Error::invalid(
+                    "egress does not apply with durable or reuse: a durable Space is created \
+                     again elsewhere without it, and a reused Space keeps the policy it has",
+                ));
+            }
+            if opts.wait == Some(false) {
+                // The policy is applied once the Space is ready; a create
+                // that returns before then would hand back an open Space.
+                return Err(Error::invalid(
+                    "egress needs the Space ready: a create with wait = false returns before it \
+                     is, so create it with wait, or set the policy with set_egress once it is",
+                ));
+            }
+        }
+        if opts.network == cua_sandbox_core::NetworkMode::None && (opts.durable || opts.reuse) {
+            return Err(Error::invalid(
+                "network=none does not apply with durable or reuse: a durable Space is created \
+                 again elsewhere without it, and a reused Space keeps the network it has",
+            ));
+        }
+        // A fork of a checkpoint, wherever the checkpoint is.
+        if crate::pool_checkpoints::checkpoint_image(opts.image.as_deref()).is_some() {
+            // Boxed: the fork's future is deep (the batch planner).
+            return Box::pin(self.create_from_checkpoint(opts)).await;
+        }
+        if let Some(r) = opts
+            .image
+            .as_deref()
+            .and_then(|i| i.strip_prefix(crate::build::BUILD_IMAGE_PREFIX))
+        {
+            let r = r.to_string();
+            return self.create_from_build(&r, opts).await;
+        }
+        if opts.durable {
+            if !opts.labels.is_empty() {
+                return Err(Error::invalid(
+                    "labels do not apply to a durable Space: it is created again on another \
+                     machine, which would not carry them",
+                ));
+            }
+            return self.create_durable(opts).await;
+        }
+        self.require_volumes(&opts.volumes)?;
+        if !opts.volumes.is_empty() {
+            // A typo in a volume name is an error here, not an empty folder.
+            let names: Vec<&str> = opts.volumes.iter().map(|v| v.name.as_str()).collect();
+            self.call_extension(
+                "Cua Volume (volumes in Spaces)",
+                "volumes.exists",
+                serde_json::json!({ "names": names }),
+            )
+            .await?;
+        }
+        if opts.reuse && !opts.volumes.is_empty() {
+            return Err(Error::invalid(
+                "reuse does not apply with volumes: a reused Space has its own mounts",
+            ));
+        }
+        if opts.reuse && !opts.labels.is_empty() {
+            return Err(Error::invalid(
+                "labels do not apply with reuse: a reused Space keeps the labels it was \
+                 created with",
+            ));
+        }
         let sink = opts.progress.take().map(|p| p.0);
-        let key = self.create_key(&mut opts)?;
+        let (key, on) = self.create_key(&mut opts)?;
+        // A Mac cannot create a Windows VM locally yet. With the `windows-kvm`
+        // experiment on, the selected remote host may be a Linux or Windows
+        // machine that can run it, so the coordinator's local restriction
+        // applies only to local placement. Off: it applies everywhere.
+        if on == On::Local || !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm)
+        {
+            refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
+        }
+        // The record is written before the Space connects, and the volume
+        // attaches on connect: its mounts are known by then.
+        self.expect_volumes(&key.id, opts.volumes.clone());
+        if !egress.is_empty()
+            && let On::Provider(word) = &on
+        {
+            return Err(crate::egress::refused(
+                word,
+                "a Space in your own cloud account runs on a machine with no host-side \
+                 point cua controls; create it on this machine or one of yours",
+            ));
+        }
         // Every report names the Space it is about.
         let target = key.id.clone();
         let sink: Option<cua_sandbox_core::progress::Sink> = sink.map(|s| {
@@ -1680,13 +2491,12 @@ impl Spaces {
 
     /// The GPU options each runtime of `on` offers here: on this machine,
     /// per local runtime (Lume: "GPU acceleration" for macOS VMs; QEMU:
-    /// virgl on Linux; containers: NVIDIA on Linux); none on Cua Cloud yet.
+    /// virgl on Linux; containers: NVIDIA on Linux).
     /// A runtime with no option says why ([`cua_sandbox_core::gpu`]).
     pub async fn gpu_support(&self, on: &On) -> Vec<cua_sandbox_core::gpu::GpuSupport> {
         let sbx = &self.inner.sandboxes;
         match on {
             On::Local => sbx.gpu_support(ProviderKind::Local, None).await,
-            On::Cloud => sbx.gpu_support(ProviderKind::Fleet, None).await,
             On::Provider(word) => sbx.gpu_support(ProviderKind::Contrib, Some(word)).await,
             _ => vec![],
         }
@@ -1695,7 +2505,7 @@ impl Spaces {
     /// Names the create before it starts (a generated name is chosen now,
     /// so a cancel and a crash recovery know what to look for) and says
     /// how it is found.
-    fn create_key(&self, opts: &mut SpaceCreate) -> Result<crate::creating::CreateKey> {
+    fn create_key(&self, opts: &mut SpaceCreate) -> Result<(crate::creating::CreateKey, On)> {
         let on = match opts.on.clone() {
             Some(on) => on,
             None => {
@@ -1746,7 +2556,7 @@ impl Spaces {
                 generated,
             },
         };
-        Ok(key)
+        Ok((key, on))
     }
 
     /// [`Spaces::create`] once registered: runs it with its journal, and
@@ -1764,6 +2574,22 @@ impl Spaces {
             "local"
         };
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
+        let labels = opts.labels.clone();
+        let joined_tree = opts.tree.clone().filter(|_| opts.parent.is_none());
+        let egress = opts.egress.clone();
+        let network = crate::network::CreateNetwork {
+            settings: opts
+                .network_settings
+                .clone()
+                .unwrap_or_else(crate::network::NetworkSettings::internet),
+            parent: opts
+                .parent
+                .as_deref()
+                .and_then(|p| self.resolve(p).ok())
+                .map(|i| i.to_string()),
+            root: None,
+            depth: 0,
+        };
         let journal =
             crate::creating::JournalHandle::start(self.home_dir(), &key, kind, expect_env);
         // A create dropped before it returned (a closed request, a Ctrl-C
@@ -1772,13 +2598,82 @@ impl Spaces {
             spaces: self.clone(),
             journal: Some(journal.clone()),
         };
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Preparing,
-        ));
+        // A Space made on this computer shows on your other computers while
+        // it is created ([`crate::resources::creates`]): it leaves the list
+        // when this returns, fails, is cancelled or is dropped.
+        let on_board = (kind == "local").then(|| {
+            let hub = self.inner.resources.clone();
+            let os = opts
+                .image
+                .as_deref()
+                .map(crate::elastic::guest_os)
+                .unwrap_or_default();
+            hub.creates.start(&key.id, &key.name, &os);
+            crate::resources::creates::OnBoard {
+                board: hub,
+                id: key.id.clone(),
+            }
+        });
+        let outer = cua_sandbox_core::progress::current();
+        let sink: Option<cua_sandbox_core::progress::Sink> = on_board.as_ref().map(|b| {
+            let (hub, id) = (b.board.clone(), b.id.clone());
+            Arc::new(move |p: &CreateProgress| {
+                hub.creates.report(&id, p);
+                if let Some(outer) = &outer {
+                    outer(p);
+                }
+            }) as cua_sandbox_core::progress::Sink
+        });
+        cua_sandbox_core::progress::carry(sink.clone(), async {
+            cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
+                cua_sandbox_core::progress::Phase::Preparing,
+            ));
+        })
+        .await;
+        let wants_volumes = !opts.volumes.is_empty();
+        let volumes = opts.volumes.clone();
         let run = Box::pin(crate::creating::scope(
             journal.clone(),
-            Box::pin(self.create_inner(opts)),
+            Box::pin(async move {
+                let created = self.create_inner(opts).await?;
+                // Mounts were asked for: the Space is only ready once they
+                // are in place (a Space that cannot have them is removed).
+                if wants_volumes
+                    && let SpaceCreated::Ready {
+                        info,
+                        reused: false,
+                    } = &created
+                {
+                    // A Space on another machine (a pool host) has no record
+                    // here: this machine, which holds the Cua Volume, serves
+                    // the volume over the Space's own connection.
+                    if !(info.id.starts_with("local:") || info.id.starts_with("cloud:")) {
+                        self.inner
+                            .registry
+                            .set_overlay_volumes(&info.id, volumes.clone())?;
+                    }
+                    if let Err(e) = self.ensure_volumes(&info.id).await {
+                        let _ = self.delete(&info.id).await;
+                        return Err(e);
+                    }
+                }
+                // Reported with the mounts it now has.
+                Ok(match created {
+                    SpaceCreated::Ready {
+                        mut info,
+                        reused: false,
+                    } if wants_volumes => {
+                        info.volumes = volumes;
+                        SpaceCreated::Ready {
+                            info,
+                            reused: false,
+                        }
+                    }
+                    other => other,
+                })
+            }),
         ));
+        let run = cua_sandbox_core::progress::carry(sink, run);
         let result = tokio::select! {
             r = run => r,
             _ = flight.cancelled() => {
@@ -1791,6 +2686,76 @@ impl Spaces {
         };
         guard.journal = None;
         journal.close();
+        // What a create that did not get as far as a record leaves behind.
+        self.expect_volumes(&key.id, vec![]);
+        let mut result = result;
+        if let Ok(created) = &mut result
+            && !matches!(created, SpaceCreated::Ready { reused: true, .. })
+        {
+            // The Space exists: keep its labels and when it was created,
+            // and close its network as asked. A Space that cannot be left
+            // as asked for is deleted, not handed back.
+            let id = match created {
+                SpaceCreated::Ready { info, .. } => &info.id,
+                SpaceCreated::Starting(p) => &p.id,
+            }
+            .clone();
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let kept = self.inner.registry.update_meta(&id, |m| {
+                m.labels = labels.clone();
+                m.created_at_unix = now;
+                // A member of a tree that started on another computer.
+                if let Some(t) = &joined_tree {
+                    m.overlay_tree = Some(t.clone());
+                }
+            });
+            // The policy was enforced from the guest's first instruction
+            // (by this machine's runtime, or the host that created it).
+            let applied = match &kept {
+                Ok(()) if !egress.is_empty() => self.inner.registry.update_meta(&id, |m| {
+                    m.egress = egress.clone();
+                }),
+                _ => Ok(()),
+            };
+            let applied = applied.and_then(|()| {
+                // Its network settings and its place in a tree.
+                let root = network.parent.as_ref().map(|p| {
+                    self.inner
+                        .registry
+                        .meta(p)
+                        .and_then(|m| m.root)
+                        .unwrap_or_else(|| p.clone())
+                });
+                let depth = network.parent.as_ref().map_or(0, |p| {
+                    self.inner.registry.meta(p).map_or(0, |m| m.depth) + 1
+                });
+                self.record_network(
+                    &id,
+                    &crate::network::CreateNetwork {
+                        root,
+                        depth,
+                        ..network.clone()
+                    },
+                )
+            });
+            if let Some(e) = kept.err().or(applied.err()) {
+                let _ = Box::pin(self.delete(&id)).await;
+                result = Err(e);
+            } else if let Ok(SpaceCreated::Ready { info, .. }) = &mut result {
+                info.labels = labels.clone();
+                info.created_at_unix = now;
+                info.egress = egress.clone();
+                info.egress_enforced =
+                    (!egress.is_empty()).then_some(crate::egress::Enforcement::Host);
+                info.network = Some(crate::network::SpaceNetwork {
+                    settings: network.settings.clone(),
+                    note: None,
+                    notice_pending: false,
+                });
+            }
+        }
         flight.finish(match &result {
             Err(Error::Cancelled(m)) => CancelOutcome {
                 id: key.id.clone(),
@@ -1811,20 +2776,68 @@ impl Spaces {
         result
     }
 
-    async fn create_inner(&self, opts: SpaceCreate) -> Result<SpaceCreated> {
+    pub(crate) async fn create_inner(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::placement;
-        let on = match opts.on.clone() {
-            Some(on) => on,
-            None => {
-                cua_sandbox_core::settings::Settings::load()
-                    .and_then(|s| s.default_on())
-                    .map_err(|e| Error::invalid(e.to_string()))?
-                    .0
-            }
+        let omitted = opts.on.is_none();
+        // A child made on another of your computers joins its parent's tree
+        // there: the computer gets the tree's id, qualified with this one.
+        if opts.tree.is_none()
+            && !matches!(opts.on, None | Some(On::Local))
+            && let Some(root) = self.tree_root_of(opts.parent.as_deref())
+        {
+            opts.tree = Some(cua_vmm::tree::qualify(&cua_vmm::tree::overlay_id(), &root));
+        }
+        let (on, source) = match opts.on.clone() {
+            Some(on) => (on, cua_sandbox_core::settings::Source::Explicit),
+            None => cua_sandbox_core::settings::Settings::load()
+                .and_then(|s| s.default_on())
+                .map_err(|e| Error::invalid(e.to_string()))?,
         };
+        // No location given and none configured: this machine first, then
+        // the linked clouds when it is full and a budget is set
+        // (`placement.overflow`). An explicit `local` never overflows.
+        if may_overflow(omitted, &on, &source, opts.reuse, !opts.mounts.is_empty())
+            && self.overflow_allowed().await
+        {
+            let mut local = opts.clone();
+            local.on = Some(On::Local);
+            return match Box::pin(self.create_inner(local)).await {
+                Err(e) if overflows(&e) => {
+                    tracing::info!("this machine is full ({e}); overflowing into your clouds");
+                    self.create_overflow(opts).await.map_err(|c| match c {
+                        Error::LimitExceeded(why) => Error::LimitExceeded(format!(
+                            "this machine is full and no cloud machine fits the budget: {why}"
+                        )),
+                        other => other,
+                    })
+                }
+                r => r,
+            };
+        }
         let place = |e: placement::PlacementError| {
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(e))
         };
+        if !opts.mounts.is_empty() && on != On::Local {
+            return Err(Error::invalid(
+                "mounts are directories of this computer: only a Space on local takes them",
+            ));
+        }
+        if on == On::Auto {
+            if opts.reuse {
+                return Err(Error::invalid(
+                    "reuse does not apply to on=\"auto\"; list Spaces with list_spaces",
+                ));
+            }
+            placement::validate(&on, opts.kind, &opts.runtime).map_err(place)?;
+            // With a linked cloud that supplies the pool: one solve over
+            // your devices, your hosts and your clouds ([`crate::elastic`]).
+            // Without one: the least-loaded of your machines, by what their
+            // Spaces reserve (idle capacity is reclaimed before a refusal).
+            if self.elastic_has_clouds().await {
+                return self.create_on_auto_elastic(opts).await;
+            }
+            return self.create_on_auto(opts).await;
+        }
         if let On::Host(query) = &on {
             if opts.reuse {
                 return Err(Error::invalid(
@@ -1838,6 +2851,17 @@ impl Spaces {
                 reused: false,
             });
         }
+        // A linked cloud that supplies the elastic pool (hosts, or Spaces
+        // priced per Space): the same solve as on="auto", pinned to it.
+        // With autoscale off you manage machines yourself: a cloud named
+        // gets a machine of its own for this Space, as before the pool.
+        if let On::Provider(word) = &on
+            && !opts.reuse
+            && self.elastic_policy().autoscale
+            && self.elastic_supplier(word).await
+        {
+            return self.create_on_auto_elastic(opts).await;
+        }
         if let On::Provider(word) = &on
             && match self.inner.sandboxes.contrib_provider(word) {
                 Ok(p) => p.joins_relay(),
@@ -1845,14 +2869,29 @@ impl Spaces {
                 Err(_) => !cua_sandbox_core::is_contrib_location(word),
             }
         {
-            // Your own cloud account (`aws`, `gcp`, `modal`): a sandbox there
+            // Your own cloud account (`aws`, `gcp`, `hetzner`, `modal`): a sandbox there
             // whose driver joined the relay.
+            // A cloud that keeps network rules itself (Modal) takes
+            // network=none; any other refuses it here, before anything is made.
+            if opts.network == cua_sandbox_core::NetworkMode::None
+                && !self
+                    .inner
+                    .sandboxes
+                    .contrib_provider(word)
+                    .is_ok_and(|p| p.takes_network_rules())
+            {
+                return Err(Error::invalid(format!(
+                    "network=none applies to VMs on your computers and to Modal, not Spaces in \
+                     this cloud ({word})"
+                )));
+            }
             if opts.reuse {
                 return Err(Error::invalid(format!(
                     "reuse does not apply to Spaces in your cloud ({word}); list them with \
                      list_spaces"
                 )));
             }
+            // `create_in_cloud` keeps the Space's network or refuses it.
             let info = self.create_in_cloud(word, opts).await?;
             return Ok(SpaceCreated::Ready {
                 info,
@@ -1861,7 +2900,7 @@ impl Spaces {
         }
         if on.is_existing_machine() {
             return Err(Error::invalid(format!(
-                "{on} is an existing machine: add it with add_space (url {}), create_space \
+                "{on} is an existing computer: add it with add_space (url {}), create_space \
                  makes a new one (on local or cloud)",
                 on.to_string().split_once(':').map_or("", |(_, a)| a)
             )));
@@ -1903,6 +2942,15 @@ impl Spaces {
             services: opts.services,
             spacesd: opts.spacesd,
             gpu: opts.gpu,
+            mounts: opts.mounts,
+            headless: opts.headless,
+            forkable: opts.forkable,
+            network: opts.network,
+            egress: opts.egress,
+            network_tree: self
+                .tree_root_of(opts.parent.as_deref())
+                .or_else(|| opts.tree.clone()),
+            network_settings: opts.network_settings,
         };
         // `create` runs a `wait = false` create in the background
         // itself, so here it always waits.
@@ -1910,21 +2958,6 @@ impl Spaces {
             info: self.provision_local(local).await?,
             reused: false,
         })
-    }
-
-    /// The warm pool Spaces claims `image` on `runtime` from:
-    /// `<namespace>-<runtime>-<sha256(image)[..8]>`, a DNS label.
-    pub fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        self.pool_name(runtime, image)
-    }
-
-    fn pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        use sha2::Digest;
-        let digest = hex::encode(sha2::Sha256::digest(image.as_bytes()));
-        let suffix = format!("-{}-{}", runtime.as_str(), &digest[..8]);
-        let base = &self.inner.namespace;
-        let keep = 63usize.saturating_sub(suffix.len()).min(base.len());
-        sanitize_label(&format!("{}{suffix}", base[..keep].trim_end_matches('-')))
     }
 
     /// Provisions a Space on the local runtime and registers it. Readiness
@@ -1953,8 +2986,13 @@ impl Spaces {
             .image
             .as_deref()
             .map(|i| cua_image::canonical::alias(i).unwrap_or_else(|| i.to_string()))
-            .unwrap_or_else(|| cua_fleet::canonical_image("linux"));
-        let token = format!("{:032x}", rand::random::<u128>());
+            .unwrap_or_else(|| cua_image::canonical::canonical_image_or_linux("linux"));
+        // A name that already has a sandbox keeps the token that sandbox was
+        // started with: a new one would be recorded but never reach the
+        // guest, and the existing Space would answer UNAUTHENTICATED to its
+        // own record.
+        let existing_token = self.inner.sandboxes.recorded_env_token(&name);
+        let token = existing_token.unwrap_or_else(|| format!("{:032x}", rand::random::<u128>()));
         // Until the Space is registered, the create's journal holds its
         // token and what it made: a process that dies mid-create (a daemon
         // crash, a quit) leaves it, and [`Spaces::recover_interrupted_creates`]
@@ -1971,8 +3009,18 @@ impl Spaces {
         let mut create = CreateOptions::new(ProviderKind::Local, &image).name(&name);
         create.kind = opts.kind;
         create.runtime = opts.runtime.clone();
-        create.cpus = opts.cpus.unwrap_or(2);
-        create.memory_mb = opts.memory_mb.unwrap_or(4096);
+        create.cpus = opts.cpus.unwrap_or(crate::local_load::DEFAULT_CPUS);
+        create.memory_mb = opts
+            .memory_mb
+            .unwrap_or(crate::local_load::DEFAULT_MEMORY_MB);
+        // Until the sandbox exists, other creates count this one's size.
+        let _reserved = crate::local_load::Pending::hold(
+            self.home_dir(),
+            &name,
+            create.kind != Kind::Vm && crate::host_spaces::resolve_image(&image).1 != "macos",
+            create.cpus,
+            create.memory_mb,
+        );
         create.disk_gb = opts.disk_gb.filter(|g| *g > 0);
         create.env = opts.env.clone();
         create.env.insert("CUA_ENV_TOKEN".into(), token.clone());
@@ -1981,6 +3029,19 @@ impl Spaces {
         create.ready_timeout_given = opts.timeout.is_some();
         create.command = opts.command.clone().filter(|c| !c.is_empty());
         create.gpu = opts.gpu.clone().filter(|g| !g.trim().is_empty());
+        create.mounts = opts.mounts.clone();
+        create.headless = opts.headless;
+        create.forkable = opts.forkable;
+        create.spacesd = opts.spacesd;
+        create.network = opts.network;
+        create.egress = opts.egress.clone();
+        create.network_settings = opts.network_settings.clone();
+        // Its tree: its parent's, or its own.
+        create.network_tree = Some(
+            opts.network_tree
+                .clone()
+                .unwrap_or_else(|| SpaceId::Local { name: name.clone() }.to_string()),
+        );
         for (svc, port) in opts.services.iter().filter(|(s, _)| s.as_str() != "env") {
             create = create
                 .service(svc.clone(), *port)
@@ -1999,12 +3060,32 @@ impl Spaces {
                 .create_cancellable(create, cua_sandbox_core::CancellationToken::new()),
         )
         .await;
+        // A runtime that can't protect it yet started it without network
+        // (or the user chose No protection): say so on the Space.
+        if let Ok(sb) = &created {
+            let settings = opts
+                .network_settings
+                .clone()
+                .unwrap_or_else(crate::network::NetworkSettings::internet);
+            let note = crate::network::note_for(sb.runtime_type(), &settings);
+            let id = SpaceId::Local { name: name.clone() }.to_string();
+            if let Err(e) = self
+                .inner
+                .registry
+                .update_meta(&id, |m| m.network_note = note)
+            {
+                tracing::warn!(space = %id, error = %e, "could not record the Space's network note");
+            }
+        }
         if let Err(e) = created {
             // A start that failed after the instance existed (a readiness
-            // probe that never passed) leaves a running VM no registry
-            // lists: nothing would ever show or stop it. One under a name
-            // the caller chose stays to debug.
-            if fresh && crate::creating::generated_name() {
+            // probe that never passed, a host with no room) leaves a VM no
+            // registry lists: nothing would ever show or stop it, and it
+            // would hold this machine's memory and CPUs against every retry.
+            // `fresh` says the name had nothing before this create, so
+            // whatever is under it is this attempt's: delete it, whoever
+            // chose the name.
+            if fresh {
                 match self.inner.sandboxes.delete(&name).await {
                     Ok(()) | Err(cua_sandbox_core::Error::NotFound(_)) => {}
                     Err(d) => {
@@ -2014,6 +3095,14 @@ impl Spaces {
             }
             return Err(e.into());
         }
+        // An image without cua-spacesd that the runtime gave one: the
+        // create waited for it, and the connection expects it.
+        let expect_env = expect_env
+            || created
+                .as_ref()
+                .ok()
+                .and_then(|sb| sb.image_info())
+                .is_some_and(|i| i.injected);
         let id = SpaceId::Local { name: name.clone() };
         let credential = Credential {
             url: None,
@@ -2036,7 +3125,112 @@ impl Spaces {
                 return Err(e);
             }
         };
+        // A container Space reads the repo cache through a read-only mount:
+        // its git gets the helper (best effort, bounded, silent).
+        let guest_os = crate::host_spaces::resolve_image(&image).1;
+        if opts.kind != Kind::Vm
+            && opts.kind != Kind::MicroVm
+            && guest_os != "macos"
+            && guest_os != "windows"
+        {
+            crate::repo_cache::install(&space, &name).await;
+        }
         self.store(&space, credential)?;
+        self.inner
+            .connections
+            .lock()
+            .await
+            .insert(id.to_string(), space);
+        #[cfg(feature = "mcp")]
+        self.notify_connected(&id);
+        self.info(&id)
+    }
+
+    /// Forks local checkpoint (or sandbox) `source` into a new Space on
+    /// this machine, named `name` (default `<source>-<hex>`), and registers
+    /// it once its cua-spacesd answers with the fork's own token (a fork
+    /// that never answers is deleted). The one fork path: [`Spaces::fork`],
+    /// the daemon's `ForkSpace`, batched forks ([`crate::fork_batch`]) and
+    /// forks a host makes for other machines
+    /// (`CreateHostSpaceRequest.fork_source`) all end here.
+    pub async fn fork_local(&self, source: &str, name: Option<String>) -> Result<SpaceInfo> {
+        // A local Space's id (`local:<name>`) names its sandbox.
+        let source = match SpaceId::parse(source) {
+            Ok(SpaceId::Local { name }) => name,
+            _ => source.to_string(),
+        };
+        let source = source.as_str();
+        let name = sanitize_label(
+            &name
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| format!("{source}-{}", random_suffix())),
+        );
+        // A sandbox or checkpoint of that name wins; failing that, the name
+        // may be a build's tag (or its key).
+        let mut built_from: Option<String> = None;
+        let sandbox = match self.inner.sandboxes.fork(source, &name).await {
+            Err(cua_sandbox_core::Error::NotFound(m)) => match self.build_checkpoint(source) {
+                Some(checkpoint) => {
+                    built_from = Some(source.to_string());
+                    self.inner.sandboxes.fork(&checkpoint, &name).await?
+                }
+                None => return Err(cua_sandbox_core::Error::NotFound(m).into()),
+            },
+            other => other?,
+        };
+        // The final layer of a build, forked by its checkpoint name, has the
+        // build's configuration too.
+        if built_from.is_none() && source.starts_with("build-") {
+            built_from = Some(source.to_string());
+        }
+        let token = sandbox.env_token();
+        let id = SpaceId::Local { name: name.clone() };
+        // A fork mounts what its source does (its guest memory still has the
+        // source's mount; the volume is attached to the fork again).
+        if let Ok(mounts) = self.volume_mounts(&format!("local:{source}")) {
+            self.expect_volumes(&id.to_string(), mounts);
+        }
+        let credential = Credential {
+            url: None,
+            token: token.clone(),
+            ..Default::default()
+        };
+        let space = match self
+            .connect_when_ready(
+                &id,
+                &credential,
+                Some(&name),
+                Duration::from_secs(120),
+                token.is_some(),
+            )
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = sandbox.delete().await;
+                return Err(e);
+            }
+        };
+        // The fork is booted: a failure to register it must not leave it
+        // running for a retry to duplicate.
+        let registered = (|| -> Result<()> {
+            self.store(&space, credential)?;
+            if let Some(config) = built_from.as_deref().and_then(|b| self.build_config(b)) {
+                space.set_image_config(config.clone());
+                self.record_image_config(&id.to_string(), &config)?;
+            }
+            Ok(())
+        })();
+        teardown_on_error(registered, "fork", &name, sandbox.delete()).await?;
+        // A fork starts with its source Space's labels and egress policy (a
+        // checkpoint source has none).
+        let _ = self.inherit_meta(
+            &SpaceId::Local {
+                name: source.to_string(),
+            }
+            .to_string(),
+            &id.to_string(),
+        );
         self.inner
             .connections
             .lock()
@@ -2146,8 +3340,80 @@ impl Spaces {
     /// the relay (`relay_register`, or a share) leaves the relay directory
     /// with it, and deleting such a Space's `relay:<machine>` removes that
     /// record (as its owner) even when the Space itself is already gone.
+    ///
+    /// Its child Spaces ([`crate::tree`]) go first: see
+    /// [`Spaces::delete_tree`], which can keep them instead.
     pub async fn delete(&self, space: &str) -> Result<String> {
-        let id = self.resolve(space)?;
+        self.delete_tree(space, false).await
+    }
+
+    /// [`Spaces::delete`] of this Space alone (its children, if any, are
+    /// the caller's).
+    pub(crate) async fn delete_this(&self, space: &str) -> Result<String> {
+        // A durable Space goes for good (deleting only its current copy
+        // would have it created again).
+        if self.inner.pool.read().expect("pool").is_some() {
+            let _ = self.durable_spaces().await;
+            let key = self
+                .resolve(space)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|_| space.to_string());
+            if let Some((name, _)) = self.durable_of(space).or_else(|| self.durable_of(&key)) {
+                return self.delete_durable(&name).await;
+            }
+        }
+        self.delete_copy(space).await
+    }
+
+    /// [`Spaces::delete`] of this Space only, even when it is a durable
+    /// Space's copy: what the coordinator that keeps durable Spaces uses to
+    /// remove a copy it replaced or deleted.
+    pub async fn delete_copy(&self, space: &str) -> Result<String> {
+        let id = match self.resolve(space) {
+            Ok(id) => id,
+            // A local sandbox no Space record names (a `cua sb fork`, a
+            // sandbox made with `cua sb create`): delete it by name too.
+            Err(Error::NotFound(m)) => match self.unregistered_local(space) {
+                Some(id) => id,
+                None => return Err(Error::NotFound(m)),
+            },
+            Err(e) => return Err(e),
+        };
+        let ended = self.delete_copy_of(id.clone()).await;
+        if ended.is_ok() {
+            // A Space made later under the same name starts without the
+            // lifetime this one had.
+            let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());
+        }
+        ended
+    }
+
+    /// `local:<name>` when `name` is a plain name (no `kind:` prefix) of a
+    /// sandbox Cua made on this computer (a recorded one) that no Space
+    /// record names. Only recorded sandboxes: a VM the runtime has that Cua
+    /// never made (another tool's Lume VM) is never deleted by name here.
+    fn unregistered_local(&self, name: &str) -> Option<SpaceId> {
+        if name.is_empty() || name.contains(':') || name.contains('/') {
+            return None;
+        }
+        self.inner
+            .sandboxes
+            .state()
+            .load(name)
+            .is_some()
+            .then(|| SpaceId::Local {
+                name: name.to_string(),
+            })
+    }
+
+    async fn delete_copy_of(&self, id: SpaceId) -> Result<String> {
+        self.learn_usage_before_delete(&id.to_string()).await;
+        if let SpaceId::Local { name } = &id {
+            if let Ok(space) = self.space(&id.to_string()).await {
+                crate::repo_cache::collect(&space, name).await;
+            }
+            crate::repo_cache::forget(name);
+        }
         // A Space added by address keeps running: if it is attached to the
         // relay, its driver is asked to leave while it is still reachable.
         #[cfg(feature = "spaces-agents")]
@@ -2210,7 +3476,7 @@ impl Spaces {
                 }
                 let _ = self.inner.registry.forget_direct(&id.to_string());
                 format!(
-                    "Removed {id} (added by address, so only forgotten; the machine is untouched)."
+                    "Removed {id} (added by address, so only forgotten; the computer is untouched)."
                 )
             }
             SpaceId::Relay { machine_id } => {
@@ -2244,9 +3510,9 @@ impl Spaces {
                              owner can remove it from the relay directory)."
                         ),
                         Some(_) => format!(
-                            "Removed {id} (disconnected; it is one of your machines, so it stays \
+                            "Removed {id} (disconnected; it is one of your computers, so it stays \
                              in your relay directory: run `cua host remove` on it, or if that \
-                             machine is gone, `cua spaces relay-unregister {id}`)."
+                             computer is gone, `cua spaces relay-unregister {id}`)."
                         ),
                         None => format!("Removed {id} (disconnected)."),
                     },
@@ -2414,6 +3680,13 @@ impl Spaces {
 
     // --------------------------------------------------------------- power
 
+    /// Whether the local Space `id` is running now (its sandbox's power
+    /// state, from state files only). The state is the second half of
+    /// [`Self::power_of`]; the first is how it is turned off.
+    pub fn is_running(&self, id: &str) -> bool {
+        self.power_of(id).1 == "running"
+    }
+
     /// [`SpaceInfo::power`] and [`SpaceInfo::power_state`] of the Space
     /// `id`, from state files only: empty for a Space that cannot be turned
     /// off and on. A Space one of your machines provides says so in its
@@ -2437,6 +3710,21 @@ impl Spaces {
             .stop_reason(&name)
             .map(|r| r.words())
             .unwrap_or_default()
+    }
+
+    /// Why the local Space `id` stopped without being asked to, looked at
+    /// now (its engine is asked, never started): `None` while it runs, for
+    /// a Space that is not local, or one that was stopped on purpose. Unlike
+    /// [`Self::stop_reason_of`] this does not wait for the next stop watch.
+    pub async fn unasked_stop_of(&self, id: &str) -> Option<String> {
+        let Ok(SpaceId::Local { name }) = SpaceId::parse(id) else {
+            return None;
+        };
+        self.inner
+            .sandboxes
+            .unasked_stop(&name)
+            .await
+            .map(|r| r.words())
     }
 
     /// [`Self::power_of`] for the sandbox `name` (a local Space's, or the
@@ -2464,6 +3752,8 @@ impl Spaces {
     /// and a legacy `cloud:` Space fails with
     /// [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn stop(&self, space: &str) -> Result<SpacePower> {
+        // Its child Spaces first ([`crate::tree`]).
+        self.power_off_children(space, false).await;
         self.set_power(space, false).await
     }
 
@@ -2472,10 +3762,118 @@ impl Spaces {
     /// relay again), and leaves a running one as it is. Returns once it
     /// answers again (bounded).
     pub async fn start(&self, space: &str) -> Result<SpacePower> {
-        self.set_power(space, true).await
+        // The runtime keeps an egress policy with the Space: it applies
+        // again before the guest's first instruction. A Space from before
+        // network settings moves to them now ([`crate::network`]).
+        if let Ok(id) = self.resolve(space)
+            && let Err(e) = self.migrate_network(&id.to_string())
+        {
+            tracing::warn!(space, error = %e, "could not record the Space's network settings");
+        }
+        let power = self.set_power(space, true).await?;
+        // Its child Spaces after it ([`crate::tree`]).
+        self.power_on_children(space).await;
+        Ok(power)
     }
 
-    async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
+    /// Suspends a local Space, keeping its memory (it resumes where it
+    /// was, and its memory stays in use meanwhile): a container or a QEMU
+    /// VM. [`Self::stop`] stops it instead and frees its memory. Other
+    /// Spaces are refused.
+    pub async fn suspend(&self, space: &str) -> Result<SpacePower> {
+        // Its child Spaces first ([`crate::tree`]).
+        self.power_off_children(space, true).await;
+        self.suspend_one(space).await
+    }
+
+    /// [`Spaces::suspend`] of this Space alone.
+    pub(crate) async fn suspend_one(&self, space: &str) -> Result<SpacePower> {
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Suspending".into(),
+                provider: format!("{} (only a Space on this computer)", id.provider()),
+            });
+        };
+        let sandboxes = &self.inner.sandboxes;
+        if sandboxes.power_control(name).is_none() {
+            return Err(Error::invalid(format!("{space} cannot be suspended")));
+        }
+        self.drop_connection(&id).await;
+        let state = sandboxes
+            .power_off_as(name, cua_sandbox_core::PowerControl::Suspend)
+            .await?;
+        Ok(SpacePower::new(
+            &id.to_string(),
+            cua_sandbox_core::PowerControl::Suspend,
+            state,
+        ))
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). The
+    /// VM shuts down and boots again from its own disk (a stopped one
+    /// boots), so its files stay and its memory and processes do not.
+    /// Returns once it is ready again. Other Spaces are refused.
+    pub async fn resize(
+        &self,
+        space: &str,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResize> {
+        if cpus.is_none() && memory_mb.is_none() && disk_gb.is_none() {
+            return Err(Error::invalid(
+                "say what to change: cpus, memory_mb or disk_gb",
+            ));
+        }
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Resizing".into(),
+                provider: format!(
+                    "{} (only a VM on this computer; resize it on the computer that runs it)",
+                    id.provider()
+                ),
+            });
+        };
+        self.drop_connection(&id).await;
+        let shape = cua_sandbox_core::Resize {
+            cpus,
+            memory_mb,
+            disk_gb,
+            probes: Vec::new(),
+        };
+        self.inner.sandboxes.resize(name, &shape).await?;
+        #[cfg(feature = "mcp")]
+        self.notify_connected(&id);
+        // It booted again: a Space that was on the relay goes back on it.
+        #[cfg(feature = "spaces-agents")]
+        self.reattach_relay_after_boot(&id).await;
+        let mut what = Vec::new();
+        if let Some(c) = cpus {
+            what.push(format!("{c} vCPUs"));
+        }
+        if let Some(m) = memory_mb {
+            what.push(format!("{m} MiB of memory"));
+        }
+        if let Some(d) = disk_gb {
+            what.push(format!("a {d} GiB disk"));
+        }
+        Ok(SpaceResize {
+            space: id.to_string(),
+            cpus,
+            memory_mb,
+            disk_gb,
+            message: format!(
+                "{} now has {}; it booted again from its disk.",
+                id,
+                what.join(", ")
+            ),
+        })
+    }
+
+    pub(crate) async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
         let id = self.resolve(space)?;
         let cloud = self.cloud_sandbox_of(&id.to_string())?;
         let refuse = |provider: &str| Error::WrongProvider {
@@ -2495,6 +3893,9 @@ impl Spaces {
                     // again now, not only when something next connects.
                     #[cfg(feature = "mcp")]
                     self.notify_connected(&id);
+                    // A guest that booted again forgot its relay attachment.
+                    #[cfg(feature = "spaces-agents")]
+                    self.reattach_relay_after_boot(&id).await;
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?
@@ -2534,7 +3935,9 @@ impl Spaces {
                         self.drop_connection(&id).await;
                         self.power_on_host(&m, &host, on).await
                     }
-                    None => Err(refuse("relay (only a Space one of your machines provides)")),
+                    None => Err(refuse(
+                        "relay (only a Space one of your computers provides)",
+                    )),
                 }
             }
             // Cua Cloud has ended: there is no cloud Space to turn on or off.
@@ -2657,7 +4060,7 @@ pub fn expects_spacesd(image: Option<&str>, explicit: Option<bool>) -> bool {
         // The canonical images (and their CUA_IMAGE_<OS> overrides) carry
         // cua-spacesd; anything else says so with `spacesd`. A local runtime
         // prefix (`container:`, `vm:`, ...) picks the variant, not the image.
-        Some(image) => cua_fleet::is_canonical_image(strip_runtime_prefix(image)),
+        Some(image) => cua_image::canonical::is_canonical(strip_runtime_prefix(image)),
     }
 }
 
@@ -2669,48 +4072,6 @@ fn split_mcp_url(url: &str) -> Result<(String, String)> {
         path = format!("{path}?{q}");
     }
     Ok((u.origin().ascii_serialization(), path))
-}
-
-/// The key a Fleet pool is named after (see [`Spaces::fleet_pool_name`]):
-/// the image alone for a plain Spaces claim (unchanged pool names), else the
-/// image plus what else shapes the template (`command`, `env` and the
-/// services). A sized Space's key is [`sized_pool_key`].
-pub fn pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-) -> String {
-    sized_pool_key(image, command, env, services, None, None)
-}
-
-/// [`pool_key`] plus the size (`vmTemplate.cpuCores`, `vmTemplate.memory`
-/// in MiB), which shapes the template too. Unsized, it is [`pool_key`].
-pub fn sized_pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-    cpus: Option<u32>,
-    memory_mb: Option<u32>,
-) -> String {
-    if command.is_none()
-        && env.is_empty()
-        && services.is_empty()
-        && cpus.is_none()
-        && memory_mb.is_none()
-    {
-        return image.to_string();
-    }
-    let mut key = serde_json::json!({"command": command, "env": env, "services": services});
-    // Only when set, so the pools of unsized Spaces keep their names.
-    if let Some(c) = cpus {
-        key["cpu"] = c.into();
-    }
-    if let Some(m) = memory_mb {
-        key["memory_mb"] = m.into();
-    }
-    format!("{image}\n{key}")
 }
 
 /// The error a thumbnail request gets while the Space's capture backs off
@@ -2728,9 +4089,70 @@ fn thumbnail_failure(f: &crate::thumbnails::CaptureFailure) -> Error {
     }
 }
 
-/// Windows Spaces are not offered from a Mac yet: every create failed at the
-/// image pull. Refuses one up front, in words a person can act on. Windows
-/// and Linux hosts are not affected.
+/// Whether a create may overflow from this machine into the linked clouds:
+/// no location given and none configured (an explicit `local`, `auto`, a
+/// host or a cloud keeps its meaning), not a reuse, no mounts of this
+/// computer. The budget, the setting and the linked clouds are checked
+/// after ([`Spaces::overflow_allowed`]).
+pub(crate) fn may_overflow(
+    omitted: bool,
+    on: &On,
+    source: &cua_sandbox_core::settings::Source,
+    reuse: bool,
+    mounts: bool,
+) -> bool {
+    omitted
+        && *on == On::Local
+        && *source == cua_sandbox_core::settings::Source::Default
+        && !reuse
+        && !mounts
+}
+
+/// Whether a local create failed because this machine has no room (what
+/// overflows into the linked clouds).
+pub(crate) fn overflows(e: &Error) -> bool {
+    matches!(e.tag(), "host_capacity" | "insufficient_disk")
+}
+
+/// How long a ready Space waits for spacesd's desktop health to be
+/// SERVING (its desktop component can take a moment after the port opens).
+const SERVING_WAIT: Duration = Duration::from_secs(10);
+
+/// Waits (bounded by `SERVING_WAIT` and the create's `deadline`) until the
+/// Space's spacesd reports desktop component SERVING, so a caller that acts at once
+/// (a screenshot) does not hit a half-started desktop. Never an error: a
+/// spacesd that does not report health, or stays NOT_SERVING, is still
+/// returned as the create's result, as before.
+async fn wait_serving(space: &Space, deadline: tokio::time::Instant) {
+    let Ok(client) = space.spacesd() else {
+        return;
+    };
+    let until = deadline.min(tokio::time::Instant::now() + SERVING_WAIT);
+    loop {
+        match client.health().await {
+            Ok(h) => {
+                // Only the desktop component is waited for: an image
+                // without a desktop has none and is ready at once.
+                let desktop_starting = h.components.iter().any(|c| {
+                    c.name == cua_spacesd_client::DESKTOP_COMPONENT
+                        && c.status != cua_spacesd_client::pb::HealthStatus::Serving as i32
+                });
+                if !desktop_starting {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+        if tokio::time::Instant::now() >= until {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// A Mac cannot create a Windows VM locally yet. Refuses a local create up
+/// front, in words a person can act on. Remote host placement is checked by
+/// the selected host instead.
 pub(crate) const WINDOWS_COMING_SOON: &str = "Windows Spaces are coming soon on Mac.";
 
 fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
@@ -2746,8 +4168,157 @@ fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
     Ok(())
 }
 
+/// Passes `result` through; on an error runs `teardown` (best effort),
+/// logging its failure without replacing the original error.
+pub(crate) async fn teardown_on_error<T, E, D>(
+    result: Result<T>,
+    what: &str,
+    name: &str,
+    teardown: D,
+) -> Result<T>
+where
+    E: std::fmt::Display,
+    D: std::future::Future<Output = std::result::Result<(), E>>,
+{
+    if result.is_err()
+        && let Err(e) = teardown.await
+    {
+        tracing::warn!(error = %e, %what, %name, "teardown after failed registration also failed");
+    }
+    result
+}
+
+/// The kind a local Space's runtime makes it: the runtime that runs it says
+/// what it is (a microVM's guest reports itself as a container, and its image
+/// is a root filesystem); else the image's variant; else the kind an external
+/// provider presents as.
+fn kind_of_runtime(
+    runtime: &str,
+    variant: &str,
+    placed: cua_sandbox_core::placement::Kind,
+) -> String {
+    match runtime {
+        "vz" | "firecracker" | "containerization" => return "microvm".into(),
+        "qemu" | "lume" | "qemu-docker" => return "vm".into(),
+        _ => {}
+    }
+    match variant {
+        "rootfs" => "container",
+        "containerdisk" | "lume" => "vm",
+        _ if placed != cua_sandbox_core::placement::Kind::Auto => placed.as_str(),
+        _ => "",
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_spaces_kind_is_what_its_runtime_makes_it() {
+        use cua_sandbox_core::placement::Kind;
+        // A microVM runs a root filesystem and its guest says "container".
+        assert_eq!(kind_of_runtime("vz", "rootfs", Kind::Auto), "microvm");
+        assert_eq!(
+            kind_of_runtime("firecracker", "rootfs", Kind::Auto),
+            "microvm"
+        );
+        assert_eq!(kind_of_runtime("qemu", "containerdisk", Kind::Auto), "vm");
+        assert_eq!(
+            kind_of_runtime("container", "rootfs", Kind::Auto),
+            "container"
+        );
+        assert_eq!(
+            kind_of_runtime("managed", "rootfs", Kind::Auto),
+            "container"
+        );
+        assert_eq!(kind_of_runtime("other", "", Kind::Auto), "");
+    }
+
+    #[tokio::test]
+    async fn a_failed_registration_tears_the_fork_down_and_keeps_its_error() {
+        use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+        let deleted = AtomicU32::new(0);
+        let td = |fail: bool| {
+            let deleted = &deleted;
+            async move {
+                deleted.fetch_add(1, SeqCst);
+                if fail { Err("delete refused") } else { Ok(()) }
+            }
+        };
+        let ok = super::teardown_on_error(Ok(7), "fork", "f", td(false)).await;
+        assert_eq!(ok.unwrap(), 7);
+        assert_eq!(deleted.load(SeqCst), 0, "a registered fork stays");
+        for fail in [false, true] {
+            let err = super::teardown_on_error::<(), _, _>(
+                Err(Error::invalid("register failed")),
+                "fork",
+                "f",
+                td(fail),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("register failed"), "{err}");
+        }
+        assert_eq!(deleted.load(SeqCst), 2);
+    }
+
+    #[test]
+    fn only_an_unplaced_create_overflows_into_your_clouds() {
+        use cua_sandbox_core::settings::Source;
+        let default = Source::Default;
+        // No location given, none configured: may overflow (when a budget
+        // and a linked cloud say so, checked after).
+        assert!(may_overflow(true, &On::Local, &default, false, false));
+        // An explicit local never overflows; nor auto, a host or a cloud.
+        assert!(!may_overflow(
+            false,
+            &On::Local,
+            &Source::Explicit,
+            false,
+            false
+        ));
+        assert!(!may_overflow(
+            false,
+            &On::Auto,
+            &Source::Explicit,
+            false,
+            false
+        ));
+        assert!(!may_overflow(
+            false,
+            &On::Provider("aws".into()),
+            &Source::Explicit,
+            false,
+            false
+        ));
+        // A configured default (`default.on`, CUA_DEFAULT_ON) is the person's choice.
+        assert!(!may_overflow(
+            true,
+            &On::Local,
+            &Source::Env("CUA_DEFAULT_ON"),
+            false,
+            false
+        ));
+        assert!(!may_overflow(
+            true,
+            &On::Local,
+            &Source::Config("c".into()),
+            false,
+            false
+        ));
+        // Reuse and this computer's mounts stay here.
+        assert!(!may_overflow(true, &On::Local, &default, true, false));
+        assert!(!may_overflow(true, &On::Local, &default, false, true));
+        // Only "no room here" overflows; other failures are the answer.
+        assert!(overflows(&Error::Sandbox(
+            cua_sandbox_core::Error::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(
+                "full".into()
+            ))
+        )));
+        assert!(!overflows(&Error::invalid("bad image")));
+        assert!(!overflows(&Error::LimitExceeded("cap".into())));
+    }
+
     use super::*;
 
     #[test]
@@ -2923,19 +4494,5 @@ mod tests {
         ] {
             assert!(!is_generated_name(other), "{other}");
         }
-    }
-
-    #[test]
-    fn pool_names_fit_and_differ_by_image_and_runtime() {
-        let spaces = Spaces::builder()
-            .home(tempfile::tempdir().unwrap().keep())
-            .fleet_namespace("cua-spaces-".to_string() + &"x".repeat(70))
-            .build();
-        let a = spaces.pool_name(FleetRuntime::Kubevirt, "img:1");
-        let b = spaces.pool_name(FleetRuntime::Kubevirt, "img:2");
-        let c = spaces.pool_name(FleetRuntime::Gvisor, "img:docker-1");
-        assert!(a.len() <= 63 && b.len() <= 63 && c.len() <= 63);
-        assert_ne!(a, b);
-        assert!(c.contains("-gvisor-"));
     }
 }

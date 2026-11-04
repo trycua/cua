@@ -117,8 +117,8 @@ class Driver:
         This uses cua-spacesd's ``/mcp`` (``service="env"``,
         ``transport="mcp"``) through the cua SDK, and verifies the
         ``ai.cua.driver.envelopes`` extension before opening a receiver.
-        Named Driver services were a Cua Cloud feature: any other ``service``
-        or ``transport="envelope"`` raises :class:`DriverConnectionError`.
+        Any other ``service`` or ``transport="envelope"`` raises
+        :class:`DriverConnectionError`.
         """
         self._check_loop()
         if transport not in (None, "envelope", "mcp"):

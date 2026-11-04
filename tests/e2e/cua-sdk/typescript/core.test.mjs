@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { existsSync } from "node:fs"
+import { createServer } from "node:http"
 import { after, before } from "node:test"
 
 import * as e from "./lib.mjs"
@@ -16,11 +17,14 @@ before(async () => {
 })
 after(async () => fx?.stop())
 
-const fakeFleet = () =>
-  cua.embedded({
-    stateDir: e.tmpState(),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
+/** A loopback HTTP server that answers every request with 404: a URL where no spacesd answers. */
+const plainHttpServer = () =>
+  new Promise((resolveP) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(404)
+      res.end()
+    })
+    server.listen(0, "127.0.0.1", () => resolveP(server))
   })
 
 // ------------------------------------------------------------ direct-connect
@@ -83,12 +87,17 @@ async function plainLocal(c, image, port, banner, what, memoryMb) {
 }
 
 e.e2eTest("daemon-agnostic", "hermetic", "cloud create fails (Cua Cloud has ended) + direct URL without a driver", async () => {
-  await e.assertCloudEnded(fakeFleet(), { pool: e.name("agnostic") })
-  // Direct URL where no spacesd answers (the fake Fleet API's HTTP server).
   const c = e.embeddedLocal(e.tmpState())
-  const d = await c.sandboxes().connectUrl(fx.fleet_base_url, "t", e.name("nodriver"))
-  await assert.rejects(d.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  await d.delete_()
+  await e.assertCloudEnded(c)
+  // Direct URL where no spacesd answers.
+  const server = await plainHttpServer()
+  try {
+    const d = await c.sandboxes().connectUrl(`http://127.0.0.1:${server.address().port}`, "t", e.name("nodriver"))
+    await assert.rejects(d.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
+    await d.delete_()
+  } finally {
+    server.close()
+  }
 })
 
 e.e2eTest("daemon-agnostic", "container", "plain ubuntu-server (sshd only)", async () => {
@@ -106,28 +115,6 @@ e.e2eTest("daemon-agnostic", "qemu", "plain ubuntu-server disk under QEMU", asyn
   if (!existsSync(disk)) e.skip(`missing ${disk}`)
   await plainLocal(e.embeddedLocal(e.tmpState()), `vm:${disk}`, 22, "SSH-2.0", "qemu-ssh", 1024)
 }, { timeout: 900_000 })
-
-e.e2eTest("daemon-agnostic", "fleet", "legacy computer-server image on Fleet (no spacesd)", async () => {
-  const c = cua.embedded({ stateDir: e.tmpState() })
-  const fleet = c.fleet()
-  const pool = e.name("agnostic")
-  let sb
-  try {
-    await e.applyPool(fleet, {
-      name: pool, image: e.LEGACY_FLEET_ROOTFS, runtime: "gvisor", services: { server: 8000 },
-      cpu: 1, memoryMb: 2048, ttlSecondsAfterCreated: 3600,
-    })
-    sb = await c.sandboxes().create(cua.SandboxCreateOptions.create({
-      on: "cloud", pool, name: `${pool}-c`, readyTimeoutMs: 900_000,
-    }))
-    await e.poll("server /status", async () => (await sb.service("server").request("GET", "/status", undefined, 30_000)).status === 200,
-      { attempts: 60, delayMs: 5000 })
-    await assert.rejects(sb.spacesd(10_000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  } finally {
-    await sb?.delete_()
-    await fleet.deletePool(pool).catch(() => {})
-  }
-}, { timeout: 1_500_000 })
 
 // ------------------------------------------------------------ daemon-vs-embedded
 

@@ -5,11 +5,12 @@ description: 'Unlock a tested Metal capability profile for one workload inside a
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A stock macOS guest reports conservative Metal capabilities, so some apps skip
-GPU paths the paravirtualized device can run. A small MIT shim, injected into
-one process, raises two answers: `supportsFamily:` up to a configured Apple
-family, and the maximum threadgroup memory. It does not pass a physical GPU
-through, patch the host, or touch the guest kernel. Background and benchmarks:
+A macOS VM reports fewer Metal features than its virtual GPU can run, so some
+apps skip the GPU. A small MIT-licensed shim, loaded into one process, changes
+two of those answers: the Apple GPU family that `supportsFamily:` reports (up to
+a family you choose), and the maximum threadgroup memory. It does not pass a
+physical GPU to the VM, patch the host or touch the guest kernel. For background
+and benchmarks, read the
 [technical writeup](https://cua.ai/blog/gpu-passthrough-macos-vms).
 
 <Callout type="warn">

@@ -24,7 +24,7 @@ import cua_sandbox._sdk as sdk
 runtime = sdk.runtime(state_dir=sys.argv[1])
 runtime.sandboxes()
 # The pattern of a real program: a handle in a library module's globals.
-sdk._test_extra_handle = sdk.sdk().embedded(state_dir=sys.argv[1], fleet_from_env=False)
+sdk._test_extra_handle = sdk.sdk().embedded(state_dir=sys.argv[1])
 print("ok")
 """
 

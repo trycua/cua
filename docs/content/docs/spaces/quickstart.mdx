@@ -1,28 +1,33 @@
 ---
 title: Quickstart
-description: 'Install Cua Spaces, connect your AI agent, and ask it to work on a computer you can watch. About five minutes.'
+description: 'Install Cua Spaces, connect your AI agent, make this Mac your first Space and send your first request. About five minutes.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-In about five minutes you install Cua Spaces, connect your AI coding agent, and
-ask it to run a task in a Space while you watch.
+In about five minutes you install Cua Spaces, connect your AI coding agent, make
+this computer your first Space and ask your agent to use it while you watch.
 
-{/* VIDEO: Install Cua Spaces, connect an agent and watch it work in a Space (about 60 seconds) */}
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-spaces/quickstart.mp4"
+  poster="https://trycua.github.io/assets/videos/cua-spaces/quickstart-poster.jpg"
+  title="Cua Spaces quickstart"
+>
+  Install Cua Spaces, connect your agent and watch it work in a Space (39 seconds, no sound).
+</VideoDemo>
 
 ## Before you start
 
 - A Mac (macOS 26 or later), a Windows PC (preview) or a Linux PC (Ubuntu 24.04).
 - An AI coding agent, such as Claude Code, Codex or Cursor. See the
   [supported agents](/cua-cli/guides/mcp-server#supported-agents).
-- Enough room for a first Space. A Linux Space needs a container engine such as
-  Docker running on this computer. A macOS Space needs an Apple silicon Mac and
-  about 50 GB of free disk, and its first image is a large download, so a Linux
-  Space is the faster way to see it work.
+- A free Cua account, only to reach this computer from your other computers.
+  Everything on this computer works without one.
 
-You don't need an account to start. Sign in later to reach your computers from
-other devices.
+Your computer is your first Space, so there is nothing big to download. An extra
+Space is optional: a Linux Space needs a container engine such as Docker, and a
+macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
 
 ## 1. Install Cua Spaces
 
@@ -33,9 +38,19 @@ other devices.
     ```
   </Tab>
   <Tab value="Windows (preview)">
+    Recommended: run this in PowerShell.
+
     ```powershell skip="host-install"
     irm https://cua.ai/install.ps1 | iex
     ```
+
+    If you download and run the installer from the [download page](https://cua.ai/download)
+    instead, Windows may show a SmartScreen prompt the first time: choose **More info**,
+    then **Run anyway**. The publisher shows as **Cua AI, Inc.**
+
+    Windows 11 Home is supported; Hyper-V is not required. Local Spaces use
+    Docker Desktop on WSL 2 (the app can install it for you) or QEMU with WHPX,
+    which needs the **Windows Hypervisor Platform** feature turned on.
   </Tab>
 </Tabs>
 
@@ -43,46 +58,58 @@ The command installs the `cua` command and the app. You can also download the
 app from the [download page](https://cua.ai/download). [Install](/spaces/guides/install)
 has the details for each system.
 
-## 2. Connect your agent
+## 2. Pick your agent
 
-Open Cua Spaces. The app walks you through a few first-run screens.
+Open Cua Spaces. The first screen says "Your computers, shared by your team and its agents."
+Press **Get started**.
 
-1. On **Sign in**, sign in or skip.
-2. On **AI agents**, tick the agents you use and press **Set up**. When you see
-   "Your AI agents are set up", press **Continue**. The app gave each agent the
-   `cua` skills and MCP server.
-3. On **This machine**, keep **Access other machines** and continue. Pick the
-   other option only for a computer you want to reach from elsewhere.
+**Pick your agent** lists the agents found on this computer, such as Hermes,
+Claude Code, Codex, Cursor or OpenClaw, each with the settings file Cua adds
+itself to. Press **Connect** on each one you want to use. Nothing is connected
+until you press it, and you can connect more later. Codex also shows its
+**ChatGPT sign-in**, and Claude Code and Codex show the provider key they use
+in a Space; these stay on this computer.
 
-If your agent was already running, start a new session so it loads the new
-tools. To connect an agent later, see [Connect your agent](/spaces/guides/connect-your-agent).
+No agent found? The screen offers to install one, or to use the `cua` command
+in a terminal instead. If your agent was already open, close it and open it
+again so it loads the new tools. See [Connect your agent](/spaces/guides/connect-your-agent).
 
-## 3. Create your first Space
+## 3. Add your other computers (optional)
 
-On the last screen, choose **Create** next to a system. Cua Spaces shows the
-download progress, and the Space appears in your list when it is ready. You can
-also create one later with **New Space**.
+**Sign in** lets your other computers and your cloud use this computer's
+Spaces, after you sign in on them too. The app then adds this computer to your
+account by itself. **Not now** keeps Cua on this computer only; **Sign in** at
+the bottom of the sidebar does it later.
 
-## 4. Ask your agent to use it
+## 4. Try it in your agent
 
-The last screen has a **Try asking your agent** list. Press a prompt to copy it,
-then paste it into your agent:
+The app names the agent you connected and gives you a request to paste into it:
 
-- "Open a Linux Space and run my test suite in it"
-- "Use my Space's browser to finish the checkout test and show me"
-- "Share this Space with a teammate as a viewer"
+> Make a Linux Space on this Mac and show its desktop in a new window.
 
-Open the Space from Cua Spaces to watch the agent work. You can take over at any
-time by using the desktop yourself.
+Press **Copy**, paste it into your agent, and the agent makes the Space.
+The line under it turns green when your agent has used Cua. On Windows and
+Linux the request says "this PC" or "this computer".
+
+With no agent connected, the screen offers a first Space instead: choose
+**Linux** for the quickest one (a Mac with Apple silicon can also make a macOS
+Space). The card shows how long it takes and how much it downloads. The Space
+keeps getting made after the window closes, and you get a notice when it's
+ready.
+
+Press **Done** whenever you like. To let your agent control this Mac itself,
+open **Computers, This Mac**: it lists the two settings macOS asks for once.
 
 <Callout type="info">
-  A Space that fails to create shows the reason and a **Try again** button. See
-  [Troubleshoot a failed create](/spaces/guides/troubleshoot-create).
+  Home's sidebar keeps a **Get started** list (for example "Get started 2/5").
+  Open it to see what's left, **Skip** what you don't need, or **Hide** it. A
+  Space that fails to create shows the reason and a **Try again** button. See
+  [Troubleshoot](/spaces/guides/troubleshoot).
 </Callout>
 
 ## Next
 
-- [Add a machine](/spaces/guides/add-a-machine): use another computer you own.
+- [Add a computer](/spaces/guides/add-a-computer): use another computer you own.
 - [Share a Space](/spaces/guides/share-a-space): let a teammate watch or work in it.
-- [Plans](/spaces/guides/plans): what Free, Pro and Teams include.
-- Using code instead? [Create a Space with the Cua SDK](/spaces/guides/create-a-space-with-the-sdk).
+- [Plans and Teams](/spaces/guides/teams): what Free, Pro and Teams include.
+- Using code instead? [Use Spaces from code](/spaces/guides/create-a-space-with-the-sdk).

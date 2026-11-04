@@ -58,6 +58,11 @@ export interface RelayAllowanceNotice {
   /** `warn`: 80% of the relay hours (a prompt, held back during a live
    * session or an agent run). `limit`: the allowance is used (always shown). */
   level: "warn" | "limit";
+  /** For usage data: the cap (`sessions`, `hours`; `none` for the 80%
+   * heads-up). Absent from cores before it. */
+  kind?: string;
+  /** For usage data: `free`, `pro`, `teams` or `unknown`. */
+  plan?: string;
 }
 
 /** `relay_usage::PlanLink`: a button that opens a page on the account app. */
@@ -80,9 +85,9 @@ export interface PlanCard {
 
 /** `relay_usage::RelayUsageView`: Settings' row and the notice. */
 export interface RelayUsageView {
-  /** "Relay usage". */
+  /** "Remote use". */
   label: string;
-  /** "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month". */
+  /** "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month". */
   line: string;
   /** "Free plan". */
   plan: string;

@@ -71,7 +71,26 @@ export type OnboardingAction =
   | { type: "drive-storage-loaded"; storage: DriveStorageInput; home: string | null }
   | { type: "storage-chosen"; choice: StorageChoice }
   | { type: "drive-storage"; action: StorageAction }
-  | { type: "drive-storage-saved"; check: DriveCheckInput };
+  | { type: "drive-storage-saved"; check: DriveCheckInput }
+  /** A fix on Done's to-do list: its page opens, and leaving it comes back to Done. */
+  | { type: "todo-chosen"; id: OnboardingTodoId }
+  /** The coding agents that already use cua (set up earlier). */
+  | { type: "agents-detected"; configured: string[] };
+
+/** `OnboardingTodoId`: a line of Done's to-do list. */
+export type OnboardingTodoId = "cli" | "signin" | "agents" | "volume";
+
+/** `OnboardingTodo`: what is set up on Done, and a one-click fix for what is not. */
+export interface OnboardingTodo {
+  id: OnboardingTodoId;
+  title: string;
+  note: string;
+  done: boolean;
+  /** Nice to have: "You're all set" does not wait for it. */
+  optional: boolean;
+  /** The fix's button ("Sign in"), while not done. */
+  action?: string | null;
+}
 
 export interface OnboardingDot {
   step: OnboardingStep;
@@ -104,7 +123,7 @@ export interface PresentationCard {
   selected: boolean;
 }
 
-/** Welcome's "Share anonymous usage data" switch. */
+/** Welcome's "Share usage data to help improve Cua" switch. */
 export interface OnboardingUsage {
   label: string;
   on: boolean;
@@ -139,6 +158,8 @@ export interface OnboardingView {
   prompts?: string[];
   /** Done's "Launch at login" checkbox (on Done only). */
   launchAtLogin?: OnboardingCheckbox | null;
+  /** Done's to-do list (on Done only). */
+  todos?: OnboardingTodo[];
 }
 
 /** `OnboardingCheckbox`: Done's "Launch at login". */

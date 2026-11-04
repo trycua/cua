@@ -174,8 +174,8 @@ def _env_float(name: str) -> Optional[float]:
 
 
 #: Sandbox refs (``local:<name>``, ``cloud:<name>``, ``direct:<host:port>``,
-#: ``relay:<id>``) and the legacy ``fleet:`` spelling: always cua-spacesd.
-_REF_PREFIXES = ("local:", "cloud:", "direct:", "relay:", "fleet:", "space://")
+#: ``relay:<id>``): always cua-spacesd. A ``cloud:`` ref fails: Cua Cloud has ended.
+_REF_PREFIXES = ("local:", "cloud:", "direct:", "relay:", "space://")
 
 
 def is_sandbox_ref(value: str) -> bool:

@@ -6,14 +6,15 @@
 // delete and cancel (the SwiftUI host's `spaces`, `createOptions`, `create`
 // and `cancelCreate`).
 import type { Native } from "../native/load";
-import type { AppCreateSpaceArgs, AppRuntime, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
+import type { AppCreateSpaceArgs, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
-import type { RuntimeFix } from "../model/windows-runtime";
-import { kindOf, osOf } from "../model/backend";
+import { RUNTIME_FIX_ACTIONS, type RuntimeFix, type RuntimeFixAction } from "../model/windows-runtime";
+import { createNetworks, kindOf, osOf, runtimeOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type BridgeArgs, type Handlers } from "./host";
+import { spaceReadyNote } from "./space-ready";
 import { encode } from "./value";
 
 export function spacesState(model: AppModel) {
@@ -27,6 +28,14 @@ export function spacesState(model: AppModel) {
     rosterError: model.rosterError,
     // Another app keeps its own daemon and this app uses it (null otherwise).
     daemonNotice: model.daemonNotice,
+    // Some of your computers have not answered yet (`Spaces.list_known`): the
+    // page shows what is known and "Reaching N computers…", never the empty home.
+    incomplete: model.listIncomplete,
+    reaching: model.listReaching,
+    // Your other computers' rows are the last known ones, not yet confirmed.
+    stale: model.listStale,
+    // Spaces your other computers are creating now: "Creating macOS on Mac mini… 40%".
+    creatingElsewhere: model.creatingElsewhere,
   };
 }
 
@@ -47,7 +56,6 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
       storage: encode(env.storage),
     },
     gpus: encode(env.gpus),
-    cloudPricing: encode(env.cloudPricing),
     experiments: encode(env.experiments),
     maxCpus: env.maxCpus,
     env: encode(env),
@@ -57,23 +65,21 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
   return out;
 }
 
-const RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume", "kubevirt"] as const;
-
 /** The page's `SpaceCreateConfig` (the core's `CreateSpaceArgs`) as the FFI record. */
 export function createArgs(native: Native, c: BridgeArgs, defaultOn: string): AppCreateSpaceArgs {
   const image = c.image;
   if (typeof image !== "string" || image === "") throw Failure.badArgs("config.image: string");
   const kind = kindOf(native, typeof c.kind === "string" ? c.kind : "");
-  if (!kind) throw Failure.badArgs("config.kind: container | vm");
-  const runtime = (c.runtime ?? "auto") as string;
-  if (!(RUNTIMES as readonly string[]).includes(runtime)) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt");
+  if (!kind) throw Failure.badArgs("config.kind: container | vm | microvm");
+  const runtime = runtimeOf(native, typeof c.runtime === "string" ? c.runtime : "auto");
+  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | firecracker | vz | containerization | an external runtime's name");
   const count = (k: string) => (typeof c[k] === "number" && Number.isFinite(c[k]) && (c[k] as number) >= 0 ? Math.floor(c[k] as number) : undefined);
   const text = (k: string) => (typeof c[k] === "string" && c[k] !== "" ? (c[k] as string) : undefined);
   return {
     image,
     on: text("on") ?? defaultOn,
     kind,
-    runtime: runtime as AppRuntime,
+    runtime,
     name: text("name"),
     cpus: count("cpus"),
     memoryMb: count("memoryMb"),
@@ -97,8 +103,14 @@ export function progress(p: SpaceCreateProgress, pendingId: string) {
 }
 
 export function spacesMethods(ctx: BridgeContext): Handlers {
-  const { model, events, ui } = ctx;
+  const { model, events, ui, system, platform } = ctx;
   const native = model.native;
+
+  const ids = (args: BridgeArgs): string[] => {
+    const v = args.ids;
+    if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw Failure.badArgs("ids: string[]");
+    return v as string[];
+  };
 
   const space = (args: BridgeArgs): AppSpace => {
     const id = string(args, "id");
@@ -121,11 +133,13 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     },
     "spaces.fixRuntime": (args) => {
       const action = string(args, "action");
-      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!(RUNTIME_FIX_ACTIONS as readonly string[]).includes(action)) throw Failure.badArgs(`action: ${RUNTIME_FIX_ACTIONS.join(" | ")}`);
       if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
-      model.fixRuntime(action);
+      model.fixRuntime(action as RuntimeFixAction);
       return null;
     },
+    // `{config, pendingId, os?, notifyWhenReady?}`. The create belongs to the app, not to the window:
+    // it runs on when the window is closed, and `notifyWhenReady` posts "<Space> is ready" when it succeeds.
     "spaces.create": async (args) => {
       const pendingId = string(args, "pendingId");
       if (!native.appCreatesIsPending(pendingId)) throw Failure.badArgs("pendingId: pending:<id>");
@@ -133,16 +147,33 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       if (!config || typeof config !== "object" || Array.isArray(config)) throw Failure.badArgs("config: object");
       const defaultOn = "local"; // Cua Cloud has ended
       const a = createArgs(native, config as BridgeArgs, defaultOn);
+      // The New Space's Network choice goes with the create (by its id).
+      const net = (config as BridgeArgs).network;
+      if (typeof net === "string" && net) createNetworks.set(pendingId, net);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;
       let id: string;
       try {
-        id = await model.runCreate(a, os, pendingId, (p) => events.emit("spaces.createProgress", progress(p, pendingId)));
+        id = await model.runCreate(
+          a,
+          os,
+          pendingId,
+          (p) => events.emit("spaces.createProgress", progress(p, pendingId)),
+          // The model runs it once more: the page shows "Retrying…".
+          (error, errorVariant) => events.emit("spaces.createProgress", { pendingId, phase: "preparing", detail: "", retry: { error, errorVariant } }),
+        );
       } catch (error) {
         if (isCancelled(error)) throw new Failure("cancelled", "cancelled");
         throw error;
+      } finally {
+        createNetworks.delete(pendingId);
       }
       const made = model.spaces.find((s) => s.id === id);
+      // A create the first run started: "<Space> is ready", window or not.
+      if (args.notifyWhenReady === true) {
+        const known = made && made.os !== native.AppSpaceOs.Unknown ? made.os : os;
+        system?.notify(spaceReadyNote({ id, name: made?.name ?? a.name ?? id, os: String(known) }, platform));
+      }
       if (made) return encode(made);
       return { id, name: a.name ?? id, os, status: "running", detail: "", lastUsedAt: Number(AppModel.nowMs()) };
     },
@@ -155,6 +186,46 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       const s = space(args);
       model.delete(s, args.removeOnly === true);
       return spacesState(model);
+    },
+    // `{ids}`: each row shows Deleting until its own result; `{results}` once all are done.
+    "spaces.deleteMany": async (args) => ({ results: await model.bulk(ids(args), false) }),
+    "spaces.leave": async (args) => ({ results: await model.bulk(ids(args), true) }),
+    // `{spaceId, name}` -> `{}`: the new name comes with the next `spaces.list`.
+    "spaces.rename": async (args) => {
+      const id = string(args, "spaceId");
+      const s = model.spaces.find((x) => x.id === id);
+      if (!s) throw Failure.notFound(`no Space ${id}`);
+      await model.rename(s, string(args, "name"));
+      return {};
+    },
+    // A Space's network, clipboard and Volume settings (the SDK's).
+    "network.get": async (args) => {
+      const b = model.backend;
+      if (!b.network) throw Failure.unsupported("network settings");
+      return await b.network(string(args, "spaceId"));
+    },
+    "network.set": async (args) => {
+      const b = model.backend;
+      if (!b.setNetwork) throw Failure.unsupported("network settings");
+      const list = (k: string) => (Array.isArray(args[k]) ? (args[k] as unknown[]).filter((x): x is string => typeof x === "string") : []);
+      const via = typeof args.via === "string" ? args.via : undefined;
+      const applied = await b.setNetwork(string(args, "spaceId"), string(args, "network"), list("allow"), list("deny"), args.widen === true, args.tree === true, via);
+      return { applied };
+    },
+    "network.log": async (args) => {
+      const b = model.backend;
+      return b.networkLog ? await b.networkLog(string(args, "spaceId")) : [];
+    },
+    "network.ackNotice": async (args) => {
+      await model.backend.ackNetworkNotice?.(string(args, "spaceId"));
+      return {};
+    },
+    "spaces.setAccess": async (args) => {
+      const b = model.backend;
+      const word = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : null);
+      if (!b.setAccess) throw Failure.unsupported("these settings");
+      await b.setAccess(string(args, "spaceId"), word("clipboard"), word("volume"));
+      return {};
     },
     "spaces.cancelCreate": (args) => {
       const id = string(args, "pendingId");

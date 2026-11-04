@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -19,41 +18,9 @@ class _Config:
 _global_config = _Config()
 
 
-def configure(
-    *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    fleet_base_url: Optional[str] = None,
-    token_url: Optional[str] = None,
-    client_id: Optional[str] = None,
-    client_secret: Optional[str] = None,
-    fleet_token: Optional[str] = None,
-) -> None:
-    """Set global configuration.
-
-    ``api_key`` and ``base_url`` apply to the legacy ``login()`` and
-    ``whoami()`` helpers. ``fleet_base_url``, ``token_url``, ``client_id``,
-    ``client_secret`` and ``fleet_token`` configured Cua Cloud, which has
-    ended: they are accepted so existing calls keep working, and ignored.
-    """
-    retired = [
-        name
-        for name, value in (
-            ("fleet_base_url", fleet_base_url),
-            ("token_url", token_url),
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("fleet_token", fleet_token),
-        )
-        if value is not None
-    ]
-    if retired:
-        warnings.warn(
-            f"configure({', '.join(f'{name}=' for name in retired)}) has no effect: "
-            "Cua Cloud has ended",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+def configure(*, api_key: Optional[str] = None, base_url: Optional[str] = None) -> None:
+    """Set global configuration for the legacy ``login()`` and ``whoami()``
+    helpers."""
     if api_key is not None:
         _global_config.api_key = api_key
     if base_url is not None:

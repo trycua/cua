@@ -60,7 +60,7 @@ fn def() -> &'static ToolDef {
         name: "type_text".into(),
         description: "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\
             \n\
-            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Observe the target before retrying. An accepted or uncertain AX write is never replayed automatically through keystrokes. Missing read-back alone does not prove non-delivery or a safe retry.".into(),
+            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Web content takes keystrokes instead of an AX write. An accepted or uncertain AX write is never replayed through keystrokes. Reobserve/verify the intended postcondition. Seeing the expected text confirms the earlier write. If the effect is still absent or ambiguous, keep the prior action outcome unknown; do not replay automatically.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["text"],
@@ -429,6 +429,11 @@ impl Tool for TypeTextTool {
     }
 }
 
+/// Recovery guidance for a text outcome the driver could not confirm.
+const OUTCOME_GUIDANCE: &str = "Reobserve/verify the intended postcondition. Seeing the expected \
+     text confirms the earlier write. If the effect is still absent or ambiguous, keep the prior \
+     action outcome unknown; do not replay automatically.";
+
 fn text_result(
     outcome: TypeTextOutcome,
     char_count: usize,
@@ -465,7 +470,7 @@ fn text_result(
     record.delivered_count = count;
     let result = if effect == ActionEffect::Partial {
         ToolResult::error(format!(
-            "type_text incomplete: observed {} of {char_count} character(s){}; observe the target before retrying{suffix}",
+            "type_text incomplete: observed {} of {char_count} character(s){}; {OUTCOME_GUIDANCE}{suffix}",
             count.unwrap(), outcome.detail,
         ))
         .with_structured(serde_json::json!({
@@ -479,7 +484,7 @@ fn text_result(
         let status = if effect == ActionEffect::Confirmed {
             "confirmed"
         } else {
-            "unverifiable; observe the target before retrying"
+            &format!("unverifiable; {OUTCOME_GUIDANCE}")
         };
         ToolResult::text(format!(
             "type_text: {char_count} character(s){}; {status}{suffix}",
@@ -753,21 +758,45 @@ enum TypedProgress {
     Unverifiable,
 }
 
+/// Classify an AX write. `None` means the attribute is unsupported and
+/// nothing was written, so synthesis may run. Any other outcome stops the
+/// ladder: an accepted write's effect is read back through a bounded drain,
+/// because a field may publish its value well after the write returns. A
+/// fresh read can confirm the write; absence when the drain ends is only
+/// "we stopped waiting", never zero delivered or a safe replay.
 fn ax_write_progress(
     error: i32,
     before: Option<&str>,
-    after: Option<&str>,
     text: &str,
     trusted: bool,
+    deadline: std::time::Instant,
+    read_after: impl FnMut() -> Option<String>,
 ) -> Option<TypedProgress> {
     if error == crate::ax::bindings::kAXErrorAttributeUnsupported {
         return None;
     }
     Some(if error == kAXErrorSuccess && trusted {
-        typed_progress(before, after, text)
+        await_typed_delivery(before, text, deadline, read_after)
     } else {
         TypedProgress::Unverifiable
     })
+}
+
+/// Whether the element reports `AXSelectedText` as settable; `None` when the
+/// query itself fails.
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn selected_text_settable(element: AXUIElementRef) -> Option<bool> {
+    use core_foundation::{base::TCFType, string::CFString};
+    let attr = CFString::new("AXSelectedText");
+    let mut settable = 0_u8;
+    (crate::ax::bindings::AXUIElementIsAttributeSettable(
+        element,
+        attr.as_concrete_TypeRef(),
+        &mut settable,
+    ) == kAXErrorSuccess)
+        .then_some(settable != 0)
 }
 
 fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
@@ -1097,15 +1126,22 @@ fn await_typed_delivery(
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
 ) -> TypedProgress {
+    // Keep the strongest observation. A field that falls back to its prior
+    // value after showing progress contradicts that progress.
+    let mut best = TypedProgress::Unchanged;
     loop {
         let after = read_value();
-        let progress = typed_progress(before, after.as_deref(), text);
-        if matches!(
-            progress,
-            TypedProgress::Complete | TypedProgress::Unverifiable
-        ) || std::time::Instant::now() >= deadline
+        best = match (typed_progress(before, after.as_deref(), text), best) {
+            (TypedProgress::Partial(n), TypedProgress::Partial(m)) => {
+                TypedProgress::Partial(n.max(m))
+            }
+            (TypedProgress::Unchanged, TypedProgress::Partial(_)) => TypedProgress::Unverifiable,
+            (progress, _) => progress,
+        };
+        if matches!(best, TypedProgress::Complete | TypedProgress::Unverifiable)
+            || std::time::Instant::now() >= deadline
         {
-            return progress;
+            return best;
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -1443,13 +1479,34 @@ fn type_text_in_key_window(
     }
 
     let mut ax_attempt = AxAttempt::NotAttempted;
-    if let Some((ptr, idx_opt)) = element_ptr_and_idx {
+    // When keystrokes are allowed, two targets skip the AX write and type
+    // instead. Nothing was written, so the keystrokes are the first delivery,
+    // not a replay. In web content the AX value is a shim the page never sees,
+    // so an accepted write there could only ever be unverifiable. An element
+    // that reports AXSelectedText as not settable has AppKit accept and drop
+    // the write (an NSTextField that is not being edited).
+    let keys_allowed = matches!(keyboard_policy, BackgroundKeyboardPolicy::Allowed);
+    let ax_target = element_ptr_and_idx
+        .map(|(ptr, idx_opt)| {
+            (
+                ptr,
+                target_in_web_area(pid, Some((ptr, idx_opt)), window_id),
+            )
+        })
+        .filter(|&(ptr, web)| {
+            !keys_allowed
+                || (web != Some(true)
+                    && unsafe { selected_text_settable(ptr as AXUIElementRef) } != Some(false))
+        });
+    if let Some((ptr, web)) = ax_target {
         let element = ptr as AXUIElementRef;
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-        let after = unsafe { copy_string_attr(element, "AXValue") };
-        let trusted =
-            target_in_web_area(pid, Some((element as usize, idx_opt)), window_id) == Some(false);
-        let progress = ax_write_progress(err, before.as_deref(), after.as_deref(), text, trusted);
+        let trusted = web == Some(false);
+        let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+        let progress =
+            ax_write_progress(err, before.as_deref(), text, trusted, deadline, || unsafe {
+                copy_string_attr(element, "AXValue")
+            });
         if let Some(progress) = progress {
             // An AX insert bypasses NSTextView's edit model, so a document is
             // not marked edited and would never save the new text (DS-07).
@@ -1678,6 +1735,24 @@ mod tests {
 
     use super::*;
 
+    /// One AX write outcome with a single read-back sample.
+    fn ax_write_once(
+        error: i32,
+        before: Option<&str>,
+        after: Option<&str>,
+        text: &str,
+        trusted: bool,
+    ) -> Option<TypedProgress> {
+        ax_write_progress(
+            error,
+            before,
+            text,
+            trusted,
+            std::time::Instant::now(),
+            || after.map(str::to_owned),
+        )
+    }
+
     fn public_action(result: &ToolResult) -> Value {
         let record = result
             .action_record
@@ -1713,9 +1788,8 @@ mod tests {
     fn web_readback_never_publishes_an_exact_count_or_a_safe_retry() {
         for count in [0, 2, 4] {
             let after = "text".chars().take(count).collect::<String>();
-            let progress =
-                ax_write_progress(kAXErrorSuccess, Some(""), Some(&after), "text", false)
-                    .expect("an accepted AX write must not replay through keystrokes");
+            let progress = ax_write_once(kAXErrorSuccess, Some(""), Some(&after), "text", false)
+                .expect("an accepted AX write must not replay through keystrokes");
             let result = text_result(
                 TypeTextOutcome {
                     detail: String::new(),
@@ -1743,7 +1817,7 @@ mod tests {
     fn missing_target_ancestry_cannot_confirm_cached_text() {
         let trusted = target_in_web_area(-1, None, None) == Some(false);
         let progress =
-            ax_write_progress(kAXErrorSuccess, Some(""), Some("text"), "text", trusted).unwrap();
+            ax_write_once(kAXErrorSuccess, Some(""), Some("text"), "text", trusted).unwrap();
         let result = text_result(
             TypeTextOutcome {
                 detail: String::new(),
@@ -1768,7 +1842,7 @@ mod tests {
     fn native_unicode_readback_keeps_confirmation_and_partial_without_retry_advice() {
         for (after, effect, count) in [("é🙂z", "confirmed", 3), ("é🙂", "partial", 2)] {
             let progress =
-                ax_write_progress(kAXErrorSuccess, Some(""), Some(after), "é🙂z", true).unwrap();
+                ax_write_once(kAXErrorSuccess, Some(""), Some(after), "é🙂z", true).unwrap();
             let result = text_result(
                 TypeTextOutcome {
                     detail: String::new(),
@@ -1811,7 +1885,7 @@ mod tests {
             ("a", "aab", "abc", "partial", 2),
         ] {
             let progress =
-                ax_write_progress(kAXErrorSuccess, Some(before), Some(after), text, true).unwrap();
+                ax_write_once(kAXErrorSuccess, Some(before), Some(after), text, true).unwrap();
             let result = text_result(
                 TypeTextOutcome {
                     detail: String::new(),
@@ -1837,7 +1911,7 @@ mod tests {
     #[test]
     fn uncertain_ax_errors_stop_while_unsupported_attributes_allow_synthesis() {
         use crate::ax::bindings::{kAXErrorAttributeUnsupported, kAXErrorFailure};
-        assert!(ax_write_progress(
+        assert!(ax_write_once(
             kAXErrorAttributeUnsupported,
             Some(""),
             Some(""),
@@ -1851,7 +1925,7 @@ mod tests {
             (kAXErrorFailure, Some("marker")),
             (kAXErrorFailure, None),
         ] {
-            let progress = ax_write_progress(error, Some(""), after, "marker", true)
+            let progress = ax_write_once(error, Some(""), after, "marker", true)
                 .expect("uncertain AX attempts must not reach synthesis");
             let result = text_result(
                 TypeTextOutcome {
@@ -1872,6 +1946,86 @@ mod tests {
                 })
             );
         }
+    }
+
+    /// A write accepted at t=0 whose field still reads unchanged at the
+    /// immediate sample and publishes several polls later is one AX action,
+    /// confirmed when it publishes: the drain never hands it to keystrokes.
+    #[test]
+    fn accepted_write_published_after_several_polls_is_confirmed_once() {
+        let mut reads = 0;
+        let progress = ax_write_progress(
+            kAXErrorSuccess,
+            Some(""),
+            "marker",
+            true,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            || {
+                reads += 1;
+                Some(if reads < 5 { "" } else { "marker" }.into())
+            },
+        )
+        .expect("an accepted AX write must not fall back to keystrokes");
+        assert_eq!(reads, 5, "the drain must outlast the unchanged samples");
+        let result = text_result(
+            TypeTextOutcome {
+                detail: String::new(),
+                transport: ActionTransport::MacosAxValue,
+                delivery: ActualDelivery::Background,
+                progress,
+            },
+            6,
+            false,
+            "",
+        );
+        assert_ne!(result.is_error, Some(true));
+        let action = public_action(&result);
+        assert_eq!(action["effect"], "confirmed");
+        assert_eq!(action["route"], "accessibility");
+        assert_eq!(action["delivery"]["delivered_count"], 6);
+    }
+
+    /// A write that never publishes is still unknown when the drain ends: no
+    /// delivered count, no retry advice, no replay.
+    #[test]
+    fn accepted_write_that_never_publishes_stays_unverifiable_after_the_drain() {
+        let mut reads = 0;
+        let progress = ax_write_progress(
+            kAXErrorSuccess,
+            Some(""),
+            "marker",
+            true,
+            std::time::Instant::now() + std::time::Duration::from_millis(50),
+            || {
+                reads += 1;
+                Some(String::new())
+            },
+        )
+        .expect("an accepted AX write must not fall back to keystrokes");
+        assert!(reads > 1, "the read-back must be drained, not sampled once");
+        let result = text_result(
+            TypeTextOutcome {
+                detail: String::new(),
+                transport: ActionTransport::MacosAxValue,
+                delivery: ActualDelivery::Background,
+                progress,
+            },
+            6,
+            false,
+            "",
+        );
+        assert_ne!(result.is_error, Some(true));
+        assert!(result.structured_content.is_none());
+        assert_eq!(
+            public_action(&result),
+            serde_json::json!({
+                "effect": "unverifiable", "route": "accessibility",
+                "delivery": {"mode": "background"}
+            })
+        );
+        let text = format!("{result:?}");
+        assert!(text.contains("do not replay automatically"), "{text}");
+        assert!(!text.contains("retry_from_character"), "{text}");
     }
 
     #[test]
@@ -2091,7 +2245,7 @@ mod tests {
     #[test]
     fn large_atomic_ax_payloads_are_not_subject_to_the_synthesis_budget() {
         let text = "x".repeat(11_500);
-        let progress = ax_write_progress(kAXErrorSuccess, Some(""), Some(&text), &text, true)
+        let progress = ax_write_once(kAXErrorSuccess, Some(""), Some(&text), &text, true)
             .expect("a confirmed AX write must stop before synthesis");
         let result = text_result(
             TypeTextOutcome {
@@ -2125,7 +2279,7 @@ mod tests {
         assert_eq!(safe["escalation"]["recommended"], "chunk");
 
         let text = "x".repeat(6_500);
-        let progress = ax_write_progress(kAXErrorSuccess, Some(""), None, &text, true)
+        let progress = ax_write_once(kAXErrorSuccess, Some(""), None, &text, true)
             .expect("an uncertain atomic write must not enter synthesis preflight");
         let result = text_result(
             TypeTextOutcome {

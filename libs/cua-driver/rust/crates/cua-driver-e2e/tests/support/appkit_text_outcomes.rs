@@ -21,6 +21,8 @@ fn harness_appkit_text_outcomes_match_independent_state() {
         ("native", "confirmed", DriverRoute::MacosAxValue),
         ("stale", "unverifiable", DriverRoute::MacosAxValue),
         ("unsupported", "confirmed", DriverRoute::MacosCgEventPid),
+        ("unsettable", "confirmed", DriverRoute::MacosCgEventPid),
+        ("lagging", "confirmed", DriverRoute::MacosAxValue),
     ] {
         let case = native_background_case(
             "appkit",
@@ -88,13 +90,22 @@ fn harness_appkit_text_outcomes_match_independent_state() {
                     } else {
                         assert_eq!(result["delivery"]["delivered_count"], 6);
                     }
-                    assert_eq!(state["fields"][field]["value"], "marker");
                     assert_eq!(state["unrelated"], "marker");
+                    if field == "unsettable" {
+                        // A stock field AppKit drops the AX write for: typed.
+                        assert_eq!(result["route"], "synthetic_events");
+                        assert_eq!(state["unsettable"], "marker");
+                        return;
+                    }
+                    assert_eq!(state["fields"][field]["value"], "marker");
                     if field == "unsupported" {
                         assert_eq!(result["route"], "synthetic_events");
                         assert_eq!(state["fields"][field]["writes"], 0);
                         assert_eq!(state["fields"][field]["keys"], 6);
                     } else {
+                        // One AX write, no keystroke fallback: the lagging
+                        // field is confirmed when it publishes, and the stale
+                        // one stays unknown without a replay.
                         assert_eq!(result["route"], "accessibility");
                         assert_eq!(state["fields"][field]["writes"], 1);
                         assert_eq!(state["fields"][field]["keys"], 0);

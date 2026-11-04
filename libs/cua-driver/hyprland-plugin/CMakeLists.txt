@@ -246,8 +246,13 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
-            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2" AND NOT HYPRLAND_VERSION STREQUAL "0.57.0")
+            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2 and 0.57.0 (found ${HYPRLAND_VERSION})")
+        endif()
+        if(HYPRLAND_VERSION VERSION_GREATER_EQUAL "0.57.0")
+            # 0.57 renamed InputManager::m_exclusiveLSes to m_exclusiveKeyboardLSes.
+            set_source_files_properties(src/input_experiment.cpp PROPERTIES
+                COMPILE_DEFINITIONS CUA_HYPRLAND_EXCLUSIVE_KEYBOARD_LSES=1)
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
     endif()

@@ -61,6 +61,15 @@
 
 namespace cua::hyprland {
 namespace {
+
+// Layer surfaces holding exclusive keyboard focus (renamed in Hyprland 0.57).
+const auto& exclusive_layer_surfaces() {
+#ifdef CUA_HYPRLAND_EXCLUSIVE_KEYBOARD_LSES
+    return g_pInputManager->m_exclusiveKeyboardLSes;
+#else
+    return g_pInputManager->m_exclusiveLSes;
+#endif
+}
 using Clock = std::chrono::steady_clock;
 constexpr std::size_t kMaxPacket = 2048;
 constexpr std::size_t kMaxClients = 8;
@@ -845,7 +854,7 @@ struct InputExperiment::Impl {
             .physical_keys = pressed,
             .physical_buttons = g_pInputManager->hasHeldButtons(),
             .grab = bool(g_pSeatManager->m_seatGrab) || bool(g_layoutManager->dragController()->target()) ||
-                !g_pInputManager->m_exclusiveLSes.empty(),
+                !exclusive_layer_surfaces().empty(),
             .dnd = PROTO::data && PROTO::data->dndActive(),
             .constraint = g_pInputManager->isConstrained(),
             .exact_keyboard_focus = root && g_pSeatManager->m_state.keyboardFocus == root &&
@@ -1402,7 +1411,7 @@ struct InputExperiment::Impl {
     }
 };
 
-// Hyprland 0.56.2 signals run synchronously on the compositor thread. Keep
+// Hyprland 0.56.2 and 0.57.0 signals run synchronously on the compositor thread. Keep
 // their ownership explicit and detach before retiring the seats. No polling
 // or aggregate-state comparison substitutes for this transition boundary.
 struct InputExperiment::DesktopListeners {

@@ -3272,6 +3272,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_idle_end_keeps_the_launches_the_browser_hook_shares() {
+        // The engine's session-end hook drops the session's launch records
+        // from the store the registry's kill_app checks; an idle sweep only
+        // pauses a session, so they stay, while any other end drops them.
+        let ownership = Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
+        let _engine = BrowserEngine::new_with_runtime_services(
+            Arc::new(MockPlatform::default()),
+            Arc::new(crate::consent::ApprovalBroker::unavailable()),
+            ownership.clone(),
+        );
+        let prefix = "__cua_runtime_browser_launch_records:";
+        let (idle, ended) = (format!("{prefix}idle"), format!("{prefix}ended"));
+        for session in [&idle, &ended] {
+            crate::session::activate_session(
+                session,
+                None,
+                session,
+                false,
+                crate::session::SessionTransport::Daemon,
+                crate::session::SessionClientKind::Cli,
+            )
+            .unwrap();
+            ownership.mark_driver_owned_pid(session, 424243);
+        }
+
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(std::time::Duration::ZERO, &idle),
+            vec![idle.clone()]
+        );
+        assert!(crate::session::fire_session_end(&ended));
+
+        assert!(ownership.is_driver_owned_pid(&idle, 424243));
+        assert!(!ownership.is_driver_owned_pid(&ended, 424243));
+        crate::session::revoke_sessions_with_prefix(prefix);
+        crate::session::forget_ended_sessions_with_prefix(prefix);
+    }
+
     fn engine() -> Arc<BrowserEngine> {
         BrowserEngine::new(Arc::new(MockPlatform::default()))
     }

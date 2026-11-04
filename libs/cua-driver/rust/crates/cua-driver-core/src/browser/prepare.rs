@@ -796,7 +796,13 @@ impl BrowserEngine {
     }
 
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
-        self.protected_resource_ownership.remove_session(session);
+        // The store is the registry's: an idle sweep keeps the session's
+        // launch records there, as the registry's own end hook does.
+        if crate::session::session_end_reason(session)
+            != Some(crate::session::SessionEndReason::IdleTimeout)
+        {
+            self.protected_resource_ownership.remove_session(session);
+        }
         self.managed_browsers
             .lock()
             .unwrap()

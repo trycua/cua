@@ -18,7 +18,7 @@ export const METHODS = [
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
   "agents.setup", "agents.configure", "agents.signIn",
-  "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait", "agents.start", "agents.message",
+  "agents.status", "agents.connect", "agents.disconnect", "agents.recentThreads", "agents.threadHistory", "agents.signInStart", "agents.signInWait", "agents.start", "agents.message",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",

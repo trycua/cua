@@ -23,6 +23,9 @@ import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connec
 import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 import { usePrepare } from "@/lib/prepare/store";
+import { useNewOnboarding } from "@/bridge";
+import { PickUpWhereYouLeftOff } from "@/components/ask-first/pick-up";
+import type { AskTask } from "@/lib/ask-first";
 
 export const Route = createFileRoute("/onboarding/")({
   // `?due=1` is a host opening the first run because it is not done (the Mac
@@ -86,6 +89,17 @@ function OnboardingPage() {
     }
   };
 
+  // Continue in Cua (CUA-3319): setup is done, and the picked chat opens in Home. Nothing runs until the person sends.
+  const continueChat = async (task: AskTask) => {
+    try {
+      prepare.driver?.onboardingDone();
+      await fr.finish();
+    } catch {
+      // The chat opens anyway; setup can be finished later.
+    }
+    await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
+  };
+
   // A new screen: focus moves to its heading, so a screen reader reads it.
   useEffect(() => {
     document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
@@ -125,7 +139,7 @@ function OnboardingPage() {
           {view.cli ? <CommandLine fr={fr} view={view} /> : null}
           {view.devices ? <Devices fr={fr} view={view} /> : null}
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
-          {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
+          {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} onContinueChat={(task) => void continueChat(task)} /> : null}
         </div>
         <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:719px)]:grow-[50]" />
       </div>
@@ -786,8 +800,9 @@ function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
 
 /* ---- 5 · Try it ---------------------------------------------------------------------- */
 
-function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
+function Setup({ fr, view, onFinish, onContinueChat }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void; onContinueChat?: (task: AskTask) => void }) {
   const s = view.setup!;
+  const newSetup = useNewOnboarding();
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<string | null>(null);
   const tabs = s.prompt?.tabs ?? [];
@@ -841,6 +856,8 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
+      {/* The new setup's Ready screen (Labs, CUA-3319): the person's own recent chats, hidden when there are none. */}
+      {newSetup && onContinueChat ? <PickUpWhereYouLeftOff className="mt-8" onContinue={onContinueChat} /> : null}
       <div className={ACTION_ROW}>
         <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}

@@ -26,6 +26,7 @@ import { CLI_ARGS } from "../ops/cli";
 import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
+import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
@@ -176,6 +177,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...THREAD_ARGS,
   ...PRESENCE_ARGS,
   ...CLOUD_APPROVE_ARGS,
+  ...AGENT_THREADS_ARGS,
   ...RUNTIME_FIX_ARGS,
 };
 

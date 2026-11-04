@@ -126,6 +126,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.openStream": { spaceId: SPACE, tier: "tile" },
   "relay.usage": {},
   "nudges.pending": {},
+  "agents.recentThreads": { limit: 4 },
+  "agents.threadHistory": { agent: "claude-code", id: "0b1e5c2a-1111-4222-8333-944445555666" },
   "nudges.answer": { id: "risky-1-1", choice: "here" },
   "resources.get": { visible: true },
   "machines.rename": { id: "m-studio", name: "Studio" },

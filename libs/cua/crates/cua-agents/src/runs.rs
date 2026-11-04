@@ -132,6 +132,50 @@ pub struct RunOptions {
     /// from the guest's own setup. Ignored for other harnesses and with an
     /// endpoint.
     pub hermes_config: Option<String>,
+    /// Continue this session of the harness's own (Claude Code, Codex or
+    /// Hermes keep it on the computer the run is on) instead of opening a
+    /// new one: the runner asks the agent to reload it (ACP `session/resume`
+    /// or `session/load`). Not with `durable`, which keeps its own session.
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, put before
+    /// the first prompt only when the agent cannot reload the session.
+    pub resume_context: Option<String>,
+}
+
+/// The most of `resume_context` a run takes.
+pub const RESUME_CONTEXT_MAX: usize = 32 * 1024;
+
+/// `run.json`'s `resume`: the agent's own session to reload, and the
+/// context for when it can't be.
+fn resume_section(opts: &RunOptions) -> Result<Value> {
+    let Some(id) = opts.resume_session.as_deref() else {
+        return Ok(Value::Null);
+    };
+    let valid = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return Err(Error::Invalid(format!(
+            "resume_session: {id:?} is not a session id"
+        )));
+    }
+    if opts.durable.is_some() {
+        return Err(Error::Invalid(
+            "resume_session: a durable run keeps its own session".into(),
+        ));
+    }
+    let context = opts
+        .resume_context
+        .as_deref()
+        .filter(|c| !c.trim().is_empty());
+    if context.is_some_and(|c| c.len() > RESUME_CONTEXT_MAX) {
+        return Err(Error::Invalid(format!(
+            "resume_context: at most {RESUME_CONTEXT_MAX} bytes"
+        )));
+    }
+    Ok(json!({"sessionId": id, "context": context}))
 }
 
 /// `meta.json`.
@@ -1158,6 +1202,7 @@ impl Agents {
             "guardModeKinds": crate::durable::guard_mode_kinds(h),
             "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
             "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
+            "resume": resume_section(&opts)?,
         });
         uploads.push((
             format!("{rdir}/run.json"),
@@ -1678,6 +1723,32 @@ mod tests {
             )
         );
         assert!(!a.contains("one"));
+    }
+
+    #[test]
+    fn a_resume_names_the_agents_own_session() {
+        let opts = |id: &str, ctx: Option<&str>| RunOptions {
+            resume_session: Some(id.into()),
+            resume_context: ctx.map(String::from),
+            ..Default::default()
+        };
+        assert_eq!(resume_section(&RunOptions::default()).unwrap(), Value::Null);
+        assert_eq!(
+            resume_section(&opts("0b1e5c2a-1111", Some("earlier"))).unwrap(),
+            json!({"sessionId": "0b1e5c2a-1111", "context": "earlier"})
+        );
+        assert_eq!(
+            resume_section(&opts("abc", Some("  "))).unwrap()["context"],
+            Value::Null
+        );
+        assert!(resume_section(&opts("../x", None)).is_err());
+        let big = "x".repeat(RESUME_CONTEXT_MAX + 1);
+        assert!(resume_section(&opts("abc", Some(&big))).is_err());
+        let durable = RunOptions {
+            durable: Some(Default::default()),
+            ..opts("abc", None)
+        };
+        assert!(resume_section(&durable).is_err());
     }
 
     fn probe(h: &Harness, home: &std::path::Path, env: &[(&str, &str)]) -> String {

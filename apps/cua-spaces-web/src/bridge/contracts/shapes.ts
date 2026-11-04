@@ -69,6 +69,7 @@ import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
+import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
@@ -88,6 +89,10 @@ const ref = (name: string, s: Schema) => defs.ref(name, s);
 const strings = list(str);
 const limits = list(object({ resource: str, used: num, limit: num, reason: str }));
 const os = oneOf("macos", "windows", "linux", "unknown");
+const RecentThreadShape = ref(
+  "RecentThread",
+  obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
+);
 
 /* ---- Spaces and machines --------------------------------------------------- */
 
@@ -1526,6 +1531,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "machines.checkHealth": nul,
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
+  "agents.recentThreads": list(RecentThreadShape),
+  "agents.threadHistory": obj<PastThread>()({
+    thread: RecentThreadShape,
+    messages: list(obj<PastMessage>()({ key: str, role: oneOf("person", "agent"), text: str, tsMs: nullable(num), cut: bool })),
+    earlierOmitted: num,
+  }),
   "nudges.answer": nul,
   "relay.usage": nullable(
     obj<RelayUsage>()({
@@ -2131,6 +2142,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
 /** Methods whose answer has no shape here, and why. */
 const THREAD_TOOL_JSON =
   "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host";
+const AGENT_THREADS_TOOL_JSON = "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host";
 export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
   "thread.read": THREAD_TOOL_JSON,
   "thread.post": THREAD_TOOL_JSON,
@@ -2142,6 +2154,8 @@ export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
   "thread.joinCodeList": THREAD_TOOL_JSON,
   "thread.joinCodeCancel": THREAD_TOOL_JSON,
   "thread.settings": THREAD_TOOL_JSON,
+  "agents.recentThreads": AGENT_THREADS_TOOL_JSON,
+  "agents.threadHistory": AGENT_THREADS_TOOL_JSON,
 };
 
 /** The exported document (`bridge-shapes.json`): `ops` and `webkit` map

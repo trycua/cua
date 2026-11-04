@@ -33,6 +33,7 @@ import { linksMethods } from "./links";
 import { cliMethods } from "./cli";
 import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
+import { agentThreadsMethods } from "./agent-threads";
 import { relayUsageMethods } from "./relay-usage";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
@@ -84,6 +85,7 @@ export const AREAS = [
   cliMethods,
   ciMethods,
   threadMethods,
+  agentThreadsMethods,
   presenceMethods,
 ];
 

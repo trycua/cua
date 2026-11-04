@@ -7,6 +7,15 @@ invocation, isolation, schedule, gates and output. The method is in
 
 ## Arms
 
+`cx-browser-use-cli` (Amendment 24.2a) is staged: operational preflight always fails,
+including offline, smoke and no-model modes. No execution policy or trial home is written.
+It requires `CDB_CODEX_AUTH=chatgpt` and a nonempty selection of `browser: true` tasks;
+no existing task is flagged here. This is not like-for-like with Browser Use's own Agent loop.
+The planned GUI-only exception is recognized CLI invocations, not general Bash or arbitrary Python.
+Install an already downloaded, pinned wheel with `python tools/install_browser_use.py /path/to/browser_use-0.13.11-py3-none-any.whl`.
+Heredocs, skill discovery/provisioning, matcher-derived execution rules, browser lifecycle,
+observed-pin comparison and doctor/CDP/page-info/deny probes remain prerequisites to enabling it.
+
 | Arm | Public setup | Tools Claude Code gets |
 | --- | --- | --- |
 | `cc-cua-driver-script` | Cua Driver | Cua Driver built from the pinned main commit, MCP server `cua`, `run_script` on, the skill of that commit in the working directory, and a short `run_script` addendum in the system prompt |
@@ -18,6 +27,42 @@ invocation, isolation, schedule, gates and output. The method is in
 
 Arms `codex-native-cu` and `codex-cua-driver` (`codex exec --json`, from
 `run_pilot.py`) exist behind `--allow-codex-arms` and are not part of Bench v2.
+
+## Codex authentication
+
+`CDB_CODEX_AUTH=gateway` is the default and retains the LiteLLM route.
+Set `CDB_CODEX_AUTH=chatgpt` for direct ChatGPT-login authentication on the
+three `cx-*` arms and the Codex fallback/pilot arms; no gateway or gateway key
+is needed. Other values are rejected.
+
+```bash
+export CDB_CODEX_AUTH=chatgpt
+# Optional; defaults to the runner user's ~/.codex/auth.json:
+export CDB_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+python3 run_bench.py preflight --only-arm cx-cua-driver
+```
+
+Log in to Codex with ChatGPT beforehand. Each trial's `CODEX_HOME/auth.json`
+is a symlink to that existing file, never a credential copy. The harness does
+not read or log its contents or perform login. ChatGPT mode sets
+`cli_auth_credentials_store = "file"`; gateway configuration is unchanged.
+**The ChatGPT auth file is shared with the host and its clones; refresh-token
+rotation can sign out the other copies.**
+The harness removes each trial/preflight symlink after use and flags a symlink
+replaced with a regular file as an infrastructure failure. Gateway key
+forwarding (`CDB_PILOT_PASS_GATEWAY_KEY=1`) applies only in gateway mode.
+
+ChatGPT preflight uses only app-server metadata (`initialize`, `account/read`
+with refresh disabled, and paginated `model/list`), not a model call. It requires
+a ChatGPT account and the configured model, checks the credential link remains
+a symlink, and is skipped offline. The metadata probe runs once per run, even
+with `--no-model-preflight`. Gateway preflight is unchanged; the pilot does not
+add a live authentication probe.
+Model and effort are unchanged: native arms retain `gpt-6.1-sol` at its catalog
+default `low` effort; pilot defaults remain independent. Native rows/manifests
+record `codex_native.codex_auth` and omit the gateway URL in ChatGPT mode; pilot
+rows/manifests record `codex_auth`. The fallback native-CU `notify` setting
+is now root-level TOML in both modes, rather than inside the provider table.
 
 ## Files
 
@@ -126,11 +171,29 @@ arm, task, category, condition, run, seed, versions and hashes, status, pass and
 checks, turns, tool calls by class, tokens, cost, the background measures, the
 GUI-only evidence and the interruption diagnostic.
 
+## Capture setup and preflight
+
+Amendment 11: grant `app-cu-helper` Accessibility. Separately grant Apple's
+`/usr/sbin/screencapture` Screen Recording in System Settings → Privacy & Security
+→ Screen Recording → **+** → Go to `/usr/sbin/screencapture`. `cu-disclaim` wraps
+both processes. Do not grant Terminal, the adapter or launcher new permissions.
+Every selected arm gets a `real capture` row through its own MCP, even offline;
+the recorder also decodes its three-second test unless disabled. ffmpeg must be
+installed at `/opt/homebrew/bin/ffmpeg`. Empty, undecodable and uniform RGB
+frames fail; this is a deterministic blank check, not semantic recognition.
+Rows log dimensions, byte count and saved path, never image content.
+
+Errored tool results reporting capture/TCC/Accessibility setup failures or a
+stopped helper/daemon are infrastructure failures (`tool_setup`, `infra_pattern`).
+Assistant prose and successful tool results do not trigger these patterns.
+The existing policy retries once, then excludes; Cua daemon retries recheck and
+restart a down daemon. Quota and authentication classification retains precedence.
+
 ## Commands
 
 ```bash
 python3 run_bench.py dry-run --bench-v2 --phase1-runs 3 --phase2-runs 2    # schedule and commands, no side effects
-python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # static checks only
+python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # captures and recording, no model calls
 python3 run_bench.py gate-check                                             # HOLD file and quota, no model call
 python3 run_bench.py preflight --bench-v2 --build-dir WORK/build            # full: daemons, MCP, recording, 3 Haiku calls
 python3 run_bench.py run --bench-v2 --condition background --run-id RUN ... # see ../../README.md

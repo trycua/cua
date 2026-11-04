@@ -127,6 +127,9 @@ mod tests {
     async fn guests_reach_only_named_targets() {
         let dir = tempfile::tempdir().unwrap();
         let drive = Drive::open_local(dir.path());
+        drive
+            .grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let vfs = Vfs::new(
             &drive,
             Context::space("local:lab"),

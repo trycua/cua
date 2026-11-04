@@ -286,6 +286,7 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         inherit_stderr: true,
         // No overlay window on the developer's display.
         no_overlay: true,
+        capture_stderr: false,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();

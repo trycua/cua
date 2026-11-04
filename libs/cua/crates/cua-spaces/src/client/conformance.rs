@@ -172,7 +172,7 @@ fn write_string(out: &mut String, value: &str) {
 pub fn session_script() -> String {
     // Written as a value and serialized by the ordered writer, so the script
     // file itself is deterministic too.
-    include_str!("../../../../spaces-contract/fixtures/control/session-script.json").to_string()
+    include_str!(concat!(env!("OUT_DIR"), "/session-script.json")).to_string()
 }
 
 // ---------------------------------------------------------------------------

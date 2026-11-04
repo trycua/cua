@@ -30,7 +30,7 @@
 //!   `libs/cua-spacesd`).
 //! - `CUA_BYOC_CLOUD_IMAGE`: an Ubuntu 24.04 cloud image for this machine's
 //!   architecture; default: downloaded once into
-//!   `~/projects/.cua-work/cloud-providers/boot-test/`.
+//!   `~/.cache/cua-byoc/boot-test/`.
 //! - `CUA_BYOC_BOOT_IMAGE`: the sandbox image (default
 //!   `ghcr.io/trycua/linux:24.04`).
 //!
@@ -250,7 +250,7 @@ fn image() -> String {
 
 fn work_dir() -> tempfile::TempDir {
     let home = std::env::var("HOME").unwrap();
-    let cache = PathBuf::from(home).join("projects/.cua-work/cloud-providers/boot-test");
+    let cache = PathBuf::from(home).join(".cache/cua-byoc/boot-test");
     std::fs::create_dir_all(&cache).unwrap();
     tempfile::Builder::new()
         .prefix("byoc-boot-")
@@ -287,6 +287,9 @@ fn the_sandbox_container_joins_an_account_relay() {
         expires: 0,
         ttl_secs: 0,
         shm_mb: 1024,
+        provider: "test",
+        net_guard: true,
+        share_slots: false,
     };
     // The files and the environment file cloud-init writes, as the VM's
     // first boot hands them to Docker (owned by the image's user).
@@ -400,6 +403,9 @@ fn a_cloud_vm_first_boot_joins_the_relay() {
         // The backstop still runs: the VM powers itself off within the hour.
         ttl_secs: 3600,
         shm_mb: 1024,
+        provider: "test",
+        net_guard: true,
+        share_slots: false,
     });
     let seed = cua_vmm::cloudinit::Seed {
         meta_data: format!("instance-id: {id}\nlocal-hostname: {id}\n"),

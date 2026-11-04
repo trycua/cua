@@ -1,0 +1,8 @@
+{
+  "devices.banner.label": "设备注册",
+  "devices.section.label": "设备",
+  "devices.section.title": "设备",
+  "devices.recent.not_yours_label": "不是您的设备",
+  "devices.enroll.code_label": "一次性验证码",
+  "devices.approve.passphrase_label": "密钥库口令"
+}

@@ -4,7 +4,6 @@
   "now": 1800000000000,
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": [

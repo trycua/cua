@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "google/protobuf/duration.proto";
+
+// Builds (cua.daemon.v1): the messages of `SpaceService.BuildSpace`,
+// `ListBuilds` and `DeleteBuild`. A build turns a Dockerfile or steps into
+// pinned checkpoints on this machine that Spaces fork from.
+
+// Request for `SpaceService.BuildSpace`: give a Dockerfile, or a base and
+// steps.
+message BuildSpaceRequest {
+  // Dockerfile text.
+  string dockerfile = 1;
+  // The build context: the directory `COPY` sources are relative to, on the
+  // daemon's machine.
+  string context_dir = 2;
+  // The base image for a build of `steps` alone.
+  string base = 3;
+  // JSON array of build steps (`{"op":"run","command":"make"}`, `copy`,
+  // `env`, `workdir`, `user`, ...), after the Dockerfile's.
+  string steps_json = 4;
+  // Build arguments (`ARG` values).
+  map<string, string> build_args = 5;
+  // Alias for the result.
+  string tag = 6;
+  // "vm" (default, empty), "container" or "microvm".
+  string kind = 7;
+  // Where: "local" (default, empty). A build's checkpoints stay on the
+  // machine that took them.
+  string location = 8;
+  // vCPUs of the machine (0: 2).
+  uint32 cpus = 9;
+  // Memory in MiB (0: 4096).
+  uint64 memory_mb = 10;
+  // No desktop (unset: true).
+  optional bool headless = 11;
+  // Build every layer again.
+  bool no_cache = 12;
+  // Budget for each step (default 1 hour).
+  google.protobuf.Duration step_timeout = 13;
+}
+
+// What a build is doing.
+message BuildProgress {
+  // "note", "step", "output", "step_done" or "finished".
+  string event = 1;
+  // The step (0: the base image).
+  uint32 index = 2;
+  // Steps after the base.
+  uint32 total = 3;
+  // The step as a line, a note, or an output line.
+  string text = 4;
+  // "step": served from a cached layer. "finished": nothing ran.
+  bool cached = 5;
+  // "step_done" and "finished": seconds taken.
+  double seconds = 6;
+  // "step_done": the layer's checkpoint.
+  string checkpoint = 7;
+}
+
+// One step of a finished build.
+message BuildStepResult {
+  // The step (0: the base image).
+  uint32 index = 1;
+  // The step as a line.
+  string text = 2;
+  // Served from a cached layer.
+  bool cached = 3;
+  // Seconds taken (0 when cached).
+  double seconds = 4;
+  // The layer's checkpoint, for a step that makes one.
+  string checkpoint = 5;
+}
+
+// A finished build.
+message BuildResult {
+  // The final layer's checkpoint (a fork source).
+  string checkpoint = 1;
+  // The tag, when asked for.
+  string tag = 2;
+  // The recipe's cache key.
+  string key = 3;
+  // Every layer was cached.
+  bool cached = 4;
+  // One per step, base first.
+  repeated BuildStepResult steps = 5;
+  // JSON image configuration (`env`, `workdir`, `user`, `cmd`, ...).
+  string config_json = 6;
+  // Seconds the build took.
+  double seconds = 7;
+}
+
+// One message of `SpaceService.BuildSpace`.
+message BuildSpaceResponse {
+  // Progress, or the result.
+  oneof event {
+    // What the build is doing now.
+    BuildProgress progress = 1;
+    // The result (the last message).
+    BuildResult result = 2;
+  }
+}
+
+// Request for `SpaceService.ListBuilds`.
+message ListBuildsRequest {}
+
+// A build on this machine.
+message BuildInfo {
+  // The final layer's checkpoint.
+  string checkpoint = 1;
+  // The recipe's cache key.
+  string key = 2;
+  // Tags naming it.
+  repeated string tags = 3;
+  // The `FROM` reference.
+  string base = 4;
+  // Layers it is made of (checkpoints), base first.
+  repeated string layers = 5;
+  // RFC 3339 build time.
+  string created_at = 6;
+  // JSON image configuration.
+  string config_json = 7;
+}
+
+// Response for `SpaceService.ListBuilds`.
+message ListBuildsResponse {
+  // Builds, oldest first.
+  repeated BuildInfo builds = 1;
+}
+
+// Request for `SpaceService.DeleteBuild`.
+message DeleteBuildRequest {
+  // A tag, a recipe key (or its first 12 characters) or a checkpoint.
+  string build = 1;
+}
+
+// Response for `SpaceService.DeleteBuild`.
+message DeleteBuildResponse {
+  // The layer checkpoints deleted.
+  repeated string deleted = 1;
+}

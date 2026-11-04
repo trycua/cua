@@ -23,6 +23,8 @@ const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="SetCursorColor"><arg type="s" direction="in" name="fill_color"/></method>
 <method name="SetCursorState"><arg type="s" direction="in" name="action"/><arg type="s" direction="in" name="delivery"/><arg type="s" direction="in" name="target"/><arg type="b" direction="in" name="active"/></method>
+<method name="SetCursorLook"><arg type="s" direction="in" name="look_json"/></method>
+<method name="PlayCursorPath"><arg type="s" direction="in" name="track_json"/></method>
 <method name="SetSessionLabel"><arg type="s" direction="in" name="label"/></method>
 <method name="HideCursor"></method>
 </interface></node>`;
@@ -34,7 +36,6 @@ const DISPLAY_SIZE = 42;
 const ACTOR_SIZE = 112;
 const ACTOR_CENTER = ACTOR_SIZE / 2;
 const SCALE = DISPLAY_SIZE / CANVAS_SIZE;
-const FLOAT_DURATION = 4.0;
 const GLOW_SURFACE_SCALE = 3;
 const GLOW_PADDING = 24;
 const BADGE_Y_OFFSET = 29;
@@ -70,6 +71,208 @@ const ACTION_DURATIONS = {
   record: 1.6,
   system: 1.6,
 };
+
+// cua-driver plans every move with the shared planner and sends it as poses
+// (PlayCursorPath), with the resting float and halo it paints with
+// (SetCursorLook). The helper only plays them back and carries the float on at
+// rest from the clock each track ends on; it plans nothing.
+const TIP_X = 55;
+const TIP_Y = 30;
+const MAX_POSE_JSON = 256 * 1024;
+const MAX_PATH_SAMPLES = 2000;
+const PATH_FRAME_MS = 16;
+
+function finiteWithin(value, limit) {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= limit;
+}
+
+function parseJsonObject(json) {
+  if (typeof json !== 'string' || json.length === 0 || json.length > MAX_POSE_JSON) return null;
+  try {
+    const value = JSON.parse(json);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function parseFloatLook(value) {
+  if (value === null || value === undefined) return null;
+  const f = value;
+  const ok =
+    finiteWithin(f?.secs, 60) && f.secs >= 0.1 &&
+    finiteWithin(f.sway, 50) && f.sway >= 0 &&
+    finiteWithin(f.bob, 50) && f.bob >= 0 &&
+    finiteWithin(f.lift, 50) && f.lift >= 0 &&
+    finiteWithin(f.tilt, 1) && f.tilt >= 0 &&
+    finiteWithin(f.hold, 60) && f.hold >= 0 &&
+    finiteWithin(f.ease_in, 60) && f.ease_in > 0 &&
+    finiteWithin(f.ease_out, 60) && f.ease_out > 0;
+  if (!ok) return undefined;
+  return {
+    secs: f.secs,
+    sway: f.sway,
+    bob: f.bob,
+    lift: f.lift,
+    tilt: f.tilt,
+    hold: f.hold,
+    easeIn: f.ease_in,
+    easeOut: f.ease_out,
+  };
+}
+
+function parseCursorLook(json) {
+  const look = parseJsonObject(json);
+  if (!look) return null;
+  const float = parseFloatLook(look.float);
+  if (float === undefined) return null;
+  let halo = null;
+  if (look.halo !== null && look.halo !== undefined) {
+    const h = look.halo;
+    const rgb = typeof h?.rgb === 'string' ? /^#([0-9a-fA-F]{6})$/.exec(h.rgb) : null;
+    const stops = Array.isArray(h?.stops) ? h.stops : [];
+    const body = Array.isArray(h?.body) ? h.body : [];
+    if (
+      !rgb ||
+      !finiteWithin(h.radius, 200) ||
+      h.radius <= 0 ||
+      !finiteWithin(h.peak, 1) ||
+      h.peak < 0 ||
+      stops.length < 1 ||
+      stops.length > 8 ||
+      !stops.every(
+        (stop) =>
+          Array.isArray(stop) &&
+          stop.length === 2 &&
+          stop.every((part) => finiteWithin(part, 1) && part >= 0)
+      ) ||
+      body.length !== 2 ||
+      !body.every((part) => finiteWithin(part, 200))
+    )
+      return null;
+    const value = Number.parseInt(rgb[1], 16);
+    halo = {
+      rgb: [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff],
+      radius: h.radius,
+      peak: h.peak,
+      stops: stops.map(([offset, share]) => [offset, share]),
+      body: [body[0], body[1]],
+    };
+  }
+  return { float, halo };
+}
+
+function parseCursorPath(json) {
+  const track = parseJsonObject(json);
+  if (!track || !Array.isArray(track.samples)) return null;
+  const samples = track.samples;
+  if (samples.length < 1 || samples.length > MAX_PATH_SAMPLES) return null;
+  let previous = 0;
+  for (const sample of samples) {
+    if (!Array.isArray(sample) || sample.length !== 6) return null;
+    const [t, x, y, dx, dy, rotation] = sample;
+    if (!finiteWithin(t, 30) || t < previous) return null;
+    if (!finiteWithin(x, 100000) || !finiteWithin(y, 100000)) return null;
+    if (!finiteWithin(dx, 100) || !finiteWithin(dy, 100) || !finiteWithin(rotation, 8)) return null;
+    previous = t;
+  }
+  const arrival = track.arrival;
+  if (arrival !== null && arrival !== undefined && (!finiteWithin(arrival, 30) || arrival < 0))
+    return null;
+  // The float clock at the last sample: [phase, hold, from].
+  const rest = track.rest;
+  if (
+    !Array.isArray(rest) ||
+    rest.length !== 3 ||
+    !finiteWithin(rest[0], 1e7) ||
+    !finiteWithin(rest[1], 3600) ||
+    rest[1] < 0 ||
+    !finiteWithin(rest[2], 1) ||
+    rest[2] < 0
+  )
+    return null;
+  return {
+    samples,
+    arrival: arrival ?? null,
+    rest: { phase: rest[0], hold: rest[1], from: rest[2] },
+  };
+}
+
+// Linear interpolation between the planner's samples, clamped to the ends.
+function samplePath(samples, t) {
+  if (t <= samples[0][0]) return samples[0];
+  const last = samples[samples.length - 1];
+  if (t >= last[0]) return last;
+  let lo = 0;
+  let hi = samples.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid][0] <= t) lo = mid;
+    else hi = mid;
+  }
+  const a = samples[lo];
+  const b = samples[hi];
+  const f = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 1;
+  return a.map((value, index) => value + (b[index] - value) * f);
+}
+
+function smoothstep(x) {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * (3 - 2 * t);
+}
+
+// cursor_pose::rest_amplitude: `from` eases out to 0, holds at 0 for the
+// click, drop or typing that follows, then eases back in to 1.
+function restAmplitude(float, hold, from) {
+  const out = Math.min(1, Math.max(0, from)) * (1 - smoothstep(hold / float.easeOut));
+  const back = smoothstep((hold - float.hold) / float.easeIn);
+  return Math.max(out, back);
+}
+
+const STILL = Object.freeze({ dx: 0, dy: 0, rotation: 0 });
+
+// cursor_pose::float_at at the rest amplitude: the 4 s sway, bob and tilt,
+// `now - rest.at` seconds on from the clock `rest` (phase, hold, from). The
+// phase never restarts.
+function restingFloat(look, rest, now) {
+  const float = look?.float;
+  if (!float || !rest) return STILL;
+  const elapsed = Math.max(0, now - rest.at);
+  const amp = restAmplitude(float, rest.hold + elapsed, rest.from);
+  if (amp <= 0) return STILL;
+  const angle = (((rest.phase + elapsed) % float.secs) / float.secs) * 2 * Math.PI;
+  return {
+    dx: amp * float.sway * Math.sin(angle),
+    dy: amp * (float.bob * Math.cos(angle) - float.lift),
+    rotation: amp * float.tilt * Math.cos(angle),
+  };
+}
+
+// The halo of cursor_pose::paint_halo, centred on the arrow body, in canvas
+// units with the tip at (TIP_X, TIP_Y).
+function drawCursorHalo(cr, halo, rotation) {
+  const sin = Math.sin(rotation);
+  const cos = Math.cos(rotation);
+  const bx = halo.body[0] / SCALE;
+  const by = halo.body[1] / SCALE;
+  const cx = TIP_X + bx * cos - by * sin;
+  const cy = TIP_Y + bx * sin + by * cos;
+  const radius = halo.radius / SCALE;
+  const gradient = new Cairo.RadialGradient(cx, cy, 0, cx, cy, radius);
+  for (const [offset, share] of halo.stops)
+    gradient.addColorStopRGBA(
+      offset,
+      halo.rgb[0] / 255,
+      halo.rgb[1] / 255,
+      halo.rgb[2] / 255,
+      halo.peak * share
+    );
+  cr.save();
+  cr.setSource(gradient);
+  cr.arc(cx, cy, radius, 0, 2 * Math.PI);
+  cr.fill();
+  cr.restore();
+}
 
 function nowSeconds() {
   return GLib.get_monotonic_time() / 1_000_000;
@@ -197,7 +400,16 @@ function roundedRect(cr, x, y, width, height, radius) {
   cr.closePath();
 }
 
+// Upright like the system pointer, matching cua.default: the dart outline is
+// turned 20 degrees clockwise about the hotspot (55, 30) so its left edge
+// stands vertical.
+const UPRIGHT_RADIANS = (20 * Math.PI) / 180;
+
 function traceCursorBody(cr) {
+  cr.save();
+  cr.translate(55, 30);
+  cr.rotate(UPRIGHT_RADIANS);
+  cr.translate(-55, -30);
   cr.moveTo(55, 30);
   cr.curveTo(48, 28, 42, 33, 43, 41);
   cr.lineTo(64, 98);
@@ -207,6 +419,7 @@ function traceCursorBody(cr) {
   cr.lineTo(108, 63);
   cr.curveTo(115, 59, 114, 53, 107, 50);
   cr.closePath();
+  cr.restore();
 }
 
 function drawCursorGlowShape(cr, fillColor) {
@@ -248,16 +461,6 @@ function createGlowSurface(fillColor) {
   return surface;
 }
 
-function sharedFloatMotion(progress) {
-  const angle = progress * Math.PI * 2;
-  return {
-    dx: Math.sin(angle) * 5,
-    dy: Math.cos(angle) * 6 - 5,
-    rotation: Math.cos(angle) * ((2.5 * Math.PI) / 180),
-    scale: 1,
-  };
-}
-
 function cursorBodyMotion(progress, action) {
   let dx = 0;
   let dy = 0;
@@ -277,11 +480,13 @@ function cursorBodyMotion(progress, action) {
   return { dx, dy, rotation, scale };
 }
 
+// About the tip, like the Rust renderer's click squish, so a press never
+// moves the point the arrow clicks.
 function applyCursorBodyMotion(cr, motion) {
-  cr.translate(64 + motion.dx, 64 + motion.dy);
+  cr.translate(TIP_X + motion.dx, TIP_Y + motion.dy);
   cr.rotate(motion.rotation);
   cr.scale(motion.scale, motion.scale);
-  cr.translate(-64, -64);
+  cr.translate(-TIP_X, -TIP_Y);
 }
 
 function drawCursorGlow(cr, progress, action, glowSurface) {
@@ -699,6 +904,8 @@ export default class WinRectsExtension extends Extension {
       null
     );
     this._action = 'idle';
+    // Whether cua-driver asked for the current action's cue.
+    this._cueRequested = false;
     this._delivery = '';
     this._target = '';
     this._actionStarted = nowSeconds();
@@ -706,6 +913,12 @@ export default class WinRectsExtension extends Extension {
     this._fillColor = [94, 192, 232];
     this._fillColorCss = '#5ec0e8';
     this._glowSurface = createGlowSurface(this._fillColor);
+    // Null until cua-driver sends a look: an older driver keeps the glow.
+    this._look = null;
+    this._path = null;
+    this._pathFrameId = 0;
+    // The float clock at `at`: a fresh cursor floats fully.
+    this._rest = { at: nowSeconds(), phase: 0, hold: 3600, from: 0 };
     this._cursor = new St.DrawingArea({
       width: ACTOR_SIZE,
       height: ACTOR_SIZE,
@@ -718,14 +931,27 @@ export default class WinRectsExtension extends Extension {
       const duration = ACTION_DURATIONS[this._action] ?? 1.6;
       const elapsed = nowSeconds() - this._actionStarted;
       const progress = (elapsed % duration) / duration;
-      const floatProgress = (elapsed % FLOAT_DURATION) / FLOAT_DURATION;
+      const pose = this._pose(nowSeconds());
       cr.save();
+      // The actor is placed with its centre on the cursor point (see
+      // _placeCursor), so the tip, not the canvas centre, goes there. Mapping
+      // the canvas centre drew the tip (55, 30) about 3 px left of and 11 px
+      // above the click point.
       cr.translate(ACTOR_CENTER, ACTOR_CENTER);
       cr.scale(SCALE, SCALE);
-      cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
-      applyCursorBodyMotion(cr, sharedFloatMotion(floatProgress));
-      drawCursorGlow(cr, progress, this._action, this._glowSurface);
-      drawActionCue(cr, this._action, progress, this._fillColor);
+      cr.translate(-TIP_X, -TIP_Y);
+      // The float moves the whole cursor; the rotation (heading plus the
+      // float tilt) turns it about its tip.
+      cr.translate(pose.dx / SCALE, pose.dy / SCALE);
+      if (!this._look) drawCursorGlow(cr, progress, this._action, this._glowSurface);
+      else if (this._look.halo) drawCursorHalo(cr, this._look.halo, pose.rotation);
+      cr.translate(TIP_X, TIP_Y);
+      cr.rotate(pose.rotation);
+      cr.translate(-TIP_X, -TIP_Y);
+      // A click the helper plays by itself (ClickPulse) only squishes the
+      // arrow; its marks are cua-driver's call (`cursor.marks`).
+      if (this._action !== 'click' || this._cueRequested)
+        drawActionCue(cr, this._action, progress, this._fillColor);
       drawCursorBody(cr, progress, this._action, this._fillColor);
       cr.restore();
       cr.$dispose();
@@ -839,6 +1065,7 @@ export default class WinRectsExtension extends Extension {
       GLib.source_remove(this._frameId);
       this._frameId = 0;
     }
+    this._stopPath();
     if (this._cursor) {
       this._cursor.destroy();
       this._cursor = null;
@@ -864,7 +1091,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   GetVersion() {
-    return 10;
+    return 12;
   }
   GetRects() {
     const actors = global.get_window_actors();
@@ -1030,6 +1257,7 @@ export default class WinRectsExtension extends Extension {
   }
   MoveCursor(x, y) {
     if (!this._cursor) return;
+    this._stopPath();
     const revealBadge = !this._cursor.visible;
     this._cursorX = x;
     this._cursorY = y;
@@ -1046,12 +1274,22 @@ export default class WinRectsExtension extends Extension {
   ClickPulse(x, y) {
     if (!this._cursor) return;
     const revealBadge = !this._cursor.visible;
-    this._cursorX = x;
-    this._cursorY = y;
-    this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
-    this._positionBadge(x, y, 0);
-    if (['idle', 'navigate', 'click'].includes(this._action))
+    // A move still settling onto the click point finishes by itself.
+    const end = this._path?.samples[this._path.samples.length - 1];
+    const settling = end && Math.hypot(end[1] - x, end[2] - y) <= 2;
+    if (!settling) {
+      this._stopPath();
+      this._cursor.remove_all_transitions();
+      this._cursorX = x;
+      this._cursorY = y;
+      this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
+      this._positionBadge(x, y, 0);
+    }
+    if (['idle', 'navigate', 'click'].includes(this._action)) {
       this._setCursorState('click', this._delivery, this._target);
+      this._cueRequested = false;
+    }
+    this._settleFloat();
     this._cursor.show();
     this._cursor.queue_repaint();
     if (revealBadge) this._revealBadge();
@@ -1069,10 +1307,92 @@ export default class WinRectsExtension extends Extension {
     this._glowSurface = createGlowSurface(this._fillColor);
     if (this._cursor) this._cursor.queue_repaint();
   }
+  SetCursorLook(lookJson) {
+    const look = parseCursorLook(lookJson);
+    if (!look) return;
+    this._look = look;
+    if (this._cursor) this._cursor.queue_repaint();
+  }
+  PlayCursorPath(trackJson) {
+    if (!this._cursor) return;
+    const track = parseCursorPath(trackJson);
+    if (!track) return;
+    const revealBadge = !this._cursor.visible;
+    const now = nowSeconds();
+    this._stopPath();
+    this._cursor.remove_all_transitions();
+    this._badge?.remove_all_transitions();
+    // At rest the float carries on from the clock the track ends on.
+    const end = track.samples[track.samples.length - 1][0];
+    this._rest = { at: now + end, ...track.rest };
+    const first = track.samples[0];
+    this._placeCursor(first[1], first[2]);
+    this._cursor.show();
+    if (track.samples.length > 1) {
+      this._path = { samples: track.samples, start: now };
+      this._pathFrameId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PATH_FRAME_MS, () => {
+        if (!this._cursor || !this._path) {
+          this._pathFrameId = 0;
+          return GLib.SOURCE_REMOVE;
+        }
+        const t = nowSeconds() - this._path.start;
+        const samples = this._path.samples;
+        const [, x, y] = samplePath(samples, t);
+        this._placeCursor(x, y);
+        this._cursor.queue_repaint();
+        if (t >= samples[samples.length - 1][0]) {
+          this._path = null;
+          this._pathFrameId = 0;
+          return GLib.SOURCE_REMOVE;
+        }
+        return GLib.SOURCE_CONTINUE;
+      });
+    }
+    this._cursor.queue_repaint();
+    if (revealBadge) this._revealBadge();
+  }
+  // Float offset (points) and rotation (radians) painted at `now`.
+  _pose(now) {
+    if (this._path) {
+      const [, , , dx, dy, rotation] = samplePath(this._path.samples, now - this._path.start);
+      return { dx, dy, rotation };
+    }
+    return restingFloat(this._look, this._rest, now);
+  }
+  // RenderStateCore::settle_float: a click or cue at rest eases the float
+  // out from where it is and holds it at 0. The phase runs on. A path in
+  // flight already settles at its arrival.
+  _settleFloat() {
+    if (this._path || !this._look?.float) return;
+    const now = nowSeconds();
+    // Negative when a click cut a path short: the phase is linear in time.
+    const elapsed = now - this._rest.at;
+    const amp = restAmplitude(
+      this._look.float,
+      Math.max(0, this._rest.hold + elapsed),
+      this._rest.from
+    );
+    this._rest = { at: now, phase: this._rest.phase + elapsed, hold: 0, from: amp };
+  }
+  _placeCursor(x, y) {
+    this._cursorX = x;
+    this._cursorY = y;
+    this._cursor.set_position(Math.round(x - ACTOR_CENTER), Math.round(y - ACTOR_CENTER));
+    this._positionBadge(x, y, 0);
+  }
+  _stopPath() {
+    if (this._pathFrameId) {
+      GLib.source_remove(this._pathFrameId);
+      this._pathFrameId = 0;
+    }
+    this._path = null;
+  }
   SetCursorState(action, delivery, target, active) {
     if (!ACTIONS.has(action)) return;
     if (active) {
       this._setCursorState(action, delivery, target);
+      this._cueRequested = true;
+      this._settleFloat();
     } else if (this._action === action && !ONE_SHOT_ACTIONS.has(action)) {
       this._endingAt = nowSeconds() + 0.4;
     }
@@ -1145,6 +1465,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   HideCursor() {
+    this._stopPath();
     if (this._cursor) this._cursor.hide();
     if (this._badge) this._badge.hide();
     this._badgeRevealedAt = null;

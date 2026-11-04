@@ -107,3 +107,36 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
     assert f"[recordings/windows-wpf-click/recording.mp4]({artifact_url})" in summary
     assert "No lane summary artifact was produced." not in summary
     assert step_summary.read_text(encoding="utf-8") == summary
+
+
+def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> None:
+    """Same invariant as the Linux matrix: no PR-scoped saves, dispatches still save."""
+    workflow = (ROOT / ".github/workflows/e2e-rust-windows.yml").read_text(encoding="utf-8")
+    save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
+    assert not any("ref_type == 'branch'" in line for line in save_guards)
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha"
+            " && inputs.runner == 'windows-latest' }}"
+        )
+        == 3
+    )
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}"
+        )
+        == 1
+    )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """Same invariant as the Linux matrix: the shared leg saves its own entry."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    families = {
+        name: step["with"].get("shared-key")
+        for name, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if step.get("uses") == "./.github/actions/rust-cache"
+    }
+    assert families["shared"] == "cua-driver-e2e-shared"
+    assert list(families.values()).count("cua-driver-e2e-shared") == 1

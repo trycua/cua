@@ -290,10 +290,14 @@ fi
             'git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"',
             workflow,
         )
-        self.assertIn("git rebase origin/main", workflow)
-        self.assertIn("merge_release_please_manifests.py", workflow)
-        self.assertIn('git diff --name-only --diff-filter=U', workflow)
-        self.assertIn("git rebase --abort", workflow)
+        # The replay onto main (manifest reconciliation, generated-commit drop,
+        # abort on a real conflict) lives in replay_release_branch.sh.
+        replay = (REPO_ROOT / ".github/scripts/replay_release_branch.sh").read_text()
+        self.assertIn("replay_release_branch.sh", workflow)
+        self.assertIn("git rebase origin/main", replay)
+        self.assertIn("merge_release_please_manifests.py", replay)
+        self.assertIn('git diff --name-only --diff-filter=U', replay)
+        self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_driver_release_docs.py", workflow)

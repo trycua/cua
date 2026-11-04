@@ -38,6 +38,7 @@ cua-spacesd --help
 | Listen address | `--listen` / `CUA_ENV_LISTEN` | `0.0.0.0:3211` with a token, `127.0.0.1:3211` without |
 | Port | `--port` / `CUA_ENV_PORT` | `3211` |
 | QUIC media port | `--quic-port` / `CUA_ENV_QUIC_PORT` | `3212` (`0` disables QUIC) |
+| Mesh media port | `--mesh-udp-port` / `CUA_ENV_MESH_UDP_PORT` | `3212` (the port of the mesh's own network that reaches the QUIC media port; peers dial the same number) |
 | Token | `CUA_ENV_TOKEN`, `--token-file` / `CUA_ENV_TOKEN_FILE`, `--token` | `/run/cua/env-token` |
 | Data directory | `--data-dir` / `CUA_ENV_DATA_DIR` | per-user state directory |
 | Teleport destination | `--downloads-dir` / `CUA_ENV_DOWNLOADS_DIR` | `~/Downloads` |

@@ -9,8 +9,10 @@ public enum EngineUpdate: Equatable, Sendable {
     case assistant(turn: UInt32, text: String)
     /// A tool the harness is running ("Run tests", "Open browser").
     case tool(turn: UInt32, title: String)
+    case turnStarted
     case turnEnded(turn: UInt32)
     case failed(String)
+    case exited
 }
 
 /// Where a bot is in its life, as the engine reports it.

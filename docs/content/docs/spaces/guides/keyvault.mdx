@@ -279,6 +279,35 @@ cua keyvault lock
 Scripts can pass the passphrase on stdin with `--passphrase-stdin`. See the
 [`cua keyvault` reference](/cua-cli/reference/cli/files-teleport-and-keys#cua-keyvault).
 
+### Linux
+
+On Linux the Keyvault recognises the Cua daemon by where it is installed: only
+a daemon run from the Cua package (`/opt/Cua Spaces`, `/usr/lib/cua-spaces`,
+`/usr/local/lib/cua-spaces`, in a tree only root can change) is trusted, because
+a copy in your home directory cannot be told from any other program you run. A
+`cua` built or copied into your home gets `refusing to talk to it` from every
+`cua keyvault` command (exit code 6). Install the package, or for a debug build
+set `CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON=1` for the command.
+
+## Development builds
+
+A debug `cua daemon` can trust a development build of the app instead of
+Cua's signature. It never touches the login keychain, so its vault is
+passphrase-only:
+
+```bash skip="no-runner"
+# The app build (and, for the CLI, a debug cua) by cdhash
+export CUA_KEYVAULT_TEST_REQUIREMENT="$(apps/cua-spaces-macos/scripts/dev-keyvault.sh \
+  "<path>/Cua Spaces.app" libs/cua/target/debug/cua)"
+cua daemon start --foreground
+```
+
+Launch the app built with a debug `libcua_sdk.dylib` (`CUA_SDK_DYLIB` in
+`apps/cua-spaces-macos/scripts/build-app.sh`) and
+`CUA_KEYVAULT_ALLOW_UNVERIFIED_DAEMON=1`, which lets a debug client talk to
+the unsigned daemon. Set the same variable for a debug `cua keyvault`.
+Release builds ignore both variables.
+
 See [Teleport an app](/spaces/guides/teleport-an-app) for what moves, and the
 [teleport reference](/spaces/reference/agents#session-teleport) for the `teleport_app` consent
 flow.

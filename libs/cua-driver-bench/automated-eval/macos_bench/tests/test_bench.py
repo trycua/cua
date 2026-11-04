@@ -10,6 +10,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import plistlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,6 +28,64 @@ import claude_events as ce  # noqa: E402
 
 TASKS = [f"MB-{i:02d}" for i in range(1, 13)]
 ARMS = ["cc-cua-driver", "cc-codex-cu"]
+
+
+class ToolSetupTest(unittest.TestCase):
+    def test_only_errored_tools_report_setup_failures(self) -> None:
+        errors = {
+            "screencapture": "could not create image from window",
+            "permissions_pending": "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
+            "screen_recording": "screen_recording_permission_denied",
+            "accessibility": "Accessibility permission denied",
+            "tcc": "tcc_permission_denied",
+            "daemon_not_running": "Cua Driver daemon is not running",
+            "helper_exited": "helper exited during probe",
+        }
+        for pattern, text in errors.items():
+            for is_error in (True, False):
+                with self.subTest(pattern=pattern, is_error=is_error):
+                    events = [
+                        {"type": "system", "subtype": "init"},
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "is_error": is_error,
+                                        "content": [
+                                            {"type": "image", "data": "SECRET"},
+                                            {"type": "text", "text": "x" * 310 + " " + text},
+                                        ],
+                                    }
+                                ]
+                            },
+                        },
+                    ]
+                    summary = ce.summarize(events)
+                    failure = ce.classify_failure(summary)
+                    self.assertEqual(failure["kind"], "tool_setup" if is_error else None)
+                    if is_error:
+                        self.assertEqual(failure["pattern"], pattern)
+                        self.assertLessEqual(len(failure["message"]), 300)
+                        self.assertNotIn("SECRET", json.dumps(summary))
+            summary = ce.summarize(
+                [{"type": "system", "subtype": "init"}, {"type": "result", "result": text}]
+            )
+            self.assertIsNone(ce.classify_failure(summary)["kind"])
+        for text in ("background_unavailable", "permission_denied"):
+            summary = ce.summarize(
+                [
+                    {"type": "system", "subtype": "init"},
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [{"type": "tool_result", "is_error": True, "content": text}]
+                        },
+                    },
+                ]
+            )
+            self.assertIsNone(ce.classify_failure(summary)["kind"])
 
 
 class ScheduleTest(unittest.TestCase):
@@ -211,6 +271,81 @@ class LedgerTest(unittest.TestCase):
             self.assertTrue(core.budget_allows(1e9, 6.0, None))  # no cap by default
             self.assertTrue(core.budget_allows(10.0, 4.0, 15.0))
             self.assertFalse(core.budget_allows(12.0, 4.0, 15.0))
+
+
+@unittest.skipUnless(sys.platform == "darwin", "assembly requires macOS plutil and zsh")
+class MainAssemblyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        self.main = self.home / "bench-work/cua-main"
+        self.rust = self.main / "src/libs/cua-driver/rust"
+        release = self.rust / "target/release"
+        release.mkdir(parents=True)
+        for name in ("cua-driver", "cua-cursor-theme"):
+            binary = release / name
+            binary.write_text("#!/bin/sh\necho fixture-driver\n")
+            binary.chmod(0o755)
+        skills = self.rust / "Skills/cua-driver"
+        skills.mkdir(parents=True)
+        (skills / "SKILL.md").write_text("fixture skill\n")
+        self.sha = "123456789abcdef0123456789abcdef0123456789"
+        (self.main / "SOURCE_SHA").write_text(self.sha + "\n")
+        donor = self.home / "bench-work/cua-0.34.0/CuaDriver-0.34.0.app/Contents"
+        (donor / "Resources").mkdir(parents=True)
+        (donor / "Resources/AppIcon.icns").write_bytes(b"fixture icon")
+        with (donor / "Info.plist").open("wb") as stream:
+            plistlib.dump(
+                {"CFBundleShortVersionString": "0.34.0", "CFBundleVersion": "0.34.0"}, stream
+            )
+        shim = self.home / "bin"
+        shim.mkdir()
+        codesign = shim / "codesign"
+        codesign.write_text("#!/bin/sh\nexit 0\n")
+        codesign.chmod(0o755)
+        self.env = {**os.environ, "HOME": str(self.home), "PATH": f"{shim}:{os.environ['PATH']}"}
+
+    def test_bundle_versions_follow_workspace_package(self) -> None:
+        (self.rust / "Cargo.toml").write_text(
+            '[package]\nversion = "0.0.1"\n'
+            '[workspace.package]\nversion = "9.8.7"\n'
+            '[workspace.dependencies]\nversion = "0.0.2"\n'
+        )
+        result = subprocess.run(
+            ["/bin/zsh", str(HERE.parent / "tools/vm_main_build/assemble_main.sh")],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with (self.main / "CuaDriverBenchMain.app/Contents/Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        self.assertEqual(info["CFBundleShortVersionString"], "9.8.7")
+        self.assertEqual(info["CFBundleVersion"], "9.8.7." + self.sha[:9])
+
+    def test_missing_workspace_version_fails(self) -> None:
+        for workspace in (
+            "",
+            '[workspace.package]\nedition = "2021"\n',
+            '[workspace.package]\nversion = ""\n',
+        ):
+            with self.subTest(workspace=workspace):
+                (self.rust / "Cargo.toml").write_text(
+                    '[package]\nversion = "0.0.1"\n'
+                    + workspace
+                    + '[workspace.dependencies]\nversion = "0.0.2"\n'
+                )
+                result = subprocess.run(
+                    ["/bin/zsh", str(HERE.parent / "tools/vm_main_build/assemble_main.sh")],
+                    env=self.env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("no [workspace.package] version", result.stderr)
 
 
 class PinsAndGateTest(unittest.TestCase):

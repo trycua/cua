@@ -28,6 +28,17 @@ fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
     }
 }
 
+fn should_quit_before_enabling(
+    permission: crate::apple_events::AutomationPermission,
+    ensure_permitted: impl FnOnce() -> Result<(), crate::apple_events::ScriptRefusal>,
+) -> Result<bool, crate::apple_events::ScriptRefusal> {
+    if permission == crate::apple_events::AutomationPermission::NotRunning {
+        return Ok(false);
+    }
+    ensure_permitted()?;
+    Ok(true)
+}
+
 impl BrowserJs {
     /// Returns true if this bundle ID is a supported browser.
     pub fn supports(bundle_id: &str) -> bool {
@@ -43,6 +54,9 @@ impl BrowserJs {
     ) -> anyhow::Result<String> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+
+        crate::apple_events::ensure_permitted(bundle_id, app_name)
+            .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
         // Resolve the WindowServer CGWindowID to stable properties that can be
         // matched against the browser's AppleScript window model.
@@ -91,15 +105,23 @@ end tell"#
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
-        // Quit the browser.
-        let quit_script = format!("tell application \"{app_name}\" to quit");
-        let _ = tokio::process::Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(&quit_script)
-            .output()
-            .await;
+        let should_quit = should_quit_before_enabling(
+            crate::apple_events::automation_permission(bundle_id),
+            || crate::apple_events::ensure_permitted(bundle_id, app_name),
+        )
+        .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Quit the browser.
+        if should_quit {
+            let quit_script = format!("tell application \"{app_name}\" to quit");
+            let _ = tokio::process::Command::new("/usr/bin/osascript")
+                .arg("-e")
+                .arg(&quit_script)
+                .output()
+                .await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
         // Find profile directory.
         let home = std::env::var("HOME").unwrap_or_default();
@@ -415,6 +437,36 @@ mod tests {
             },
             same_bounds_ordinal,
         }
+    }
+
+    #[test]
+    fn closed_browser_skips_quit_without_checking_consent() {
+        for refuse_ungranted in [false, true] {
+            let should_quit = should_quit_before_enabling(
+                crate::apple_events::AutomationPermission::NotRunning,
+                || panic!("closed browser checked consent with refuse={refuse_ungranted}"),
+            )
+            .unwrap();
+            assert!(!should_quit);
+        }
+    }
+
+    #[test]
+    fn running_browser_requires_permission_before_quitting() {
+        use crate::apple_events::{AutomationPermission, ScriptRefusal};
+
+        assert!(should_quit_before_enabling(AutomationPermission::Granted, || Ok(())).unwrap());
+        let refusal = ScriptRefusal {
+            code: "automation_consent_required",
+            reason: "Grant access in System Settings > Privacy & Security > Automation".into(),
+        };
+        assert_eq!(
+            should_quit_before_enabling(
+                AutomationPermission::NeedsConsent,
+                || Err(refusal.clone())
+            ),
+            Err(refusal)
+        );
     }
 
     #[test]

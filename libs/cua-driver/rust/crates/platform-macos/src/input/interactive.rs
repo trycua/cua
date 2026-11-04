@@ -761,7 +761,7 @@ mod tests {
         let bounds = target_window_bounds(&config).unwrap();
         let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
         let mut state = NativeInputState::new(config, source, bounds);
-        let mut press = |state: &mut NativeInputState, phase, x, y| {
+        let press = |state: &mut NativeInputState, phase, x, y| {
             let (event, _, _, stamped) = state
                 .pointer_event(phase, Some(PointerButton::Left), x, y, &[])
                 .unwrap();

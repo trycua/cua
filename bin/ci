@@ -628,6 +628,12 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                   tools=("actionlint",), hint="install: brew install actionlint (CI pins v1.7.12)",
                   ci=(("ci-lint-workflows.yml", "./actionlint -shellcheck= -pyflakes="),)))
 
+    if changes.touches(r"^\.github/(workflows/|larger-runners-allowed\.txt|scripts/check_no_larger_runners\.py)"):
+        add(Check("larger-runners", "no paid larger runners in workflows",
+                  "python3 .github/scripts/check_no_larger_runners.py",
+                  hint="use ubuntu-latest, macos-26 or windows-latest; opt-outs: .github/larger-runners-allowed.txt",
+                  ci=(("ci-block-larger-runners.yml", "check_no_larger_runners.py"),)))
+
     # Repo-wide gate (no path filter in CI): every image ref comes from the catalog.
     if changes.files or changes.full:
         add(Check("image-refs", "image refs come from the catalog",

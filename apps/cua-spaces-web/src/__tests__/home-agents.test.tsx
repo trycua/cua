@@ -75,10 +75,22 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     const onAgents = await found("[data-chat-run][data-chat-tone='creating']");
     expect(onAgents.textContent).toContain("fix the build");
     expect(onAgents.querySelector("[data-chat-line]")?.textContent).toMatch(/^Waiting for .+ to be ready$/);
-    const total = qa("[data-agent-list] [data-chat]").length;
-    // …and Home counts the same list.
+    // The list fills in as the host answers: wait for it to be whole (the demo's other agents and this run).
+    await waitFor(() => expect(qa("[data-agent-list] [data-chat]").length).toBeGreaterThan(1));
+    // …and Home counts the same list: its count is the Agents page's own, once both have settled.
     await act(async () => void router.navigate({ to: "/home" }));
-    expect((await found("[data-home-see-all='/agents']")).textContent?.trim()).toBe(`See all ${total}`);
+    await waitFor(async () => {
+      const shown = q("[data-home-see-all='/agents']")?.textContent?.trim();
+      expect(shown).toMatch(/^See all \d+$/);
+      await act(async () => void router.navigate({ to: "/agents" }));
+      const total = await waitFor(() => {
+        const n = qa("[data-agent-list] [data-chat]").length;
+        expect(n).toBeGreaterThan(1);
+        return n;
+      });
+      await act(async () => void router.navigate({ to: "/home" }));
+      expect(shown).toBe(`See all ${total}`);
+    }, { timeout: 15000 });
     await act(async () => void router.navigate({ to: "/agents" }));
     release();
 

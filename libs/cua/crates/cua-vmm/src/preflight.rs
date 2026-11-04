@@ -299,7 +299,7 @@ mod tests {
             } else {
                 assert!(issues.is_empty(), "{output}");
             }
-            let mut container = req.clone();
+            let mut container = req;
             container.guest = Guest::Linux;
             container.runs = Runs::Container;
             assert!(pf::evaluate(&container, &facts).is_empty());

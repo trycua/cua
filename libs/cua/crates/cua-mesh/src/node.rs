@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
 use crate::coord::{self, AuthProvider, Control, ControlConfig, ControlState, PairVerifier};
@@ -119,6 +119,8 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a failed dial answers for its peer: callers that waited for it,
 /// and callers arriving right after, fail at once instead of each dialing
 /// (and holding its local connection) for another full timeout.
+/// Connections one [`Forward`] serves at once; more are closed on accept.
+const MAX_FORWARD_CONNECTIONS: usize = 256;
 const FAILED_DIAL_HOLD: Duration = Duration::from_secs(5);
 
 /// The machine's hostname, for display.
@@ -846,6 +848,7 @@ impl Mesh {
         // its local socket while it waited for a peer that never answered.
         let stop = coord::tokio_util_cancel::Token::new();
         let stop2 = stop.clone();
+        let inflight = Arc::new(tokio::sync::Semaphore::new(MAX_FORWARD_CONNECTIONS));
         let tcp_task = tokio::spawn(async move {
             loop {
                 let conn = match tcp.accept().await {
@@ -858,13 +861,28 @@ impl Mesh {
                         continue;
                     }
                 };
+                // A forward serves a bounded number of connections at once:
+                // past it a new one is closed at once (the client retries)
+                // instead of piling up sockets behind a peer that is slow.
+                let Ok(permit) = inflight.clone().try_acquire_owned() else {
+                    tracing::debug!("mesh forward at its connection limit");
+                    continue;
+                };
                 let me = me.clone();
                 let service = service.clone();
                 let session = session2.clone();
                 let stop = stop2.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let serve = async {
-                        match me.open_stream(&peer, &service, session).await {
+                        // The client hanging up while the stream is still
+                        // being dialled ends the connection now, not when
+                        // the dial gives up (up to the connect timeout).
+                        let opened = tokio::select! {
+                            r = me.open_stream(&peer, &service, session) => r,
+                            () = client_hung_up(&conn) => return,
+                        };
+                        match opened {
                             Ok(stream) => quic::splice(conn, stream).await,
                             // The process or the node is going away (a short
                             // `cua` run exiting): nothing to warn about.
@@ -1017,6 +1035,21 @@ impl Mesh {
         for t in self.inner.udp_services.lock().expect("udp").drain(..) {
             t.abort();
         }
+    }
+}
+
+/// Resolves when the peer of `conn` closed its end (EOF or reset). Bytes it
+/// sent first are left unread for the splice.
+async fn client_hung_up(conn: &TcpStream) {
+    loop {
+        match conn.ready(tokio::io::Interest::READABLE).await {
+            Ok(r) if r.is_read_closed() => return,
+            Ok(_) => {}
+            Err(_) => return,
+        }
+        // Readable with data (not EOF): look again shortly; the bytes stay
+        // queued for the splice.
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -1349,9 +1382,14 @@ type Flows = HashMap<SocketAddr, (Arc<VSocket>, tokio::time::Instant)>;
 async fn udp_client_forward(mesh: Mesh, local: Arc<UdpSocket>, peer: PublicKey) {
     // One mesh socket per local source, so replies find their way back.
     let flows: Arc<Mutex<Flows>> = Arc::default();
+    // The per-flow readers hold the local socket: they end with this task
+    // (the forward being dropped), not 180 s later.
+    let mut readers = tokio::task::JoinSet::new();
     let mut buf = vec![0u8; 65_535];
     loop {
+        while readers.try_join_next().is_some() {}
         let Ok((n, src)) = local.recv_from(&mut buf).await else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
         };
         let Some(info) = mesh
@@ -1380,7 +1418,7 @@ async fn udp_client_forward(mesh: Mesh, local: Arc<UdpSocket>, peer: PublicKey) 
                     let back = local.clone();
                     let reader = s.clone();
                     let flows = flows.clone();
-                    tokio::spawn(async move {
+                    readers.spawn(async move {
                         loop {
                             let r =
                                 tokio::time::timeout(Duration::from_secs(180), reader.recv_from())

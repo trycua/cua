@@ -1127,7 +1127,7 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
             ),
             "cua runtime doctor",
         ),
-        "runtime_missing" | "runtime_permission" => copy(
+        "runtime_missing" | "vm_runtime_missing" | "runtime_permission" => copy(
             format!(
                 "It failed twice for the same reason: Cua can't use a container engine or VM \
                  runtime{on}. Run `cua runtime doctor` in Terminal to see what to install or \
@@ -2183,6 +2183,7 @@ mod tests {
             "insufficient_disk",
             "runtime_not_running",
             "runtime_missing",
+            "vm_runtime_missing",
             "runtime_permission",
             "virtualization_unavailable",
             "vm_limit",
@@ -3195,9 +3196,11 @@ mod tests {
                 Some(FailureCause::RuntimeMissing),
                 "{raw}"
             );
+            // QEMU is a VM runtime: its own word in telemetry, while the
+            // person still reads the same "runtime missing" message.
             assert_eq!(
                 failure_variant(raw, Some("pulling"), false, "Other"),
-                "runtime_missing"
+                "vm_runtime_missing"
             );
         }
         // Local Network privacy on the Mac that runs the VM.

@@ -76,6 +76,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
         "agents.status", "agents.connect", "agents.disconnect",
+        // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
+        "agents.recentThreads", "agents.threadHistory",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -390,6 +392,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
              "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message",
              "agents.signInStart", "agents.signInWait":
             return try await agents(method, args)
+
+        case "agents.recentThreads", "agents.threadHistory":
+            return try await agentThreads(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":
@@ -843,7 +848,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
             return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
                                                  branch: text("branch"), model: text("model"),
-                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [])
+                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [],
+                                                 cwd: text("cwd"), resumeSession: text("resumeSession"),
+                                                 resumeContext: text("resumeContext"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }

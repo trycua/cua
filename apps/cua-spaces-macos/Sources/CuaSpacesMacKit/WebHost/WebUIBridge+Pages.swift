@@ -463,6 +463,34 @@ extension WebUIBridge {
         return try await model.persistent.daemonTool(name, args)
     }
 
+    /// `agents.recentThreads {limit?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). A daemon
+    /// without them answers `unsupported`, and the Ready screen hides the list.
+    func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
+        var out: [String: Any] = [:]
+        if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        let name: String
+        if method == "agents.threadHistory" {
+            guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+            guard let id = args["id"] as? String, !id.isEmpty else { throw Failure.badArgs("id: string") }
+            out["agent"] = agent
+            out["id"] = id
+            name = "agent_thread_read"
+        } else {
+            name = "agent_threads"
+        }
+        do {
+            return try await tool(name, out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon can't list your agents' chats; update Cua") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
     /// `thread.read`, `thread.post`, `thread.members`, `thread.setRights`,
     /// `thread.agentAdd`, `thread.agentRemove`, `thread.joinCodeCreate`,
     /// `thread.joinCodeList`, `thread.joinCodeCancel`, `thread.settings`: the operation's
@@ -564,7 +592,7 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 

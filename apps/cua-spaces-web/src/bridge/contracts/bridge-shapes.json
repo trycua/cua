@@ -4464,6 +4464,47 @@
         "kind"
       ]
     },
+    "RecentThread": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "enum": [
+            "claude-code",
+            "openai-codex",
+            "hermes"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastActiveMs": {
+          "type": "number"
+        },
+        "resume": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "agent",
+        "id",
+        "title",
+        "cwd",
+        "lastActiveMs",
+        "resume"
+      ]
+    },
     "RemoteWindow": {
       "type": "object",
       "properties": {
@@ -8169,6 +8210,12 @@
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
     },
+    "agents.recentThreads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RecentThread"
+      }
+    },
     "agents.removeRoutine": {
       "type": "null"
     },
@@ -8347,6 +8394,58 @@
     },
     "agents.status": {
       "$ref": "#/$defs/ConnectionReport"
+    },
+    "agents.threadHistory": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/RecentThread"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "person",
+                  "agent"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "tsMs": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "cut": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "role",
+              "text",
+              "tsMs",
+              "cut"
+            ]
+          }
+        },
+        "earlierOmitted": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "thread",
+        "messages",
+        "earlierOmitted"
+      ]
     },
     "checklist.get": {
       "type": "object",
@@ -14177,6 +14276,8 @@
     }
   },
   "webkitUnshaped": {
+    "agents.recentThreads": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
+    "agents.threadHistory": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "thread.agentAdd": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.agentRemove": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.joinCodeCancel": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",

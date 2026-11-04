@@ -1200,6 +1200,28 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("agent_capabilities", "Report what the agent harnesses support.")
         }
         .with::<i::AgentCapabilities>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).",
+            errors: &["permission_denied"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user (never a relay caller or a Space's agent). Reads the coding agents' own stores on this computer read-only (Claude Code's projects folder, Codex's sessions, Hermes's state.db) and returns only each chat's title, folder and time; nothing is kept or sent anywhere. A store that is missing or unreadable adds nothing.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_threads\")",
+            rust_symbol: "cua_agent_threads::recent",
+            ..Spec::new("agent_threads", "List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreads>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `thread` (as in `agent_threads`), `messages` (oldest first, each `key`, `role` (`person` or `agent`), `text` (cut to 8 KiB), `ts_ms`, and `cut` when cut) and `earlier_omitted` (older messages left out).",
+            errors: &["permission_denied", "not_found", "invalid_argument"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user. Reads one chat from the agent's own store, read-only: what the person typed and the agent's replies, without tool calls, tool output, thinking or the agent's own injected instructions. Call it once the person picked the chat; continue it with agent_start's `resume_session`.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_thread_read\")",
+            rust_symbol: "cua_agent_threads::history",
+            ..Spec::new("agent_thread_read", "Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreadRead>(),
         // --- Persistent agents ----------------------------------------------------
         Spec {
             category: Category::PersistentAgents,
@@ -2259,7 +2281,7 @@ pub fn canonical(name: &str) -> &str {
 /// Tools only a person may call: no MCP server lists or runs them for an
 /// agent (the apps, the CLI and the SDK call them through the daemon).
 /// Their capabilities are never granted to an agent.
-pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve"];
+pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve", "agent_threads", "agent_thread_read"];
 
 /// Whether `name` is a tool only a person may call ([`PERSON_ONLY_TOOLS`]).
 pub fn person_only(name: &str) -> bool {
@@ -2366,7 +2388,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 119);
+        assert_eq!(tools().len(), 121);
     }
 
     #[test]
@@ -2423,7 +2445,6 @@ mod tests {
             let t = tool(name).unwrap_or_else(|| panic!("{name} is not a contract tool"));
             assert!(person_only(name));
             assert!(t.instructions.contains("Only for a person"), "{name}");
-            assert!(!t.annotations.read_only, "{name}");
         }
         assert!(!person_only("cloud_connect"));
     }

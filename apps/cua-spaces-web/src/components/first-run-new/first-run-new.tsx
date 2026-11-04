@@ -13,7 +13,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
+import { folderLabel, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import type { HostStatus } from "@/bridge/contracts/host";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
@@ -23,7 +23,9 @@ import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { AppMarkImage } from "@/components/agents/harness-mark";
+import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
   agentView,
   chosenAgent,
@@ -31,6 +33,7 @@ import {
   INSTALL_PAGES,
   NEW_RUN_EMPTY,
   nextView,
+  placeName,
   readyView,
   signInView,
   togglePick,
@@ -356,7 +359,46 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
   );
 }
 
-export function ReadyScreen({ view, agent, onDone }: { view: ReadyView; agent: string; onDone: () => void }) {
+/**
+ * "Pick up where you left off" (CUA-3319): 2 to 4 of the person's recent chats with their agents on
+ * this computer, each with **Continue in Cua**, which opens it in a new Home task with what was said
+ * so far. Nothing runs until they send. Hidden when there are none. Only each chat's title, folder
+ * and time are read here; its messages are read when it is picked.
+ */
+export function PickUpWhereYouLeftOff({ onContinue, place = "this Mac", className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
+  const threads = useRecentThreads();
+  if (!threads?.length) return null;
+  return (
+    <section aria-labelledby="pick-up-heading" className={cn("w-full", className)} data-pick-up="">
+      <h2 id="pick-up-heading" className="text-[15px] font-semibold text-white">
+        Pick up where you left off
+      </h2>
+      <ul className={cn(CARD, "mt-2.5 max-w-[600px]")}>
+        {threads.map((t) => {
+          const folder = folderLabel(t.cwd);
+          const when = agoLabel(t.lastActiveMs);
+          return (
+            <li key={`${t.agent}:${t.id}`} className="flex items-center gap-3 px-3 py-2.5" data-pick-up-row={t.agent}>
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
+                <AppMarkImage agent={t.agent} className="size-3.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px] leading-5 font-medium text-white">{t.title}</span>
+                <span className={cn("block truncate text-[13.5px] leading-[19px] font-medium", GREY)}>{folder ? `${folder}, ${when}` : when}</span>
+              </span>
+              <button type="button" className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3 text-[13.5px]")} onClick={() => onContinue(addImportedTask(t))} data-pick-up-continue="">
+                Continue in Cua
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <p className={cn("mt-2 text-[13.5px] font-medium", GREY)}>Your chats stay on {place} until you pick one.</p>
+    </section>
+  );
+}
+
+export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; place?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard?.writeText(view.command).catch(() => {});
@@ -379,6 +421,8 @@ export function ReadyScreen({ view, agent, onDone }: { view: ReadyView; agent: s
           {copied ? "Copied" : view.copy}
         </button>
       </div>
+      {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
+      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
       <div className="mt-6">
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -705,6 +749,12 @@ export function NewFirstRun() {
     writeFirstRun({ finishedLater: false, todosClosed: false });
     await navigate({ to: "/home" });
   };
+  // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
+  const continueChat = async (task: AskTask) => {
+    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
+    writeFirstRun({ finishedLater: false, todosClosed: false });
+    await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
+  };
 
   const startSignIn = () => {
     started.current = true;
@@ -765,7 +815,9 @@ export function NewFirstRun() {
       );
       break;
     case "ready":
-      body = s.agent ? <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames() })} agent={s.agent} onDone={() => go("next")} /> : null;
+      body = s.agent ? (
+        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames() })} agent={s.agent} place={placeName(os)} onDone={() => go("next")} onContinueChat={(task) => void continueChat(task)} />
+      ) : null;
       break;
     case "next": {
       const granted = (id: string) => Boolean(host?.permissions.find((p) => p.id === id)?.granted);

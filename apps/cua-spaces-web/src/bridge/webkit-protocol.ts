@@ -38,6 +38,7 @@ import { CI_WEBKIT_METHODS } from "./ops/ci";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
+import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -210,6 +211,7 @@ export const WEBKIT_METHODS = [
   "cli.install",
   ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
+  ...AGENT_THREADS_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];

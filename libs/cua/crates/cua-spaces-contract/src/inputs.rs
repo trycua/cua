@@ -678,6 +678,17 @@ pub struct AgentStart {
     /// a one-off run whose state lives only in the Space.
     #[serde(default)]
     pub home: Option<String>,
+    /// Continue this session of the harness's own (an id from
+    /// `agent_threads`) instead of starting a new one: the harness reloads
+    /// it from its own store on this computer. Give `cwd` as the chat's
+    /// folder. Not with `home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, given to
+    /// the agent before the prompt only when the harness cannot reload the
+    /// session (up to 32 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_context: Option<String>,
 }
 
 /// `agent_message`: a follow-up in the same session.
@@ -774,6 +785,30 @@ pub struct AgentStop {
 /// `agent_capabilities`: takes no arguments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCapabilities {}
+
+/// `agent_threads`: the coding agents' own recent chats on this computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreads {
+    /// Harness ids to look at: `claude-code`, `openai-codex`, `hermes`.
+    /// Default: all three.
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// How many chats, newest first (1-50). Default 4.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// `agent_thread_read`: one of those chats, what was said in it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreadRead {
+    /// Its harness id (`claude-code`, `openai-codex`, `hermes`).
+    pub agent: String,
+    /// Its id, from `agent_threads`.
+    pub id: String,
+    /// The newest messages to return (1-5000). Default 200.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
 
 /// `agent_add` (formerly `persistent_agent_create`): a named agent whose memory outlives its runs.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

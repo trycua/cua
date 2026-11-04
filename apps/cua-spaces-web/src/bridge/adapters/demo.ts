@@ -8,6 +8,7 @@
  */
 
 import type { RiskyRequest } from "../ops/nudges";
+import { demoAgentThreads } from "./demo/agent-threads";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
 import type { AgentSetupRow, ConnectionReport, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
@@ -150,6 +151,8 @@ export interface DemoOptions {
   cli?: "local" | "missing";
   /** A daemon without the Space thread (`?demo=nothread`): the Space page keeps its old layout. */
   noThread?: boolean;
+  /** No Claude Code, Codex or Hermes chats on this computer (`?demo=nochats`): the Ready screen hides "Pick up where you left off". */
+  noChats?: boolean;
   /** You in the demo's thread as someone the Space is shared with: `guest` (`?demo=thread-guest`, view only) or `member` (`?demo=thread-member`); the owner by default. */
   threadRole?: "member" | "guest";
   /** Extra scenes in the demo's thread: `?demo=thread-lookalike` (CUA-2262). */
@@ -283,6 +286,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noTeam: flags.has("no-team"),
     teamFull: flags.has("team-full"),
     noThread: flags.has("nothread"),
+    noChats: flags.has("nochats"),
     ...(flags.has("thread-guest") ? { threadRole: "guest" as const } : flags.has("thread-member") ? { threadRole: "member" as const } : {}),
     threadLookalike: flags.has("thread-lookalike"),
     threadAuthFailed: flags.has("thread-auth-failed"),
@@ -1048,6 +1052,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       if (options.threadLongDm && !options.noThread) seedLongDm(h, options.threadLongDm);
       return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
     })(),
+    ...demoAgentThreads(now, options.noChats ?? false),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);

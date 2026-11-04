@@ -304,6 +304,43 @@ pub(crate) fn background_refusal_result(
     .with_structured(structured)
 }
 
+/// Structured `element_disabled` refusal: the control reported
+/// `AXEnabled=false` immediately before dispatch and nothing was sent.
+pub(crate) fn element_disabled_result(
+    pid: i32,
+    window_id: u32,
+    disabled: &crate::input::ax_actions::ElementDisabled,
+) -> cua_driver_core::protocol::ToolResult {
+    cua_driver_core::protocol::ToolResult::error(disabled.to_string()).with_structured(
+        serde_json::json!({
+            "code": crate::input::ax_actions::ElementDisabled::CODE,
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "action": disabled.action,
+        }),
+    )
+}
+
+/// Re-read `AXEnabled` on a token target and refuse a disabled one before any
+/// cursor or input work. The snapshot's `enabled` can be stale.
+pub(crate) async fn refuse_if_disabled(
+    pid: i32,
+    window_id: u32,
+    element: &crate::ax::snapshot::RetainedElement,
+    action: &'static str,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    let element = element.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        crate::input::ax_actions::ensure_ax_action_enabled(element.as_ptr(), action)
+    })
+    .await
+    .ok()?;
+    let error = checked.err()?;
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(pid, window_id, disabled))
+}
+
 /// Hint shown with every `windowserver_connection_invalid` refusal.
 pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
 

@@ -122,6 +122,11 @@ impl Tool for DoubleClickTool {
             } else {
                 None
             };
+            if let Some(refusal) =
+                super::refuse_if_disabled(pid, wid, &element_guard, "double_click").await
+            {
+                return refusal;
+            }
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".

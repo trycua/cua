@@ -533,9 +533,9 @@ unsafe fn walk_element(
     // A disabled control is still indexed and published with `enabled: false`:
     // enablement is state the caller needs to read (a form's Save button, a
     // toolbar item in a window that is not key), not a reason to hide the row.
-    // `click` re-reads AXEnabled and refuses a disabled target
-    // (`input::ax_actions::ensure_ax_action_enabled`). Other token writers
-    // (set_value, right_click, double_click, type_text) do not check it.
+    // Every token writer (click, right_click, double_click, set_value,
+    // type_text) re-reads AXEnabled before dispatch and refuses a disabled
+    // target with `element_disabled` (`tools::refuse_if_disabled`).
     let enabled = if !actions.is_empty() || value_settable {
         copy_bool_attr(element, "AXEnabled")
     } else {

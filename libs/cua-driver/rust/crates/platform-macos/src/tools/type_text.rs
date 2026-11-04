@@ -228,6 +228,11 @@ impl Tool for TypeTextTool {
             }
             _ => (None, BackgroundKeyboardPolicy::Allowed),
         };
+        if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
+            if let Some(refusal) = super::refuse_if_disabled(pid, wid, element, "type_text").await {
+                return refusal;
+            }
+        }
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_token) for an *element px action*: pixel-click the

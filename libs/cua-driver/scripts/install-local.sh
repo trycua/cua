@@ -2,12 +2,15 @@
 # cua-driver local/debug installer — Rust backend only.
 #
 # This script is for developers working on the checked-out tree. It builds
-# cua-driver from libs/cua-driver/rust and installs the cross-platform binary.
+# cua-driver from libs/cua-driver/rust and installs it as `cua-driver-local`,
+# separate from any released `cua-driver` installation.
 #
 # Flags (forwarded verbatim to the Rust helper):
 #   --release              build the release configuration (default: debug)
 #   --autostart            register an auto-start daemon (macOS: LaunchAgent;
 #                          Linux: systemd user unit). Default off.
+#   --require-stable-signing
+#                          on macOS, refuse to install an ad-hoc-signed app
 #   --bin-dir <path>       override the symlink destination (default ~/.local/bin)
 #   --backend=rust         explicit Rust backend (no-op; Rust is the only option)
 #   --experimental-rust    legacy alias for --backend=rust (no-op)

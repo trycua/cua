@@ -118,7 +118,7 @@ OpenClaw validates missing pull requests, missing human attribution, invalid iss
 
 OpenClaw's full process is larger than we need for two products. We should adopt its PR-first source of truth and validation rules without copying its complete release system.
 
-The OpenClaw checkout was not available under `/Users/administrator/repo` during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
+The OpenClaw checkout was not available under the local repo directory during the local audit. The claims above come from the linked upstream files and must be rechecked against a pinned upstream revision before implementation. The Hermes claims were verified against the local `hermes-agent` checkout.
 
 ## Goals
 
@@ -568,7 +568,7 @@ GitHub release: draft
 Target SHA: the merged release pull request commit
 ```
 
-The Cua Driver CD workflow starts from the tag, builds the platform artifacts, looks up the matching draft by release ID, and uploads assets without changing its body or publication state. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
+The tag push starts the Cua Driver CD workflow, which builds the release artifacts from the exact tagged commit. The same run then calls the canonical Linux, Windows, macOS hosted, and standalone-browser E2E suites against that tag SHA; the Linux and Windows matrices also exercise `install-local.sh` and `install-local.ps1` in isolated namespaces. When the builds, the release artifact checks, and every E2E suite pass, the run's release job uploads the assets and publishes the draft. Nobody dispatches a workflow to publish. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
 
 #### Final GitHub release body
 
@@ -840,13 +840,15 @@ The cloud repository should consume the release manifest only after the core wor
 
 ### Publication
 
-1. Let the existing tag-triggered CD workflow build and test the exact tagged commit.
-2. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
-3. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
-4. Attach the attribution manifest and optional visual to the same release ID.
-5. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
-6. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
-7. Publish the GitHub release and produce the non-blocking social draft artifact.
+1. Let the tag-triggered CD workflow build candidate artifacts from the exact tagged commit.
+2. In that same run, call the canonical E2E workflows with the tag SHA: the Linux shared, native, capture, and `install-local.sh` lanes; the Windows interactive lanes plus the `install-local.ps1` lane on the GitHub-hosted runner; the macOS hosted matrix; and the standalone-browser suites. The macOS Lume matrix stays pre-merge evidence and is not part of this automatic gate.
+3. Run the release job on the tag push only after the builds, the release artifact checks, and every E2E suite pass. No maintainer dispatch is required.
+4. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
+5. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
+6. Attach the attribution manifest and optional visual to the same release ID.
+7. Let the **release finalizer job** be the only writer of the final body and the only job allowed to change `draft: true` to published. It waits for all required product artifacts and attribution checks, marks Cua Driver as a prerelease, and allows Lume to become the latest release.
+8. Verify that the release body matches the tag-pinned changelog data and that the manifest tag and SHA match the release target.
+9. Publish the GitHub release and produce the non-blocking social draft artifact.
 
 All jobs that mutate a release use a per-tag concurrency group. During the
 pilot, rendering failures leave the release in draft along with artifact,

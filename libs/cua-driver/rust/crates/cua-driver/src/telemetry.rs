@@ -20,12 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const POSTHOG_CAPTURE_URL: &str = "https://eu.i.posthog.com/capture/";
 const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
 const POSTHOG_TIMEOUT_SECS: u64 = 3;
 const LIFECYCLE_RETRY_BACKOFF_SECS: u64 = 15 * 60;
+const TOOL_TELEMETRY_LIMIT_PER_HOUR: usize = 1_000;
+const TOOL_TELEMETRY_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 const HOME_SUBDIRECTORY: &str = ".cua-driver";
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
@@ -54,6 +56,15 @@ const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KI
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_WORKER: &str = "CUA_DRIVER_UPDATE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_NAME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_EVENT";
+const ENV_UPDATE_SOURCE: &str = "CUA_DRIVER_UPDATE_TELEMETRY_SOURCE";
+const ENV_UPDATE_OUTCOME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_OUTCOME";
+const ENV_UPDATE_TARGET_VERSION: &str = "CUA_DRIVER_UPDATE_TELEMETRY_TARGET_VERSION";
+const ENV_UPDATE_CACHE_HIT: &str = "CUA_DRIVER_UPDATE_TELEMETRY_CACHE_HIT";
+const ENV_UPDATE_DAEMON_WAS_RUNNING: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DAEMON_RUNNING";
+const ENV_UPDATE_FAILURE_CLASS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_FAILURE_CLASS";
+const ENV_UPDATE_DURATION_MS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DURATION_MS";
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_DRIVER_INSTALL_CHANNEL";
 pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 
@@ -70,6 +81,9 @@ pub mod event {
     pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
     pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
     pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
+    pub const UPDATE_CHECKED: &str = "cua_driver_update_checked";
+    pub const UPDATE_APPLY_STARTED: &str = "cua_driver_update_apply_started";
+    pub const UPDATE_APPLY_COMPLETED: &str = "cua_driver_update_apply_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
@@ -85,7 +99,80 @@ const INSPECTABLE_EVENTS: &[&str] = &[
     event::PERMISSIONS_GATE_STARTED,
     event::PERMISSIONS_GATE_DISMISSED,
     event::PERMISSIONS_GATE_COMPLETED,
+    event::UPDATE_CHECKED,
+    event::UPDATE_APPLY_STARTED,
+    event::UPDATE_APPLY_COMPLETED,
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckSource {
+    Background,
+    Cli,
+    Mcp,
+}
+
+impl UpdateCheckSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Cli => "cli",
+            Self::Mcp => "mcp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckOutcome {
+    UpToDate,
+    Available,
+    Unavailable,
+}
+
+impl UpdateCheckOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up_to_date",
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateApplyOutcome {
+    Installed,
+    AlreadyCurrent,
+    Failed,
+}
+
+impl UpdateApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::AlreadyCurrent => "already_current",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateFailureClass {
+    None,
+    CheckFailed,
+    InstallerExit,
+    InstallerLaunch,
+}
+
+impl UpdateFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CheckFailed => "check_failed",
+            Self::InstallerExit => "installer_exit",
+            Self::InstallerLaunch => "installer_launch",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
@@ -127,16 +214,43 @@ pub fn is_enabled() -> bool {
 }
 
 fn effective_enabled() -> (bool, &'static str) {
+    // The cross-tool opt-out wins over everything.
+    if crate::env_vars::var("DO_NOT_TRACK").is_some_and(|v| {
+        let v = v.trim();
+        !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+    }) {
+        return (false, "do_not_track");
+    }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED) {
         return (value, "environment");
     }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED_COMPAT) {
         return (value, "environment_compat");
     }
+    // The switches every Cua program shares: `CUA_TELEMETRY`, then
+    // `cua config set telemetry off` / the Spaces app setting.
+    if let Some(value) = parse_env_bool(cua_telemetry::config::ENV_TELEMETRY) {
+        return (value, "environment_shared");
+    }
+    if shared_config_disabled() {
+        return (false, "shared_config");
+    }
     if let Some(value) = persisted_enabled() {
         return (value, "persisted");
     }
     (true, "default")
+}
+
+/// `[telemetry] enabled = "off"` in `$CUA_HOME/config.toml` (outside
+/// tests, `~/.cua/config.toml` when `CUA_HOME` is unset). Only an explicit
+/// off counts here; on is the driver's own default.
+fn shared_config_disabled() -> bool {
+    let home = if cfg!(test) {
+        crate::env_vars::var_os("CUA_HOME").map(PathBuf::from)
+    } else {
+        cua_telemetry::config::cua_home(&cua_telemetry::config::process_env)
+    };
+    home.is_some_and(|h| cua_telemetry::config::config_value(&h) == Some(false))
 }
 
 pub fn status() -> TelemetryStatus {
@@ -168,7 +282,9 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
-    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+    let legacy = if crate::env_vars::var_os(ENV_TELEMETRY_HOME).is_none()
+        && !crate::bundle::is_local_installation()
+    {
         home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
     } else {
         None
@@ -177,11 +293,11 @@ pub fn reset_id() -> Result<(), String> {
 }
 
 fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
-    let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
+    let lifecycle_lock = open_lock_file(home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
     lifecycle_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry lifecycle: {error}"))?;
-    let identity_lock = open_lock_file(&home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
     identity_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
@@ -277,6 +393,8 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("revived", Value::Bool(false)),
             ("concurrent_sessions_bucket", Value::String("1".into())),
             ("entry_transport", Value::String("mcp_stdio".into())),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::AGENT_SESSION_ENDED => bounded_properties(&[
@@ -295,15 +413,14 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("used_config_write", Value::Bool(false)),
             ("cursor_outcome_observed", Value::Bool(true)),
             ("cursor_overlay_enabled_at_end", Value::Bool(true)),
-            ("cursor_style", Value::String("default".into())),
-            (
-                "cursor_color_source",
-                Value::String("automatic_palette".into()),
-            ),
-            ("cursor_label_set", Value::Bool(false)),
+            ("cursor_theme", Value::String("default".into())),
             ("cursor_motion_customized", Value::Bool(false)),
             ("multi_cursor_bucket", Value::String("1".into())),
             ("observed_multiple_transports", Value::Bool(false)),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
+            ("auto_escalated_to_desktop", Value::Bool(true)),
+            ("escalation_reason", Value::String("other".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
@@ -321,6 +438,23 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("panel_shown", Value::Bool(true)),
             ("dismissed", Value::Bool(false)),
             ("resolution", Value::String("granted".into())),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
+        event::UPDATE_CHECKED => bounded_properties(&[
+            ("source", Value::String("cli".into())),
+            ("outcome", Value::String("available".into())),
+            ("target_version", Value::String("1.2.3".into())),
+            ("cache_hit", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("daemon_was_running", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("outcome", Value::String("installed".into())),
+            ("failure_class", Value::String("none".into())),
+            ("daemon_was_running", Value::Bool(false)),
             ("duration_bucket", Value::String("2s_9_999ms".into())),
         ]),
         _ => Map::new(),
@@ -354,7 +488,9 @@ pub fn register_stdio_observer() {
 }
 
 fn execution_mode() -> &'static str {
-    if cua_driver_core::embedded_mode() {
+    if cua_driver_core::is_embedded_sentinel(
+        crate::env_vars::var_os(cua_driver_core::EMBEDDED_ENV).as_deref(),
+    ) {
         "embedded"
     } else {
         "standalone"
@@ -379,6 +515,10 @@ static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = Onc
 struct AgentSessionState {
     started: std::time::Instant,
     entry_transport: Transport,
+    client_kind: cua_driver_core::session::SessionClientKind,
+    capture_scope: cua_driver_core::CaptureScope,
+    auto_escalated_to_desktop: bool,
+    escalation_reason: Option<cua_driver_core::EscalationReason>,
     transport_bits: u8,
     tool_count: u64,
     computer_action_count: u64,
@@ -391,13 +531,23 @@ struct AgentSessionState {
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
+    used_window_modality: bool,
+    used_desktop_modality: bool,
 }
 
 impl AgentSessionState {
-    fn new(entry_transport: Transport) -> Self {
+    fn new(
+        entry_transport: Transport,
+        client_kind: cua_driver_core::session::SessionClientKind,
+        capture_scope: cua_driver_core::CaptureScope,
+    ) -> Self {
         Self {
             started: std::time::Instant::now(),
             entry_transport,
+            client_kind,
+            capture_scope,
+            auto_escalated_to_desktop: false,
+            escalation_reason: None,
             transport_bits: transport_bit(entry_transport),
             tool_count: 0,
             computer_action_count: 0,
@@ -410,6 +560,8 @@ impl AgentSessionState {
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
+            used_window_modality: false,
+            used_desktop_modality: false,
         }
     }
 
@@ -417,10 +569,32 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
+        if is_history_tool(&outcome.tool_name) {
+            return;
+        }
         self.transport_bits |= transport_bit(transport);
+        self.used_window_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Window)
+        );
+        self.used_desktop_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Desktop)
+        );
         let tool_name = outcome.tool_name.as_str();
+        if tool_name == "escalate_session"
+            && outcome.success
+            && self.capture_scope == cua_driver_core::CaptureScope::Auto
+        {
+            if let Some(reason) = escalation_reason {
+                self.auto_escalated_to_desktop = true;
+                self.escalation_reason = Some(reason);
+            }
+        }
         if matches!(tool_name, "start_session" | "end_session") {
             return;
         }
@@ -454,7 +628,7 @@ impl AgentSessionState {
             tool_name,
             "set_agent_cursor_enabled"
                 | "set_agent_cursor_motion"
-                | "set_agent_cursor_style"
+                | "set_agent_cursor_theme"
                 | "get_agent_cursor_state"
         );
         self.used_recording |= matches!(
@@ -469,7 +643,7 @@ impl AgentSessionState {
         reason: cua_driver_core::session::SessionEndReason,
         cursor: Option<cua_driver_core::session::CursorOutcomeObservation>,
     ) -> Map<String, Value> {
-        use cua_driver_core::session::{CursorColorSource, CursorStyleCategory, SessionEndReason};
+        use cua_driver_core::session::{CursorThemeCategory, SessionEndReason};
         let end_reason = match reason {
             SessionEndReason::Explicit => "explicit",
             SessionEndReason::IdleTimeout => "idle_timeout",
@@ -479,23 +653,15 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
-            style: CursorStyleCategory::Unknown,
-            color_source: CursorColorSource::Unknown,
-            label_set: false,
+            visible: false,
+            theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
         });
-        let cursor_style = match cursor.style {
-            CursorStyleCategory::Default => "default",
-            CursorStyleCategory::BuiltinArrow => "builtin_arrow",
-            CursorStyleCategory::BuiltinTeardrop => "builtin_teardrop",
-            CursorStyleCategory::CustomIcon => "custom_icon",
-            CursorStyleCategory::Unknown => "unknown",
-        };
-        let cursor_color_source = match cursor.color_source {
-            CursorColorSource::AutomaticPalette => "automatic_palette",
-            CursorColorSource::Custom => "custom",
-            CursorColorSource::Unknown => "unknown",
+        let cursor_theme = match cursor.theme {
+            CursorThemeCategory::Default => "default",
+            CursorThemeCategory::Custom => "custom",
+            CursorThemeCategory::Unknown => "unknown",
         };
         bounded_properties(&[
             ("end_reason", Value::String(end_reason.into())),
@@ -529,14 +695,17 @@ impl AgentSessionState {
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
+            (
+                "used_window_modality",
+                Value::Bool(self.used_window_modality),
+            ),
+            (
+                "used_desktop_modality",
+                Value::Bool(self.used_desktop_modality),
+            ),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
-            ("cursor_style", Value::String(cursor_style.into())),
-            (
-                "cursor_color_source",
-                Value::String(cursor_color_source.into()),
-            ),
-            ("cursor_label_set", Value::Bool(cursor.label_set)),
+            ("cursor_theme", Value::String(cursor_theme.into())),
             (
                 "cursor_motion_customized",
                 Value::Bool(cursor.motion_customized),
@@ -548,6 +717,22 @@ impl AgentSessionState {
             (
                 "observed_multiple_transports",
                 Value::Bool(self.transport_bits.count_ones() > 1),
+            ),
+            (
+                "client_kind",
+                Value::String(session_client_kind(self.client_kind).into()),
+            ),
+            (
+                "capture_scope",
+                Value::String(capture_scope(self.capture_scope).into()),
+            ),
+            (
+                "auto_escalated_to_desktop",
+                Value::Bool(self.auto_escalated_to_desktop),
+            ),
+            (
+                "escalation_reason",
+                Value::String(escalation_reason(self.escalation_reason).into()),
             ),
             ("execution_mode", Value::String(execution_mode().into())),
         ])
@@ -569,6 +754,37 @@ fn session_transport(transport: cua_driver_core::session::SessionTransport) -> T
         cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
         cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
         cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn session_client_kind(kind: cua_driver_core::session::SessionClientKind) -> &'static str {
+    match kind {
+        cua_driver_core::session::SessionClientKind::Cli => "cli",
+        cua_driver_core::session::SessionClientKind::Direct => "direct",
+        cua_driver_core::session::SessionClientKind::Mcp => "mcp",
+        cua_driver_core::session::SessionClientKind::PythonSdk => "python_sdk",
+        cua_driver_core::session::SessionClientKind::TypescriptSdk => "typescript_sdk",
+    }
+}
+
+fn capture_scope(scope: cua_driver_core::CaptureScope) -> &'static str {
+    match scope {
+        cua_driver_core::CaptureScope::Auto => "auto",
+        cua_driver_core::CaptureScope::Window => "window",
+        cua_driver_core::CaptureScope::Desktop => "desktop",
+    }
+}
+
+fn escalation_reason(reason: Option<cua_driver_core::EscalationReason>) -> &'static str {
+    match reason {
+        Some(cua_driver_core::EscalationReason::AxTreePixelMismatch) => "ax_tree_pixel_mismatch",
+        Some(cua_driver_core::EscalationReason::BackgroundDeliveryFailed) => {
+            "background_delivery_failed"
+        }
+        Some(cua_driver_core::EscalationReason::ForegroundIneffective) => "foreground_ineffective",
+        Some(cua_driver_core::EscalationReason::NoWindowTarget) => "no_window_target",
+        Some(cua_driver_core::EscalationReason::Other) => "other",
+        None => "not_applicable",
     }
 }
 
@@ -640,7 +856,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
                 return;
             }
-            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.insert(
+                session_id.to_owned(),
+                AgentSessionState::new(
+                    transport,
+                    observation.client_kind,
+                    observation.capture_scope,
+                ),
+            );
             sessions.len()
         };
         let declaration = match observation.declaration {
@@ -659,6 +882,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
                     Value::String(concurrent_sessions_bucket(concurrent).into()),
                 ),
                 ("entry_transport", Value::String(transport.as_str().into())),
+                (
+                    "client_kind",
+                    Value::String(session_client_kind(observation.client_kind).into()),
+                ),
+                (
+                    "capture_scope",
+                    Value::String(capture_scope(observation.capture_scope).into()),
+                ),
                 ("execution_mode", Value::String(execution_mode().into())),
             ]),
             transport,
@@ -670,6 +901,8 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -679,7 +912,13 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             return;
         }
         if let Some(state) = sessions.get_mut(session_id) {
-            state.observe(session_transport(transport), computer_action, outcome);
+            state.observe(
+                session_transport(transport),
+                computer_action,
+                capture_modality,
+                escalation_reason,
+                outcome,
+            );
         }
     }
 
@@ -787,12 +1026,69 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    if is_history_tool(&outcome.tool_name) {
+        return;
+    }
+    let is_first_value_candidate =
+        outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
+    if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
+        return;
+    }
     let mut properties = tool_completion_properties(outcome);
     properties.insert(
         "execution_mode".into(),
         Value::String(execution_mode().into()),
     );
     capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+fn is_history_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "history_status" | "history_query")
+}
+
+#[derive(Debug)]
+struct ToolTelemetryRateLimit {
+    window_started: Instant,
+    captured: usize,
+    captured_value_event: bool,
+}
+
+impl ToolTelemetryRateLimit {
+    fn new(now: Instant) -> Self {
+        Self {
+            window_started: now,
+            captured: 0,
+            captured_value_event: false,
+        }
+    }
+
+    fn allow(&mut self, now: Instant, is_value_event: bool) -> bool {
+        if now.duration_since(self.window_started) >= TOOL_TELEMETRY_WINDOW {
+            self.window_started = now;
+            self.captured = 0;
+            self.captured_value_event = false;
+        }
+        if self.captured >= TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            if !is_value_event || self.captured_value_event {
+                return false;
+            }
+            self.captured_value_event = true;
+            return true;
+        }
+        self.captured += 1;
+        self.captured_value_event |= is_value_event;
+        true
+    }
+}
+
+static TOOL_TELEMETRY_RATE_LIMIT: OnceLock<Mutex<ToolTelemetryRateLimit>> = OnceLock::new();
+
+fn should_capture_tool_completion(now: Instant, is_value_event: bool) -> bool {
+    TOOL_TELEMETRY_RATE_LIMIT
+        .get_or_init(|| Mutex::new(ToolTelemetryRateLimit::new(now)))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .allow(now, is_value_event)
 }
 
 fn tool_completion_properties(
@@ -804,10 +1100,10 @@ fn tool_completion_properties(
         ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams
     ) {
         "other".to_owned()
-    } else if outcome.tool_name == "type_text_chars" {
-        "type_text".to_owned()
     } else {
-        outcome.tool_name
+        // Re-checked against the compile-time registry, as on the CLI
+        // path: an extension or dynamically named tool is `other`.
+        fixed_tool_name(&outcome.tool_name)
     };
     let error_class = match outcome.error_class {
         ToolErrorClass::None => "none",
@@ -899,6 +1195,7 @@ pub(crate) fn capture_mcp_startup_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_completed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -933,6 +1230,7 @@ pub(crate) fn capture_permissions_gate_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const fn permissions_gate_resolution(
     gate_failed: bool,
     dismissed: bool,
@@ -946,6 +1244,7 @@ pub(crate) const fn permissions_gate_resolution(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_started(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -963,6 +1262,7 @@ pub(crate) fn capture_permissions_gate_started(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_dismissed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1063,8 +1363,6 @@ fn normalize_model(value: Option<&str>) -> String {
         } else {
             "gemini_other"
         }
-    } else if raw.starts_with("grok-") {
-        "grok"
     } else if raw.starts_with("nova-") {
         "amazon_nova"
     } else if raw.starts_with("phi-") {
@@ -1300,6 +1598,203 @@ pub(crate) fn capture_bounded(
     spawn_payload(event_name, payload);
 }
 
+/// Record an explicit or freshness-bounded update check. A detached worker
+/// owns delivery because CLI checks are one-shot processes and must not wait
+/// on PostHog before returning to the user.
+pub(crate) fn capture_update_checked(
+    source: UpdateCheckSource,
+    outcome: UpdateCheckOutcome,
+    target_version: Option<&str>,
+    cache_hit: bool,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_CHECKED,
+        Some(source.as_str()),
+        Some(outcome.as_str()),
+        target_version,
+        Some(cache_hit),
+        None,
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_started(target_version: &str, daemon_was_running: bool) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_STARTED,
+        None,
+        None,
+        Some(target_version),
+        None,
+        Some(daemon_was_running),
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_completed(
+    target_version: Option<&str>,
+    outcome: UpdateApplyOutcome,
+    failure_class: UpdateFailureClass,
+    daemon_was_running: bool,
+    elapsed: Duration,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_COMPLETED,
+        None,
+        Some(outcome.as_str()),
+        target_version,
+        None,
+        Some(daemon_was_running),
+        Some(failure_class.as_str()),
+        Some(elapsed),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_update_event_worker(
+    event_name: &'static str,
+    source: Option<&str>,
+    outcome: Option<&str>,
+    target_version: Option<&str>,
+    cache_hit: Option<bool>,
+    daemon_was_running: Option<bool>,
+    failure_class: Option<&str>,
+    elapsed: Option<Duration>,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut worker = std::process::Command::new(executable);
+    worker
+        .env(ENV_UPDATE_EVENT_WORKER, "1")
+        .env(ENV_UPDATE_EVENT_NAME, event_name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(source) = source {
+        worker.env(ENV_UPDATE_SOURCE, source);
+    }
+    if let Some(outcome) = outcome {
+        worker.env(ENV_UPDATE_OUTCOME, outcome);
+    }
+    if let Some(version) = target_version.and_then(strict_release_version) {
+        worker.env(ENV_UPDATE_TARGET_VERSION, version);
+    }
+    if let Some(cache_hit) = cache_hit {
+        worker.env(ENV_UPDATE_CACHE_HIT, if cache_hit { "1" } else { "0" });
+    }
+    if let Some(daemon_was_running) = daemon_was_running {
+        worker.env(
+            ENV_UPDATE_DAEMON_WAS_RUNNING,
+            if daemon_was_running { "1" } else { "0" },
+        );
+    }
+    if let Some(failure_class) = failure_class {
+        worker.env(ENV_UPDATE_FAILURE_CLASS, failure_class);
+    }
+    if let Some(elapsed) = elapsed {
+        worker.env(ENV_UPDATE_DURATION_MS, elapsed.as_millis().to_string());
+    }
+    let _ = worker.spawn();
+}
+
+/// Run the hidden update-event delivery worker before CLI parsing. Every
+/// environment value is revalidated into a closed enum or strict SemVer before
+/// it can enter a payload.
+pub(crate) fn run_update_event_worker_if_requested() -> bool {
+    if !parse_env_bool(ENV_UPDATE_EVENT_WORKER).unwrap_or(false) {
+        return false;
+    }
+    let event_name = std::env::var(ENV_UPDATE_EVENT_NAME).unwrap_or_default();
+    let target_version = std::env::var(ENV_UPDATE_TARGET_VERSION)
+        .ok()
+        .and_then(|value| strict_release_version(&value))
+        .unwrap_or_else(|| "unknown".into());
+    let properties = match event_name.as_str() {
+        event::UPDATE_CHECKED => {
+            let source = match std::env::var(ENV_UPDATE_SOURCE).as_deref() {
+                Ok("background") => "background",
+                Ok("cli") => "cli",
+                Ok("mcp") => "mcp",
+                _ => return true,
+            };
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("up_to_date") => "up_to_date",
+                Ok("available") => "available",
+                Ok("unavailable") => "unavailable",
+                _ => return true,
+            };
+            bounded_properties(&[
+                ("source", Value::String(source.into())),
+                ("outcome", Value::String(outcome.into())),
+                ("target_version", Value::String(target_version)),
+                (
+                    "cache_hit",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_CACHE_HIT).unwrap_or(false)),
+                ),
+            ])
+        }
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String(target_version)),
+            (
+                "daemon_was_running",
+                Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+            ),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => {
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("installed") => "installed",
+                Ok("already_current") => "already_current",
+                Ok("failed") => "failed",
+                _ => return true,
+            };
+            let failure_class = match std::env::var(ENV_UPDATE_FAILURE_CLASS).as_deref() {
+                Ok("none") => "none",
+                Ok("check_failed") => "check_failed",
+                Ok("installer_exit") => "installer_exit",
+                Ok("installer_launch") => "installer_launch",
+                _ => return true,
+            };
+            let elapsed = std::env::var(ENV_UPDATE_DURATION_MS)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_millis)
+                .unwrap_or_default();
+            bounded_properties(&[
+                ("target_version", Value::String(target_version)),
+                ("outcome", Value::String(outcome.into())),
+                ("failure_class", Value::String(failure_class.into())),
+                (
+                    "daemon_was_running",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+                ),
+                (
+                    "duration_bucket",
+                    Value::String(duration_bucket(elapsed).into()),
+                ),
+            ])
+        }
+        _ => return true,
+    };
+    if !is_enabled() {
+        return true;
+    }
+    let Some(identity) = get_or_create_install_id() else {
+        return true;
+    };
+    let payload = build_payload(&event_name, &properties, &identity, Transport::Cli);
+    if let Err(error) =
+        post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS))
+    {
+        debug_log(format_args!("{event_name} failed: {error}"));
+    }
+    true
+}
+
 /// Record a finite CLI command only after its outcome is known. This is
 /// synchronous with a short timeout because one-shot processes may exit before
 /// a detached request is delivered.
@@ -1324,6 +1819,7 @@ pub(crate) fn capture_cli_completed(
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1332,6 +1828,7 @@ pub(crate) fn capture_cli_completed(
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     };
@@ -1356,7 +1853,7 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
-            ("tool_name", Value::String(tool_name.into())),
+            ("tool_name", Value::String(tool_name)),
             ("operation", Value::String(operation.into())),
             (
                 "computer_action",
@@ -1406,7 +1903,7 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
         .map(Duration::from_millis)
         .unwrap_or_default();
     let command = fixed_cli_command(&command);
-    let tool_name = std::env::var(ENV_CLI_COMPLETION_TOOL).ok();
+    let tool_name = crate::env_vars::var(ENV_CLI_COMPLETION_TOOL);
     let computer_action = parse_env_bool(ENV_CLI_COMPLETION_COMPUTER_ACTION).unwrap_or(false);
     let operation = std::env::var(ENV_CLI_COMPLETION_OPERATION).unwrap_or_default();
     let client_kind = std::env::var(ENV_CLI_COMPLETION_CLIENT_KIND).unwrap_or_default();
@@ -1478,6 +1975,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1486,6 +1984,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     }
@@ -1495,6 +1994,7 @@ fn fixed_tool_name(tool_name: &str) -> String {
     if tool_name == "type_text_chars" {
         return "type_text".into();
     }
+    let tool_name = cua_driver_core::tool::renamed_tool(tool_name).unwrap_or(tool_name);
     if cua_driver_core::tool::default_capabilities_for(tool_name).is_empty() {
         "other".into()
     } else {
@@ -1513,6 +2013,18 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "stop" => "stop",
             "status" => "status",
             "render" => "render",
+            _ => "other",
+        },
+        "history" => match operation {
+            "enable" => "enable",
+            "disable" => "disable",
+            "pause" => "pause",
+            "resume" => "resume",
+            "status" => "status",
+            "flush" => "flush",
+            "list" => "list",
+            "show" => "show",
+            "delete" => "delete",
             _ => "other",
         },
         "permissions" => match operation {
@@ -1539,6 +2051,16 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "update" => "update",
             "uninstall" => "uninstall",
             "status" => "status",
+            "path" => "path",
+            _ => "other",
+        },
+        "extension" => match operation {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
             "path" => "path",
             _ => "other",
         },
@@ -1612,6 +2134,8 @@ fn build_payload(
     );
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
     event_properties.insert("$process_person_profile".into(), Value::Bool(false));
+    // No location lookup from the request IP (same as Lume and the cua SDK).
+    event_properties.insert("$geoip_disable".into(), Value::Bool(true));
     event_properties.insert("$lib".into(), Value::String("cua-driver-rs".into()));
     event_properties.insert(
         "$lib_version".into(),
@@ -1701,6 +2225,11 @@ fn post_to_posthog(payload: &Value) -> Result<u16, String> {
 }
 
 fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u16, String> {
+    // Unit tests drive the real capture paths; none of them may reach the
+    // network, whatever the developer's or runner's opt-out variables say.
+    if cfg!(test) {
+        return Err("telemetry delivery is disabled in unit tests".to_owned());
+    }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
         .build()
@@ -1716,15 +2245,15 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
 }
 
 fn telemetry_home_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
+    if let Some(path) = crate::env_vars::var_os(ENV_TELEMETRY_HOME) {
         return Some(PathBuf::from(path));
     }
-    home_root().map(|home| home.join(HOME_SUBDIRECTORY))
+    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
 }
 
 fn home_root() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    crate::env_vars::var_os("HOME")
+        .or_else(|| crate::env_vars::var_os("USERPROFILE"))
         .map(PathBuf::from)
 }
 
@@ -1804,6 +2333,7 @@ fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(home.join(name))
         .map_err(|error| format!("failed to open telemetry state lock: {error}"))
 }
@@ -1830,7 +2360,9 @@ fn try_lifecycle_lock(home: &Path) -> Option<File> {
 }
 
 fn migrate_legacy_telemetry_home() {
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
+    if crate::env_vars::var_os(ENV_TELEMETRY_HOME).is_some()
+        || crate::bundle::is_local_installation()
+    {
         return;
     }
     let Some(root) = home_root() else {
@@ -1953,8 +2485,7 @@ fn current_product_version() -> &'static str {
 }
 
 fn release_version() -> String {
-    std::env::var(ENV_RELEASE_VERSION)
-        .ok()
+    crate::env_vars::var(ENV_RELEASE_VERSION)
         .and_then(|value| strict_release_version(&value))
         .unwrap_or_else(|| current_product_version().to_owned())
 }
@@ -1999,8 +2530,7 @@ fn duration_bucket(elapsed: Duration) -> &'static str {
 }
 
 fn install_channel() -> &'static str {
-    std::env::var(ENV_INSTALL_CHANNEL)
-        .ok()
+    crate::env_vars::var(ENV_INSTALL_CHANNEL)
         .and_then(|value| normalize_install_channel(&value))
         .or_else(|| {
             marker_path(TELEMETRY_INSTALL_CHANNEL_FILE_NAME)
@@ -2027,7 +2557,7 @@ fn process_session_id() -> String {
 }
 
 fn parse_env_bool(name: &str) -> Option<bool> {
-    let value = std::env::var(name).ok()?;
+    let value = crate::env_vars::var(name)?;
     match value.trim().to_ascii_lowercase().as_str() {
         "0" | "false" | "no" | "off" => Some(false),
         "1" | "true" | "yes" | "on" => Some(true),
@@ -2086,7 +2616,7 @@ fn os_version() -> String {
         .output();
     #[cfg(target_os = "linux")]
     {
-        return std::fs::read_to_string("/etc/os-release")
+        std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|contents| {
                 contents
@@ -2094,7 +2624,7 @@ fn os_version() -> String {
                     .find_map(|line| line.strip_prefix("VERSION_ID=").map(str::to_owned))
             })
             .map(|value| value.trim_matches('"').to_owned())
-            .unwrap_or_else(|| "unknown".into());
+            .unwrap_or_else(|| "unknown".into())
     }
     #[cfg(not(target_os = "linux"))]
     command
@@ -2134,7 +2664,7 @@ fn is_ci() -> bool {
     ];
     VARIABLES
         .iter()
-        .any(|name| std::env::var_os(name).is_some())
+        .any(|name| crate::env_vars::var_os(name).is_some())
 }
 
 #[cfg(test)]
@@ -2144,7 +2674,18 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Instant;
 
+    use crate::env_vars::Overrides;
+
+    // Telemetry tests share process-wide statics (pending sends, session
+    // aggregates), so they still run one at a time. Environment changes are
+    // thread-local `Overrides`, never `std::env::set_var`.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
     const TEST_CHILD_KIND: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_KIND";
     const TEST_CHILD_ROOT: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_ROOT";
     const TEST_CHILD_INDEX: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_INDEX";
@@ -2153,21 +2694,16 @@ mod tests {
     fn with_isolated_home<R>(test: impl FnOnce(&Path) -> R) -> R {
         let root = std::env::temp_dir().join(format!("cua-telemetry-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let telemetry_home = root.join(HOME_SUBDIRECTORY);
-        let old_telemetry_home = std::env::var_os(ENV_TELEMETRY_HOME);
-        unsafe {
-            std::env::set_var(ENV_TELEMETRY_HOME, &telemetry_home);
-            std::env::remove_var(ENV_TELEMETRY_ENABLED);
-            std::env::remove_var(ENV_TELEMETRY_ENABLED_COMPAT);
-        }
+        let mut env = Overrides::new();
+        env.set(ENV_TELEMETRY_HOME, root.join(HOME_SUBDIRECTORY))
+            .unset(ENV_TELEMETRY_ENABLED)
+            .unset(ENV_TELEMETRY_ENABLED_COMPAT)
+            .unset("DO_NOT_TRACK")
+            .unset("CUA_TELEMETRY")
+            .unset("CUA_HOME");
         let result = test(&root);
+        drop(env);
         let _ = std::fs::remove_dir_all(&root);
-        unsafe {
-            match old_telemetry_home {
-                Some(value) => std::env::set_var(ENV_TELEMETRY_HOME, value),
-                None => std::env::remove_var(ENV_TELEMETRY_HOME),
-            }
-        }
         result
     }
 
@@ -2212,7 +2748,9 @@ mod tests {
     }
 
     fn spawn_test_child(kind: &str, root: &Path, index: usize) -> Child {
-        Command::new(std::env::current_exe().expect("current test executable"))
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        Overrides::apply(&mut command);
+        command
             .arg(match kind {
                 "identity" => "telemetry::tests::identity_process_child",
                 "lifecycle-winner" | "lifecycle-contender" => {
@@ -2280,7 +2818,7 @@ mod tests {
 
     #[test]
     fn installation_identity_creation_is_atomic_across_processes() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             const CHILDREN: usize = 8;
             let mut children: Vec<_> = (0..CHILDREN)
@@ -2316,7 +2854,7 @@ mod tests {
 
     #[test]
     fn lifecycle_registration_is_single_writer_and_non_blocking_across_processes() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             let mut winner = spawn_test_child("lifecycle-winner", root, 0);
             assert!(wait_for_path(
@@ -2391,24 +2929,55 @@ mod tests {
 
     #[test]
     fn precedence_is_environment_then_persisted_then_default() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|_| {
             assert_eq!(effective_enabled(), (true, "default"));
             set_enabled(false).unwrap();
             assert_eq!(effective_enabled(), (false, "persisted"));
-            unsafe {
-                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
-            }
+            let mut env = Overrides::new();
+            env.set(ENV_TELEMETRY_ENABLED, "true");
             assert_eq!(effective_enabled(), (true, "environment"));
-            unsafe {
-                std::env::remove_var(ENV_TELEMETRY_ENABLED);
-            }
         });
     }
 
     #[test]
+    fn shared_cua_switches_turn_the_driver_off() {
+        let _guard = env_lock();
+        with_isolated_home(|home| {
+            assert_eq!(effective_enabled(), (true, "default"));
+            let mut env = Overrides::new();
+            env.set("DO_NOT_TRACK", "1")
+                .set(ENV_TELEMETRY_ENABLED, "true");
+            assert_eq!(effective_enabled(), (false, "do_not_track"));
+            env.unset("DO_NOT_TRACK")
+                .unset(ENV_TELEMETRY_ENABLED)
+                .set("CUA_TELEMETRY", "0");
+            assert_eq!(effective_enabled(), (false, "environment_shared"));
+            env.unset("CUA_TELEMETRY");
+            let cua_home = home.join("cua-home");
+            std::fs::create_dir_all(&cua_home).unwrap();
+            std::fs::write(
+                cua_home.join("config.toml"),
+                "[telemetry]\nenabled = \"off\"\n",
+            )
+            .unwrap();
+            env.set("CUA_HOME", &cua_home);
+            assert_eq!(effective_enabled(), (false, "shared_config"));
+            // The driver's own switch still wins over the shared file.
+            env.set(ENV_TELEMETRY_ENABLED, "true");
+            assert_eq!(effective_enabled(), (true, "environment"));
+        });
+    }
+
+    #[test]
+    fn mcp_tool_names_outside_the_registry_are_other() {
+        assert_eq!(fixed_tool_name("my_private_extension_tool"), "other");
+        assert_eq!(fixed_tool_name("type_text_chars"), "type_text");
+    }
+
+    #[test]
     fn persisted_install_channel_prevents_first_run_attribution_race() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             let home = root.join(HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&home).unwrap();
@@ -2419,13 +2988,10 @@ mod tests {
             .unwrap();
             assert_eq!(install_channel(), "install_script");
 
-            unsafe {
-                std::env::set_var(ENV_INSTALL_CHANNEL, "update_apply");
-            }
+            let mut env = Overrides::new();
+            env.set(ENV_INSTALL_CHANNEL, "update_apply");
             assert_eq!(install_channel(), "update_apply");
-            unsafe {
-                std::env::remove_var(ENV_INSTALL_CHANNEL);
-            }
+            env.unset(ENV_INSTALL_CHANNEL);
 
             std::fs::write(home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME), "invalid").unwrap();
             assert_eq!(install_channel(), "first_run");
@@ -2434,16 +3000,15 @@ mod tests {
 
     #[test]
     fn disabled_install_makes_no_request_or_marker_and_keeps_existing_id() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             let home = root.join(HOME_SUBDIRECTORY);
             std::fs::create_dir_all(&home).unwrap();
             let id = uuid::Uuid::new_v4().to_string();
             std::fs::write(home.join(TELEMETRY_ID_FILE_NAME), &id).unwrap();
             set_enabled(false).unwrap();
-            unsafe {
-                std::env::set_var(ENV_TELEMETRY_ENABLED, "false");
-            }
+            let mut env = Overrides::new();
+            env.set(ENV_TELEMETRY_ENABLED, "false");
             let mut calls = 0;
             capture_install_with_poster(|_| {
                 calls += 1;
@@ -2453,15 +3018,12 @@ mod tests {
             assert_eq!(read_install_id().as_deref(), Some(id.as_str()));
             assert!(!home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
             assert!(!home.join(TELEMETRY_RETRY_AFTER_FILE_NAME).exists());
-            unsafe {
-                std::env::remove_var(ENV_TELEMETRY_ENABLED);
-            }
         });
     }
 
     #[test]
     fn disabled_permissions_events_do_not_create_an_installation_id() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|_| {
             set_enabled(false).unwrap();
             capture_permissions_gate_started(true, false);
@@ -2489,13 +3051,31 @@ mod tests {
         assert_eq!(permissions_gate_resolution(true, true), "timeout");
     }
 
+    /// A process forked by a parallel test holds a copy of the lifecycle lock
+    /// descriptor until it execs, which makes the non-blocking lock report
+    /// busy. Retry until the poster runs so that window cannot fail the test.
+    fn capture_install_until_posted(mut post: impl FnMut(&Value) -> Result<u16, String>) {
+        for _ in 0..200 {
+            let mut posted = false;
+            capture_install_with_poster(|payload| {
+                posted = true;
+                post(payload)
+            });
+            if posted {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("lifecycle lock stayed busy");
+    }
+
     #[test]
     fn lifecycle_markers_are_written_only_after_each_2xx() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             let home = root.join(HOME_SUBDIRECTORY);
             let mut calls = 0;
-            capture_install_with_poster(|_| {
+            capture_install_until_posted(|_| {
                 calls += 1;
                 if calls == 1 {
                     Ok(200)
@@ -2509,7 +3089,7 @@ mod tests {
                 .exists());
 
             remove_file_if_exists(&home.join(TELEMETRY_RETRY_AFTER_FILE_NAME)).unwrap();
-            capture_install_with_poster(|_| Ok(200));
+            capture_install_until_posted(|_| Ok(200));
             assert!(release_marker_path(current_product_version())
                 .unwrap()
                 .exists());
@@ -2518,11 +3098,11 @@ mod tests {
 
     #[test]
     fn failed_lifecycle_delivery_defers_retries_without_marking_success() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             let home = root.join(HOME_SUBDIRECTORY);
             let mut calls = 0;
-            capture_install_with_poster(|_| {
+            capture_install_until_posted(|_| {
                 calls += 1;
                 Ok(503)
             });
@@ -2543,7 +3123,7 @@ mod tests {
 
     #[test]
     fn reset_erases_identity_and_markers_but_preserves_preference() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             set_enabled(false).unwrap();
             let home = root.join(HOME_SUBDIRECTORY);
@@ -2563,7 +3143,7 @@ mod tests {
 
     #[test]
     fn reset_erases_legacy_identity_before_migration_can_restore_it() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let root =
             std::env::temp_dir().join(format!("cua-telemetry-reset-{}", uuid::Uuid::new_v4()));
         let current = root.join(HOME_SUBDIRECTORY);
@@ -2581,8 +3161,8 @@ mod tests {
     }
 
     #[test]
-    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
-        let _guard = ENV_LOCK.lock().unwrap();
+    fn v3_payload_disables_geoip_and_sends_no_ip_or_client_timestamp() {
+        let _guard = env_lock();
         let identity = InstallationIdentity {
             id: "test-id".into(),
             persisted: true,
@@ -2619,7 +3199,7 @@ mod tests {
         }
         assert_eq!(properties["telemetry_schema_version"], 3);
         assert_eq!(properties["is_synthetic"], false);
-        assert!(!properties.contains_key("$geoip_disable"));
+        assert_eq!(properties["$geoip_disable"], true);
         assert!(!properties.contains_key("$ip"));
         let serialized = serde_json::to_string(&payload)
             .unwrap()
@@ -2650,19 +3230,11 @@ mod tests {
 
     #[test]
     fn synthetic_marker_is_explicit_and_common_to_all_events() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let original = std::env::var_os(ENV_TELEMETRY_SYNTHETIC);
-        unsafe {
-            std::env::set_var(ENV_TELEMETRY_SYNTHETIC, "true");
-        }
+        let _guard = env_lock();
+        let mut env = Overrides::new();
+        env.set(ENV_TELEMETRY_SYNTHETIC, "true");
         let payload = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(payload["properties"]["is_synthetic"], true);
-        unsafe {
-            match original {
-                Some(value) => std::env::set_var(ENV_TELEMETRY_SYNTHETIC, value),
-                None => std::env::remove_var(ENV_TELEMETRY_SYNTHETIC),
-            }
-        }
     }
 
     #[test]
@@ -2757,6 +3329,45 @@ mod tests {
     }
 
     #[test]
+    fn update_events_expose_only_bounded_funnel_properties() {
+        let checked = inspect_event(event::UPDATE_CHECKED).unwrap();
+        assert_eq!(checked["properties"]["source"], "cli");
+        assert_eq!(checked["properties"]["outcome"], "available");
+        assert_eq!(checked["properties"]["target_version"], "1.2.3");
+        assert_eq!(checked["properties"]["cache_hit"], false);
+
+        let started = inspect_event(event::UPDATE_APPLY_STARTED).unwrap();
+        assert_eq!(started["properties"]["target_version"], "1.2.3");
+        assert_eq!(started["properties"]["daemon_was_running"], false);
+
+        let completed = inspect_event(event::UPDATE_APPLY_COMPLETED).unwrap();
+        assert_eq!(completed["properties"]["outcome"], "installed");
+        assert_eq!(completed["properties"]["failure_class"], "none");
+        assert_eq!(completed["properties"]["duration_bucket"], "2s_9_999ms");
+
+        for payload in [checked, started, completed] {
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "raw_error",
+                "exit_code",
+                "install_command",
+                "release_notes_url",
+                "file_path",
+                "arguments",
+                "prompt",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "update payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn session_observation_keys_are_bounded_by_transport_and_client_category() {
         assert_eq!(
             mcp_session_observation_key(Transport::McpStdio, "claude_code"),
@@ -2774,27 +3385,15 @@ mod tests {
 
     #[test]
     fn execution_mode_requires_the_exact_embedded_sentinel() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let name = cua_driver_core::EMBEDDED_ENV;
-        let original = std::env::var_os(name);
-        unsafe {
-            std::env::remove_var(name);
-        }
+        let mut env = Overrides::new();
+        env.unset(name);
         assert_eq!(execution_mode(), "standalone");
-        unsafe {
-            std::env::set_var(name, "1");
-        }
+        env.set(name, "1");
         assert_eq!(execution_mode(), "embedded");
-        unsafe {
-            std::env::set_var(name, "true");
-        }
+        env.set(name, "true");
         assert_eq!(execution_mode(), "standalone");
-        unsafe {
-            match original {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
     }
 
     #[test]
@@ -2803,11 +3402,17 @@ mod tests {
             DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
         };
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
         state.started = std::time::Instant::now() - Duration::from_secs(75);
         state.observe(
             Transport::McpHttp,
             true,
+            Some(cua_driver_core::session::CaptureModality::Window),
+            None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
@@ -2823,6 +3428,25 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            None,
+            Some(cua_driver_core::EscalationReason::NoWindowTarget),
+            &ToolCompletionObservation {
+                tool_name: "escalate_session".into(),
+                operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: false,
+                success: true,
+                error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            Some(cua_driver_core::session::CaptureModality::Desktop),
+            None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
@@ -2840,9 +3464,8 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
-                style: cua_driver_core::session::CursorStyleCategory::CustomIcon,
-                color_source: cua_driver_core::session::CursorColorSource::Custom,
-                label_set: true,
+                visible: true,
+                theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
             }),
@@ -2856,12 +3479,16 @@ mod tests {
         assert_eq!(properties["used_page"], true);
         assert_eq!(properties["used_browser"], false);
         assert_eq!(properties["browser_refusal_count_bucket"], "0");
-        assert_eq!(properties["cursor_style"], "custom_icon");
-        assert_eq!(properties["cursor_color_source"], "custom");
-        assert_eq!(properties["cursor_label_set"], true);
+        assert_eq!(properties["cursor_theme"], "custom");
         assert_eq!(properties["cursor_motion_customized"], true);
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
+        assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["used_window_modality"], true);
+        assert_eq!(properties["used_desktop_modality"], true);
+        assert_eq!(properties["capture_scope"], "auto");
+        assert_eq!(properties["auto_escalated_to_desktop"], true);
+        assert_eq!(properties["escalation_reason"], "no_window_target");
 
         let serialized = serde_json::to_string(&properties)
             .unwrap()
@@ -2881,6 +3508,98 @@ mod tests {
                 "aggregate contains {forbidden}: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn history_reads_do_not_change_tool_or_agent_session_telemetry() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
+        };
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        for tool_name in ["history_status", "history_query"] {
+            assert!(is_history_tool(tool_name));
+            state.observe(
+                Transport::McpHttp,
+                false,
+                Some(cua_driver_core::session::CaptureModality::Desktop),
+                None,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                    computer_action: false,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+        }
+        assert_eq!(state.tool_count, 0);
+        assert_eq!(state.transport_bits, transport_bit(Transport::McpStdio));
+        assert!(!state.used_desktop_modality);
+        assert!(!state.had_successful_tool);
+    }
+
+    #[test]
+    fn failed_or_non_auto_escalation_is_not_counted() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let failed = ToolCompletionObservation {
+            tool_name: "escalate_session".into(),
+            operation: ToolOperation::NotApplicable,
+            computer_action: false,
+            success: false,
+            error_class: ToolErrorClass::InvalidParams,
+            refusal_code: ToolRefusalCode::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let mut auto = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::TypescriptSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        auto.observe(
+            Transport::Daemon,
+            false,
+            None,
+            Some(cua_driver_core::EscalationReason::Other),
+            &failed,
+        );
+        let properties =
+            auto.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
+
+        let mut desktop = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Desktop,
+        );
+        let mut successful = failed;
+        successful.success = true;
+        successful.error_class = ToolErrorClass::None;
+        desktop.observe(
+            Transport::Daemon,
+            false,
+            None,
+            Some(cua_driver_core::EscalationReason::Other),
+            &successful,
+        );
+        let properties =
+            desktop.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
     }
 
     #[test]
@@ -2910,8 +3629,12 @@ mod tests {
         );
         assert_eq!(event_properties["operation"], "browser_click_trusted");
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
-        state.observe(Transport::McpStdio, true, &outcome);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::Mcp,
+            cua_driver_core::CaptureScope::Window,
+        );
+        state.observe(Transport::McpStdio, true, None, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -2941,10 +3664,16 @@ mod tests {
                 ToolOperation::BrowserPointerDoubleClickDomEvent,
             ),
         ] {
-            let mut state = AgentSessionState::new(Transport::McpStdio);
+            let mut state = AgentSessionState::new(
+                Transport::McpStdio,
+                cua_driver_core::session::SessionClientKind::Mcp,
+                cua_driver_core::CaptureScope::Window,
+            );
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
+                None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
                     operation,
@@ -3028,7 +3757,7 @@ mod tests {
             SessionDeclaration, SessionObserver, SessionStartObservation, SessionTransport,
         };
 
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|_| {
             set_enabled(false).unwrap();
             let session_id = "private-disabled-session-telemetry-test";
@@ -3038,6 +3767,8 @@ mod tests {
                     declaration: SessionDeclaration::StartSession,
                     revived: false,
                     transport: SessionTransport::McpStdio,
+                    client_kind: cua_driver_core::session::SessionClientKind::Mcp,
+                    capture_scope: cua_driver_core::CaptureScope::Auto,
                 },
             );
             capture_tool_completed(
@@ -3061,6 +3792,20 @@ mod tests {
                 .contains_key(session_id));
             assert!(read_install_id().is_none());
         });
+    }
+
+    #[test]
+    fn tool_completion_rate_limit_resets_after_one_hour() {
+        let started = Instant::now();
+        let mut limit = ToolTelemetryRateLimit::new(started);
+
+        for _ in 0..TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            assert!(limit.allow(started, false));
+        }
+        assert!(!limit.allow(started, false));
+        assert!(limit.allow(started, true));
+        assert!(!limit.allow(started, true));
+        assert!(limit.allow(started + TOOL_TELEMETRY_WINDOW, false));
     }
 
     #[test]
@@ -3134,6 +3879,9 @@ mod tests {
     fn cli_operations_and_client_kinds_are_revalidated_in_the_worker() {
         assert_eq!(fixed_cli_operation("recording", "start"), "start");
         assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
+        assert_eq!(fixed_cli_command("history"), "history");
+        assert_eq!(fixed_cli_operation("history", "query-secret"), "other");
+        assert_eq!(fixed_cli_operation("history", "show"), "show");
         assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),
@@ -3151,7 +3899,7 @@ mod tests {
 
     #[test]
     fn process_session_id_is_stable_and_not_written_to_disk() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         with_isolated_home(|root| {
             assert_eq!(process_session_id(), process_session_id());
             let on_disk = std::fs::read_dir(root.join(HOME_SUBDIRECTORY))
@@ -3166,22 +3914,14 @@ mod tests {
 
     #[test]
     fn release_version_is_bounded_and_safe_for_payloads_and_marker_paths() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let previous = std::env::var_os(ENV_RELEASE_VERSION);
-        unsafe {
-            std::env::set_var(
-                ENV_RELEASE_VERSION,
-                "v1.2.3/../../private path?token=secret-and-more",
-            );
-        }
+        let _guard = env_lock();
+        let mut env = Overrides::new();
+        env.set(
+            ENV_RELEASE_VERSION,
+            "v1.2.3/../../private path?token=secret-and-more",
+        );
         assert_eq!(release_version(), current_product_version());
         assert!(!release_version().contains("secret"));
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var(ENV_RELEASE_VERSION, value),
-                None => std::env::remove_var(ENV_RELEASE_VERSION),
-            }
-        }
     }
 
     #[test]
@@ -3214,7 +3954,7 @@ mod tests {
 
     #[test]
     fn pending_send_flush_waits_for_bounded_delivery() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         assert_eq!(PENDING_SENDS.load(Ordering::SeqCst), 0);
         PENDING_SENDS.fetch_add(1, Ordering::SeqCst);
         std::thread::spawn(|| {

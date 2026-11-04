@@ -13,13 +13,16 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::ToolResult;
-use crate::tool::{Tool, ToolDef};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
+use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::required_session_schema;
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
+use super::tools::{browser_protected_resource_scope, browser_resource_ownership};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerAction {
@@ -52,6 +55,16 @@ impl PointerAction {
             Self::Scroll => "scroll",
             Self::Drag => "drag",
         }
+    }
+}
+
+fn visual_kind(action: PointerAction) -> BrowserVisualActionKind {
+    match action {
+        PointerAction::Hover => BrowserVisualActionKind::Hover,
+        PointerAction::RightClick => BrowserVisualActionKind::RightClick,
+        PointerAction::DoubleClick => BrowserVisualActionKind::DoubleClick,
+        PointerAction::Scroll => BrowserVisualActionKind::Scroll,
+        PointerAction::Drag => BrowserVisualActionKind::Drag,
     }
 }
 
@@ -99,6 +112,10 @@ enum Location {
 struct PointerRequest {
     action: PointerAction,
     route: InputRoute,
+    /// `delivery_mode="foreground"`: the caller accepts that trusted input
+    /// may activate the browser's own window (platforms whose trusted route
+    /// cannot stay in the background, such as Linux Chromium).
+    foreground: bool,
     origin: Location,
     destination: Option<Location>,
     delta_x: f64,
@@ -156,6 +173,7 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
             .and_then(Value::as_str)
             .unwrap_or("trusted"),
     )?;
+    let foreground = super::tools::parse_delivery_mode(args)?;
     let origin = one_location(args, "ref", "x", "y")?
         .ok_or_else(|| "browser_pointer needs a ref or x/y coordinates".to_owned())?;
     let destination = one_location(args, "destination_ref", "to_x", "to_y")?;
@@ -187,6 +205,7 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
     Ok(PointerRequest {
         action,
         route,
+        foreground,
         origin,
         destination,
         delta_x,
@@ -287,9 +306,10 @@ impl BrowserPointerTool {
                     "properties": {
                         "target_id": { "type": "string", "description": "Opaque target id minted by get_browser_state." },
                         "tab_id": { "type": "string", "description": "Opaque tab id minted by get_browser_state." },
-                        "session": { "type": "string", "description": "Explicit caller session owning the browser capabilities." },
-                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"] },
-                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted" },
+                        "session": required_session_schema(),
+                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y." },
+                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref." },
+                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
                         "x": { "type": "number", "description": "Origin viewport x in CSS pixels." },
                         "y": { "type": "number", "description": "Origin viewport y in CSS pixels." },
@@ -362,7 +382,7 @@ impl BrowserPointerTool {
                     BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
                         format!(
-                            "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery"
+                            "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery, or delivery_mode=\"foreground\" to accept that the browser window may activate"
                         ),
                     )
                     .with_detail(json!({
@@ -370,6 +390,7 @@ impl BrowserPointerTool {
                         "limitation": limitation,
                         "alternative_route": "dom_event",
                         "alternative_requires_ref": true,
+                        "alternative_delivery_mode": "foreground",
                         "trusted_delivery_attempted": false,
                     }))
                     .to_tool_result(),
@@ -381,6 +402,7 @@ impl BrowserPointerTool {
 
     async fn dom_event(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin: &ResolvedRef,
@@ -392,6 +414,19 @@ impl BrowserPointerTool {
                 Ok(id) => id,
                 Err(result) => return result,
             };
+
+        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    session,
+                    validated,
+                    &origin.cdp_session,
+                    x,
+                    y,
+                    visual_kind(request.action),
+                )
+                .await;
+        }
 
         let (function, arguments) = match request.action {
             PointerAction::Hover => (
@@ -407,7 +442,29 @@ impl BrowserPointerTool {
                 json!([]),
             ),
             PointerAction::Scroll => (
-                "function(dx,dy) { const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new WheelEvent('wheel',o)); let n=this; while (n && n !== this.ownerDocument.documentElement) { const s=this.ownerDocument.defaultView.getComputedStyle(n); if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break; n=n.parentElement; } const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement; const beforeX=target.scrollLeft; const beforeY=target.scrollTop; target.scrollBy(dx,dy); const changed=target.scrollLeft !== beforeX || target.scrollTop !== beforeY; if (changed) target.dispatchEvent(new Event('scroll')); return changed; }",
+                r#"async function(dx,dy) {
+                    const view=this.ownerDocument.defaultView;
+                    const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view};
+                    this.dispatchEvent(new WheelEvent('wheel',o));
+                    let n=this;
+                    while (n && n !== this.ownerDocument.documentElement) {
+                        const s=view.getComputedStyle(n);
+                        if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break;
+                        n=n.parentElement;
+                    }
+                    const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement;
+                    const beforeX=target.scrollLeft;
+                    const beforeY=target.scrollTop;
+                    target.scrollBy(dx,dy);
+                    // Smooth scrolling can start after this JavaScript task returns.
+                    const deadline=view.performance.now()+250;
+                    while (target.scrollLeft === beforeX && target.scrollTop === beforeY) {
+                        if (view.performance.now() >= deadline) return false;
+                        await new Promise(resolve => view.setTimeout(resolve,25));
+                    }
+                    target.dispatchEvent(new Event('scroll'));
+                    return true;
+                }"#,
                 json!([{ "value": request.delta_x }, { "value": request.delta_y }]),
             ),
             PointerAction::Drag => {
@@ -451,6 +508,7 @@ impl BrowserPointerTool {
                     "functionDeclaration": function,
                     "arguments": arguments,
                     "returnByValue": true,
+                    "awaitPromise": request.action == PointerAction::Scroll,
                 }),
             )
             .await
@@ -514,6 +572,7 @@ impl BrowserPointerTool {
             "status": "ok",
             "action": request.action.as_str(),
             "route": request.route.as_str(),
+            "delivery_mode": if request.foreground && request.route == InputRoute::Trusted { "foreground" } else { "background" },
             "target_id": validated.record.target_id,
             "tab_id": validated.tab.tab_id,
             "ref": external_ref,
@@ -530,6 +589,7 @@ impl BrowserPointerTool {
 
     async fn trusted(
         &self,
+        session: &str,
         request: &PointerRequest,
         validated: &ValidatedTab,
         origin_ref: Option<&ResolvedRef>,
@@ -560,6 +620,17 @@ impl BrowserPointerTool {
             (None, None) => None,
             _ => unreachable!("destination resolution matches request"),
         };
+
+        self.engine
+            .visualize_browser_action(
+                session,
+                validated,
+                cdp_session,
+                origin.0,
+                origin.1,
+                visual_kind(request.action),
+            )
+            .await;
 
         if let Err(error) = conn
             .call(
@@ -692,6 +763,30 @@ impl Tool for BrowserPointerTool {
         &self.def
     }
 
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         let target_id = match args.require_str("target_id") {
             Ok(value) => value,
@@ -726,7 +821,7 @@ impl Tool for BrowserPointerTool {
             Ok(value) => value,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if request.route == InputRoute::Trusted {
+        if request.route == InputRoute::Trusted && !request.foreground {
             if let Some(refusal) = self.trusted_background_refusal(&validated) {
                 return refusal;
             }
@@ -804,6 +899,7 @@ impl Tool for BrowserPointerTool {
         match request.route {
             InputRoute::DomEvent => {
                 self.dom_event(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref().expect("dom route requires ref"),
@@ -813,6 +909,7 @@ impl Tool for BrowserPointerTool {
             }
             InputRoute::Trusted => {
                 self.trusted(
+                    &session,
                     &request,
                     &validated,
                     origin_ref.as_ref(),

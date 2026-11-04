@@ -23,8 +23,16 @@ pub struct WindowInfo {
     pub layer: i32,
     pub z_index: usize,
     pub is_on_screen: bool,
+    /// Active Space on the display WindowServer associates with this window.
+    /// This can differ between windows when displays use independent Spaces.
+    pub current_space_id: Option<u64>,
     pub on_current_space: Option<bool>,
     pub space_ids: Option<Vec<u64>>,
+}
+
+pub(crate) struct WindowEnumeration {
+    pub(crate) windows: Vec<WindowInfo>,
+    pub(crate) current_space_id: Option<u64>,
 }
 
 // ── CGWindow option flags ─────────────────────────────────────────────────────
@@ -58,15 +66,134 @@ extern "C" {
 
 /// Enumerate all windows (including off-screen).
 pub fn all_windows() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements)
+    all_windows_with_space_snapshot().windows
+}
+
+pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
+    all_layer0(true)
+}
+
+/// [`all_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn all_windows_without_spaces() -> Vec<WindowInfo> {
+    all_layer0(false).windows
+}
+
+fn all_layer0(spaces: bool) -> WindowEnumeration {
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        None,
+        spaces,
+    )
 }
 
 /// Enumerate only on-screen windows.
 pub fn visible_windows() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements)
+    visible_windows_with_space_snapshot().windows
 }
 
-fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
+pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
+    visible_layer0(true)
+}
+
+/// [`visible_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn visible_windows_without_spaces() -> Vec<WindowInfo> {
+    visible_layer0(false).windows
+}
+
+fn visible_layer0(spaces: bool) -> WindowEnumeration {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        None,
+        spaces,
+    )
+}
+
+pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) -> WindowEnumeration {
+    let on_screen = if on_screen_only {
+        kCGWindowListOptionOnScreenOnly
+    } else {
+        0
+    };
+    enumerate_windows(
+        on_screen | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        true,
+    )
+}
+
+/// On-screen windows of `pid` on every layer, without the Space snapshot.
+/// Cheap enough to poll during a gesture (the drag tool watches for a
+/// drag-image window at the dragging level).
+pub(crate) fn pid_on_screen_windows_any_layer(pid: i32) -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows
+}
+
+/// On-screen windows of every app on every layer, front to back, without the
+/// Space snapshot. Use this, not [`all_windows_any_layer`], to compare two
+/// apps' window order: the all-windows list (off-screen windows included) did
+/// not follow a raise in Bench v2 (a Chromium window raised over the user's
+/// window still read as behind it), while the on-screen list does.
+pub(crate) fn on_screen_windows_any_layer() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
+}
+
+pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
+    if windows.iter().any(|w| w.layer == 0) {
+        windows.retain(|w| w.layer == 0);
+    }
+}
+
+/// Enumerate windows on every CGWindow layer, including the accessory layers
+/// (`layer != 0`) that [`all_windows`] hides.
+///
+/// Only used to answer "does this CGWindowID exist, and who owns it?" — the
+/// question `list_windows` must NOT answer, because surfacing tooltips,
+/// popovers, the Dock and every NSMenu window would swamp callers. Keeping the
+/// layer filter on enumeration and off identity lookup is what lets
+/// `get_window_state` tell "no such window" apart from "exists, but is not a
+/// layer-0 window" (issue #2237).
+pub(crate) fn all_windows_any_layer() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
+}
+
+/// Which CGWindow layers an enumeration admits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerFilter {
+    /// Normal application windows only — what `list_windows` reports.
+    ZeroOnly,
+    /// Every layer, accessory windows included.
+    AnyLayer,
+}
+
+fn enumerate_windows(
+    options: u32,
+    layers: LayerFilter,
+    pid_filter: Option<i32>,
+    spaces: bool,
+) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
         base::{CFGetTypeID, CFTypeRef, TCFType},
@@ -77,14 +204,24 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
     };
     use std::os::raw::c_void;
 
+    let space_query = spaces
+        .then(crate::input::skylight::SpaceQuery::new)
+        .flatten();
+    let current_space_id = space_query
+        .as_ref()
+        .and_then(|query| query.current_space_id());
+
     let raw_ref = unsafe { CGWindowListCopyWindowInfo(options, kCGNullWindowID) };
     if raw_ref.is_null() {
-        return vec![];
+        return WindowEnumeration {
+            windows: vec![],
+            current_space_id,
+        };
     }
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
     let total = raw.len() as usize;
-    let mut result = Vec::new();
+    let mut results = Vec::new();
 
     for (idx, item) in raw.iter().enumerate() {
         let item = *item;
@@ -147,8 +284,11 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
         let layer = get_num("kCGWindowLayer") as i32;
         let is_on_screen = get_bool("kCGWindowIsOnscreen");
 
-        // Only include layer-0 windows.
-        if layer != 0 {
+        // Only include layer-0 windows, unless the caller asked for every layer.
+        if layer != 0 && layers == LayerFilter::ZeroOnly {
+            continue;
+        }
+        if pid_filter.is_some_and(|wanted| wanted != pid) {
             continue;
         }
 
@@ -184,9 +324,9 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
         };
 
         // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = total - idx;
+        let z_index = cua_driver_core::window_target::z_index_from_front_to_back(total, idx);
 
-        result.push(WindowInfo {
+        results.push(WindowInfo {
             window_id,
             pid,
             app_name,
@@ -195,12 +335,43 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
             layer,
             z_index,
             is_on_screen,
+            current_space_id: None,
             on_current_space: None,
             space_ids: None,
         });
     }
 
-    result
+    if let Some(query) = &space_query {
+        for window in &mut results {
+            let space_ids = query.window_space_ids(window.window_id);
+            let display_space_id = space_ids
+                .as_ref()
+                .and_then(|_| query.current_space_for_window(window.window_id));
+            apply_window_space_metadata(window, space_ids, display_space_id);
+        }
+    }
+
+    WindowEnumeration {
+        windows: results,
+        current_space_id,
+    }
+}
+
+fn apply_window_space_metadata(
+    window: &mut WindowInfo,
+    space_ids: Option<Vec<u64>>,
+    current_space_id: Option<u64>,
+) {
+    window.on_current_space = window_on_current_space(space_ids.as_deref(), current_space_id);
+    window.current_space_id = current_space_id;
+    window.space_ids = space_ids;
+}
+
+fn window_on_current_space(
+    space_ids: Option<&[u64]>,
+    current_space_id: Option<u64>,
+) -> Option<bool> {
+    Some(space_ids?.contains(&current_space_id?))
 }
 
 fn get_bounds_num(
@@ -227,7 +398,94 @@ fn get_bounds_num(
                 None
             }
         })
+        .filter(|v| v.is_finite())
         .unwrap_or(0.0)
+}
+
+/// Look up a window by its CGWindowID across every layer.
+///
+/// Returns `None` only when WindowServer has no record of the id at all —
+/// which is precisely the "closed or fabricated window_id" signal callers need.
+/// Whether `window` has the shape of an AppKit-internal helper window:
+/// WindowServer reports it off screen, untitled, and in no Space. Real
+/// windows that are minimized, hidden, or on another Space keep a Space or
+/// stay listed in `AXWindows`; these helpers have neither, so no AX tool can
+/// read, move, or focus them (issue #4525).
+fn may_be_ax_less_helper(window: &WindowInfo) -> bool {
+    !window.is_on_screen
+        && window.title.trim().is_empty()
+        && window.space_ids.as_ref().is_none_or(Vec::is_empty)
+}
+
+/// Drop helper-shaped windows that `pid`'s `AXWindows` does not list.
+///
+/// `ax_window_ids` is asked once per pid that owns a helper-shaped window.
+/// When it returns `None` (no Accessibility trust, unresponsive app) every
+/// window of that pid is kept: an unreadable AX list proves nothing.
+pub(crate) fn retain_ax_reachable_with(
+    windows: &mut Vec<WindowInfo>,
+    mut ax_window_ids: impl FnMut(i32) -> Option<std::collections::HashSet<u32>>,
+) {
+    let mut by_pid: std::collections::HashMap<i32, Option<std::collections::HashSet<u32>>> =
+        std::collections::HashMap::new();
+    windows.retain(|window| {
+        if !may_be_ax_less_helper(window) {
+            return true;
+        }
+        by_pid
+            .entry(window.pid)
+            .or_insert_with(|| ax_window_ids(window.pid))
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&window.window_id))
+    });
+}
+
+/// [`retain_ax_reachable_with`] against the live `AXWindows` of each app.
+///
+/// Only applies to an enumeration whose Space query worked
+/// (`current_space_id` is known): without it every window lacks Space
+/// membership, and an off-Space window, which `AXWindows` also omits, would be
+/// indistinguishable from a helper.
+pub(crate) fn retain_ax_reachable(windows: &mut Vec<WindowInfo>, current_space_id: Option<u64>) {
+    if current_space_id.is_some() {
+        retain_ax_reachable_with(windows, crate::ax::bindings::ax_window_ids_of_pid);
+    }
+}
+
+pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
+    all_windows_any_layer()
+        .into_iter()
+        .find(|w| w.window_id == window_id)
+}
+
+/// Whether `window_id` is on the current Space of its display. `None` when
+/// WindowServer does not know the window or Space membership is unreadable.
+pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {
+    all_windows()
+        .into_iter()
+        .find(|w| w.window_id == window_id)?
+        .on_current_space
+}
+
+/// WindowServer's Space and on-screen view of one layer-0 window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WindowSpaceView {
+    /// See [`WindowInfo::on_current_space`].
+    pub(crate) on_current_space: Option<bool>,
+    /// `kCGWindowIsOnscreen`.
+    pub(crate) is_on_screen: bool,
+}
+
+/// [`WindowSpaceView`] of `window_id`, or `None` when WindowServer does not
+/// list it as a layer-0 window.
+pub(crate) fn window_space_view_by_id(window_id: u32) -> Option<WindowSpaceView> {
+    all_windows()
+        .into_iter()
+        .find(|w| w.window_id == window_id)
+        .map(|w| WindowSpaceView {
+            on_current_space: w.on_current_space,
+            is_on_screen: w.is_on_screen,
+        })
 }
 
 /// Look up a window's bounds by its CGWindowID.
@@ -235,22 +493,62 @@ fn get_bounds_num(
 /// Returns `None` if the window is not currently known to WindowServer
 /// (e.g. it was closed or the window_id is stale).
 pub fn window_bounds_by_id(window_id: u32) -> Option<WindowBounds> {
-    all_windows()
-        .into_iter()
-        .find(|w| w.window_id == window_id)
-        .map(|w| w.bounds)
+    window_info_by_id(window_id).map(|w| w.bounds)
+}
+
+/// Who owns a requested CGWindowID, as seen by a caller that asked about `pid`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowOwner {
+    /// The window exists and `pid` owns it.
+    SamePid,
+    /// The window exists, but a different process owns it. macOS hosts a
+    /// sandboxed app's Open/Save panel in
+    /// `com.apple.appkit.xpc.openAndSavePanelService`, so the panel's
+    /// CGWindowID belongs to that service and not to the app that opened it
+    /// (issue #2237).
+    ForeignPid {
+        owner_pid: i32,
+        owner_app_name: String,
+    },
+    /// WindowServer has no record of the id — closed, stale, or fabricated.
+    Unknown,
+}
+
+/// Pure form of [`resolve_window_owner`] over an already-enumerated window
+/// list, so the ownership decision is testable without a WindowServer.
+pub fn resolve_window_owner_in(windows: &[WindowInfo], pid: i32, window_id: u32) -> WindowOwner {
+    match windows.iter().find(|w| w.window_id == window_id) {
+        None => WindowOwner::Unknown,
+        Some(w) if w.pid == pid => WindowOwner::SamePid,
+        Some(w) => WindowOwner::ForeignPid {
+            owner_pid: w.pid,
+            owner_app_name: w.app_name.clone(),
+        },
+    }
+}
+
+/// Resolve whether `pid` really owns `window_id`. Blocking (one CGWindowList
+/// enumeration).
+pub fn resolve_window_owner(pid: i32, window_id: u32) -> WindowOwner {
+    resolve_window_owner_in(&all_windows_any_layer(), pid, window_id)
 }
 
 /// Select the best window_id for a pid.
 pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
-    let windows = all_windows();
-    let pid_windows: Vec<&WindowInfo> = windows.iter().filter(|w| w.pid == pid).collect();
+    let mut pid_windows = enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows;
+    prefer_layer0(&mut pid_windows);
     if pid_windows.is_empty() {
         anyhow::bail!("pid {pid} has no windows");
     }
-    let mut on_screen: Vec<&&WindowInfo> = pid_windows.iter().filter(|w| w.is_on_screen).collect();
+    let mut on_screen: Vec<&WindowInfo> = pid_windows.iter().filter(|w| w.is_on_screen).collect();
     if !on_screen.is_empty() {
-        on_screen.sort_by(|a, b| b.z_index.cmp(&a.z_index));
+        on_screen.sort_by_key(|window| std::cmp::Reverse(window.z_index));
         return Ok(on_screen[0].window_id);
     }
     let largest = pid_windows.iter().max_by(|a, b| {
@@ -261,4 +559,290 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(largest.unwrap().window_id)
+}
+
+/// kCGPopUpMenuWindowLevel: the WindowServer layer of an open menu's window.
+const MENU_WINDOW_LAYER: i32 = 101;
+
+/// The ids of the menu windows `pid` has on screen; `None` when
+/// WindowServer's window list could not be read (unknown, never "no menu").
+pub(crate) fn menu_window_ids(pid: i32) -> Option<Vec<u32>> {
+    let windows = all_windows_any_layer();
+    (!windows.is_empty()).then(|| {
+        windows
+            .iter()
+            .filter(|w| w.pid == pid && w.is_on_screen && w.layer == MENU_WINDOW_LAYER)
+            .map(|w| w.window_id)
+            .collect()
+    })
+}
+
+/// How many menu windows of `pid` are on screen that were not in `before`;
+/// `None` when unknown.
+pub(crate) fn new_menu_windows(pid: i32, before: &[u32]) -> Option<usize> {
+    menu_window_ids(pid).map(|ids| ids.iter().filter(|id| !before.contains(id)).count())
+}
+
+/// `Some(true)` once no menu window of `pid` outside `before` is on screen
+/// (polled for up to 400 ms), `Some(false)` when one still is, `None` when
+/// that could not be read.
+pub(crate) fn wait_for_new_menus_closed(pid: i32, before: &[u32]) -> Option<bool> {
+    poll_until_no_menu(
+        || new_menu_windows(pid, before),
+        std::time::Duration::from_millis(400),
+    )
+}
+
+fn poll_until_no_menu(
+    mut open_menus: impl FnMut() -> Option<usize>,
+    timeout: std::time::Duration,
+) -> Option<bool> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if open_menus()? == 0 {
+            return Some(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Some(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounds_numbers_preserve_finite_values_and_default_non_finite_or_missing_values() {
+        use core_foundation::{
+            base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
+        };
+
+        let bounds = CFDictionary::from_CFType_pairs(&[
+            (
+                CFString::new("X").as_CFType(),
+                CFNumber::from(12.5).as_CFType(),
+            ),
+            (
+                CFString::new("Y").as_CFType(),
+                CFNumber::from(f64::INFINITY).as_CFType(),
+            ),
+            (
+                CFString::new("Width").as_CFType(),
+                CFNumber::from(f64::NAN).as_CFType(),
+            ),
+            (
+                CFString::new("Height").as_CFType(),
+                CFNumber::from(f64::NEG_INFINITY).as_CFType(),
+            ),
+        ]);
+        let bounds = unsafe { CFDictionary::wrap_under_get_rule(bounds.as_concrete_TypeRef()) };
+
+        assert_eq!(get_bounds_num(&bounds, "X"), 12.5);
+        assert_eq!(get_bounds_num(&bounds, "Y"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Width"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Height"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Missing"), 0.0);
+    }
+
+    #[test]
+    fn space_membership_checks_all_spaces_for_a_window() {
+        assert_eq!(window_on_current_space(Some(&[2, 4]), Some(4)), Some(true));
+        assert_eq!(window_on_current_space(Some(&[2, 4]), Some(3)), Some(false));
+    }
+
+    #[test]
+    fn space_membership_stays_unknown_without_either_side() {
+        assert_eq!(window_on_current_space(None, Some(4)), None);
+        assert_eq!(window_on_current_space(Some(&[4]), None), None);
+    }
+
+    #[test]
+    fn per_window_current_space_is_the_one_used_for_membership() {
+        let mut secondary_display_window = window(42, 800, "TextEdit");
+        apply_window_space_metadata(&mut secondary_display_window, Some(vec![2, 4]), Some(4));
+
+        assert_eq!(secondary_display_window.current_space_id, Some(4));
+        assert_eq!(secondary_display_window.space_ids, Some(vec![2, 4]));
+        assert_eq!(secondary_display_window.on_current_space, Some(true));
+        assert!(secondary_display_window
+            .space_ids
+            .as_deref()
+            .is_some_and(|spaces| spaces.contains(
+                &secondary_display_window
+                    .current_space_id
+                    .expect("display Space must be present")
+            )));
+    }
+
+    fn window(window_id: u32, pid: i32, app_name: &str) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            pid,
+            app_name: app_name.into(),
+            title: String::new(),
+            bounds: WindowBounds {
+                x: 0.,
+                y: 580.,
+                width: 500.,
+                height: 500.,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn layer0_windows_win_over_accessory_windows() {
+        let accessory = WindowInfo {
+            layer: 3,
+            ..window(41, 800, "TextEdit")
+        };
+        let mut windows = vec![accessory, window(42, 800, "TextEdit")];
+        prefer_layer0(&mut windows);
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [42]
+        );
+    }
+
+    #[test]
+    fn accessory_only_app_keeps_its_accessory_windows() {
+        let mut windows = vec![WindowInfo {
+            layer: 3,
+            ..window(194, 800, "OnboardingApp")
+        }];
+        prefer_layer0(&mut windows);
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [194]
+        );
+    }
+
+    #[test]
+    fn menu_close_polling_keeps_an_unreadable_window_list_unknown() {
+        let timeout = std::time::Duration::from_millis(100);
+        assert_eq!(poll_until_no_menu(|| Some(0), timeout), Some(true));
+        assert_eq!(poll_until_no_menu(|| None, timeout), None);
+        assert_eq!(poll_until_no_menu(|| Some(1), timeout), Some(false));
+        let mut reads = [Some(1), Some(0)].into_iter();
+        assert_eq!(
+            poll_until_no_menu(|| reads.next().flatten(), timeout),
+            Some(true)
+        );
+    }
+
+    fn helper(window_id: u32, pid: i32) -> WindowInfo {
+        WindowInfo {
+            title: String::new(),
+            is_on_screen: false,
+            space_ids: None,
+            ..window(window_id, pid, "TextEdit")
+        }
+    }
+
+    #[test]
+    fn ax_less_helper_windows_are_dropped() {
+        // #4525: TextEdit's off-screen, untitled, Space-less AppKit helpers.
+        let mut visible = window(58, 3018, "TextEdit");
+        visible.title = "Untitled".into();
+        let mut windows = vec![visible, helper(57, 3018), helper(55, 3018)];
+        let mut asked = Vec::new();
+        retain_ax_reachable_with(&mut windows, |pid| {
+            asked.push(pid);
+            Some([58].into_iter().collect())
+        });
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [58]
+        );
+        assert_eq!(asked, [3018], "AXWindows is read once per pid");
+    }
+
+    #[test]
+    fn helper_shaped_windows_listed_in_ax_or_unreadable_are_kept() {
+        let mut windows = vec![helper(57, 1), helper(70, 2)];
+        retain_ax_reachable_with(&mut windows, |pid| match pid {
+            1 => Some([57].into_iter().collect()),
+            _ => None,
+        });
+        assert_eq!(windows.len(), 2);
+    }
+
+    #[test]
+    fn off_space_titled_and_on_screen_windows_never_query_ax() {
+        let mut off_space = helper(1, 9);
+        off_space.space_ids = Some(vec![4]);
+        let mut titled = helper(2, 9);
+        titled.title = "Notes".into();
+        let on_screen = WindowInfo {
+            is_on_screen: true,
+            ..helper(3, 9)
+        };
+        let mut windows = vec![off_space, titled, on_screen];
+        retain_ax_reachable_with(&mut windows, |_| panic!("AX must not be read"));
+        assert_eq!(windows.len(), 3);
+    }
+
+    #[test]
+    fn owner_resolves_same_pid() {
+        let windows = vec![window(42, 800, "TextEdit")];
+        assert_eq!(
+            resolve_window_owner_in(&windows, 800, 42),
+            WindowOwner::SamePid
+        );
+    }
+
+    /// Issue #2237: TextEdit's Open panel is a layer-0 CGWindow owned by
+    /// `com.apple.appkit.xpc.openAndSavePanelService`, not by TextEdit. The
+    /// caller must be told the real owner pid, not handed TextEdit's menu bar.
+    #[test]
+    fn owner_detects_out_of_process_panel_host() {
+        let windows = vec![
+            window(41, 800, "TextEdit"),
+            window(42, 900, "Open and Save Panel Service"),
+        ];
+        assert_eq!(
+            resolve_window_owner_in(&windows, 800, 42),
+            WindowOwner::ForeignPid {
+                owner_pid: 900,
+                owner_app_name: "Open and Save Panel Service".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn owner_is_unknown_for_fabricated_id() {
+        let windows = vec![window(42, 800, "TextEdit")];
+        assert_eq!(
+            resolve_window_owner_in(&windows, 800, 0xFFFF_FFF0),
+            WindowOwner::Unknown
+        );
+    }
+
+    #[test]
+    fn owner_is_unknown_for_zero_id() {
+        // kCGNullWindowID is never a real window number.
+        let windows = vec![window(42, 800, "TextEdit")];
+        assert_eq!(
+            resolve_window_owner_in(&windows, 800, 0),
+            WindowOwner::Unknown
+        );
+    }
+
+    #[test]
+    fn owner_is_unknown_after_the_window_closes() {
+        // Stale id: it was enumerated once, then the panel was dismissed.
+        let before = vec![window(42, 900, "Open and Save Panel Service")];
+        assert_eq!(
+            resolve_window_owner_in(&before, 900, 42),
+            WindowOwner::SamePid
+        );
+        assert_eq!(resolve_window_owner_in(&[], 900, 42), WindowOwner::Unknown);
+    }
 }

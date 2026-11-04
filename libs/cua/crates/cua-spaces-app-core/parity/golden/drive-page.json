@@ -1,0 +1,389 @@
+{
+  "flow": "drive-page",
+  "frames": [
+    {
+      "step": "loading the root",
+      "view": {
+        "busy": true,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": "load",
+        "requestRows": [
+          "agent:researcher asks to read agents/writer/outputs/ | cite the draft | Approve | Deny | -"
+        ],
+        "requests": "Requests: 1",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "the root",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": null,
+        "requestRows": [
+          "agent:researcher asks to read agents/writer/outputs/ | cite the draft | Approve | Deny | -"
+        ],
+        "requests": "Requests: 1",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "approve",
+      "view": {
+        "busy": true,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": "approve q1",
+        "requestRows": [
+          "agent:researcher asks to read agents/writer/outputs/ | cite the draft | Approve | Deny | -"
+        ],
+        "requests": "Requests: 1",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "declined",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": "not confirmed: you declined",
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": null,
+        "requestRows": [
+          "agent:researcher asks to read agents/writer/outputs/ | cite the draft | Approve | Deny | -"
+        ],
+        "requests": "Requests: 1",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "approve again",
+      "view": {
+        "busy": true,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": "approve q1",
+        "requestRows": [
+          "agent:researcher asks to read agents/writer/outputs/ | cite the draft | Approve | Deny | -"
+        ],
+        "requests": "Requests: 1",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "granted",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [
+          "agent:researcher can read agents/writer/outputs/ |  | Revoke | - | -"
+        ],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "revoke",
+      "view": {
+        "busy": true,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [
+          "agent:researcher can read agents/writer/outputs/ |  | Revoke | - | -"
+        ],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": "revoke g1",
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "revoked",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": null,
+        "open": null,
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "not mounted",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "Not mounted",
+        "open": "Open in Finder -",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "open mounts first",
+      "view": {
+        "busy": true,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "Not mounted",
+        "open": "Open in Finder -",
+        "request": "mount and reveal",
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "opened",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [],
+        "devices": "Devices: 0",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "Not mounted",
+        "open": "Open in Finder -",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "mounted and syncing",
+      "view": {
+        "busy": false,
+        "conflicts": [
+          "public/plan.md | From maya-linux, 2m ago | Open /Volumes/Cua Volume/public/plan (conflict from maya-linux 2026-09-29 14.02.11).md | Resolve"
+        ],
+        "deviceRows": [
+          "maya-mbp (this device) | 2 pending, synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "open in Finder",
+      "view": {
+        "busy": true,
+        "conflicts": [
+          "public/plan.md | From maya-linux, 2m ago | Open /Volumes/Cua Volume/public/plan (conflict from maya-linux 2026-09-29 14.02.11).md | Resolve"
+        ],
+        "deviceRows": [
+          "maya-mbp (this device) | 2 pending, synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": "reveal /Volumes/Cua Volume",
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "shown",
+      "view": {
+        "busy": false,
+        "conflicts": [
+          "public/plan.md | From maya-linux, 2m ago | Open /Volumes/Cua Volume/public/plan (conflict from maya-linux 2026-09-29 14.02.11).md | Resolve"
+        ],
+        "deviceRows": [
+          "maya-mbp (this device) | 2 pending, synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "resolve",
+      "view": {
+        "busy": true,
+        "conflicts": [
+          "public/plan.md | From maya-linux, 2m ago | Open /Volumes/Cua Volume/public/plan (conflict from maya-linux 2026-09-29 14.02.11).md | Resolve"
+        ],
+        "deviceRows": [
+          "maya-mbp (this device) | 2 pending, synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": "resolve public/plan.md",
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "resolved",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [
+          "maya-mbp (this device) | Synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": null,
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "feed error",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [
+          "maya-mbp (this device) | 2 pending, synced just now | - | - | -",
+          "maya-linux | Seen 2m ago | - | - | -"
+        ],
+        "devices": "Devices: 2",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "In Finder at /Volumes/Cua Volume",
+        "open": "Open in Finder /Volumes/Cua Volume",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": "!The bucket refused the change log: AccessDenied.",
+        "title": "Volume"
+      }
+    },
+    {
+      "step": "this Mac only",
+      "view": {
+        "busy": false,
+        "conflicts": [],
+        "deviceRows": [
+          "maya-mbp (this device) | Not syncing | - | - | -"
+        ],
+        "devices": "Devices: 1",
+        "error": null,
+        "grantRows": [],
+        "grants": "Grants: Agents have only their own folders.",
+        "mountLine": "Not mounted",
+        "open": "Open in Finder -",
+        "request": null,
+        "requestRows": [],
+        "requests": "Requests: 0",
+        "syncNote": "Syncing across devices needs S3-compatible storage.",
+        "title": "Volume"
+      }
+    }
+  ]
+}

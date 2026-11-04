@@ -1,7 +1,8 @@
 """Abstract transport protocol.
 
 A Transport moves commands and data between the sandbox client and the
-underlying computer (local host, WebSocket to computer-server, or cloud API).
+underlying computer: cua-spacesd through the ``cua`` SDK (EnvTransport) or an
+agentless legacy path (QMP, VNC, SSH, ADB, OSWorld, the local host).
 """
 
 from __future__ import annotations
@@ -66,6 +67,25 @@ class Transport(ABC):
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
 
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        json_body: Any = None,
+        body: bytes | None = None,
+        headers: Any = None,
+        timeout: float | None = None,
+        max_response_bytes: int | None = None,
+    ) -> Any:
+        """Request an auxiliary named service exposed by this sandbox."""
+        raise NotImplementedError(f"{type(self).__name__} does not support named service requests.")
+
+    async def native_service(self, name: str) -> Any:
+        """The ``cua.Service`` handle for a named service (used by ``sb.mcp``)."""
+        raise NotImplementedError(f"{type(self).__name__} does not expose native service handles.")
+
     async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
 
@@ -75,7 +95,8 @@ class Transport(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support port forwarding. "
-            "Supported transports: ADBTransport, GRPCEmulatorTransport, SSHTransport."
+            "Supported transports: ADBTransport, EnvTransport, GRPCEmulatorTransport, "
+            "SSHTransport."
         )
 
     async def close_tunnel(self, info: "TunnelInfo") -> None:
@@ -111,9 +132,9 @@ class Transport(ABC):
         """Return a URL to view this sandbox's display.
 
         Args:
-            share: If True, return a public link with embedded credentials
-                   (cloud only). If False, return a direct connection URL
-                   (localhost VNC for local runtimes; auth-gated URL for cloud).
+            share: If True, return a shareable link with embedded credentials
+                   (where the transport supports one). If False, return a
+                   direct connection URL (localhost VNC for local runtimes).
 
         Raises NotImplementedError for transports that don't expose a display
         (e.g. HTTP, ADB).

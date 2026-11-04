@@ -21,11 +21,6 @@
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HANDLE;
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
-};
-#[cfg(target_os = "windows")]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::StationsAndDesktops::{
@@ -34,8 +29,6 @@ use windows::Win32::System::StationsAndDesktops::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
-#[cfg(target_os = "windows")]
-use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -184,6 +177,94 @@ pub fn desktop_state() -> DesktopState {
     }
 }
 
+/// Why this session's desktop can't be seen or driven right now, in words
+/// a person can act on. `None` when it can (or when the cause is unknown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopUnavailable {
+    /// The Remote Desktop session is disconnected: Windows draws nothing.
+    Disconnected,
+    /// The PC is locked (or on another secure desktop such as UAC).
+    Locked,
+}
+
+impl DesktopUnavailable {
+    /// The sentence a remote viewer or agent sees.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Disconnected => {
+                "This PC's desktop isn't on screen: its Remote Desktop session is disconnected, \
+                 so Windows stopped drawing it. Reconnect, or sign in at the PC itself. To leave \
+                 a remote PC reachable, end Remote Desktop with \
+                 `tscon %sessionname% /dest:console` (as administrator) instead of closing the window."
+            }
+            Self::Locked => {
+                "This PC is locked, and Windows doesn't let apps see or use its lock screen. \
+                 Unlock it at the PC. For unattended access, turn off automatic locking \
+                 (Settings > Accounts > Sign-in options, and the screen saver's \"On resume, \
+                 display logon screen\")."
+            }
+        }
+    }
+}
+
+/// Decides from the session's connect state and its input desktop.
+pub fn classify_desktop_unavailable(
+    disconnected: bool,
+    input_desktop_name: Option<&str>,
+) -> Option<DesktopUnavailable> {
+    if disconnected {
+        return Some(DesktopUnavailable::Disconnected);
+    }
+    match input_desktop_name {
+        Some(name) if name.eq_ignore_ascii_case("Default") => None,
+        // Winlogon (locked, Ctrl+Alt+Del) or no access to the input desktop
+        // at all, which is what a locked session gives a user process.
+        _ => Some(DesktopUnavailable::Locked),
+    }
+}
+
+/// Whether this process's session is a disconnected Remote Desktop session.
+#[cfg(target_os = "windows")]
+pub fn session_disconnected() -> bool {
+    use windows::core::PWSTR;
+    use windows::Win32::System::RemoteDesktop::{
+        WTSConnectState, WTSDisconnected, WTSFreeMemory, WTSQuerySessionInformationW,
+        WTS_CONNECTSTATE_CLASS, WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+    };
+    unsafe {
+        let mut buffer = PWSTR::null();
+        let mut bytes = 0u32;
+        if WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            WTS_CURRENT_SESSION,
+            WTSConnectState,
+            &mut buffer,
+            &mut bytes,
+        )
+        .is_err()
+            || buffer.is_null()
+        {
+            return false;
+        }
+        let state = if bytes as usize >= std::mem::size_of::<WTS_CONNECTSTATE_CLASS>() {
+            *(buffer.0 as *const WTS_CONNECTSTATE_CLASS)
+        } else {
+            WTS_CONNECTSTATE_CLASS(-1)
+        };
+        WTSFreeMemory(buffer.0 as *mut std::ffi::c_void);
+        state == WTSDisconnected
+    }
+}
+
+/// Why the desktop can't be captured or driven now (`None`: it can, or the
+/// cause is unknown). Called after a capture fails, to say why.
+#[cfg(target_os = "windows")]
+pub fn desktop_unavailable() -> Option<DesktopUnavailable> {
+    let disconnected = session_disconnected();
+    let state = desktop_state();
+    classify_desktop_unavailable(disconnected, state.input_desktop_name.as_deref())
+}
+
 /// Whether the calling process has an attached interactive desktop.
 ///
 /// Two-step check:
@@ -201,56 +282,40 @@ pub fn desktop_state() -> DesktopState {
 #[cfg(target_os = "windows")]
 pub fn interactive_desktop_check() -> Result<bool, String> {
     let state = desktop_state();
-    if state.session_id == Some(0) {
-        return Err("running in Windows Session 0".to_owned());
+    classify_interactive_desktop(&state)
+}
+
+#[cfg(target_os = "windows")]
+fn classify_interactive_desktop(state: &DesktopState) -> Result<bool, String> {
+    match state.session_id {
+        Some(0) => return Err("running in Windows Session 0".to_owned()),
+        Some(_) => {}
+        None => {
+            return Err(
+                "could not determine the Windows session id; refusing desktop runtime ownership"
+                    .to_owned(),
+            );
+        }
     }
     if !state.has_process_window_station {
         return Err(state
             .process_window_station_error
+            .clone()
             .unwrap_or_else(|| "GetProcessWindowStation returned null".to_owned()));
     }
     Ok(state.has_foreground_window())
 }
 
-/// Probe whether `CoCreateInstance(CUIAutomation)` succeeds — the same
-/// COM call used by `get_window_state` / `list_windows` element-walks.
-///
-/// Initialises COM (apartment-threaded) for the duration of the probe
-/// and uninitialises before returning so the rest of the doctor run is
-/// unaffected.
-///
-/// **COM lifecycle invariant** — the IUIAutomation interface produced by
-/// CoCreateInstance must be released BEFORE CoUninitialize tears down
-/// the apartment, or `IUnknown::Release` will dereference freed COM
-/// infrastructure and segfault (0xC0000005 ACCESS_VIOLATION). We flatten
-/// the probe result into a plain `Result<(), String>` first so the
-/// `IUIAutomation` is dropped at the end of the statement, then call
-/// CoUninitialize on the next line.
+/// Probe the same bounded desktop child enumeration used by window tools.
 #[cfg(target_os = "windows")]
 pub fn ui_automation_available() -> Result<(), String> {
-    unsafe {
-        // Failure here means COM is already initialised in this thread
-        // (likely apartment-threaded too); we only call CoUninitialize
-        // when our CoInitializeEx actually paired with a fresh init.
-        let init_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let need_uninit = init_result.is_ok();
+    crate::uia::windows_enum::probe_desktop_availability()
+}
 
-        // Bind to `_` immediately so the IUIAutomation interface is
-        // dropped (and `Release()` runs while COM is still up) before
-        // we proceed to CoUninitialize. Holding the binding past
-        // CoUninitialize and letting Drop run at function return
-        // causes a use-after-free in the COM apartment.
-        let result =
-            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-                .map(|_| ())
-                .map_err(|e| format!("{e}"));
-
-        if need_uninit {
-            CoUninitialize();
-        }
-
-        result
-    }
+/// Whether a UIA failure leaves the Win32-only fallback usable.
+pub fn is_degraded_ui_automation_error(err: &str) -> bool {
+    err.starts_with("UI Automation desktop enumeration exceeded ")
+        || err.starts_with("UI Automation is busy with an earlier timed-out provider call;")
 }
 
 // ── Non-Windows stubs so the cua-driver crate can call into us
@@ -313,6 +378,42 @@ pub fn is_non_interactive_error(err: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn state(session_id: u32, attached: bool, foreground: bool) -> DesktopState {
+        DesktopState {
+            session_id: Some(session_id),
+            has_process_window_station: attached,
+            process_window_station_error: (!attached).then(|| "no station".into()),
+            thread_desktop_name: None,
+            thread_desktop_error: None,
+            input_desktop_name: None,
+            input_desktop_error: None,
+            foreground_hwnd: foreground.then_some(1),
+        }
+    }
+
+    #[test]
+    fn session_zero_is_classified_as_runtime_unavailable() {
+        let error = classify_interactive_desktop(&state(0, true, true)).unwrap_err();
+        assert!(error.contains("Session 0"));
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, true)),
+            Ok(true)
+        );
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, false)),
+            Ok(false),
+            "a temporarily locked interactive session remains a valid owner"
+        );
+        let mut unknown = state(2, true, true);
+        unknown.session_id = None;
+        assert!(
+            classify_interactive_desktop(&unknown)
+                .unwrap_err()
+                .contains("could not determine"),
+            "an unclassified process must not be allowed to claim an interactive runtime"
+        );
+    }
+
     #[test]
     fn current_session_id_returns_some_on_windows() {
         // ProcessIdToSessionId on the current process must always succeed.
@@ -329,7 +430,22 @@ mod tests {
         // a predictable way — we accept that as a valid outcome rather
         // than failing the test, so the same suite runs green on both
         // dev boxes and headless CI runners.
-        match ui_automation_available() {
+        //
+        // Other tests in this crate (for example the health report) run the
+        // same probe concurrently through the process-wide UIA single-flight
+        // gate, which answers "busy" instead of queueing. Wait for the gate
+        // rather than treating a sibling test's probe as a failure.
+        let mut result = ui_automation_available();
+        for _ in 0..100 {
+            match &result {
+                Err(e) if e.contains("UI Automation is busy") => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    result = ui_automation_available();
+                }
+                _ => break,
+            }
+        }
+        match result {
             Ok(()) => {}
             Err(e) => {
                 let non_interactive =
@@ -340,5 +456,60 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod error_classification_tests {
+    use super::is_degraded_ui_automation_error;
+
+    #[test]
+    fn only_bounded_desktop_failures_are_degraded() {
+        assert!(is_degraded_ui_automation_error(
+            "UI Automation desktop enumeration exceeded 4000ms; a UIA provider may be hung."
+        ));
+        assert!(is_degraded_ui_automation_error(
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration."
+        ));
+        assert!(!is_degraded_ui_automation_error(
+            "CoCreateInstance(CUIAutomation) failed"
+        ));
+        assert!(!is_degraded_ui_automation_error(
+            "FindAll(TreeScope_Children): operation timed out"
+        ));
+        assert!(!is_degraded_ui_automation_error("provider is busy"));
+    }
+}
+
+#[cfg(test)]
+mod desktop_unavailable_tests {
+    use super::{classify_desktop_unavailable, DesktopUnavailable};
+
+    #[test]
+    fn a_disconnected_session_says_so_first() {
+        assert_eq!(
+            classify_desktop_unavailable(true, Some("Default")),
+            Some(DesktopUnavailable::Disconnected)
+        );
+        assert!(DesktopUnavailable::Disconnected.message().contains("tscon"));
+    }
+
+    #[test]
+    fn a_locked_session_is_the_winlogon_desktop_or_none() {
+        assert_eq!(
+            classify_desktop_unavailable(false, Some("Winlogon")),
+            Some(DesktopUnavailable::Locked)
+        );
+        assert_eq!(
+            classify_desktop_unavailable(false, None),
+            Some(DesktopUnavailable::Locked)
+        );
+        assert!(DesktopUnavailable::Locked.message().contains("locked"));
+    }
+
+    #[test]
+    fn the_default_desktop_is_available() {
+        assert_eq!(classify_desktop_unavailable(false, Some("Default")), None);
+        assert_eq!(classify_desktop_unavailable(false, Some("default")), None);
     }
 }

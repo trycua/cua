@@ -1,0 +1,17 @@
+[package]
+name = "cua-spaces-transcript"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "cua-spaces-fixtures"
+path = "src/bin/cua-spaces-fixtures.rs"

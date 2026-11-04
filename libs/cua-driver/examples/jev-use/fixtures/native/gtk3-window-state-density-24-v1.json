@@ -1,0 +1,1466 @@
+{
+ "_fixture": {
+  "source": "CuaTestHarness GTK3 task mode with CUA_GTK3_TASK_DENSITY=24 (initial), observed by cua-driver 0.30.4 get_window_state on X11 with AT-SPI",
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed."
+ },
+ "app_name": "Main.py",
+ "bounds_complete": true,
+ "capture_id": "capture_962f6564bb34418a88cc82bedfb90147_0000000000000000",
+ "coordinate_frame": "window",
+ "element_count": 61,
+ "elements": [
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 48,
+    "x": 466,
+    "y": 174
+   },
+   "label": "Help",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 48,
+    "x": 461,
+    "y": 118
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 105,
+    "x": 355,
+    "y": 174
+   },
+   "label": "Show sidebar",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 105,
+    "x": 350,
+    "y": 118
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 91,
+    "x": 258,
+    "y": 174
+   },
+   "label": "Word count",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 91,
+    "x": 253,
+    "y": 118
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 92,
+    "x": 160,
+    "y": 174
+   },
+   "label": "Spell check",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 92,
+    "x": 155,
+    "y": 118
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 100,
+    "x": 21,
+    "y": 174
+   },
+   "label": "Insert image",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 100,
+    "x": 16,
+    "y": 118
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 92,
+    "x": 672,
+    "y": 140
+   },
+   "label": "Insert table",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 92,
+    "x": 667,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 85,
+    "x": 576,
+    "y": 140
+   },
+   "label": "Align right",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 85,
+    "x": 571,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 96,
+    "x": 466,
+    "y": 140
+   },
+   "label": "Align center",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 96,
+    "x": 461,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 76,
+    "x": 355,
+    "y": 140
+   },
+   "label": "Align left",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 76,
+    "x": 350,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 9,
+   "element_token": "s00000001:9",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 81,
+    "x": 258,
+    "y": 140
+   },
+   "label": "Underline",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 81,
+    "x": 253,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 10,
+   "element_token": "s00000001:10",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 50,
+    "x": 160,
+    "y": 140
+   },
+   "label": "Italic",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 50,
+    "x": 155,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 11,
+   "element_token": "s00000001:11",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 47,
+    "x": 21,
+    "y": 140
+   },
+   "label": "Bold",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 47,
+    "x": 16,
+    "y": 84
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 12,
+   "element_token": "s00000001:12",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 61,
+    "x": 672,
+    "y": 106
+   },
+   "label": "Import",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 61,
+    "x": 667,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 13,
+   "element_token": "s00000001:13",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 90,
+    "x": 576,
+    "y": 106
+   },
+   "label": "Export PDF",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 90,
+    "x": 571,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 14,
+   "element_token": "s00000001:14",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 104,
+    "x": 466,
+    "y": 106
+   },
+   "label": "Print preview",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 104,
+    "x": 461,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 15,
+   "element_token": "s00000001:15",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 72,
+    "x": 355,
+    "y": 106
+   },
+   "label": "Rename",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 72,
+    "x": 350,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 16,
+   "element_token": "s00000001:16",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 80,
+    "x": 258,
+    "y": 106
+   },
+   "label": "Duplicate",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 80,
+    "x": 253,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 17,
+   "element_token": "s00000001:17",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 79,
+    "x": 160,
+    "y": 106
+   },
+   "label": "Copy link",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 79,
+    "x": 155,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 18,
+   "element_token": "s00000001:18",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 133,
+    "x": 21,
+    "y": 106
+   },
+   "label": "Increase font size",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 133,
+    "x": 16,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 19,
+   "element_token": "s00000001:19",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 84,
+    "x": 672,
+    "y": 72
+   },
+   "label": "Save draft",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 84,
+    "x": 667,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 20,
+   "element_token": "s00000001:20",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 81,
+    "x": 576,
+    "y": 72
+   },
+   "label": "Zoom out",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 81,
+    "x": 571,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 21,
+   "element_token": "s00000001:21",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 72,
+    "x": 466,
+    "y": 72
+   },
+   "label": "Zoom in",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 72,
+    "x": 461,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 22,
+   "element_token": "s00000001:22",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 51,
+    "x": 355,
+    "y": 72
+   },
+   "label": "Redo",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 51,
+    "x": 350,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 23,
+   "element_token": "s00000001:23",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 52,
+    "x": 258,
+    "y": 72
+   },
+   "label": "Undo",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 52,
+    "x": 253,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 24,
+   "element_token": "s00000001:24",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 68,
+    "x": 160,
+    "y": 72
+   },
+   "label": "Refresh",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 68,
+    "x": 155,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 25,
+   "element_token": "s00000001:25",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 89,
+    "x": 21,
+    "y": 72
+   },
+   "label": "New folder",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 89,
+    "x": 16,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 26,
+   "element_token": "s00000001:26",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 154,
+    "x": 21,
+    "y": 210
+   },
+   "label": "Search",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 154,
+    "x": 16,
+    "y": 154
+   }
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 27,
+   "element_token": "s00000001:27",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 154,
+    "x": 183,
+    "y": 210
+   },
+   "label": "Note title",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 154,
+    "x": 178,
+    "y": 154
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 28,
+   "element_token": "s00000001:28",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 203,
+    "x": 504,
+    "y": 298
+   },
+   "label": "Check spelling as you type",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 203,
+    "x": 499,
+    "y": 242
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 29,
+   "element_token": "s00000001:29",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 184,
+    "x": 308,
+    "y": 298
+   },
+   "label": "Remember window size",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 184,
+    "x": 303,
+    "y": 242
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 30,
+   "element_token": "s00000001:30",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 132,
+    "x": 164,
+    "y": 298
+   },
+   "label": "Show status bar",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 132,
+    "x": 159,
+    "y": 242
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 31,
+   "element_token": "s00000001:31",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 131,
+    "x": 21,
+    "y": 298
+   },
+   "label": "Compact layout",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 131,
+    "x": 16,
+    "y": 242
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 32,
+   "element_token": "s00000001:32",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 203,
+    "x": 504,
+    "y": 273
+   },
+   "label": "Sync on startup",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 203,
+    "x": 499,
+    "y": 217
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 33,
+   "element_token": "s00000001:33",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 184,
+    "x": 308,
+    "y": 273
+   },
+   "label": "Show hidden files",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 184,
+    "x": 303,
+    "y": 217
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 34,
+   "element_token": "s00000001:34",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 132,
+    "x": 164,
+    "y": 273
+   },
+   "label": "Dark mode",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 132,
+    "x": 159,
+    "y": 217
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 35,
+   "element_token": "s00000001:35",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 131,
+    "x": 21,
+    "y": 273
+   },
+   "label": "Line numbers",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 131,
+    "x": 16,
+    "y": 217
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 36,
+   "element_token": "s00000001:36",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 203,
+    "x": 504,
+    "y": 248
+   },
+   "label": "Auto-save",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 203,
+    "x": 499,
+    "y": 192
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 37,
+   "element_token": "s00000001:37",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 184,
+    "x": 308,
+    "y": 248
+   },
+   "label": "Word wrap",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 184,
+    "x": 303,
+    "y": 192
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 38,
+   "element_token": "s00000001:38",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 132,
+    "x": 164,
+    "y": 248
+   },
+   "label": "Show previews",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 132,
+    "x": 159,
+    "y": 192
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 39,
+   "element_token": "s00000001:39",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 131,
+    "x": 21,
+    "y": 248
+   },
+   "label": "Show ruler",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 131,
+    "x": 16,
+    "y": 192
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 40,
+   "element_token": "s00000001:40",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 60,
+    "x": 21,
+    "y": 327
+   },
+   "label": "Light",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 60,
+    "x": 16,
+    "y": 271
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 41,
+   "element_token": "s00000001:41",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 59,
+    "x": 93,
+    "y": 327
+   },
+   "label": "Dark",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 59,
+    "x": 88,
+    "y": 271
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 42,
+   "element_token": "s00000001:42",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 77,
+    "x": 164,
+    "y": 327
+   },
+   "label": "System",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 77,
+    "x": 159,
+    "y": 271
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 43,
+   "element_token": "s00000001:43",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 51,
+    "x": 21,
+    "y": 356
+   },
+   "label": "List",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 51,
+    "x": 16,
+    "y": 300
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 44,
+   "element_token": "s00000001:44",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 55,
+    "x": 84,
+    "y": 356
+   },
+   "label": "Grid",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 55,
+    "x": 79,
+    "y": 300
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 45,
+   "element_token": "s00000001:45",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 85,
+    "x": 151,
+    "y": 356
+   },
+   "label": "Columns",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 85,
+    "x": 146,
+    "y": 300
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 46,
+   "element_token": "s00000001:46",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 67,
+    "x": 21,
+    "y": 385
+   },
+   "label": "Name",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 67,
+    "x": 16,
+    "y": 329
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 47,
+   "element_token": "s00000001:47",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 59,
+    "x": 100,
+    "y": 385
+   },
+   "label": "Date",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 59,
+    "x": 95,
+    "y": 329
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 48,
+   "element_token": "s00000001:48",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 57,
+    "x": 171,
+    "y": 385
+   },
+   "label": "Kind",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 57,
+    "x": 166,
+    "y": 329
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 49,
+   "element_token": "s00000001:49",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 103,
+    "x": 21,
+    "y": 414
+   },
+   "label": "Small icons",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 103,
+    "x": 16,
+    "y": 358
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 50,
+   "element_token": "s00000001:50",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 119,
+    "x": 136,
+    "y": 414
+   },
+   "label": "Medium icons",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 119,
+    "x": 131,
+    "y": 358
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 51,
+   "element_token": "s00000001:51",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 102,
+    "x": 267,
+    "y": 414
+   },
+   "label": "Large icons",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 102,
+    "x": 262,
+    "y": 358
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 52,
+   "element_token": "s00000001:52",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 84,
+    "x": 21,
+    "y": 485
+   },
+   "label": "Increment",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 84,
+    "x": 16,
+    "y": 429
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 53,
+   "element_token": "s00000001:53",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 55,
+    "x": 113,
+    "y": 485
+   },
+   "label": "Reset",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 55,
+    "x": 108,
+    "y": 429
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 54,
+   "element_token": "s00000001:54",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 743,
+    "x": 21,
+    "y": 521
+   },
+   "label": "I agree",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 743,
+    "x": 16,
+    "y": 465
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 55,
+   "element_token": "s00000001:55",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 65,
+    "x": 21,
+    "y": 550
+   },
+   "label": "Small",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 65,
+    "x": 16,
+    "y": 494
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 56,
+   "element_token": "s00000001:56",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 81,
+    "x": 98,
+    "y": 550
+   },
+   "label": "Medium",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 81,
+    "x": 93,
+    "y": 494
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 57,
+   "element_token": "s00000001:57",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 64,
+    "x": 191,
+    "y": 550
+   },
+   "label": "Large",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 64,
+    "x": 186,
+    "y": 494
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 58,
+   "element_token": "s00000001:58",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 234,
+    "x": 21,
+    "y": 579
+   },
+   "label": "Note",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 234,
+    "x": 16,
+    "y": 523
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 59,
+   "element_token": "s00000001:59",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 83,
+    "x": 263,
+    "y": 579
+   },
+   "label": "Save note",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 83,
+    "x": 258,
+    "y": 523
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 60,
+   "element_token": "s00000001:60",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 43,
+    "x": 21,
+    "y": 617
+   },
+   "label": "Exit",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 43,
+    "x": 16,
+    "y": 561
+   }
+  }
+ ],
+ "elements_complete": true,
+ "nodes_pending": 0,
+ "nodes_visited": 61,
+ "pid": 3702,
+ "returned_element_count": 61,
+ "screenshot_frame_valid": true,
+ "screenshot_height": 605,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 775,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 61,
+ "truncated": false,
+ "walk_elapsed_ms": 165,
+ "window_bounds": {
+  "height": 605,
+  "width": 775,
+  "x": 5,
+  "y": 56
+ },
+ "window_id": 50331651,
+ "window_title": "CuaTestHarness GTK3 Tasks"
+}

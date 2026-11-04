@@ -1,0 +1,51 @@
+[package]
+name = "cua-snapshot-sync"
+description = "Copies checkpoints between your machines: content-addressed manifests, read grants, resumable LAN transfer with verification, and a fallback copy in S3 or a shared folder (the Cua Volume)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cua-snapshot-sync"
+homepage = "https://cua.ai/docs/cua-sdk"
+keywords = ["cua","snapshot","sync","s3","checkpoint"]
+categories = ["filesystem","network-programming"]
+
+[features]
+default = ["pull", "fallback"]
+# The HTTP route a host serves its snapshot files on (cua-spacesd).
+serve = ["dep:axum", "dep:http", "dep:tokio-util"]
+# Fetching snapshot files from other hosts.
+pull = ["dep:reqwest", "dep:futures-util"]
+# The fallback stores: a folder every host mounts (the Cua Volume), and S3.
+fallback = ["dep:aws-config", "dep:aws-sdk-s3"]
+
+[dependencies]
+base64.workspace = true
+hex.workspace = true
+hmac = "0.12"
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "rt", "macros", "time"] }
+async-trait.workspace = true
+axum = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+tokio-util = { version = "0.7", features = ["io"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"], optional = true }
+futures-util = { workspace = true, optional = true }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "sso", "credentials-process"], optional = true }
+aws-sdk-s3 = { version = "1.150", default-features = false, features = ["rt-tokio", "default-https-client", "behavior-version-latest"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+axum = { workspace = true }
+cua-snapshot-sync = { path = ".", features = ["serve", "pull", "fallback"] }

@@ -47,6 +47,35 @@ macro_rules! stub_tool {
     };
 }
 
+macro_rules! contract_stub_tool {
+    ($mod_name:ident, $struct_name:ident, $tool_name:literal) => {
+        mod $mod_name {
+            use super::*;
+            pub struct $struct_name;
+            static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+            impl $struct_name {
+                pub fn def_static() -> &'static ToolDef {
+                    DEF.get_or_init(|| {
+                        let contract = cua_driver_contract::tool_contract($tool_name)
+                            .expect("canonical cursor contract exists");
+                        ToolDef::from_contract(&contract)
+                    })
+                }
+            }
+            #[async_trait]
+            impl Tool for $struct_name {
+                fn def(&self) -> &ToolDef {
+                    Self::def_static()
+                }
+                async fn invoke(&self, _args: Value) -> ToolResult {
+                    not_impl($tool_name)
+                }
+            }
+        }
+        pub use $mod_name::$struct_name;
+    };
+}
+
 stub_tool!(
     list_apps_m,
     ListAppsTool,
@@ -69,7 +98,7 @@ stub_tool!(
     "get_window_state",
     "Walk a running app's AT-SPI tree and return BOTH the element tree AND a \
      screenshot — ground on both and cross-check (the tree lies on some surfaces). \
-     Choose the modality at ACTION time: an element ax action (element_index) or an \
+     Choose the modality at ACTION time: an element ax action (element_token) or an \
      element px action (x,y) off the screenshot. capture_mode is deprecated and ignored.",
     serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema()},"additionalProperties":false})
 );
@@ -90,16 +119,16 @@ stub_tool!(
     click_m,
     ClickTool,
     "click",
-    "Click at (x, y) or on an AT-SPI element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
+    "Click at (x, y) or on an AT-SPI element by element_token.",
+    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
 );
 
 stub_tool!(
     double_click_m,
     DoubleClickTool,
     "double_click",
-    "Double-click at (x, y) or on an AT-SPI element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false})
+    "Double-click at (x, y) or on an AT-SPI element by element_token.",
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -107,7 +136,7 @@ stub_tool!(
     RightClickTool,
     "right_click",
     "Right-click (AT-SPI action on element, or synthesized event at x,y).",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema()},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema()},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -115,7 +144,7 @@ stub_tool!(
     TypeTextTool,
     "type_text",
     "Insert text into the target pid via AT-SPI SetTextContents or XSendEvent keystrokes.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form: pixel-click there to focus, then type. Pass with y, no element_index."},"y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"window_id":{"type":"integer"},"x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form: pixel-click there to focus, then type. Pass with y, no element_token."},"y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."}},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -123,7 +152,7 @@ stub_tool!(
     TypeTextCharsTool,
     "type_text_chars",
     "Type text character-by-character with configurable per-character delay.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -131,7 +160,7 @@ stub_tool!(
     PressKeyTool,
     "press_key",
     "Press and release a single key delivered directly to the target pid. No focus steal.",
-    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Pass with y, no element_index."},"y":{"type":"number","description":"Screenshot-pixel Y (see x)."}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Pass with y, no element_token."},"y":{"type":"number","description":"Screenshot-pixel Y (see x)."}},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -147,16 +176,12 @@ stub_tool!(
     SetValueTool,
     "set_value",
     "Set the value of an AT-SPI element (text field, dropdown, checkbox).",
-    serde_json::json!({"type":"object","required":["pid","value"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"value":{"type":"string"}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","value"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"value":{"type":"string"}},"additionalProperties":false})
 );
 
 stub_tool!(scroll_m, ScrollTool, "scroll",
     "Scroll the target pid's focused region. direction required; by defaults to line, amount defaults to 3.",
-    serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
-
-stub_tool!(screenshot_m, ScreenshotTool, "screenshot",
-    "Capture a screenshot. Without window_id captures the full display. Supports png and jpeg formats.",
-    serde_json::json!({"type":"object","properties":{"window_id":{"type":"integer"},"format":{"type":"string","enum":["png","jpeg"]},"quality":{"type":"integer","minimum":1,"maximum":95}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false}));
 
 stub_tool!(
     get_screen_size_m,
@@ -174,25 +199,53 @@ stub_tool!(
     serde_json::json!({"type":"object","properties":{},"additionalProperties":false})
 );
 
-stub_tool!(cursor_motion_m, SetAgentCursorMotionTool, "set_agent_cursor_motion",
-    format!("Configure the visual appearance of an agent cursor instance.\n\nExtended cursor customization for multi-cursor use cases:\n- cursor_id: instance name (default='default')\n- cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n- cursor_color: hex color e.g. '#00FFFF' or CSS name\n- cursor_label: short text shown near the cursor\n- cursor_size: dot radius in points (default=16)\n- cursor_opacity: 0.0–1.0 (default=0.85)", cursor_overlay::BuiltinShape::names_help()),
-    serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"cursor_icon":{"type":"string"},"cursor_color":{"type":"string"},"cursor_label":{"type":"string"},"cursor_size":{"type":"number"},"cursor_opacity":{"type":"number"}},"additionalProperties":false}));
-
-stub_tool!(
-    get_cursor_state_m,
-    GetAgentCursorStateTool,
-    "get_agent_cursor_state",
-    "Return the current state of all agent cursor instances.",
-    serde_json::json!({"type":"object","properties":{},"additionalProperties":false})
+contract_stub_tool!(
+    cursor_enabled_v2_m,
+    SetAgentCursorEnabledV2Tool,
+    "set_agent_cursor_enabled"
 );
-
-stub_tool!(
-    set_cursor_style_m,
-    SetAgentCursorStyleTool,
-    "set_agent_cursor_style",
-    "Update the visual style of the agent cursor overlay.",
-    serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"gradient_colors":{"type":"array","items":{"type":"string"}},"bloom_color":{"type":"string"},"image_path":{"type":"string"}},"additionalProperties":false})
+contract_stub_tool!(
+    cursor_motion_v2_m,
+    SetAgentCursorMotionV2Tool,
+    "set_agent_cursor_motion"
 );
+contract_stub_tool!(
+    get_cursor_state_v2_m,
+    GetAgentCursorStateV2Tool,
+    "get_agent_cursor_state"
+);
+contract_stub_tool!(
+    cursor_theme_m,
+    SetAgentCursorThemeTool,
+    "set_agent_cursor_theme"
+);
+pub struct InvokeMenuTool;
+
+#[async_trait]
+impl Tool for InvokeMenuTool {
+    fn def(&self) -> &ToolDef {
+        static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+        DEF.get_or_init(|| {
+            // Menu schemas are portable subsets, not canonical runtime schemas.
+            // Match the native menu definition without using the cursor bridge.
+            let contract =
+                cua_driver_contract::tool_contract("invoke_menu").expect("invoke_menu contract");
+            ToolDef {
+                name: contract.name,
+                description: contract.description,
+                input_schema: contract.input_schema,
+                read_only: contract.annotations.read_only,
+                destructive: contract.annotations.destructive,
+                idempotent: contract.annotations.idempotent,
+                open_world: contract.annotations.open_world,
+            }
+        })
+    }
+
+    async fn invoke(&self, _args: Value) -> ToolResult {
+        not_impl("invoke_menu")
+    }
+}
 
 stub_tool!(
     check_perms_m,
@@ -263,6 +316,7 @@ mod move_cursor_m {
                 x,
                 y,
                 end_heading_radians: 0.0,
+                target: None,
             });
             ToolResult::text(format!(
                 "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."
@@ -272,50 +326,19 @@ mod move_cursor_m {
 }
 pub use move_cursor_m::MoveCursorTool;
 
-mod set_enabled_m {
-    use super::*;
-    pub struct SetAgentCursorEnabledTool;
-    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-    impl SetAgentCursorEnabledTool {
-        pub fn def_static() -> &'static ToolDef {
-            DEF.get_or_init(|| ToolDef {
-                name: "set_agent_cursor_enabled".into(),
-                description: "Show or hide the agent cursor overlay.".into(),
-                input_schema: serde_json::json!({"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
-                read_only: false, destructive: false, idempotent: true, open_world: false,
-            })
-        }
-    }
-    #[async_trait]
-    impl Tool for SetAgentCursorEnabledTool {
-        fn def(&self) -> &ToolDef {
-            Self::def_static()
-        }
-        async fn invoke(&self, args: Value) -> ToolResult {
-            let enabled = args
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let cursor_id = args
-                .get("cursor_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default");
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
-            ToolResult::text(format!(
-                "Agent cursor '{}' {}.",
-                cursor_id,
-                if enabled { "enabled" } else { "disabled" }
-            ))
-        }
-    }
-}
-pub use set_enabled_m::SetAgentCursorEnabledTool;
-
 pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     let mut r = cua_driver_core::tool::ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool));
+    r.register(Box::new(
+        cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(
+            cua_driver_core::expectation::ToolObservationProvider::new(
+                std::sync::Arc::new(ListWindowsTool),
+                std::sync::Arc::new(GetWindowStateTool),
+            ),
+        )),
+    ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(ClickTool));
@@ -325,15 +348,15 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
+    r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(ScrollTool));
-    r.register(Box::new(ScreenshotTool));
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool));
-    r.register(Box::new(SetAgentCursorEnabledTool));
-    r.register(Box::new(SetAgentCursorMotionTool));
-    r.register(Box::new(GetAgentCursorStateTool));
-    r.register(Box::new(SetAgentCursorStyleTool));
+    r.register(Box::new(SetAgentCursorEnabledV2Tool));
+    r.register(Box::new(SetAgentCursorMotionV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(SetAgentCursorThemeTool));
     r.register(Box::new(CheckPermissionsTool));
     // health_report is cross-platform — the Linux provider here lets
     // non-Linux hosts running the stubbed registry still advertise

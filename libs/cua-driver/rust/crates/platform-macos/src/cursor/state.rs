@@ -7,18 +7,12 @@ use std::sync::Mutex;
 /// Per-instance cursor configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CursorConfig {
-    /// Instance identifier for multi-cursor use cases. Default: "default".
+    /// Session-owned cursor identifier.
     pub cursor_id: String,
-    /// Built-in icon name ("arrow", "crosshair", "hand") or path to PNG/SVG.
-    pub cursor_icon: Option<String>,
-    /// Hex color (e.g. "#00FFFF") or CSS name for the glow/indicator.
-    pub cursor_color: Option<String>,
-    /// Short label rendered near the cursor dot.
-    pub cursor_label: Option<String>,
-    /// Dot radius in points. Default: 16.
-    pub cursor_size: Option<f64>,
-    /// Opacity 0.0–1.0. Default: 0.85.
-    pub cursor_opacity: Option<f64>,
+    /// Installed cursor theme id.
+    pub theme_id: String,
+    /// Accessibility motion preference.
+    pub reduced_motion: cursor_overlay::ReducedMotion,
     /// Whether the overlay is currently visible.
     pub enabled: bool,
 }
@@ -27,11 +21,8 @@ impl Default for CursorConfig {
     fn default() -> Self {
         Self {
             cursor_id: "default".into(),
-            cursor_icon: None,
-            cursor_color: Some("#00FFFF".into()),
-            cursor_label: None,
-            cursor_size: Some(16.0),
-            cursor_opacity: Some(0.85),
+            theme_id: cursor_overlay::DEFAULT_THEME_ID.into(),
+            reduced_motion: cursor_overlay::ReducedMotion::Auto,
             enabled: true,
         }
     }
@@ -151,6 +142,50 @@ impl CursorRegistry {
                 position: None,
             });
         state.position = Some(CursorPosition { x, y });
+        drop(inner);
+        // Notify any embedder of the cursor move so it can render this cursor as
+        // an overlay without driving the overlay itself.
+        self.emit_cursor_event(cursor_id, x, y, false);
+    }
+
+    /// Report a press edge (click / drag start) for `cursor_id` at screen point
+    /// (`x`, `y`) to the embedder's cursor hook.
+    ///
+    /// Presses go through the registry rather than being pushed directly from
+    /// each tool so that they obey the same write-boundary resurrection guard as
+    /// [`Self::update_position`]. A click whose session has already ended must
+    /// not reach the hook: the registry has cleared that cursor, and an embedder
+    /// that rendered the press would resurrect a cursor the driver considers
+    /// gone. Unlike `update_position` this records no position — a press is an
+    /// event, not a new resting place, and the move that precedes it has already
+    /// stored the coordinates.
+    pub fn note_press(&self, cursor_id: &str, x: f64, y: f64) {
+        self.emit_cursor_event(cursor_id, x, y, true);
+    }
+
+    /// Single choke point for cursor-hook emission, so the suppression rule
+    /// cannot drift between the move path and the press path.
+    fn emit_cursor_event(&self, cursor_id: &str, x: f64, y: f64, pressed: bool) {
+        // Cheapest check first. `CursorHookEvent` owns its id, so building one
+        // costs a heap allocation on every commanded move — and almost every
+        // cua-driver consumer (the daemon, the CLI, every SDK caller that is not
+        // a remote-desktop host) never registers a hook, so that allocation
+        // would be pure waste for them. This is what `cursor_hook_enabled` is
+        // for, and it is the same order the `pip_hook` idiom uses.
+        if !cua_driver_core::cursor_hook::cursor_hook_enabled() {
+            return;
+        }
+        if cursor_id.is_empty() || cua_driver_core::session::is_session_ended(cursor_id) {
+            return;
+        }
+        cua_driver_core::cursor_hook::push_cursor_event(
+            cua_driver_core::cursor_hook::CursorHookEvent {
+                cursor_id: cursor_id.to_owned(),
+                x,
+                y,
+                pressed,
+            },
+        );
     }
 
     pub fn set_enabled(&self, cursor_id: &str, enabled: bool) {

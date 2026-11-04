@@ -1,0 +1,79 @@
+{
+  "id": "osworld",
+  "variant": "containerdisk",
+  "where": "local",
+  "arch": "amd64",
+  "image": "/mnt/release/bench/osworld/out/amd64/disk.img",
+  "child": null,
+  "container_runtime": null,
+  "pinned_ref": null,
+  "doctor": "pass",
+  "seconds": 41.5,
+  "ok": true,
+  "checks": [
+    {
+      "check": "ready",
+      "status": "pass",
+      "detail": "after 19s"
+    },
+    {
+      "check": "server",
+      "status": "pass",
+      "detail": "GET /screenshot on :5000 -> 200",
+      "seconds": 1.08
+    },
+    {
+      "check": "spacesd",
+      "status": "pass",
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, limits, machineSealPublicKey, os, protocolRevision, protocolVersion, runtime, runtimeDetail, sideChannels, version",
+      "seconds": 0.08
+    },
+    {
+      "check": "screen",
+      "status": "pass",
+      "detail": "1920x1080 (want 1920x1080), color variety 0.551",
+      "seconds": 0.19
+    },
+    {
+      "check": "input",
+      "status": "pass",
+      "detail": {
+        "ok": true,
+        "changed_fraction": 0.354
+      },
+      "seconds": 4.36
+    },
+    {
+      "check": "bench.server_screenshot",
+      "status": "pass",
+      "detail": "200, 1672221 bytes"
+    },
+    {
+      "check": "bench.server_execute",
+      "status": "pass",
+      "detail": {
+        "error": "",
+        "output": "user\n:0\n",
+        "returncode": 0,
+        "status": "success"
+      }
+    },
+    {
+      "check": "bench.server_accessibility",
+      "status": "pass",
+      "detail": "200, 154294 chars"
+    },
+    {
+      "check": "bench.server_screen_size",
+      "status": "pass",
+      "detail": "{\n  \"height\": 1080,\n  \"width\": 1920\n}\n"
+    },
+    {
+      "check": "doctor",
+      "status": "pass",
+      "detail": "rc=0 (report in containerdisk-local-amd64-doctor.json); all checks pass",
+      "seconds": 13.66
+    }
+  ],
+  "date": "2026-10-03T22:20:42Z"
+}

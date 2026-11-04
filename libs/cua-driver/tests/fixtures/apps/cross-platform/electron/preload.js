@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('cuaE2E', {
 });
 
 const sentinelMode = fixtureConfig.sentinelMode;
+let setupClick;
 
 function record(kind, details = {}) {
   if (!sentinelMode) return;
@@ -19,9 +20,24 @@ function record(kind, details = {}) {
     at_ms: Date.now(),
     ...details,
   });
+  if (setupClick) {
+    const expected = ['pointerdown', 'pointerup', 'click'];
+    if (kind === expected[setupClick.step]) setupClick.step += 1;
+    if (setupClick.step === expected.length) {
+      const token = setupClick.token;
+      setupClick = undefined;
+      // Same renderer/channel as the pointer events: main journals this only
+      // after it has synchronously appended the complete setup click.
+      record('setup-click-drained', { token });
+    }
+  }
 }
 
 if (sentinelMode) {
+  ipcRenderer.on('cua-e2e-sentinel-arm-setup-click', (_event, token) => {
+    setupClick = { token, step: 0 };
+    record('setup-click-armed', { token });
+  });
   window.addEventListener('DOMContentLoaded', () => {
     document.body.innerHTML = `
       <main style="min-height:100vh;background:#146c43;color:white;display:grid;place-content:center;text-align:center;font:24px system-ui">
@@ -30,6 +46,11 @@ if (sentinelMode) {
       </main>
     `;
     record('ready');
+    // Electron can already own native/DOM focus before this renderer's focus
+    // listener is ready. Re-activating an already focused window does not
+    // guarantee another DOM focus event, so explicitly publish the initial
+    // state and keep subsequent focus/blur transitions as separate oracles.
+    if (document.hasFocus()) record('focus');
   });
   window.addEventListener('focus', () => record('focus'));
   window.addEventListener('blur', () => record('blur'));

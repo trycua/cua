@@ -1,0 +1,111 @@
+name: "CI: cua-oidc"
+
+# CUA-2046: the Cua OIDC issuer. `CI: cua-spacesd` runs its unit and HTTP
+# tests with the rest of the workspace; this workflow adds what that one
+# can't: the Postgres registry against a real database (migrations
+# included), the KMS signer build (cargo feature `kms`), and the container
+# image answering /healthz.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-spacesd/crates/cua-oidc/**"
+      - "libs/cua-spacesd/Cargo.lock"
+      - "libs/cua/crates/cua-byoc/policy/**"
+      - "libs/cua/crates/cua-byoc/templates/**"
+      - ".github/workflows/ci-cua-oidc.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-spacesd/crates/cua-oidc/**"
+      - "libs/cua-spacesd/Cargo.lock"
+      - "libs/cua/crates/cua-byoc/policy/**"
+      - "libs/cua/crates/cua-byoc/templates/**"
+      - ".github/workflows/ci-cua-oidc.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-oidc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-and-kms:
+    name: Postgres registry, KMS build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: cua
+          POSTGRES_PASSWORD: cua
+          POSTGRES_DB: cua_oidc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cua"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: libs/cua-spacesd
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+      - name: Test (Postgres registry included)
+        env:
+          CUA_OIDC_TEST_DATABASE_URL: postgres://cua:cua@127.0.0.1:5432/cua_oidc_test
+        run: cargo test --locked -p cua-oidc -- --nocapture
+      - name: Clippy with the KMS signer
+        run: cargo clippy --locked -p cua-oidc --all-targets --features kms -- -D warnings
+
+  image:
+    name: image builds and serves
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Rust tag matches rust-toolchain.toml
+        run: |
+          want=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' libs/cua/rust-toolchain.toml)
+          grep -q "^ARG RUST_IMAGE=rust:${want}-bookworm@sha256:" libs/cua-spacesd/crates/cua-oidc/Dockerfile \
+            || { echo "Dockerfile RUST_IMAGE must be rust:${want}-bookworm@sha256:..." >&2; exit 1; }
+      - name: Build
+        run: docker buildx build --load -t cua-oidc:ci -f libs/cua-spacesd/crates/cua-oidc/Dockerfile libs
+      - name: Smoke (read-only, non-root, test key)
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          cp libs/cua-spacesd/crates/cua-oidc/tests/fixtures/test-rsa-a.pk8.der "$dir/signing.der"
+          head -c 48 /dev/urandom > "$dir/account-secret"
+          echo "relay-internal-token-for-ci-smoke-0123456789" > "$dir/relay-token"
+          # The container runs as 65532: mktemp's 0700 directory would hide the files.
+          chmod 0755 "$dir"
+          chmod 0644 "$dir"/*
+          trap 'docker logs oidc || true' EXIT
+          docker run -d --name oidc --read-only --user 65532:65532 \
+            -v "$dir:/secrets:ro" -p 127.0.0.1:18080:8080 \
+            -e CUA_OIDC_BASE_URL=https://oidc.ci.example \
+            -e CUA_OIDC_SIGNING_KEY=file:/secrets/signing.der \
+            -e CUA_OIDC_KEYCLOAK_ISSUER=https://auth.ci.example/realms/cua \
+            -e CUA_OIDC_RELAY_URL=http://relay.invalid \
+            -e CUA_OIDC_RELAY_TOKEN_FILE=/secrets/relay-token \
+            -e CUA_OIDC_ACCOUNT_SECRET_FILE=/secrets/account-secret \
+            cua-oidc:ci
+          for i in $(seq 1 30); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz)" = 204 ] && break
+            sleep 1
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/healthz)" = 204
+          curl -sf http://127.0.0.1:18080/.well-known/jwks.json | grep -q '"alg":"RS256"'
+          curl -sf http://127.0.0.1:18080/a/abcdefgh2345/.well-known/openid-configuration \
+            | grep -q '"issuer":"https://oidc.ci.example/a/abcdefgh2345"'

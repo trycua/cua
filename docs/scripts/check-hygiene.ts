@@ -19,6 +19,10 @@ const bannedPatterns: Array<[RegExp, string]> = [
   [/\bdiorama\b/i, 'misnamed docs framework'],
 ];
 
+// House style: no em dashes anywhere on a page, code blocks included
+// (scripts/check-no-em-dash.sh applies the same rule to repo Markdown).
+const EM_DASH = /\u2014/;
+
 async function main() {
   const files = await fg('**/*.mdx', { cwd: CONTENT_DIR });
   const failures: string[] = [];
@@ -27,8 +31,26 @@ async function main() {
     const abs = path.join(CONTENT_DIR, file);
     const content = await fs.readFile(abs, 'utf8');
     const lines = content.split(/\r?\n/);
+    let inFence = false;
 
     for (const [lineIndex, line] of lines.entries()) {
+      if (EM_DASH.test(line)) {
+        failures.push(
+          `${file}:${lineIndex + 1}: em dash (use a comma, colon, parentheses or a new sentence): ${line.trim()}`
+        );
+      }
+
+      if (/^\s*(?:```|~~~)/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+
+      if (!inFence && /^#\s+/.test(line)) {
+        failures.push(
+          `${file}:${lineIndex + 1}: body-level H1 duplicates the renderer-owned frontmatter title: ${line.trim()}`
+        );
+      }
+
       for (const [pattern, reason] of bannedPatterns) {
         if (pattern.test(line)) {
           failures.push(`${file}:${lineIndex + 1}: ${reason}: ${line.trim()}`);

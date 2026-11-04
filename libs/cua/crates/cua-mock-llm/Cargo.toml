@@ -1,0 +1,27 @@
+[package]
+name = "cua-mock-llm"
+description = "A scripted mock LLM provider for tests: the Anthropic Messages, OpenAI Responses and Chat Completions wire formats (SSE streaming, tool calls, auth and error shapes), driven by `mock:` directives in the prompt. Real agent harnesses run against it; it never pretends to be a model."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-mock-llm"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync", "time", "fs"] }
+tokio-stream.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }

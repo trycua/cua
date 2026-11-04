@@ -1,0 +1,8 @@
+{
+  "browser_url": "http://127.0.0.1:4184/",
+  "cases": "cases/cases.json",
+  "logs": "logs/archive-access.log",
+  "site": "archive-site",
+  "task": "cua.shared.cdb-s04.linked-support-diagnosis",
+  "wiki": "wiki/articles.json"
+}

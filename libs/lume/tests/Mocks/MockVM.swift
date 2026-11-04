@@ -22,21 +22,25 @@ class MockVM: VM {
     }
 
     override func run(
-        noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
-        vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil, clipboard: Bool = false
+        displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
+        vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
+        usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil, clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = []
     ) async throws {
         mockIsRunning = true
         try await super.run(
-            noDisplay: noDisplay, sharedDirectories: sharedDirectories, mount: mount,
+            displayMode: displayMode, sharedDirectories: sharedDirectories, mount: mount,
             vncPort: vncPort, vncPassword: vncPassword, recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
-            networkMode: networkMode, clipboard: clipboard
+            additionalDiskPaths: additionalDiskPaths,
+            networkMode: networkMode, clipboard: clipboard,
+            vncPolicy: vncPolicy, forwards: forwards
         )
     }
 
-    override func stop() async throws {
+    override func stop(force: Bool, timeout: TimeInterval) async throws {
         mockIsRunning = false
-        try await super.stop()
+        try await super.stop(force: force, timeout: timeout)
     }
 }

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Wait (up to $1 seconds, default 900) for the Omarchy session to publish
+# /run/cua-desktop/desktop.env and for its Wayland socket to exist.
+set -euo pipefail
+limit="${1:-900}"
+file="${CUA_DESKTOP_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
+for ((i = 0; i < limit; i++)); do
+    if [ -r "$file" ]; then
+        # shellcheck disable=SC1090
+        (set -a; . "$file"; [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]) && exit 0
+    fi
+    sleep 1
+done
+echo "cua-omarchy-wait-session: no Omarchy session after ${limit}s ($file)" >&2
+exit 1

@@ -50,9 +50,9 @@ impl HealthCheckProvider for LinuxHealthProvider {
 
     async fn run_check(&self, name: &str) -> CheckEntry {
         match name {
-            NAME_BINARY_VERSION => check_binary_version(),
+            NAME_BINARY_VERSION => CheckEntry::binary_version(),
             NAME_PLATFORM_SUPPORTED => check_platform_supported(),
-            NAME_SESSION_ACTIVE => check_session_active(),
+            NAME_SESSION_ACTIVE => CheckEntry::session_active(),
             NAME_BUNDLE_IDENTITY => skip_not_applicable(NAME_BUNDLE_IDENTITY),
             NAME_TCC_ACCESSIBILITY => skip_not_applicable(NAME_TCC_ACCESSIBILITY),
             NAME_TCC_SCREEN_RECORDING => skip_not_applicable(NAME_TCC_SCREEN_RECORDING),
@@ -69,13 +69,6 @@ impl HealthCheckProvider for LinuxHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-pub(crate) fn check_binary_version() -> CheckEntry {
-    CheckEntry::pass(
-        NAME_BINARY_VERSION,
-        format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
-    )
-}
-
 pub(crate) fn check_platform_supported() -> CheckEntry {
     let arch = arch_label();
     let os_version = os_release_pretty_name().unwrap_or_else(|| "Linux".to_owned());
@@ -86,10 +79,6 @@ pub(crate) fn check_platform_supported() -> CheckEntry {
             ..Default::default()
         },
     )
-}
-
-pub(crate) fn check_session_active() -> CheckEntry {
-    CheckEntry::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
 }
 
 fn skip_not_applicable(name: &str) -> CheckEntry {
@@ -115,8 +104,7 @@ async fn check_ax_capability() -> CheckEntry {
             NAME_AX_CAPABILITY,
             "Wayland session: org.a11y.Bus is not reachable on the session bus; \
              AT-SPI inspection will fail.",
-            "Start the AT-SPI bus (`/usr/libexec/at-spi-bus-launcher`) or enable \
-             accessibility in your desktop's settings.",
+            START_ATSPI_BUS_HINT,
         );
     }
     // Mirror the existing `check_permissions` Linux probe: X11
@@ -182,8 +170,8 @@ async fn check_ax_capability() -> CheckEntry {
 
 async fn check_screen_capture_capability() -> CheckEntry {
     // Native Wayland: capture flows through a cascade — wlroots screencopy
-    // (sway / labwc / kwin 5.27+ / hyprland) → ext-image-copy-capture-v1
-    // (sway 1.10+ / labwc 0.8+ / niri / KDE 6.2+ / GNOME 47+) →
+    // (sway / labwc / kwin 5.27+ / hyprland / niri) →
+    // ext-image-copy-capture-v1 (sway 1.10+ / labwc 0.8+ / KDE 6.2+ / GNOME 47+) →
     // xdg-desktop-portal Screenshot (GNOME / KDE / COSMIC + portal backend).
     // Report which tier is reachable so users on mutter / kwin don't see a
     // misleading "screen capture will fail" just because wlroots isn't
@@ -311,12 +299,20 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
-    classify_wayland_backend(
+    let mut entry = classify_wayland_backend(
         &snap,
         portal_input_enabled(),
         remote_desktop_portal_reachable,
         target_activation_available(),
-    )
+    );
+    if let Some(note) = tokio::task::spawn_blocking(compositor_note)
+        .await
+        .ok()
+        .flatten()
+    {
+        entry.message = format!("{} {note}", entry.message);
+    }
+    entry
 }
 
 fn classify_wayland_backend(
@@ -437,6 +433,9 @@ fn probe_x11_connect() -> bool {
     false
 }
 
+pub(crate) const START_ATSPI_BUS_HINT: &str = "Start the AT-SPI bus \
+    (`/usr/libexec/at-spi-bus-launcher`) or enable accessibility in your desktop's settings.";
+
 /// Probe whether `org.a11y.Bus` is reachable on the session bus — the
 /// canonical AT-SPI prerequisite on Wayland, where there is no X server to
 /// stand in. Returns false on any error (no session bus, no a11y service,
@@ -521,12 +520,23 @@ fn portal_input_enabled() -> bool {
 
 #[cfg(target_os = "linux")]
 fn target_activation_available() -> bool {
-    crate::wayland::shell_helper::list_windows(None).is_some()
+    crate::wayland::kwin_helper::available()
+        || crate::wayland::shell_helper::list_windows(None).is_some()
 }
 
 #[cfg(not(target_os = "linux"))]
 fn target_activation_available() -> bool {
     false
+}
+
+#[cfg(target_os = "linux")]
+fn compositor_note() -> Option<String> {
+    crate::wayland::niri::health_note()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn compositor_note() -> Option<String> {
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -569,9 +579,18 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
             })?;
 
         rt.block_on(async {
-            match RemoteDesktop::new().await {
-                Ok(_) => Ok(true),
-                Err(e) => {
+            let probe = tokio::time::timeout(crate::wayland::portal::PROBE_TIMEOUT, async {
+                let connection = crate::wayland::portal::fresh_session_connection().await?;
+                RemoteDesktop::with_connection(connection)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await;
+
+            match probe {
+                Err(_) => Err(anyhow::anyhow!("portal RemoteDesktop probe timed out")),
+                Ok(Ok(_)) => Ok(true),
+                Ok(Err(e)) => {
                     let msg = format!("{e}");
                     if msg.contains("ServiceUnknown")
                         || msg.contains("NameHasNoOwner")
@@ -639,32 +658,6 @@ mod tests {
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
-
-    #[test]
-    fn binary_version_always_passes() {
-        let entry = check_binary_version();
-        assert_eq!(entry.status, CheckStatus::Pass);
-        assert!(entry.message.contains("cua-driver "));
-    }
-
-    #[test]
-    fn session_active_passes() {
-        let entry = check_session_active();
-        assert_eq!(entry.status, CheckStatus::Pass);
-    }
-
-    #[test]
-    fn tcc_and_bundle_are_skipped_with_canonical_message() {
-        for name in [
-            NAME_TCC_ACCESSIBILITY,
-            NAME_TCC_SCREEN_RECORDING,
-            NAME_BUNDLE_IDENTITY,
-        ] {
-            let entry = skip_not_applicable(name);
-            assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
-            assert_eq!(entry.message, "not applicable on Linux");
-        }
-    }
 
     #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {

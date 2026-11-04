@@ -1,8 +1,9 @@
 // cua-driver-uia: Windows uiAccess-elevated tool worker.
 //
 // Listens on \\.\pipe\cua-driver-uia for line-delimited JSON requests with the
-// same shape as cua-driver's daemon pipe (\\.\pipe\cua-driver), so cua-driver's
-// CLI and MCP server can prefer this worker on Windows for UIPI-blocked ops.
+// same shape as cua-driver's daemon pipe (\\.\pipe\cua-driver). This is a
+// daemon-internal privilege boundary: public CLI/MCP clients must enter through
+// the canonical daemon authorization path and cannot call this worker directly.
 //
 // Protocol (one JSON object per line, both directions):
 //   request : {"method":"call","name":"<tool>","args":{...}}
@@ -12,8 +13,9 @@
 //   response: {"ok":true,"result":...}
 //             {"ok":false,"error":"...","exit_code":N}
 //
-// The protocol is intentionally byte-identical to cua-driver/serve.rs so that
-// the existing client code in cli.rs::run_call can talk to either pipe.
+// The protocol is intentionally byte-identical to cua-driver/serve.rs for a
+// future authorized parent-daemon forwarding path. No public client route is
+// exposed while that forwarding path is unavailable.
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -67,7 +69,235 @@ impl PipeResponse {
 }
 
 #[cfg(target_os = "windows")]
-const PIPE_PATH: &str = r"\\.\pipe\cua-driver-uia";
+fn pipe_path() -> &'static str {
+    let is_local = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_owned()))
+        .and_then(|name| name.to_str().map(str::to_owned))
+        .is_some_and(|name| name.eq_ignore_ascii_case("cua-driver-uia-local.exe"));
+    if is_local {
+        r"\\.\pipe\cua-driver-local-uia"
+    } else {
+        r"\\.\pipe\cua-driver-uia"
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct SecurityAttributesRaw {
+    n_length: u32,
+    lp_security_descriptor: *mut std::ffi::c_void,
+    b_inherit_handle: i32,
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn security_attrs_from_sddl(
+    sddl: &str,
+) -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)> {
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string_security_descriptor: *const u16,
+            string_sd_revision: u32,
+            security_descriptor: *mut *mut std::ffi::c_void,
+            security_descriptor_size: *mut u32,
+        ) -> i32;
+    }
+
+    let sddl: Vec<u16> = format!("{sddl}\0").encode_utf16().collect();
+    let mut descriptor = std::ptr::null_mut();
+    let mut descriptor_size = 0_u32;
+    let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl.as_ptr(),
+        1,
+        &mut descriptor,
+        &mut descriptor_size,
+    );
+    if ok == 0 || descriptor.is_null() {
+        return None;
+    }
+    Some((
+        SecurityAttributesRaw {
+            n_length: std::mem::size_of::<SecurityAttributesRaw>() as u32,
+            lp_security_descriptor: descriptor,
+            b_inherit_handle: 0,
+        },
+        descriptor,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn token_user_sid(token: *mut std::ffi::c_void) -> Option<String> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUserRaw {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            information_class: u32,
+            information: *mut std::ffi::c_void,
+            information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
+    }
+
+    const TOKEN_USER_CLASS: u32 = 1;
+    let mut required = 0_u32;
+    let _ = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        std::ptr::null_mut(),
+        0,
+        &mut required,
+    );
+    if required == 0 {
+        let _ = CloseHandle(token);
+        return None;
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = GetTokenInformation(
+        token,
+        TOKEN_USER_CLASS,
+        buffer.as_mut_ptr().cast(),
+        required,
+        &mut required,
+    );
+    let _ = CloseHandle(token);
+    if ok == 0 {
+        return None;
+    }
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
+    let mut string_sid = std::ptr::null_mut();
+    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
+        return None;
+    }
+    let length = (0..)
+        .find(|&index| *string_sid.add(index) == 0)
+        .unwrap_or(0);
+    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
+    let _ = LocalFree(string_sid.cast());
+    (!sid.is_empty()).then_some(sid)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn current_user_sid_string() -> Option<String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 || token.is_null() {
+        return None;
+    }
+    token_user_sid(token)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_client_identity(pipe: *mut std::ffi::c_void) -> Option<(u32, String)> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetNamedPipeClientProcessId(
+            pipe: *mut std::ffi::c_void,
+            client_process_id: *mut u32,
+        ) -> i32;
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const TOKEN_QUERY: u32 = 0x0008;
+    let mut client_process_id = 0_u32;
+    if GetNamedPipeClientProcessId(pipe, &mut client_process_id) == 0 || client_process_id == 0 {
+        return None;
+    }
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, client_process_id);
+    if process.is_null() {
+        return None;
+    }
+    let mut token = std::ptr::null_mut();
+    let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+    let _ = CloseHandle(process);
+    if opened == 0 || token.is_null() {
+        return None;
+    }
+    token_user_sid(token).map(|sid| (client_process_id, sid))
+}
+
+#[cfg(target_os = "windows")]
+fn current_user_pipe_sddl(sid: &str) -> String {
+    format!("D:P(A;;GA;;;{sid})S:(ML;;NW;;;LW)")
+}
+
+#[cfg(target_os = "windows")]
+fn authorized_parent_pid_from_args() -> anyhow::Result<u32> {
+    cua_driver_uia::authorized_parent_pid_from(std::env::args().skip(1))
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn exit_when_authorized_parent_exits(parent_pid: u32) -> anyhow::Result<()> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const INFINITE: u32 = 0xffff_ffff;
+    const WAIT_OBJECT_0: u32 = 0;
+    let parent = OpenProcess(SYNCHRONIZE, 0, parent_pid);
+    if parent.is_null() {
+        anyhow::bail!("open authorized parent process {parent_pid}");
+    }
+    let parent_handle = parent as usize;
+    std::thread::spawn(move || {
+        let parent = parent_handle as *mut std::ffi::c_void;
+        let wait = unsafe { WaitForSingleObject(parent, INFINITE) };
+        let _ = unsafe { CloseHandle(parent) };
+        if wait == WAIT_OBJECT_0 {
+            std::process::exit(0);
+        }
+    });
+    Ok(())
+}
 
 #[cfg(target_os = "windows")]
 fn main() -> anyhow::Result<()> {
@@ -79,31 +309,63 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
+    let authorized_parent_pid = authorized_parent_pid_from_args()?;
+    unsafe { exit_when_authorized_parent_exits(authorized_parent_pid)? };
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async_main())
+    rt.block_on(async_main(authorized_parent_pid))
 }
 
 #[cfg(target_os = "windows")]
-async fn async_main() -> anyhow::Result<()> {
+async fn async_main(authorized_parent_pid: u32) -> anyhow::Result<()> {
+    use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let registry = std::sync::Arc::new(platform_windows::register_tools());
     let tool_count = registry.iter_defs().count();
-    eprintln!("cua-driver-uia: {tool_count} tools registered; listening on {PIPE_PATH}");
+    let pipe_path = pipe_path();
+    eprintln!("cua-driver-uia: {tool_count} tools registered; listening on {pipe_path}");
+
+    let owner_sid = unsafe { current_user_sid_string() }
+        .ok_or_else(|| anyhow::anyhow!("resolve current Windows user SID"))?;
+    let pipe_security = unsafe { security_attrs_from_sddl(&current_user_pipe_sddl(&owner_sid)) }
+        .ok_or_else(|| anyhow::anyhow!("build current-user UIAccess pipe security descriptor"))?;
+    // Hold the descriptor for the worker lifetime. Windows reclaims it at
+    // process exit; every pipe instance receives the same current-user ACL.
+    let security_attributes = &pipe_security.0 as *const _ as *mut std::ffi::c_void;
 
     loop {
-        let server = ServerOptions::new()
-            .first_pipe_instance(false)
-            .create(PIPE_PATH)
-            .map_err(|e| anyhow::anyhow!("create named pipe {PIPE_PATH}: {e}"))?;
+        let server = unsafe {
+            ServerOptions::new()
+                .first_pipe_instance(false)
+                .create_with_security_attributes_raw(pipe_path, security_attributes)
+                .map_err(|e| anyhow::anyhow!("create named pipe {pipe_path}: {e}"))?
+        };
 
         server
             .connect()
             .await
             .map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+
+        let client_identity = unsafe {
+            named_pipe_client_identity(server.as_raw_handle().cast::<std::ffi::c_void>())
+        };
+        if !cua_driver_uia::client_identity_is_authorized(
+            client_identity
+                .as_ref()
+                .map(|(pid, sid)| (*pid, sid.as_str())),
+            authorized_parent_pid,
+            &owner_sid,
+        ) {
+            tracing::warn!(
+                expected_parent_pid = authorized_parent_pid,
+                "UIAccess named-pipe connection rejected before request parsing"
+            );
+            let _ = server.disconnect();
+            continue;
+        }
 
         let reg = registry.clone();
         tokio::spawn(async move {

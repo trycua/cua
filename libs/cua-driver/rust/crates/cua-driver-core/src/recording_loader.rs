@@ -252,19 +252,16 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
             (x, y)
         } else if let Some(cp) = v.get("click_point") {
             (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
-        } else if let Some(screen) = parse_screen_from_summary(
-            v.get("result_summary")
-                .and_then(|s| s.as_str())
-                .unwrap_or(""),
-        ) {
-            screen
         } else {
-            return None;
+            parse_screen_from_summary(
+                v.get("result_summary")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or(""),
+            )?
         }
-    } else if let Some(cp) = v.get("click_point") {
-        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     } else {
-        return None;
+        let cp = v.get("click_point")?;
+        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     };
 
     let t_ms = double_value(v.get("t_ms_from_session_start"))?;

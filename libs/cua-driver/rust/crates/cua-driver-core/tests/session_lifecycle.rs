@@ -4,9 +4,10 @@
 //! A session is a caller-declared identity that OWNS disposable per-run state:
 //! the agent cursor, per-session config overrides, and any recording it started.
 //! Those concrete registries live OUTSIDE this core crate:
-//!   * the agent cursor → `platform-macos::CursorRegistry` + the overlay,
-//!   * per-session config overrides → `platform-macos::SessionConfigRegistry`,
-//!   * the owned recording → stopped by `serve.rs`'s recording hook.
+//! - the agent cursor → `platform-macos::CursorRegistry` + the overlay,
+//! - per-session config overrides → `platform-macos::SessionConfigRegistry`,
+//! - the owned recording → stopped by `serve.rs`'s recording hook.
+//!
 //! None of them is reachable from a core-only test. They are ALL wired to
 //! disposal through ONE mechanism: each registers a `register_session_end_hook`,
 //! and BOTH teardown paths — `end_session` (explicit) and `evict_idle` (the
@@ -56,9 +57,10 @@ fn unique_id(tag: &str) -> String {
 
 /// The three disposal side-effects a session owns, each modelling one real
 /// production `register_session_end_hook` registration:
-///   * `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
-///   * `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
-///   * `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+/// - `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
+/// - `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
+/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+///
 /// Each counts fires for ONE specific session id (hooks are process-global, so we
 /// filter). A correctly-disposed session shows all three == 1.
 struct Disposal {

@@ -9,10 +9,19 @@
 //!    the activity-monitor tickle required for live-input detection.
 
 pub mod ax_actions;
+pub mod electron_drag;
+pub mod hover;
+pub mod interactive;
 pub mod keyboard;
 pub mod mouse;
+pub mod pointer_toolkit;
 pub mod skylight;
 
 pub use ax_actions::perform_ax_action;
+pub use interactive::{
+    GesturePhase, InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputConfig,
+    InteractiveInputError, InteractiveInputEvent, InteractiveInputReceipt, InteractiveInputSession,
+    KeyState, Modifier, PointerButton, PointerPhase,
+};
 pub use keyboard::{hotkey, press_key, type_text};
 pub use mouse::click_at_xy;

@@ -1,10 +1,24 @@
 """Subprocess wrapper for cua-driver binary with stdio passthrough."""
 
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import IO, Any, Optional
+
+
+def _stdio_with_fileno(stream: Optional[IO[Any]]) -> Optional[IO[Any]]:
+    """Keep a Python stream only when subprocess can use its descriptor."""
+    if stream is None:
+        return None
+    try:
+        descriptor = stream.fileno()
+        if not isinstance(descriptor, int) or descriptor < 0:
+            return None
+        os.fstat(descriptor)
+    except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+        return None
+    return stream
 
 
 def get_binary_path() -> Path:
@@ -32,8 +46,7 @@ def get_binary_path() -> Path:
             f"This package may not have been built correctly for {sys.platform}."
         )
 
-    # Ensure binary is executable on Unix
-    if sys.platform != "win32":
+    if sys.platform != "win32" and not os.access(binary_path, os.X_OK):
         os.chmod(binary_path, 0o755)
 
     return binary_path
@@ -66,9 +79,9 @@ def run_cua_driver(args: Optional[list[str]] = None) -> int:
         # Run with direct stdio inheritance - no buffering, no capturing
         result = subprocess.run(
             [str(binary_path), *args],
-            stdin=sys.stdin,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdin=_stdio_with_fileno(sys.stdin),
+            stdout=_stdio_with_fileno(sys.stdout),
+            stderr=_stdio_with_fileno(sys.stderr),
             env=child_env,
         )
         return result.returncode

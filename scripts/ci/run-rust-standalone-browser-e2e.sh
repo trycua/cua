@@ -107,13 +107,23 @@ if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; the
 else
   tests=(
     standalone_browser_background_type
+    standalone_browser_type_replace
+    standalone_browser_owned_permission_prompt
     standalone_browser_dialogs
   )
   if [[ "${HOST_OS}" == Linux ]]; then
-    tests+=(standalone_browser_dialog_background_refusal)
+    tests+=(
+      standalone_browser_dialog_background_refusal
+      standalone_browser_capture_bound_pixel_click_background_refusal
+    )
   fi
   tests+=(
     standalone_browser_download
+  )
+  if [[ "${HOST_OS}" != Darwin ]]; then
+    tests+=(standalone_browser_existing_profile_standard_refusal)
+  fi
+  tests+=(
     standalone_browser_existing_profile
     standalone_browser_existing_profile_setup
     standalone_browser_frames
@@ -121,24 +131,31 @@ else
     standalone_browser_pointer_actions
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
+    standalone_browser_same_title_tabs
     standalone_browser_semantic_state
     standalone_browser_stale_ref
+    standalone_browser_trust_gated_dom_click
     standalone_browser_trusted_click
     standalone_browser_upload
     standalone_browser_window_collision
   )
+  if [[ "${HOST_OS}" == Darwin ]]; then
+    # macOS-only native-chrome keyboard regressions.
+    tests+=(standalone_browser_native_omnibox_select_all)
+  fi
 fi
+# shellcheck source=lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=browsers
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
-  set +e
-  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver \
+  test_status=0
+  cua_e2e_run_case "${test_name}" "${ARTIFACT_DIR}/${test_name}.log" "${RUST_ROOT}" \
+    cargo test --release -p cua-driver-e2e \
     ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
-    --ignored --exact --nocapture --test-threads=1) \
-    2>&1 | tee "${ARTIFACT_DIR}/${test_name}.log"
-  test_status=${PIPESTATUS[0]}
-  set -e
+    --ignored --exact --nocapture --test-threads=1 || test_status=$?
   if [[ "${test_status}" != 0 ]]; then
     failure_count=$((failure_count + 1))
   fi

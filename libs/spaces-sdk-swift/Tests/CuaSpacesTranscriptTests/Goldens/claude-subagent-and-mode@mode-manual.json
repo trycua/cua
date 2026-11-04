@@ -1,0 +1,75 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 29
+      },
+      "type" : "rawText"
+    },
+    {
+      "content" : "Use the Explore subagent to find every function defined in calc.py, then tell me the list.",
+      "cursorIsInside" : true,
+      "placeholder" : null,
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 30,
+        "lastRow" : 32
+      },
+      "type" : "composer"
+    },
+    {
+      "hint" : null,
+      "mode" : "manual",
+      "provenance" : "observed",
+      "rawText" : "⏸ manual mode on",
+      "region" : {
+        "firstRow" : 33,
+        "lastRow" : 33
+      },
+      "type" : "modeIndicator"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 12.849,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

@@ -2,10 +2,11 @@
 //! `CARGO_MANIFEST_DIR`.
 //!
 //! When an integration test runs, Cargo sets `CARGO_MANIFEST_DIR` to the crate
-//! under test (`crates/cua-driver`), so `workspace_root()` resolves the same
-//! whether called from the test or from here.
+//! under test (`crates/cua-driver` or `crates/cua-driver-e2e`). Both sit two
+//! levels below the workspace root, so `workspace_root()` resolves the same
+//! from either crate or from here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The Rust workspace root (`libs/cua-driver/rust`).
 pub fn workspace_root() -> PathBuf {
@@ -54,6 +55,45 @@ pub fn driver_binary() -> PathBuf {
     root.join("target/debug").join(name)
 }
 
+/// Environment switch that turns a missing driver binary into a test failure.
+///
+/// Local runs keep the historical behavior: a test whose driver binary is not
+/// built logs a skip note and returns early. CI jobs that gate on these tests
+/// set `CUA_TEST_REQUIRE_DRIVER_BIN=1` so a missing or misrouted binary fails
+/// loudly instead of passing without exercising the driver.
+pub const REQUIRE_DRIVER_BIN_ENV: &str = "CUA_TEST_REQUIRE_DRIVER_BIN";
+
+/// Whether `CUA_TEST_REQUIRE_DRIVER_BIN` requests strict binary resolution.
+pub fn driver_binary_required() -> bool {
+    std::env::var(REQUIRE_DRIVER_BIN_ENV).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        )
+    })
+}
+
+/// Returns whether `bin` exists. A missing binary panics when
+/// [`REQUIRE_DRIVER_BIN_ENV`] is set, and otherwise logs a skip note so the
+/// caller can return early.
+pub fn ensure_driver_binary(bin: &Path) -> bool {
+    check_driver_binary(bin, driver_binary_required())
+}
+
+fn check_driver_binary(bin: &Path, required: bool) -> bool {
+    if bin.exists() {
+        return true;
+    }
+    if required {
+        panic!(
+            "[testkit] driver binary not built at {bin:?}; {REQUIRE_DRIVER_BIN_ENV}=1 \
+             forbids skipping. Build cua-driver or point CUA_TEST_DRIVER_BIN at it."
+        );
+    }
+    eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+    false
+}
+
 /// A built harness app under `test-apps/<dir>/<exe>` (produced by
 /// `tests/fixtures/build/{windows.ps1,macos.sh}`). Example:
 /// `harness_app("harness-wpf", "CuaTestHarness.Wpf.exe")`.
@@ -66,8 +106,8 @@ pub fn harness_app(dir: &str, exe: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{driver_binary, harness_app, workspace_root};
-    use std::path::PathBuf;
+    use super::{check_driver_binary, driver_binary, harness_app, workspace_root};
+    use std::path::{Path, PathBuf};
 
     fn with_env<F>(name: &str, value: &str, test: F)
     where
@@ -96,5 +136,25 @@ mod tests {
                 PathBuf::from("/tmp/cua-test-apps/harness-electron/CuaTestHarness.Electron")
             );
         });
+    }
+
+    #[test]
+    fn missing_driver_binary_skips_by_default() {
+        assert!(!check_driver_binary(
+            Path::new("/nonexistent/cua-driver-testkit-missing"),
+            false
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "CUA_TEST_REQUIRE_DRIVER_BIN=1 forbids skipping")]
+    fn missing_driver_binary_panics_when_required() {
+        check_driver_binary(Path::new("/nonexistent/cua-driver-testkit-missing"), true);
+    }
+
+    #[test]
+    fn present_driver_binary_is_accepted_when_required() {
+        let exe = std::env::current_exe().expect("current test executable");
+        assert!(check_driver_binary(&exe, true));
     }
 }

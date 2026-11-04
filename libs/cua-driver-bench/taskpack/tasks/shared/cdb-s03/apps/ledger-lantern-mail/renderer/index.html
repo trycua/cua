@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ledger Lantern Mail</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-mark" aria-hidden="true">LL</div>
+    <div>
+      <p class="eyebrow">Kestrel Wharf Workshop</p>
+      <h1>Ledger Lantern Mail</h1>
+    </div>
+    <span class="source-badge">Source archive · read-only</span>
+  </header>
+  <main id="app" aria-busy="true">
+    <section class="mail-list" aria-label="Message list">
+      <div class="list-heading">
+        <div><p class="eyebrow">Mailbox</p><h2>Accounts desk</h2></div>
+        <span id="message-count" class="count"></span>
+      </div>
+      <ol id="messages"></ol>
+    </section>
+    <section id="reader" class="reader" aria-live="polite"></section>
+  </main>
+  <p id="status" role="status" aria-live="polite">Loading source mail…</p>
+  <dialog id="attachment-dialog" aria-labelledby="attachment-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">Read-only attachment</p><h2 id="attachment-title"></h2></div>
+      <button id="close-attachment" class="close" type="button" aria-label="Close attachment">Close</button>
+    </div>
+    <pre id="attachment-content" tabindex="0"></pre>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>

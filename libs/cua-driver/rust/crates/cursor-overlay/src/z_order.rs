@@ -17,9 +17,11 @@
 //!   currently above the target, the overlay must appear **below** it so
 //!   the user's foreground keeps rendering on top of the synthetic cursor.
 //!
-//! - `target = None` — the overlay must sit at the top of the **non-topmost**
-//!   band. It must never be promoted into the OS "always-on-top" band
-//!   (`HWND_TOPMOST`, `NSStatusWindowLevel`, override-redirect raise).
+//! - `target = None` — the overlay must reliably sit at the top of the
+//!   **non-topmost** band. It must never remain persistently promoted into the
+//!   OS "always-on-top" band. A platform may use a non-activating transient
+//!   transition through that band when required to defeat a foreground lock,
+//!   provided the operation ends in the ordinary band.
 //!
 //! - `wid` no longer maps to a live window — fall back to the `None`
 //!   behaviour for this tick. Do not error; the next tick may have a

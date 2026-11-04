@@ -1,0 +1,268 @@
+{
+  "name": "drive-page",
+  "about": "The Volume page (not a file browser): loading, a request from an agent approved (presence declined once), denied, and a grant revoked; then Open in Finder while unmounted (mounts first) and mounted, two devices syncing with a conflict (Open, Resolve), a feed error, and one device on this Mac's store.",
+  "input": {
+    "home": "/Users/maya",
+    "requests": [
+      {
+        "id": "q1",
+        "principal": "agent:researcher",
+        "prefix": "agents/writer/outputs/",
+        "mode": "r",
+        "reason": "cite the draft"
+      }
+    ],
+    "grants": []
+  },
+  "steps": [
+    {
+      "step": "loading the root"
+    },
+    {
+      "step": "the root",
+      "action": {
+        "type": "done"
+      }
+    },
+    {
+      "step": "approve",
+      "action": {
+        "type": "approve",
+        "id": "q1"
+      }
+    },
+    {
+      "step": "declined",
+      "action": {
+        "type": "failed",
+        "error": "not confirmed: you declined"
+      }
+    },
+    {
+      "step": "approve again",
+      "action": {
+        "type": "approve",
+        "id": "q1"
+      }
+    },
+    {
+      "step": "granted",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "requests": [],
+        "grants": [
+          {
+            "id": "g1",
+            "principal": "agent:researcher",
+            "prefix": "agents/writer/outputs/",
+            "mode": "r"
+          }
+        ]
+      }
+    },
+    {
+      "step": "revoke",
+      "action": {
+        "type": "revoke",
+        "id": "g1"
+      }
+    },
+    {
+      "step": "revoked",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "grants": [
+          {
+            "id": "g1",
+            "principal": "agent:researcher",
+            "prefix": "agents/writer/outputs/",
+            "mode": "r",
+            "revoked": true
+          }
+        ]
+      }
+    },
+    {
+      "step": "not mounted",
+      "input": {
+        "mount": {
+          "enabled": false,
+          "state": "off",
+          "method": "nfs",
+          "path": null,
+          "volume_name": "Cua Volume"
+        }
+      }
+    },
+    {
+      "step": "open mounts first",
+      "action": {
+        "type": "open-volume",
+        "mounted": null
+      }
+    },
+    {
+      "step": "opened",
+      "action": {
+        "type": "done"
+      }
+    },
+    {
+      "step": "mounted and syncing",
+      "input": {
+        "nowMs": 1790683200000,
+        "mount": {
+          "enabled": true,
+          "state": "mounted",
+          "method": "fskit",
+          "path": "/Volumes/Cua Volume",
+          "volume_name": "Cua Volume"
+        },
+        "sync": {
+          "device_id": "d1",
+          "device_name": "maya-mbp",
+          "feed": "live",
+          "last_poll_ms": 1790683197000,
+          "pending_uploads": 2,
+          "conflicts": [
+            {
+              "path": "public/plan.md",
+              "conflict_path": "public/plan (conflict from maya-linux 2026-09-29 14.02.11).md",
+              "winner_device": "d1",
+              "loser_device": "d2",
+              "ts_ms": 1790683080000
+            }
+          ],
+          "devices": [
+            {
+              "id": "d1",
+              "name": "maya-mbp",
+              "this_device": true,
+              "last_seen_ms": 1790683197000,
+              "last_change_ms": 1790683140000
+            },
+            {
+              "id": "d2",
+              "name": "maya-linux",
+              "this_device": false,
+              "last_seen_ms": 1790682900000,
+              "last_change_ms": 1790683080000
+            }
+          ],
+          "last_error": null
+        }
+      }
+    },
+    {
+      "step": "open in Finder",
+      "action": {
+        "type": "open-volume",
+        "mounted": "/Volumes/Cua Volume"
+      }
+    },
+    {
+      "step": "shown",
+      "action": {
+        "type": "done"
+      }
+    },
+    {
+      "step": "resolve",
+      "action": {
+        "type": "resolve",
+        "path": "public/plan.md"
+      }
+    },
+    {
+      "step": "resolved",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "sync": {
+          "device_id": "d1",
+          "device_name": "maya-mbp",
+          "feed": "live",
+          "last_poll_ms": 1790683197000,
+          "pending_uploads": 0,
+          "conflicts": [],
+          "devices": [
+            {
+              "id": "d1",
+              "name": "maya-mbp",
+              "this_device": true,
+              "last_seen_ms": 1790683197000,
+              "last_change_ms": 1790683140000
+            },
+            {
+              "id": "d2",
+              "name": "maya-linux",
+              "this_device": false,
+              "last_seen_ms": 1790682900000,
+              "last_change_ms": 1790683080000
+            }
+          ],
+          "last_error": null
+        }
+      }
+    },
+    {
+      "step": "feed error",
+      "input": {
+        "sync": {
+          "device_id": "d1",
+          "device_name": "maya-mbp",
+          "feed": "error",
+          "last_poll_ms": 1790683197000,
+          "pending_uploads": 2,
+          "conflicts": [],
+          "devices": [
+            {
+              "id": "d1",
+              "name": "maya-mbp",
+              "this_device": true,
+              "last_seen_ms": 1790683197000,
+              "last_change_ms": 1790683140000
+            },
+            {
+              "id": "d2",
+              "name": "maya-linux",
+              "this_device": false,
+              "last_seen_ms": 1790682900000,
+              "last_change_ms": 1790683080000
+            }
+          ],
+          "last_error": "The bucket refused the change log: AccessDenied."
+        }
+      }
+    },
+    {
+      "step": "this Mac only",
+      "input": {
+        "mount": {
+          "enabled": false,
+          "state": "off",
+          "method": "fskit",
+          "path": null,
+          "volume_name": "Cua Volume"
+        },
+        "sync": {
+          "device_id": "d1",
+          "device_name": "maya-mbp",
+          "feed": "off",
+          "devices": [
+            {
+              "id": "d1",
+              "name": "maya-mbp",
+              "this_device": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

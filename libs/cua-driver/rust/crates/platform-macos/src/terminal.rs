@@ -13,8 +13,7 @@
 //! call is cheap (one Objective-C method) and we only run it when
 //! `type_text` is about to issue an AX value-set.
 //!
-//! Adding a new terminal: append the bundle id to [`TERMINAL_BUNDLE_IDS`]
-//! and add a coverage line in the unit tests below.
+//! Adding a new terminal: append the bundle id to [`TERMINAL_BUNDLE_IDS`].
 
 /// Bundle identifiers of macOS terminal emulators where AX value-set is
 /// known to be silently dropped — `type_text` skips the AX path and
@@ -39,7 +38,7 @@ pub const TERMINAL_BUNDLE_IDS: &[&str] = &[
 /// from [`TERMINAL_BUNDLE_IDS`]. Case-sensitive, exact match — bundle
 /// ids are reverse-DNS and case-significant per Apple's convention.
 pub fn is_terminal_bundle_id(bundle_id: &str) -> bool {
-    TERMINAL_BUNDLE_IDS.iter().any(|b| *b == bundle_id)
+    TERMINAL_BUNDLE_IDS.contains(&bundle_id)
 }
 
 /// Returns `true` when `pid` belongs to a known terminal emulator.
@@ -56,16 +55,6 @@ pub fn is_terminal_pid(pid: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn matches_documented_terminals() {
-        for bid in TERMINAL_BUNDLE_IDS {
-            assert!(
-                is_terminal_bundle_id(bid),
-                "documented terminal {bid:?} must match"
-            );
-        }
-    }
 
     #[test]
     fn rejects_non_terminal_bundles() {

@@ -23,7 +23,7 @@ struct HTTPRequest {
         guard let requestString = String(data: data, encoding: .utf8) else { return nil }
         let components = requestString.components(separatedBy: "\r\n\r\n")
         guard components.count >= 1 else { return nil }
-        
+
         let headerLines = components[0].components(separatedBy: "\r\n")
         guard !headerLines.isEmpty else { return nil }
         
@@ -59,6 +59,7 @@ struct HTTPResponse {
         case ok = 200
         case accepted = 202
         case badRequest = 400
+        case conflict = 409
         case notFound = 404
         case internalServerError = 500
         
@@ -67,6 +68,7 @@ struct HTTPResponse {
             case .ok: return "OK"
             case .accepted: return "Accepted"
             case .badRequest: return "Bad Request"
+            case .conflict: return "Conflict"
             case .notFound: return "Not Found"
             case .internalServerError: return "Internal Server Error"
             }
@@ -118,4 +120,4 @@ final class HTTPServer {
     init(port: UInt16) {
         self.port = port
     }
-} 
+}

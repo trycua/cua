@@ -5,94 +5,13 @@
 //! policy state: doing so would let an anonymous proxy connection bypass the
 //! per-session contract.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CaptureScopePolicy {
-    #[default]
-    Auto,
-    Window,
-    Desktop,
-}
-
-impl CaptureScopePolicy {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "window" => Some(Self::Window),
-            "desktop" => Some(Self::Desktop),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Window => "window",
-            Self::Desktop => "desktop",
-        }
-    }
-}
-
-impl fmt::Display for CaptureScopePolicy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveCaptureScope {
-    Window,
-    Desktop,
-}
-
-impl EffectiveCaptureScope {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Window => "window",
-            Self::Desktop => "desktop",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other,
-}
-
-impl EscalationReason {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "ax_tree_pixel_mismatch" => Some(Self::AxTreePixelMismatch),
-            "background_delivery_failed" => Some(Self::BackgroundDeliveryFailed),
-            "foreground_ineffective" => Some(Self::ForegroundIneffective),
-            "no_window_target" => Some(Self::NoWindowTarget),
-            "other" => Some(Self::Other),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AxTreePixelMismatch => "ax_tree_pixel_mismatch",
-            Self::BackgroundDeliveryFailed => "background_delivery_failed",
-            Self::ForegroundIneffective => "foreground_ineffective",
-            Self::NoWindowTarget => "no_window_target",
-            Self::Other => "other",
-        }
-    }
-}
+pub use cua_driver_contract::{
+    CaptureScope as CaptureScopePolicy, EffectiveScope as EffectiveCaptureScope, EscalationReason,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionCaptureScope {
@@ -122,14 +41,19 @@ impl SessionCaptureScope {
     }
 
     pub fn as_json(&self, session: &str) -> Value {
-        json!({
-            "session": session,
-            "capture_scope": self.policy.as_str(),
-            "effective_scope": self.effective_scope().as_str(),
-            "desktop_unlocked": self.desktop_unlocked,
-            "escalation_reason": self.escalation_reason.map(EscalationReason::as_str),
-            "escalation_detail": self.escalation_detail,
-        })
+        serde_json::to_value(self.output(session)).expect("session output serializes")
+    }
+
+    pub fn output(&self, session: &str) -> cua_driver_contract::SessionStateOutput {
+        cua_driver_contract::SessionStateOutput {
+            session: session.to_owned(),
+            capture_scope: self.policy,
+            effective_scope: self.effective_scope(),
+            desktop_capture_authorized: self.desktop_unlocked,
+            desktop_unlocked: self.desktop_unlocked,
+            escalation_reason: self.escalation_reason,
+            escalation_detail: self.escalation_detail.clone(),
+        }
     }
 }
 
@@ -181,6 +105,13 @@ pub fn get_session(session: &str) -> Option<SessionCaptureScope> {
 
 pub fn clear_session(session: &str) {
     scopes().lock().unwrap().remove(session);
+}
+
+pub fn clear_sessions_with_prefix(prefix: &str) -> usize {
+    let mut registry = scopes().lock().unwrap();
+    let before = registry.len();
+    registry.retain(|session, _| !session.starts_with(prefix));
+    before - registry.len()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,6 +188,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     if matches!(
         tool_name,
         "get_window_state"
+            | "verify_state"
             | "get_accessibility_tree"
             | "get_app_state"
             | "screenshot"
@@ -269,11 +201,15 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     {
         return ToolScope::Window;
     }
+    if matches!(tool_name, "mouse_button_down" | "mouse_button_up") {
+        // These stateful primitives only deliver to a window or to the window
+        // retained by a prior button-down; neither implements desktop scope.
+        return ToolScope::Window;
+    }
     if is_scoped_action(tool_name) {
         let explicit_desktop = args.get("scope").and_then(Value::as_str) == Some("desktop");
         let has_window_target = args.get("pid").is_some()
             || args.get("window_id").is_some()
-            || args.get("element_index").is_some()
             || args.get("element_token").is_some();
         if explicit_desktop && !has_window_target {
             ToolScope::Desktop
@@ -302,13 +238,18 @@ impl ScopeViolation {
     }
 }
 
-/// Enforce the modality for a public session. A first non-lifecycle action
-/// implicitly starts that session in `auto`, matching the existing cursor and
-/// recording lifecycle behavior.
+/// Enforce modality only for a session that explicitly opted into the
+/// deprecated capture-scope compatibility contract. Lifecycle-only explicit
+/// and implicit sessions select modality per call and carry no capture state.
 pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation> {
     if matches!(
         tool_name,
-        "start_session" | "end_session" | "escalate_session" | "get_session_state"
+        "start_session"
+            | "end_session"
+            | "escalate_session"
+            | "get_session"
+            | "list_sessions"
+            | "get_session_state"
     ) {
         return Ok(());
     }
@@ -319,22 +260,33 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
     else {
         return Ok(());
     };
-    let (state, _) = bind_session(session, None).map_err(|_| ScopeViolation {
-        code: "session_ended",
-        message: format!("session '{session}' has ended"),
-        state: SessionCaptureScope::new(CaptureScopePolicy::Auto),
-    })?;
+    let Some(state) = get_session(session) else {
+        return Ok(());
+    };
     match (state.effective_scope(), tool_scope(tool_name, args)) {
         (_, ToolScope::Unscoped)
         | (EffectiveCaptureScope::Window, ToolScope::Window)
         | (EffectiveCaptureScope::Desktop, ToolScope::Desktop) => Ok(()),
+        (EffectiveCaptureScope::Desktop, ToolScope::Window)
+            if state.policy == CaptureScopePolicy::Auto
+                && tool_name == "mouse_button_up"
+                && ["pid", "window_id", "x", "y", "from_zoom"]
+                    .iter()
+                    .all(|key| args.get(key).is_none_or(Value::is_null)) =>
+        {
+            // Releasing a button held before one-way desktop escalation is
+            // cleanup when it cannot retarget or reposition the release.
+            // Strict desktop sessions have no window phase and therefore do
+            // not receive this exception.
+            Ok(())
+        }
         (EffectiveCaptureScope::Window, ToolScope::Desktop)
             if state.policy == CaptureScopePolicy::Auto =>
         {
             Err(ScopeViolation {
                 code: "desktop_escalation_required",
                 message: format!(
-                    "desktop-scope tool '{tool_name}' is locked for auto session '{session}'; exhaust the window action ladder, verify each attempt, then call escalate_session"
+                    "desktop-scope tool '{tool_name}' requires desktop capture authorization for auto session '{session}'; this is separate from the host lock-screen state. Exhaust the window action ladder, verify each attempt, then call escalate_session"
                 ),
                 state,
             })
@@ -346,19 +298,29 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
             ),
             state,
         }),
-        (EffectiveCaptureScope::Desktop, ToolScope::Window) => Err(ScopeViolation {
-            code: "window_scope_disabled",
-            message: format!(
-                "window-scope tool '{tool_name}' is disabled while session '{session}' is in desktop scope"
-            ),
-            state,
-        }),
+        (EffectiveCaptureScope::Desktop, ToolScope::Window) => {
+            let message = if state.policy == CaptureScopePolicy::Auto {
+                format!(
+                    "window-scope tool '{tool_name}' is disabled because escalation to desktop scope is permanent for session '{session}'; to recover, call end_session for session '{session}', then call start_session with a new session id"
+                )
+            } else {
+                format!(
+                    "window-scope tool '{tool_name}' is disabled while session '{session}' is in desktop scope"
+                )
+            };
+            Err(ScopeViolation {
+                code: "window_scope_disabled",
+                message,
+                state,
+            })
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn fresh(prefix: &str) -> String {
         format!("capture-scope-{prefix}-{}", std::process::id())
@@ -373,12 +335,11 @@ mod tests {
         bind_session(&desktop, Some(CaptureScopePolicy::Desktop)).unwrap();
         bind_session(&window, Some(CaptureScopePolicy::Window)).unwrap();
 
-        assert_eq!(
-            enforce_tool("get_desktop_state", &json!({"session": auto}))
-                .unwrap_err()
-                .code,
-            "desktop_escalation_required"
-        );
+        let auto_error = enforce_tool("get_desktop_state", &json!({"session": auto})).unwrap_err();
+        assert_eq!(auto_error.code, "desktop_escalation_required");
+        assert!(auto_error
+            .message
+            .contains("separate from the host lock-screen state"));
         assert!(enforce_tool("get_desktop_state", &json!({"session": desktop})).is_ok());
         assert_eq!(
             enforce_tool("get_desktop_state", &json!({"session": window}))
@@ -398,6 +359,40 @@ mod tests {
         assert_eq!(
             get_session(&desktop).unwrap().effective_scope(),
             EffectiveCaptureScope::Desktop
+        );
+    }
+
+    #[test]
+    fn escalated_auto_session_reports_permanent_scope_and_recovery() {
+        let session = fresh("auto-recovery");
+        bind_session(&session, Some(CaptureScopePolicy::Auto)).unwrap();
+        escalate_session(
+            &session,
+            EscalationReason::ForegroundIneffective,
+            Some("window ladder exhausted"),
+        )
+        .unwrap();
+
+        let violation = enforce_tool("get_window_state", &json!({"session": session})).unwrap_err();
+        assert_eq!(violation.code, "window_scope_disabled");
+        assert_eq!(
+            violation.message,
+            format!(
+                "window-scope tool 'get_window_state' is disabled because escalation to desktop scope is permanent for session '{session}'; to recover, call end_session for session '{session}', then call start_session with a new session id"
+            )
+        );
+        assert_eq!(
+            violation.as_json(&session),
+            json!({
+                "session": session,
+                "capture_scope": "auto",
+                "effective_scope": "desktop",
+                "desktop_capture_authorized": true,
+                "desktop_unlocked": true,
+                "escalation_reason": "foreground_ineffective",
+                "escalation_detail": "window ladder exhausted",
+                "code": "window_scope_disabled"
+            })
         );
     }
 
@@ -465,7 +460,87 @@ mod tests {
     }
 
     #[test]
-    fn end_racing_escalation_never_resurrects_scope_state() {
+    fn mouse_button_actions_respect_strict_scope() {
+        let window = fresh("strict-window-mouse-buttons");
+        let desktop = fresh("strict-desktop-mouse-buttons");
+        bind_session(&window, Some(CaptureScopePolicy::Window)).unwrap();
+        bind_session(&desktop, Some(CaptureScopePolicy::Desktop)).unwrap();
+
+        for tool_name in ["mouse_button_down", "mouse_button_up"] {
+            assert!(enforce_tool(
+                tool_name,
+                &json!({"session": window, "pid": 42, "window_id": 7, "x": 4, "y": 5})
+            )
+            .is_ok());
+            assert_eq!(
+                enforce_tool(
+                    tool_name,
+                    &json!({"session": desktop, "pid": 42, "window_id": 7, "x": 4, "y": 5})
+                )
+                .unwrap_err()
+                .code,
+                "window_scope_disabled"
+            );
+        }
+        assert_eq!(
+            enforce_tool(
+                "mouse_button_up",
+                &json!({"session": desktop, "scope": "desktop"})
+            )
+            .unwrap_err()
+            .code,
+            "window_scope_disabled"
+        );
+    }
+
+    #[test]
+    fn auto_escalation_preserves_mouse_button_cleanup() {
+        let session = fresh("auto-mouse-button-cleanup");
+        bind_session(&session, Some(CaptureScopePolicy::Auto)).unwrap();
+        let window_args = json!({"session": session, "pid": 42, "window_id": 7, "x": 4, "y": 5});
+
+        assert!(enforce_tool("mouse_button_down", &window_args).is_ok());
+        escalate_session(&session, EscalationReason::ForegroundIneffective, None).unwrap();
+        assert_eq!(
+            enforce_tool("mouse_button_down", &window_args)
+                .unwrap_err()
+                .code,
+            "window_scope_disabled"
+        );
+        assert_eq!(
+            enforce_tool("mouse_button_up", &window_args)
+                .unwrap_err()
+                .code,
+            "window_scope_disabled"
+        );
+        for positioned_args in [
+            json!({"session": session, "x": 8, "y": 9}),
+            json!({"session": session, "scope": "desktop", "x": 8, "y": 9}),
+        ] {
+            assert_eq!(
+                enforce_tool("mouse_button_up", &positioned_args)
+                    .unwrap_err()
+                    .code,
+                "window_scope_disabled"
+            );
+        }
+        assert!(enforce_tool("mouse_button_up", &json!({"session": session})).is_ok());
+        assert!(enforce_tool(
+            "mouse_button_up",
+            &json!({
+                "session": session,
+                "pid": null,
+                "window_id": null,
+                "x": null,
+                "y": null,
+                "from_zoom": null
+            })
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn end_racing_escalation_never_resurrects_legacy_scope_state() {
         use std::sync::{Arc, Barrier};
 
         let session = fresh("end-escalate-race");
@@ -493,11 +568,9 @@ mod tests {
 
         assert!(crate::session::is_session_ended(&session));
         assert!(get_session(&session).is_none());
-        assert_eq!(
-            enforce_tool("get_window_state", &json!({"session": session}))
-                .unwrap_err()
-                .code,
-            "session_ended"
+        assert!(
+            enforce_tool("get_window_state", &json!({"session": session})).is_ok(),
+            "the compatibility helper must not recreate cleared capture state; the canonical lifecycle gate rejects the ended session"
         );
 
         assert!(crate::session::revive_session(&session));

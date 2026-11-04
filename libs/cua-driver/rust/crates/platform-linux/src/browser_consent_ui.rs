@@ -2,15 +2,13 @@
 
 use std::time::{Duration, Instant};
 
+use cua_driver_core::browser::platform::BrowserConsentAction;
 use cua_driver_core::browser::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserRefusal, BrowserRefusalCode,
 };
 
 use crate::atspi::AtspiNode;
-
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
+use crate::interaction::{with_target_foreground, RestoreMode};
 
 fn normalized_text(node: &AtspiNode) -> String {
     [
@@ -72,9 +70,10 @@ fn remote_debugging_prompt_present(nodes: &[AtspiNode]) -> bool {
         && body.contains("navigate to any url")
 }
 
-fn exact_allow_button(
+fn exact_prompt_button(
     nodes: &[AtspiNode],
     bounds: &[(usize, i32, i32, u32, u32)],
+    label: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
     if !remote_debugging_prompt_present(nodes) {
         return Ok(None);
@@ -82,7 +81,7 @@ fn exact_allow_button(
     let matches = trusted_prompt_nodes(nodes)
         .filter(|node| {
             role_is(node, &["push button", "button"])
-                && normalized_text(node) == "allow"
+                && normalized_text(node) == label
                 && !node.actions.is_empty()
                 && node.element_index.is_some()
         })
@@ -123,9 +122,9 @@ fn exact_allow_button(
     match matches.as_slice() {
         [] => Ok(None),
         [(index, ..)] => Ok(Some(*index)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact Allow actions matched the browser consent prompt",
+            format!("multiple exact {label} actions matched the browser consent prompt"),
         )
         .with_detail(serde_json::json!({
             "candidates": matches.iter().map(|(element_index, element_key, depth, role, actions, parent_element_index)| {
@@ -146,35 +145,31 @@ fn exact_allow_button(
     }
 }
 
+fn exact_allow_button(
+    nodes: &[AtspiNode],
+    bounds: &[(usize, i32, i32, u32, u32)],
+) -> Result<Option<usize>, BrowserRefusal> {
+    exact_prompt_button(nodes, bounds, "allow")
+}
+
+fn exact_cancel_button(
+    nodes: &[AtspiNode],
+    bounds: &[(usize, i32, i32, u32, u32)],
+) -> Result<Option<usize>, BrowserRefusal> {
+    exact_prompt_button(nodes, bounds, "cancel")
+}
+
 fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
     let owned = crate::wayland::list_windows_dispatch(Some(pid))
         .into_iter()
         .any(|window| window.xid == window_id);
     if !owned {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             "the approved browser window changed ownership before consent",
         ));
     }
     Ok(())
-}
-
-fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        if let Some(window) =
-            crate::wayland::sway_ipc::window_for_id(window_id).filter(|window| window.pid == pid)
-        {
-            crate::wayland::sway_ipc::with_focused_container(window.id, body)
-        } else {
-            crate::wayland::shell_helper::with_focused_window(pid, window_id, body)
-        }
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
-    }
 }
 
 fn exact_button_center(
@@ -195,7 +190,7 @@ fn exact_button_center(
 }
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         let tree = crate::atspi::walk_tree(pid, window_id, None);
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?
@@ -204,18 +199,114 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
             })?;
         let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            crate::wayland::click_desktop(center_x, center_y, 1, 1)
+            crate::wayland::click_focused((center_x, center_y).into(), 1, 1)
         } else {
             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)
         }
     })
 }
 
+/// The node at element `index` of a walk of the consent window, which an
+/// exact action addresses through its own object.
+fn walked_node(nodes: &[AtspiNode], index: usize) -> Result<AtspiNode, BrowserRefusal> {
+    nodes
+        .iter()
+        .find(|node| node.element_index == Some(index))
+        .cloned()
+        .ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact browser consent control left its walk",
+            )
+        })
+}
+
+pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
+    prove_window_owner(pid, window_id)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut dismissed = false;
+    loop {
+        prove_window_owner(pid, window_id)?;
+        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let prompt_present = remote_debugging_prompt_present(&tree.nodes);
+        if !prompt_present {
+            return Ok(dismissed);
+        }
+        let index = exact_cancel_button(&tree.nodes, &tree.bounds)?.ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact remote-debugging consent prompt exposed no semantic cancel action",
+            )
+        })?;
+        let node = walked_node(&tree.nodes, index)?;
+        crate::atspi::perform_action_walked(pid, window_id, &node).map_err(|error| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("the exact browser consent cancel action failed: {error}"),
+            )
+        })?;
+        dismissed = true;
+        if Instant::now() >= deadline {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the remote-debugging consent prompt remained after its exact cancel action",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn check_deadline(deadline: Instant) -> Result<(), BrowserRefusal> {
+    if Instant::now() >= deadline {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "Chromium remote-debugging consent did not settle within its bounded attempt",
+        ));
+    }
+    Ok(())
+}
+
+async fn consent_action<T: Send + 'static>(
+    action: &BrowserConsentAction,
+    deadline: Instant,
+    operation: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, BrowserRefusal> {
+    check_deadline(deadline)?;
+    // Commit before scheduling: dropping a running blocking task cannot cancel it.
+    let worker = action.perform(|| {
+        // The worker waits on the one foreground transaction and runs under
+        // no action of its own, so it binds this one: every wait it makes,
+        // that one included, ends at the consent deadline instead of
+        // outliving the attempt it serves.
+        let bound =
+            crate::input::action::Action::new(deadline.saturating_duration_since(Instant::now()));
+        tokio::task::spawn_blocking(move || {
+            let _bound = crate::input::action::bind(bound);
+            check_deadline(deadline)?;
+            operation().map_err(|error| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    format!("the exact browser consent action failed: {error}"),
+                )
+            })
+        })
+    });
+    let result = worker.await.map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not dispatch the exact browser consent action: {error}"),
+        )
+    })??;
+    // The native helper may outlast our deadline. Join it, then refuse without fallback.
+    check_deadline(deadline)?;
+    Ok(result)
+}
+
 pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
     let pid = u32::try_from(request.pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser pid is outside the Linux process-id range",
         )
@@ -226,35 +317,28 @@ pub async fn handle(
     let mut accessibility_action_at = None;
     let mut trusted_click_attempted = false;
     loop {
+        check_deadline(deadline)?;
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
         let tree =
             tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid, window_id, None))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("could not inspect the browser consent UI: {error}"),
                     )
                 })?;
+        check_deadline(deadline)?;
         let prompt_present = remote_debugging_prompt_present(&tree.nodes);
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
-                tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, index))
-                    .await
-                    .map_err(|error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            format!("could not dispatch the exact browser consent action: {error}"),
-                        )
-                    })?
-                    .map_err(|error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserWrongTargetRefused,
-                            format!("the exact browser consent action failed: {error}"),
-                        )
-                    })?;
+                let node = walked_node(&tree.nodes, index)?;
+                consent_action(&request.action, deadline, move || {
+                    crate::atspi::perform_action_walked(pid, window_id, &node)
+                })
+                .await?;
                 accessibility_action_at = Some(Instant::now());
             }
             Some(_)
@@ -264,40 +348,19 @@ pub async fn handle(
                     }) =>
             {
                 let window_id = request.window_id;
-                tokio::task::spawn_blocking(move || trusted_allow_click(pid, window_id))
-                    .await
-                    .map_err(|error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            format!(
-                                "could not dispatch the trusted browser consent click: {error}"
-                            ),
-                        )
-                    })?
-                    .map_err(|error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserWrongTargetRefused,
-                            format!("the trusted browser consent click failed: {error}"),
-                        )
-                    })?;
+                consent_action(&request.action, deadline, move || {
+                    trusted_allow_click(pid, window_id)
+                })
+                .await?;
                 trusted_click_attempted = true;
             }
             None if saw_prompt && !prompt_present => {
                 if accessibility_action_at.is_some() {
                     return Ok(BrowserConsentOutcome::Accepted);
                 }
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserConsentRevoked,
                     "the person dismissed the browser consent prompt",
-                ));
-            }
-            None if Instant::now() >= deadline => {
-                return Err(refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!(
-                        "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
-                        request.attempt
-                    ),
                 ));
             }
             _ => {}
@@ -310,6 +373,84 @@ pub async fn handle(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn expired_action_never_enters_native_helper() {
+        let result = consent_action(&BrowserConsentAction::default(), Instant::now(), || {
+            panic!("expired action entered the native helper");
+            #[allow(unreachable_code)]
+            Ok(())
+        })
+        .await;
+        assert_eq!(
+            result.unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn queued_action_checks_deadline_before_native_helper() {
+        use std::future::Future;
+        use std::task::Poll;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let blocker = runtime.spawn_blocking(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv().unwrap();
+        runtime.block_on(async {
+            let action = BrowserConsentAction::default();
+            let deadline = Instant::now() + Duration::from_millis(100);
+            let mut consent = Box::pin(consent_action(&action, deadline, || {
+                panic!("expired queued action entered the native helper");
+                #[allow(unreachable_code)]
+                Ok(())
+            }));
+            std::future::poll_fn(|cx| {
+                assert!(consent.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            release_tx.send(()).unwrap();
+            assert_eq!(
+                consent.await.unwrap_err().code,
+                BrowserRefusalCode::BrowserWrongTargetRefused
+            );
+            blocker.await.unwrap();
+        });
+    }
+
+    #[tokio::test]
+    async fn running_action_is_joined_and_late_success_refused() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let completed = Arc::new(AtomicBool::new(false));
+        let worker_completed = completed.clone();
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let result = consent_action(&BrowserConsentAction::default(), deadline, move || {
+            std::thread::sleep(Duration::from_millis(120));
+            worker_completed.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "native worker was detached"
+        );
+        assert_eq!(
+            result.unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
     fn node(role: &str, name: &str, actions: &[&str]) -> AtspiNode {
         AtspiNode {
             element_index: (!actions.is_empty()).then_some(7),
@@ -317,12 +458,16 @@ mod tests {
             name: Some(name.to_owned()),
             value: None,
             checked: None,
+            enabled: None,
+            selected: None,
             description: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
+            object_ref: None,
         }
     }
 
@@ -342,6 +487,7 @@ mod tests {
     #[test]
     fn matcher_requires_exact_security_prompt_and_unique_allow_action() {
         assert_eq!(exact_allow_button(&prompt(), &[]).unwrap(), Some(7));
+        assert_eq!(exact_cancel_button(&prompt(), &[]).unwrap(), Some(7));
         assert!(
             exact_allow_button(&[node("push button", "Allow", &["click"])], &[])
                 .unwrap()

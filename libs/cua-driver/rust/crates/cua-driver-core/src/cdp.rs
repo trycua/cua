@@ -89,12 +89,22 @@ async fn cdp_evaluate(
     Ok(serde_json::json!({ "result": result }))
 }
 
-fn pick_page<'a>(pages: &'a [Value], hint: Option<&str>) -> Option<&'a Value> {
+/// Pick the unique page whose `url` contains `hint` (case-insensitive), or
+/// the first page when no hint is given.
+///
+/// Explicit hints fail closed when zero or multiple pages match: CDP target
+/// ids carry no relationship to the caller's window, so a browser with more
+/// than one tab open would otherwise be picked non-deterministically.
+pub fn pick_page<'a>(
+    pages: impl IntoIterator<Item = &'a Value>,
+    hint: Option<&str>,
+) -> Option<&'a Value> {
+    let mut pages = pages.into_iter();
     match hint {
-        None => pages.first(),
+        None => pages.next(),
         Some(hint) => {
             let hint_lower = hint.to_ascii_lowercase();
-            let mut matches = pages.iter().filter(|page| {
+            let mut matches = pages.filter(|page| {
                 page.get("url")
                     .and_then(Value::as_str)
                     .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
@@ -326,9 +336,7 @@ mod tests {
             let id = call["id"].as_u64().unwrap();
             websocket
                 .send(Message::Text(
-                    json!({ "method": "Runtime.consoleAPICalled", "params": {} })
-                        .to_string()
-                        .into(),
+                    json!({ "method": "Runtime.consoleAPICalled", "params": {} }).to_string(),
                 ))
                 .await
                 .unwrap();
@@ -338,8 +346,7 @@ mod tests {
                         "id": id,
                         "result": { "result": { "value": "compat" } }
                     })
-                    .to_string()
-                    .into(),
+                    .to_string(),
                 ))
                 .await
                 .unwrap();

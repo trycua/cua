@@ -9,7 +9,7 @@
 //! - `background` (DEFAULT) — PostMessage / UIA path only, never fronts. If
 //!   `would_be_silently_dropped(target, event_kind)` returns true, the tool
 //!   returns a structured `background_unavailable` error so the caller can
-//!   `bring_to_front` then retry with `delivery_mode:"foreground"`. This is
+//!   retry that action with `delivery_mode:"foreground"`. This is
 //!   the default because cua-driver's value proposition is that input never
 //!   steals foreground — surfacing an honest error beats silently fronting.
 //!
@@ -63,46 +63,8 @@ impl EventKind {
     }
 }
 
-/// Input delivery modality — the agent-selected rung of the best-effort-
-/// background ladder, passed per call (never a stored/config setting).
-/// Mirrors macOS `tools::DeliveryMode`.
-///
-/// - `Background` (default): post synthetic input to the target without
-///   fronting; on a known silent-drop (class, event) pair the tool returns
-///   a structured `background_unavailable` error instead of fronting.
-/// - `Foreground`: briefly front the target window, act via SendInput, then
-///   restore the prior foreground. The agent's explicit last resort.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum DeliveryMode {
-    /// PostMessage / UIA only. Error if delivery would be silently dropped.
-    #[default]
-    Background,
-    /// SendInput with brief foreground swap.
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` —
-    /// the correct default, so an omitted/garbage value (or the removed
-    /// legacy `"auto"`) never silently fronts. Matches macOS
-    /// `DeliveryMode::parse`.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    /// Parse from a tool's JSON args, reading the `delivery_mode` field.
-    pub fn from_args(args: &Value) -> Self {
-        Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
 /// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
@@ -119,7 +81,7 @@ pub fn delivery_mode_schema() -> Value {
          the tool returns a structured background_unavailable error rather than \
          fronting. 'foreground' is the explicit escalation: a brief \
          SetForegroundWindow swap + SendInput, restoring the prior foreground \
-         afterward (call bring_to_front first to avoid the flash). \
+         afterward. \
          IMPORTANT: 'background' is not a hint to weigh — it is the mandatory \
          first attempt. Do NOT pass 'foreground' preemptively because a target \
          'looks like' GTK/Chromium/Electron; the DRIVER decides when background \
@@ -167,11 +129,11 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         return wpf_drops_event(kind, target_is_foreground(hwnd));
     }
     if is_tk_target_window(hwnd) {
-        // Tk's Windows event loop does not treat posted WM_CHAR/WM_KEYDOWN as
-        // genuine keyboard input for the focused widget. The messages can be
-        // accepted by PostMessage while the Entry receives nothing, so refuse
-        // instead of reporting a false background success.
-        return matches!(kind, Keystroke | KeyCombo | TextInput);
+        // Tk derives button transitions from GetKeyState rather than trusting
+        // a posted WM_*BUTTON message. PostMessage therefore reports success
+        // without producing a Tk ButtonPress, just as posted key messages can
+        // be accepted without reaching the focused widget.
+        return tk_drops_event(kind);
     }
     // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
     // here. It looks WPF-like, but its composition input-site does NOT consume
@@ -187,7 +149,7 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // clicks, drawing-area widgets accept them. We cannot distinguish
         // at the HWND level (single HWND for the whole GTK window) so we
         // flag mouse clicks broadly. Canvas-style drag works in practice;
-        // caller can still opt to retry with dispatch:"background" on the
+        // caller can still opt to retry with delivery_mode:"background" on the
         // drag path if the click error wasn't actually load-bearing.
         return matches!(kind, MouseClick);
     }
@@ -200,7 +162,7 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // Alt+F4) silently fail. Plain WM_CHAR text input through the
         // document widgets still works (verified end-to-end against
         // Writer's main editing area). Flag the keystroke-class events
-        // so dispatch:"background" surfaces a structured error instead
+        // so delivery_mode:"background" surfaces a structured error instead
         // of pretending to succeed.
         return matches!(kind, Keystroke | KeyCombo);
     }
@@ -210,6 +172,13 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
 fn wpf_drops_event(kind: EventKind, target_is_foreground: bool) -> bool {
     matches!(kind, EventKind::MouseClick | EventKind::MouseMove)
         || (!target_is_foreground && matches!(kind, EventKind::Keystroke | EventKind::KeyCombo))
+}
+
+fn tk_drops_event(kind: EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::MouseClick | EventKind::Keystroke | EventKind::KeyCombo | EventKind::TextInput
+    )
 }
 
 fn target_is_foreground(hwnd: u64) -> bool {
@@ -323,7 +292,7 @@ pub fn read_class_name(hwnd: u64) -> String {
 }
 
 /// Build the structured `background_unavailable` error returned when
-/// `dispatch:"background"` would silently drop.
+/// `delivery_mode:"background"` would silently drop.
 pub fn background_unavailable_error(
     hwnd: u64,
     kind: EventKind,
@@ -331,26 +300,23 @@ pub fn background_unavailable_error(
     let class = read_class_name(hwnd);
     let text = format!(
         "Background delivery is not available for target window class \
-         '{class}' on this event kind ({}). Either call bring_to_front \
-         then retry with delivery_mode:\"foreground\", or accept the foreground \
-         swap directly by setting delivery_mode:\"foreground\".",
+         '{class}' on this event kind ({}). Retry this action with \
+         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
+         the action and restore the previous foreground afterward.",
         kind.name()
     );
-    cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
-        "code": "background_unavailable",
-        "target_class": class,
-        "event_kind": kind.name(),
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
-        // Windows analog of the macOS escalation signal: this surface drops
-        // background input, so the deliberate next rung is foreground delivery.
-        "escalation": {
-            "recommended": "foreground",
-            "reason": "background input is dropped by this surface — re-call \
-                       delivery_mode:\"foreground\" (or bring_to_front first).",
-        },
-    }))
+    // Windows analog of the macOS escalation signal: this surface drops
+    // background input, so the deliberate next rung is foreground delivery.
+    cua_driver_core::delivery::background_unavailable_result(
+        text,
+        "background_unavailable",
+        "background input is dropped by this surface; retry this \
+         action with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "target_class": class,
+            "event_kind": kind.name(),
+        }),
+    )
 }
 
 /// Build a structured background refusal while preserving the concrete
@@ -374,23 +340,22 @@ pub fn background_unavailable_error_with_cause(
     };
     let text = format!(
         "Background delivery is not available for target window class \
-         '{class}' on this event kind ({}): {cause}",
+         '{class}' on this event kind ({}): {cause}. Retry this action with \
+         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
+         the action and restore the previous foreground afterward.",
         kind.name()
     );
-    cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
-        "code": code,
-        "target_class": class,
-        "event_kind": kind.name(),
-        "cause": cause,
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
-        "escalation": {
-            "recommended": "foreground",
-            "reason": "background input could not be delivered by the coordinate actuator — \
-                       re-call delivery_mode:\"foreground\" (or bring_to_front first).",
-        },
-    }))
+    cua_driver_core::delivery::background_unavailable_result(
+        text,
+        code,
+        "background input could not be delivered by the coordinate \
+         actuator; retry this action with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "target_class": class,
+            "event_kind": kind.name(),
+            "cause": cause,
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -416,45 +381,25 @@ mod tests {
         assert!(!wpf_drops_event(EventKind::TextInput, false));
         assert!(!wpf_drops_event(EventKind::MouseScroll, false));
     }
+
     #[test]
-    fn delivery_mode_parses_known_values() {
-        let j = |s: &str| serde_json::json!({"delivery_mode": s});
-        assert_eq!(
-            DeliveryMode::from_args(&j("background")),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&j("foreground")),
-            DeliveryMode::Foreground
-        );
-        // Case-insensitive, matching macOS DeliveryMode::parse.
-        assert_eq!(
-            DeliveryMode::from_args(&j("Foreground")),
-            DeliveryMode::Foreground
-        );
+    fn tk_refuses_posted_clicks_and_keyboard_events() {
+        assert!(tk_drops_event(EventKind::MouseClick));
+        assert!(tk_drops_event(EventKind::Keystroke));
+        assert!(tk_drops_event(EventKind::KeyCombo));
+        assert!(tk_drops_event(EventKind::TextInput));
+        assert!(!tk_drops_event(EventKind::MouseMove));
+        assert!(!tk_drops_event(EventKind::MouseScroll));
     }
 
     #[test]
-    fn delivery_mode_defaults_to_background() {
-        // Missing field, garbage value, null, and the removed legacy "auto"
-        // all resolve to Background. This is the cua-driver no-foreground-by-
-        // default contract: an unrecognised value never silently fronts.
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
-            DeliveryMode::Background
-        );
+    fn delivery_mode_schema_keeps_persistent_activation_out_of_the_input_ladder() {
+        let schema = delivery_mode_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("delivery_mode description");
+        assert!(description.contains("Only THEN re-issue the same action with 'foreground'"));
+        assert!(!description.contains("bring_to_front"));
     }
 
     #[test]
@@ -478,6 +423,12 @@ mod tests {
             _ => panic!("expected text content"),
         };
         assert!(text.contains("occluded"), "result text lost cause: {text}");
+        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
+        assert!(!text.contains("bring_to_front"));
+        assert!(!structured["suggestion"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bring_to_front"));
 
         let uipi = background_unavailable_error_with_cause(
             0,

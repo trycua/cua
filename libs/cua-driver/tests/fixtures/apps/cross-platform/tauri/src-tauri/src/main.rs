@@ -49,7 +49,12 @@ fn main() {
             #[cfg(target_os = "windows")]
             let window = window.position(40.0, 40.0);
 
-            window.build()?;
+            let window = window.build()?;
+            // The fixture is spawned directly by the behavioral runner instead
+            // of LaunchServices. Explicit focus makes its foreground-input rows
+            // deterministic; background rows immediately replace this posture
+            // with their sentinel before recording begins.
+            window.set_focus()?;
             Ok(())
         })
         .run(tauri::generate_context!())

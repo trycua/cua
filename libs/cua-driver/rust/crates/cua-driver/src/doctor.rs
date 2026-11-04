@@ -23,7 +23,7 @@
 //!   script), plus a hint to run `cua-driver diagnose` for a full
 //!   TCC / cdhash / install layout dump.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +152,9 @@ impl Report {
         serde_json::json!({
             "ok": !self.has_errors(),
             "probes": probes,
+            // The running binary's identity (source revision, sha256 of the
+            // executable): what `cua doctor --expect cua-driver=...` checks.
+            "build": cua_driver_core::build_info::current(),
         })
     }
 }
@@ -163,7 +166,20 @@ impl Report {
 fn probe_version() -> Probe {
     let version = env!("CARGO_PKG_VERSION");
     let target = build_target_triple();
-    Probe::ok("binary", format!("cua-driver {version} ({target})"))
+    let build = cua_driver_core::build_info::current();
+    let git = if build.git_sha.is_empty() {
+        "unknown".to_owned()
+    } else {
+        build.git_sha.chars().take(12).collect()
+    };
+    Probe::ok("binary", format!("cua-driver {version} ({target})")).with_detail(format!(
+        "git: {git}\nsha256: {}",
+        if build.exe_sha256.is_empty() {
+            "unreadable"
+        } else {
+            &build.exe_sha256
+        }
+    ))
 }
 
 /// Build-time target triple. We don't have a `built` crate dependency, so
@@ -198,12 +214,11 @@ fn probe_install_layout() -> Probe {
 /// release dirs so the user can sanity-check
 /// `CUA_DRIVER_RS_KEEP_VERSIONS` is doing the right thing. Renamed from
 /// `.cua-driver-rs/` in v0.2.16 to match the install-path rename (PR #1644).
-fn probe_home_dir() -> Probe {
-    let home = match home_dir() {
-        Some(h) => h,
-        None => return Probe::warn("home dir", "neither HOME nor USERPROFILE set"),
+fn probe_home_dir(home: Option<&Path>) -> Probe {
+    let Some(home) = home else {
+        return Probe::warn("home dir", "neither HOME nor USERPROFILE set");
     };
-    let cua_home = home.join(".cua-driver");
+    let cua_home = home.join(crate::bundle::user_home_subdirectory());
     if !cua_home.exists() {
         return Probe::warn(
             "home dir",
@@ -236,8 +251,7 @@ fn probe_home_dir() -> Probe {
 }
 
 /// Probe the same effective persisted/environment state as `telemetry status`.
-fn probe_telemetry() -> Probe {
-    let status = crate::telemetry::status();
+fn probe_telemetry(status: &crate::telemetry::TelemetryStatus) -> Probe {
     if status.enabled {
         let identity = if status.installation_id_present {
             "install-id present"
@@ -340,16 +354,7 @@ fn append_platform_probes(report: &mut Report) {
     };
 
     // COM / UI Automation availability.
-    match diag::ui_automation_available() {
-        Ok(()) => report.push(Probe::ok(
-            "UI Automation",
-            "CoCreateInstance(CUIAutomation) succeeded",
-        )),
-        Err(e) => report.push(Probe::err(
-            "UI Automation",
-            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
-        )),
-    }
+    report.push(ui_automation_probe());
 
     // EnumWindows count — cross-check the session probe. When Session 0
     // is in play, this almost always reports zero visible windows, which
@@ -369,6 +374,31 @@ fn append_platform_probes(report: &mut Report) {
     report.push(probe);
 }
 
+#[cfg(target_os = "windows")]
+fn ui_automation_probe() -> Probe {
+    use platform_windows::diagnostics as diag;
+
+    match diag::ui_automation_available() {
+        Ok(()) => ui_automation_probe_from(Ok(()), false),
+        Err(e) => {
+            let degraded = diag::is_degraded_ui_automation_error(&e);
+            ui_automation_probe_from(Err(e), degraded)
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn ui_automation_probe_from(result: Result<(), String>, degraded: bool) -> Probe {
+    match result {
+        Ok(()) => Probe::ok("UI Automation", "CoCreateInstance(CUIAutomation) succeeded"),
+        Err(e) if degraded => Probe::warn("UI Automation", e),
+        Err(e) => Probe::err(
+            "UI Automation",
+            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
+        ),
+    }
+}
+
 /// Run `gdbus introspect` against the AT-SPI accessibility bus and report
 /// whether it returned success within `timeout`. Any of: spawn failure,
 /// timeout elapsed, non-zero exit — all collapse to `false` (the caller
@@ -379,7 +409,6 @@ fn append_platform_probes(report: &mut Report) {
 #[cfg(target_os = "linux")]
 fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
     use std::process::{Command, Stdio};
-    use wait_timeout::ChildExt;
 
     let mut child = match Command::new("gdbus")
         .args([
@@ -397,20 +426,36 @@ fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    match child.wait_timeout(timeout) {
+    match wait_for_child(&mut child, timeout) {
         Ok(Some(status)) => status.success(),
-        Ok(None) => {
-            // Timed out — kill the stuck child so we don't leave a
+        Ok(None) | Err(_) => {
+            // Timed out or failed — kill the stuck child so we don't leave a
             // gdbus process hanging around after `doctor` exits.
             let _ = child.kill();
             let _ = child.wait();
             false
         }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            false
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_child(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
         }
+
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return Ok(None);
+        };
+        if remaining.is_zero() {
+            return Ok(None);
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(15)));
     }
 }
 
@@ -511,14 +556,28 @@ fn append_platform_probes(report: &mut Report) {
     // existing users on stale installs still get the cleanup, but the
     // output is now structured.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let legacy_plist = format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist");
-    let legacy_script = "/usr/local/bin/cua-driver-update";
+    let legacy_plist = PathBuf::from(format!(
+        "{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
+    ));
+    append_legacy_cleanup_probes(
+        report,
+        &legacy_plist,
+        Path::new("/usr/local/bin/cua-driver-update"),
+    );
+}
+
+/// Remove a stale legacy updater LaunchAgent and script, reporting each.
+#[cfg(target_os = "macos")]
+fn append_legacy_cleanup_probes(report: &mut Report, legacy_plist: &Path, legacy_script: &Path) {
+    let legacy_plist_text = legacy_plist.display().to_string();
+    let legacy_plist = legacy_plist_text.as_str();
+    let legacy_script_text = legacy_script.display().to_string();
 
     if std::path::Path::new(&legacy_plist).exists() {
         let _ = std::process::Command::new("launchctl")
-            .args(["unload", &legacy_plist])
+            .args(["unload", legacy_plist])
             .status();
-        match std::fs::remove_file(&legacy_plist) {
+        match std::fs::remove_file(legacy_plist) {
             Ok(()) => report.push(Probe::ok(
                 "legacy LaunchAgent",
                 format!("removed stale {legacy_plist}"),
@@ -532,6 +591,7 @@ fn append_platform_probes(report: &mut Report) {
         report.push(Probe::ok("legacy LaunchAgent", "not present"));
     }
 
+    let legacy_script = legacy_script_text.as_str();
     if std::path::Path::new(legacy_script).exists() {
         match std::fs::remove_file(legacy_script) {
             Ok(()) => report.push(Probe::ok(
@@ -568,14 +628,79 @@ fn append_platform_probes(report: &mut Report) {
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-/// Run every probe and return the aggregated report.
-pub fn run() -> Report {
+/// Run every probe and return the aggregated report. `fix` also repairs what
+/// can be repaired safely: on macOS it makes LaunchServices forget every other
+/// copy of the app (no files are deleted).
+pub fn run(fix: bool) -> Report {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut report = assemble(
+        home_dir().as_deref(),
+        &crate::telemetry::status(),
+        append_platform_probes,
+    );
+    #[cfg(target_os = "macos")]
+    append_install_hygiene_probes(&mut report, fix);
+    #[cfg(not(target_os = "macos"))]
+    let _ = fix;
+    report
+}
+
+/// macOS: other copies of the app that macOS can launch instead of the
+/// installed one, and permission rows tied to another path or version.
+#[cfg(target_os = "macos")]
+fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
+    use crate::duplicate_copies as copies;
+
+    let active = PathBuf::from(crate::bundle::app_bundle_path());
+    let bundle_id = crate::bundle::bundle_id();
+    let (registered, indexed_only): (Vec<_>, Vec<_>) =
+        copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .partition(|copy| copy.registered);
+    let fixed = if fix && !registered.is_empty() {
+        let outcomes = copies::unregister(&registered, &copies::run_program);
+        // What LaunchServices still has registered after the fix.
+        let remaining: Vec<_> = copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .filter(|copy| copy.registered)
+            .collect();
+        Some((outcomes, remaining))
+    } else {
+        None
+    };
+    report.push(copies::duplicate_probe(
+        &active,
+        crate::bundle::app_name(),
+        &registered,
+        &indexed_only,
+        fixed
+            .as_ref()
+            .map(|(outcomes, remaining)| (outcomes.as_slice(), remaining.as_slice())),
+    ));
+
+    let executable = active
+        .join("Contents/MacOS")
+        .join(crate::bundle::cli_name());
+    let rows = home_dir()
+        .ok_or_else(|| "HOME is not set".to_owned())
+        .and_then(|home| copies::read_tcc_rows(&home, &copies::run_program));
+    report.push(copies::permission_row_probe(&executable, rows, |bundle| {
+        copies::bundle_version_of(bundle, &copies::run_program)
+    }));
+}
+
+/// The cross-platform probes over explicit host inputs, then `platform`'s.
+fn assemble(
+    home: Option<&Path>,
+    telemetry: &crate::telemetry::TelemetryStatus,
+    platform: impl FnOnce(&mut Report),
+) -> Report {
     let mut report = Report::default();
     report.push(probe_version());
     report.push(probe_install_layout());
-    report.push(probe_home_dir());
-    report.push(probe_telemetry());
-    append_platform_probes(&mut report);
+    report.push(probe_home_dir(home));
+    report.push(probe_telemetry(telemetry));
+    platform(&mut report);
     report
 }
 
@@ -618,24 +743,117 @@ mod tests {
         assert_eq!(json["ok"], serde_json::Value::Bool(true));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wait_for_child_reports_exit() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let status = wait_for_child(&mut child, std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wait_for_child_times_out() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let status = wait_for_child(&mut child, std::time::Duration::from_millis(10)).unwrap();
+        assert!(status.is_none());
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    fn telemetry_status() -> crate::telemetry::TelemetryStatus {
+        crate::telemetry::TelemetryStatus {
+            enabled: false,
+            source: "test",
+            installation_id_present: false,
+            installation_id: None,
+            registration_recorded: false,
+            current_release_recorded: false,
+        }
+    }
+
+    // Every probe runs over explicit inputs: a test must never read the real
+    // home, run the telemetry home migration, or remove a real LaunchAgent.
     #[test]
     fn cross_platform_probes_always_emit_something() {
         // Smoke test: run the cross-platform probes and confirm they all
         // produced a probe (no silent dropouts).
+        let home = tempfile::tempdir().unwrap();
         let v = probe_version();
         assert_eq!(v.label, "binary");
         let i = probe_install_layout();
         assert_eq!(i.label, "install dir");
-        let h = probe_home_dir();
+        let h = probe_home_dir(Some(home.path()));
         assert_eq!(h.label, "home dir");
-        let t = probe_telemetry();
+        assert_eq!(probe_home_dir(None).status, Status::Warn);
+        let t = probe_telemetry(&telemetry_status());
         assert_eq!(t.label, "telemetry");
     }
 
     #[test]
     fn run_emits_at_least_cross_platform_probes() {
-        let report = run();
-        // 4 cross-platform + at least 1 platform-specific.
-        assert!(report.probes.len() >= 5, "got {}", report.probes.len());
+        let home = tempfile::tempdir().unwrap();
+        let report = assemble(Some(home.path()), &telemetry_status(), |report| {
+            report.push(Probe::ok("platform", "probed"))
+        });
+        // 4 cross-platform + the platform-specific ones.
+        assert_eq!(report.probes.len(), 5);
+        assert_eq!(report.probes[4].label, "platform");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_cleanup_removes_only_the_given_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist = dir.path().join("absent.plist");
+        let script = dir.path().join("cua-driver-update");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        let mut report = Report::default();
+        append_legacy_cleanup_probes(&mut report, &plist, &script);
+        assert!(!script.exists(), "the stale script is removed");
+        let labels: Vec<_> = report.probes.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "legacy LaunchAgent",
+                "legacy update script",
+                "TCC + cdhash report"
+            ]
+        );
+        assert_eq!(report.probes[0].message, "not present");
+        assert!(report.probes[1].message.starts_with("removed stale "));
+    }
+
+    #[test]
+    fn degraded_ui_automation_does_not_fail_doctor() {
+        let mut report = Report::default();
+        for error in [
+            "UI Automation desktop enumeration exceeded 4000ms; a UIA provider may be hung.",
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration.",
+        ] {
+            let probe = ui_automation_probe_from(Err(error.to_owned()), true);
+            assert_eq!(probe.status, Status::Warn);
+            assert_eq!(probe.message, error);
+            report.push(probe);
+        }
+        assert!(!report.has_errors());
+        assert_eq!(report.to_json()["ok"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn genuine_ui_automation_failures_still_fail_doctor() {
+        let probe = ui_automation_probe_from(
+            Err("CoCreateInstance(CUIAutomation) failed".to_owned()),
+            false,
+        );
+        assert_eq!(probe.status, Status::Err);
+        assert!(probe
+            .message
+            .contains("CoCreateInstance(CUIAutomation) failed"));
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -22,6 +23,10 @@ public partial class MainWindow : Window
     private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
     private readonly string? _fixtureStatePath;
+    private readonly System.Windows.Threading.DispatcherTimer _fixtureStateTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(50)
+    };
 
     public MainWindow()
     {
@@ -31,6 +36,11 @@ public partial class MainWindow : Window
 
         Title = _manifest.Wpf.MainWindow.Title;
         AutomationProperties.SetAutomationId(this, _manifest.Wpf.MainWindow.AutomationId);
+        _fixtureStateTimer.Tick += (_, _) =>
+        {
+            _fixtureStateTimer.Stop();
+            PublishFixtureState();
+        };
 
         CommandBindings.Add(new CommandBinding(AccelCmd, (s, e) =>
         {
@@ -54,6 +64,10 @@ public partial class MainWindow : Window
         // PostMessage actually arrived and was actionable.
         var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         source?.AddHook(OnWindowMessage);
+        // Start with the deliberate decoy focused. Foreground element-addressed
+        // keyboard tests must move focus to their exact UIA target after the
+        // top-level activation; inheriting startup focus would hide that race.
+        Keyboard.Focus(TxtDeferredInput);
         PublishFixtureState();
     }
 
@@ -150,6 +164,25 @@ public partial class MainWindow : Window
     private void OnInputChanged(object sender, TextChangedEventArgs e)
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
+        ScheduleFixtureStatePublish();
+    }
+
+    private void OnMultilineInputChanged(object sender, TextChangedEventArgs e)
+    {
+        ScheduleFixtureStatePublish();
+    }
+
+    private void ScheduleFixtureStatePublish()
+    {
+        if (string.IsNullOrWhiteSpace(_fixtureStatePath)) return;
+        _fixtureStateTimer.Stop();
+        _fixtureStateTimer.Start();
+    }
+
+    private void OnDeferredInputChanged(object sender, TextChangedEventArgs e)
+    {
+        LblDeferredInputMirror.Text = $"deferred_mirror={TxtDeferredInput.Text}";
+        ScheduleFixtureStatePublish();
     }
 
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
@@ -214,6 +247,9 @@ public partial class MainWindow : Window
             ["lbl-counter"] = new { text = LblCounter?.Text ?? "counter=0" },
             ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
+            ["txt-input"] = new { text = TxtInput?.Text ?? "" },
+            ["txt-deferred-input"] = new { text = TxtDeferredInput?.Text ?? "" },
+            ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },
         };
         try
         {
@@ -237,7 +273,9 @@ public partial class MainWindow : Window
 
     private void OnSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        LblSliderValue.Text = $"slider_value={(int)e.NewValue}";
+        // Keyboard.Modifiers reads live GetKeyState, so a thumb drag with held
+        // keys reports them for each move.
+        LblSliderValue.Text = $"slider_value={(int)e.NewValue} modifiers={Keyboard.Modifiers}";
     }
 
     private void UpdateChkState()
@@ -267,15 +305,17 @@ public partial class MainWindow : Window
     private void OnListChanged(object sender, SelectionChangedEventArgs e)
     {
         if (LblListValue is null) return;
-        if (LstItems?.SelectedItem is ListBoxItem item)
-        {
-            LblListValue.Text = $"selected={item.Content}";
-        }
+        var selected = LstItems?.SelectedItems
+            .OfType<ListBoxItem>()
+            .Select(item => item.Content?.ToString() ?? "")
+            .Where(value => value.Length > 0);
+        LblListValue.Text = $"selected={string.Join(",", selected ?? Enumerable.Empty<string>())}";
     }
 
     private void OnMenuFileNew(object sender, RoutedEventArgs e)  => LblMenuAction.Text = "menu_action=file_new";
     private void OnMenuFileOpen(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=file_open";
     private void OnMenuEditCopy(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=edit_copy";
+    private void OnMenuWindowArrangeLeft(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=window_arrange_left";
 
     private void OnCtxAction(object sender, RoutedEventArgs e)
     {

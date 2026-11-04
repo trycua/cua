@@ -1,5 +1,6 @@
 //! Parity check for `cua-driver update` (no --apply, network-dependent).
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

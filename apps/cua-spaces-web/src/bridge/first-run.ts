@@ -86,6 +86,7 @@ function withExtraFix(view: FirstRunView, fix: CreateFix | null): FirstRunView {
   return { ...view, setup: { ...view.setup, extra: { ...card, note: `${card.note} ${fix.text}`, action: { id: "fix", label: fix.label } } } };
 }
 import { spaceState } from "../lib/spaces";
+import type { NewRunSaved } from "../lib/first-run-new";
 
 
 
@@ -322,6 +323,8 @@ export interface FirstRunSaved {
   todosClosed: boolean;
   /** Advanced setup on Pick your agent (CUA-2267). */
   advanced?: boolean;
+  /** The new first run's progress (Labs, "Try the new setup"; `lib/first-run-new.ts`). Kept here so Reset & Show forgets it too. */
+  newRun?: Partial<NewRunSaved>;
 }
 
 const KEY = "cua-spaces:first-run";

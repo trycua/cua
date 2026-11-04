@@ -95,10 +95,21 @@ export interface CuaDumpDocs {
 export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'spaces-and-computers',
-    title: 'Spaces, computers and teams',
-    summary:
-      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd'],
+    title: 'Spaces',
+    summary: 'Your Spaces, and a cua-spacesd by URL',
+    commands: ['spaces', 'spacesd'],
+  },
+  {
+    slug: 'computers-and-teams',
+    title: 'Computers and teams',
+    summary: 'Your computers, unattended access on this computer, teams and your remote use this month',
+    commands: ['machines', 'host', 'devices', 'team', 'usage'],
+  },
+  {
+    slug: 'sharing-and-networks',
+    title: 'Sharing and Space networks',
+    summary: 'Share a port, file or folder as a link or a public TCP address, set what a Space can reach and where its traffic leaves, the exit through this computer, and the paths between your computers',
+    commands: ['share', 'network', 'hotspot', 'mesh'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -108,10 +119,21 @@ export const CLI_GROUPS: CliGroup[] = [
   },
   {
     slug: 'sandboxes',
-    title: 'Sandboxes and images',
-    summary:
-      'Create, reach and delete sandboxes; pull, build and push images; local runtimes, disk cleanup, your own cloud account and the sandbox viewer',
-    commands: ['sandbox', 'image', 'images', 'runtime', 'cache', 'cloud', 'viewer'],
+    title: 'Sandboxes',
+    summary: 'Create, reach and delete sandboxes; local runtimes, disk cleanup and the sandbox viewer',
+    commands: ['sandbox', 'runtime', 'cache', 'viewer'],
+  },
+  {
+    slug: 'ci-runners',
+    title: 'CI runners',
+    summary: 'Run GitHub Actions jobs in a fresh Space each on your own computers (an experiment: `cua experiments enable ci-runners`)',
+    commands: ['ci'],
+  },
+  {
+    slug: 'images-and-clouds',
+    title: 'Images and your cloud',
+    summary: 'Pull, build, push and publish images, and the cloud account you link for machines',
+    commands: ['image', 'images', 'build', 'cloud'],
   },
   {
     slug: 'computer-actions',
@@ -122,14 +144,28 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'agents',
     title: 'Agents, MCP and skills',
-    summary: 'Run coding agents in a sandbox, set up your AI agents, the stdio MCP server, and recorded skills',
-    commands: ['agent', 'agents', 'mcp', 'skills'],
+    summary: 'Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'thread', 'join', 'connect', 'connections', 'agents', 'mcp', 'skills'],
   },
   {
     slug: 'account-and-setup',
     title: 'Account and setup',
     summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
-    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry', 'experiments'],
+  },
+  {
+    slug: 'pool',
+    title: 'Your pool',
+    summary:
+      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --share spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
+    commands: ['computers', 'run', 'jobs', 'compat'],
+  },
+  {
+    slug: 'bench',
+    title: 'Benchmarks',
+    summary:
+      'Spaces performance benchmarks: list them, run one in Spaces of its own (result.json and samples.csv in the bench-result v1 format), and check a run against a committed baseline',
+    commands: ['bench'],
   },
 ];
 
@@ -204,7 +240,25 @@ function mcpCategories(spaces: SpacesLinks): McpCategory[] {
       summary: 'Screenshots, input, windows, files and shell on a sandbox desktop',
       intro: 'Computer tools act on a sandbox desktop through its cua-spacesd. Coordinates are in the pixel space of the last `computer_screenshot` of that sandbox.',
     },
+    {
+      slug: 'share',
+      title: 'Share tools',
+      summary: 'Get a link to a port, a file or a folder that opens on the user\'s other devices, and stop it',
+      intro: 'Share tools are `cua share` for agents: use them for any link to something you ran, never localhost. `share` opens the link once to check it loads. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    },
     { slug: 'skills', title: 'Skills tools', summary: 'List, read, record and delete skills (recorded demonstrations)' },
+    {
+      slug: 'connect',
+      title: 'Connect tools',
+      summary: 'Whether each AI agent on this computer is connected to Cua, as `cua connect status` shows it',
+    },
+    {
+      slug: 'runs',
+      title: 'Run tools',
+      summary: 'Run a command in new Spaces many times, on this machine or on all your machines, and follow the runs',
+      intro:
+        'Run tools are `cua sb run` and `cua sb runs` for agents: on this machine by default, or with `on="auto"` on the least-loaded of the machines signed in to your account that provide Spaces ([Use all your machines](/spaces/guides/add-a-computer#use-all-your-computers)). They need the cua daemon of Cua Spaces.',
+    },
   ];
 }
 

@@ -8,6 +8,9 @@ generic error).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import http.server
+import threading
 
 import e2e
 import pytest
@@ -73,20 +76,40 @@ async def _plain_local(
     assert name not in [s.name for s in await sbx.list("local")]
 
 
-@pytest.mark.e2e("daemon-agnostic", "hermetic")
-def test_agnostic_cloud_ended_and_direct(fixtures, fake_fleet, local_cua):
-    async def body():
-        # Cua Cloud has ended: no pool, no cloud claim.
-        await e2e.assert_cloud_ended(fake_fleet, pool=e2e.name("agnostic"))
+@contextlib.contextmanager
+def _plain_http_server():
+    """A loopback HTTP server that answers every GET with 404: a URL where no
+    spacesd answers."""
 
-        # Direct URL where no spacesd answers (the fake Fleet API's HTTP
-        # server): a typed error, never a hang.
-        d = await local_cua.sandboxes().connect_url(
-            fixtures["fleet_base_url"], "t", e2e.name("nodriver")
-        )
-        with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-            await d.spacesd(2_000)
-        await d.delete()
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - the http.server hook
+            self.send_error(404)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.e2e("daemon-agnostic", "hermetic")
+def test_agnostic_cloud_ended_and_direct(fixtures, local_cua):
+    async def body():
+        # Cua Cloud has ended: no cloud create.
+        await e2e.assert_cloud_ended(local_cua)
+
+        # Direct URL where no spacesd answers: a typed error, never a hang.
+        with _plain_http_server() as url:
+            d = await local_cua.sandboxes().connect_url(url, "t", e2e.name("nodriver"))
+            with pytest.raises(cua.CuaError.SpacesdNotAvailable):
+                await d.spacesd(2_000)
+            await d.delete()
 
     e2e.run_async(body(), timeout=120)
 
@@ -120,54 +143,6 @@ def test_agnostic_qemu_ssh_only(local_cua):
     e2e.run_async(
         _plain_local(local_cua, f"vm:{disk}", 22, b"SSH-2.0", "qemu-ssh", 1024), timeout=900
     )
-
-
-@pytest.mark.e2e("daemon-agnostic", "fleet")
-def test_agnostic_fleet_legacy_image(live_fleet):
-    """The public legacy image has computer-server, not spacesd."""
-
-    async def body():
-        pool = e2e.name("agnostic")
-        fleet = live_fleet.fleet()
-        sb = None
-        try:
-            await fleet.apply_pool(
-                cua.FleetPoolSpec(
-                    name=pool,
-                    image=e2e.LEGACY_FLEET_ROOTFS,
-                    runtime="gvisor",
-                    services={"server": 8000},
-                    cpu=1,
-                    memory_mb=2048,
-                    ttl_seconds_after_created=3600,
-                )
-            )
-            sb = await live_fleet.sandboxes().create(
-                cua.SandboxCreateOptions(
-                    on="cloud",
-                    pool=pool,
-                    name=f"{pool}-c",
-                    ready_timeout_ms=900_000,
-                )
-            )
-            resp = await e2e.poll(
-                "server /status",
-                lambda: _ok(sb.service("server").request("GET", "/status", None, 30_000)),
-                attempts=60,
-                delay=5,
-            )
-            assert resp.status == 200
-            with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-                await sb.spacesd(10_000)
-        finally:
-            if sb is not None:
-                await sb.delete()
-            try:
-                await fleet.delete_pool(pool)
-            except cua.CuaError.NotFound:
-                pass
-
-    e2e.run_async(body(), timeout=1500)
 
 
 def _banner(addr: str, banner: bytes):
@@ -207,8 +182,3 @@ def test_tcp_probe_implies_listening(local_cua):
             await sb.delete()
 
     e2e.run_async(body(), timeout=300)
-
-
-async def _ok(fut):
-    r = await fut
-    return r if r.status == 200 else None

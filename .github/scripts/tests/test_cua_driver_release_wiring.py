@@ -290,10 +290,14 @@ fi
             'git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"',
             workflow,
         )
-        self.assertIn("git rebase origin/main", workflow)
-        self.assertIn("merge_release_please_manifests.py", workflow)
-        self.assertIn('git diff --name-only --diff-filter=U', workflow)
-        self.assertIn("git rebase --abort", workflow)
+        # The replay onto main (manifest reconciliation, generated-commit drop,
+        # abort on a real conflict) lives in replay_release_branch.sh.
+        replay = (REPO_ROOT / ".github/scripts/replay_release_branch.sh").read_text()
+        self.assertIn("replay_release_branch.sh", workflow)
+        self.assertIn("git rebase origin/main", replay)
+        self.assertIn("merge_release_please_manifests.py", replay)
+        self.assertIn('git diff --name-only --diff-filter=U', replay)
+        self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_driver_release_docs.py", workflow)
@@ -358,9 +362,9 @@ fi
         actually matters: the contract exists in the canonical document, and an
         agent reading AGENTS.md is pointed at it.
         """
-        contributing = self.read("CONTRIBUTING.md")
+        contributing = self.read(".github/CONTRIBUTING.md")
         for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
-            self.assertIn(token, contributing, "CONTRIBUTING.md")
+            self.assertIn(token, contributing, ".github/CONTRIBUTING.md")
 
         # Either AGENTS.md carries the contract itself or it links to the file
         # that does -- both satisfy "an agent can find the rules from here".
@@ -526,7 +530,7 @@ fi
             "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
-            "- name: Advance public installer version on main", app_token
+            "- name: Advance public installer version through a pull request", app_token
         )
 
         self.assertLess(release_job, control_checkout)
@@ -548,8 +552,10 @@ fi
             '"$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version"',
             workflow,
         )
-        self.assertIn("-F force=false", workflow)
-        self.assertIn("[skip ci]", workflow)
+        self.assertNotIn("git/refs/heads/main", workflow)
+        self.assertNotIn("[skip ci]\"", workflow)
+        self.assertIn("gh pr create", workflow)
+        self.assertIn("gh pr merge", workflow)
 
     def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-rust.sh")
@@ -1038,6 +1044,7 @@ fi
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "    needs:\n"
+            "      - staging-gate\n"
             "      - build-linux\n"
             "      - build-windows\n"
             "      - build-macos-universal\n"

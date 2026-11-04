@@ -1,0 +1,21 @@
+[Unit]
+Description=Drop inbound IPv4 packets with IP options (CVE-2026-98432 interim guard)
+Documentation=https://docs.cua.ai/docs/spaces/guides/ip-options-guard
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+# Load after nftables.service when a user enables it, so a `flush ruleset`
+# there cannot remove the guard.
+After=nftables.service
+Before=network-pre.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/cua/bin/cua-ipopts-guard start
+ExecStop=/opt/cua/bin/cua-ipopts-guard stop
+
+[Install]
+WantedBy=sysinit.target

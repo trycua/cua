@@ -29,8 +29,8 @@ use crate::teleport::{AppSessions, TeleportScope};
 use base64::Engine as _;
 use cua_keyvault::broker::{
     AccessRequest, Backend, Broker, BrokerConfig, Captured, CookieFilter, DeliveryOutcome,
-    DomainInventory, ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Selector,
-    TeleportRequest, TeleportStage, UserPresence,
+    DomainInventory, ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Readiness,
+    Selector, TeleportRequest, TeleportStage, UserPresence,
 };
 use cua_keyvault::caller::{CallerIdentity, Signing};
 use cua_keyvault::model::{ItemKind, LoginRecord, PayloadEntry};
@@ -49,7 +49,13 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
 
 fn backend_err(context: &str, e: impl std::fmt::Display) -> KvError {
-    KvError::Backend(format!("{context}: {e}"))
+    let m = e.to_string();
+    // A macOS privacy refusal is said in plain words (what to turn on), not
+    // as "export session: Operation not permitted (os error 1)".
+    if let Some(say) = cua_teleport::privacy::plain_words(&m) {
+        return KvError::Backend(say);
+    }
+    KvError::Backend(format!("{context}: {m}"))
 }
 
 fn scope_str(scope: TransferScope) -> &'static str {
@@ -78,7 +84,14 @@ pub struct DaemonBackend {
     /// Decrypt saved passwords with this platform's scheme (default: this
     /// machine's).
     platform: cua_teleport::Platform,
+    /// Builds the providers for a capture of a named browser profile
+    /// (`--profile "Profile 1"`); tests swap in hermetic ones.
+    profiled: ProfiledSessions,
 }
+
+/// Providers acting on a host with one browser profile selected.
+pub type ProfiledSessions =
+    Arc<dyn Fn(Arc<dyn cua_teleport::HostEffects>, &str) -> AppSessions + Send + Sync>;
 
 impl DaemonBackend {
     /// A backend over the daemon's Spaces registry and teleport providers.
@@ -88,7 +101,22 @@ impl DaemonBackend {
             sessions,
             host: cua_teleport::default_host(),
             platform: cua_teleport::Platform::current(),
+            profiled: Arc::new(|host, profile| {
+                AppSessions::from_registry(
+                    cua_teleport::ExportRegistry::with_builtin_host_and_chrome_profile(
+                        host,
+                        Some(profile.to_string()),
+                    ),
+                )
+            }),
         }
+    }
+
+    /// Uses `build` for the providers of a named browser profile instead of
+    /// the built-in ones.
+    pub fn with_profiled_sessions(mut self, build: ProfiledSessions) -> Self {
+        self.profiled = build;
+        self
     }
 
     /// Reads saved passwords through `host` instead of the real machine.
@@ -177,10 +205,20 @@ impl DaemonBackend {
     fn export_entries(
         &self,
         app: &str,
+        profile: Option<&str>,
         override_paths: Option<&[String]>,
     ) -> KvResult<(String, String, Vec<PayloadEntry>)> {
-        let manifest = self
-            .sessions
+        // An explicit browser profile (`--profile "Profile 1"`) is read by a
+        // provider set up for it; without one, the daemon's own providers.
+        let named;
+        let sessions: &AppSessions = match profile.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => {
+                named = (self.profiled)(self.host.clone(), p);
+                &named
+            }
+            None => &self.sessions,
+        };
+        let manifest = sessions
             .manifest(app, TeleportScope::Full)
             .map_err(|e| backend_err("read manifest", e))?;
         let paths: Vec<String> = if let Some(p) = override_paths {
@@ -206,7 +244,7 @@ impl DaemonBackend {
             .approving("vault-import", &paths, true)
             .map_err(|e| backend_err("mint approval", e))?;
         let mut buf: Vec<u8> = Vec::new();
-        self.sessions
+        sessions
             .export(&approval, &mut buf)
             .map_err(|e| backend_err("export session", e))?;
         let reader =
@@ -565,6 +603,99 @@ impl Backend for DaemonBackend {
         })
     }
 
+    fn readiness(&self, app: &str, profile: Option<&str>) -> KvResult<Readiness> {
+        use cua_keyvault::broker::{Access, BrowserProfile, ReadinessCheck};
+        use cua_teleport::privacy as px;
+        let mut out = Readiness {
+            provider_id: self
+                .sessions
+                .provider_id(app)
+                .unwrap_or_else(|| app.to_string()),
+            app_display: self.app_display(app),
+            profile: profile.map(str::to_string),
+            ..Default::default()
+        };
+        // Only a Chromium-family browser has profiles and a cookie store to
+        // look at; the other apps have nothing to report here.
+        if app != "chrome" && app != "edge" && app != "chromium" {
+            out.files.state = Access::Granted;
+            out.tabs.state = Access::Granted;
+            return Ok(out);
+        }
+        let named = profile.map(str::trim).filter(|p| !p.is_empty());
+        let default_dir = self
+            .cookie_reader(None)
+            .profile_dir()
+            .map_err(|e| backend_err("find the browser profile", e))?;
+        let root = px::user_data_dir_of(&default_dir);
+        let profiles = root
+            .as_deref()
+            .map(px::browser_profiles)
+            .unwrap_or_default();
+        out.default_profile = default_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+        // The profile to check: the one named, else the last used.
+        let checked = named
+            .map(str::to_string)
+            .or_else(|| profiles.iter().find(|p| p.last_used).map(|p| p.dir.clone()))
+            .or_else(|| out.default_profile.clone());
+        out.profile = checked.clone();
+        out.profiles = profiles
+            .iter()
+            .map(|p| BrowserProfile {
+                dir: p.dir.clone(),
+                name: p.name.clone(),
+                account: p.account.clone(),
+                last_used: p.last_used,
+            })
+            .collect();
+        let dir = self
+            .cookie_reader(checked.clone())
+            .profile_dir()
+            .map_err(|e| backend_err("find the browser profile", e))?;
+        match px::probe_profile(&dir) {
+            px::Probe::Readable => out.files.state = Access::Granted,
+            px::Probe::Denied => {
+                out.files = ReadinessCheck {
+                    state: Access::Denied,
+                    say: px::FULL_DISK_ACCESS_SAY.into(),
+                };
+            }
+            px::Probe::Missing => {
+                out.profile_empty = true;
+                out.files = ReadinessCheck {
+                    state: Access::Granted,
+                    say: px::missing_profile_say(
+                        checked.as_deref().unwrap_or("Default"),
+                        &profiles,
+                    ),
+                };
+            }
+            px::Probe::Other(e) => {
+                out.files = ReadinessCheck {
+                    state: Access::Unknown,
+                    say: format!("The browser's files could not be checked: {e}"),
+                };
+            }
+        }
+        // Open tabs are read by asking the running browser, which macOS only
+        // decides the first time it is asked: it cannot be checked without
+        // that prompt, so it is reported as unknown, with the step to take.
+        out.tabs = ReadinessCheck {
+            state: Access::Unknown,
+            say: if cfg!(target_os = "macos") {
+                px::AUTOMATION_SAY.into()
+            } else {
+                String::new()
+            },
+        };
+        if !cfg!(target_os = "macos") {
+            out.tabs.state = Access::Granted;
+        }
+        Ok(out)
+    }
+
     fn capture(&self, spec: &ImportSpec) -> KvResult<Vec<Captured>> {
         let source = spec.profile.clone().unwrap_or_else(|| "default".into());
         let mut out: Vec<Captured> = Vec::new();
@@ -606,7 +737,8 @@ impl Backend for DaemonBackend {
         // or an app's files), turned into records by the app's codec. A
         // consent-gated file is only exported when the user picked it.
         if spec.whole_app {
-            let (scope, name, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
+            let (scope, name, entries) =
+                self.export_entries(&spec.app, spec.profile.as_deref(), spec.paths.as_deref())?;
             display = name;
             let exported = record::codec_for(&provider_id).export(
                 entries,
@@ -771,7 +903,7 @@ impl Backend for DaemonBackend {
                 })
             })
         };
-        // The env token / Fleet bearer authenticate this channel and are never
+        // The env token / gateway bearer authenticate this channel and are never
         // exposed to the MCP caller; the guest wipes on its own at expiry.
         let result = cua_teleport::upload_bundle(
             spacesd,

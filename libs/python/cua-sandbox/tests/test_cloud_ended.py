@@ -1,11 +1,11 @@
-"""Cua Cloud has ended (CUA-1854): every cloud entry point raises one message."""
+"""Cua Cloud has ended: every cloud entry point raises one message."""
 
 from __future__ import annotations
 
 import importlib
 
 import pytest
-from cua_sandbox import Image, Pool, Sandbox, pools
+from cua_sandbox import Image, Sandbox
 from cua_sandbox._ended import CLOUD_ENDED, CloudEnded
 from cua_sandbox.runtime.base import RuntimeInfo
 
@@ -54,15 +54,6 @@ async def test_references_to_cloud_sandboxes_fail():
         assert str(error.value) == MESSAGE
 
 
-async def test_pools_fail():
-    with pytest.raises(CloudEnded):
-        await Pool.get("p")
-    with pytest.raises(CloudEnded):
-        await pools.list_pools()
-    with pytest.raises(CloudEnded):
-        await pools.gc()
-
-
 async def test_the_default_listing_is_local_only(monkeypatch):
     async def local():
         return []
@@ -91,100 +82,21 @@ async def test_local_creation_with_a_runtime_object_writes_its_state_file(monkey
     assert (tmp_path / "sandboxes" / "local-demo.json").exists()
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"pool": "my-pool"},
-        {"warm": True},
-        {"max_pool_size": 3},
-        {"claim_ttl": 60},
-        {"claim_spec": object()},
-        {"keep_alive_minutes": 5},
-        {"api_key": "sk-legacy"},
-    ],
-)
-async def test_cloud_only_arguments_select_the_cloud_and_fail_without_a_warning(kwargs):
+async def test_a_pool_name_selects_the_cloud_and_fails_without_a_warning():
     import warnings
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         with pytest.raises(CloudEnded):
-            await Sandbox.create(Image.linux(), **kwargs)
+            await Sandbox.create(Image.linux(), pool="my-pool")
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [{"pool": "my-pool"}, {"claim_spec": object()}, {"replicas": 2}, {"service": "driver"}],
-)
-async def test_claim_arguments_fail_even_when_local_is_explicit(kwargs):
+async def test_a_pool_name_fails_even_when_local_is_explicit():
     with pytest.raises(CloudEnded):
-        await Sandbox.create(Image.linux(), local=True, **kwargs)
+        await Sandbox.create(Image.linux(), local=True, pool="my-pool")
     with pytest.raises(CloudEnded):
-        async with Sandbox.ephemeral(Image.linux(), local=True, **kwargs):
+        async with Sandbox.ephemeral(Image.linux(), local=True, pool="my-pool"):
             pass
-
-
-async def test_the_retired_pool_surface_raises_the_one_message():
-    from cua_sandbox import PoolOptions, SandboxSpec, Template, generate_claim_token
-    from cua_sandbox.spec import PoolAccessDeniedError
-
-    for call in (
-        lambda: Pool.reconcile(object()),
-        lambda: Pool.apply("p", SandboxSpec(image="x"), PoolOptions()),
-        lambda: Pool.export("p"),
-        lambda: Pool.check("p", SandboxSpec()),
-        lambda: Pool.apply_template("p", SandboxSpec()),
-        lambda: Template.reconcile(object()),
-        lambda: pools.list_claims(),
-        lambda: pools.gc_pools(["p"]),
-    ):
-        with pytest.raises(CloudEnded) as error:
-            await call()
-        assert str(error.value) == MESSAGE
-    for build in (lambda: Pool(object()), lambda: Template(object())):
-        with pytest.raises(CloudEnded):
-            build()
-    with pytest.raises(CloudEnded):
-        Pool.claim(None)
-    assert len(generate_claim_token()) == 64
-    assert issubclass(PoolAccessDeniedError, PermissionError)
-
-
-async def test_sandbox_methods_that_belonged_to_claims_raise_the_one_message():
-    sb = Sandbox(object(), name="box", _telemetry_enabled=False)
-    assert (sb.claim_name, sb.pool_name) == (None, None)
-    assert sb.id == "local:box"
-    for call in (
-        lambda: sb.keep_alive(minutes=5),
-        lambda: sb.close(),
-        lambda: sb.snapshot(),
-    ):
-        with pytest.raises(CloudEnded):
-            await call()
-    with pytest.raises(CloudEnded):
-        sb.to_dict()
-    with pytest.raises(CloudEnded):
-        Sandbox.from_dict({})
-
-
-def test_retired_cloud_names_explain_themselves_on_import():
-    import cua_sandbox
-    from cua_sandbox import CloudTransport
-
-    for name in ("ClaimSpec", "WarmPoolAutoscaling", "RuntimeKind", "fleet_auth_source"):
-        with pytest.raises(ImportError, match="Cua Cloud has ended"):
-            getattr(cua_sandbox, name)
-    with pytest.raises(AttributeError):
-        cua_sandbox.nonsense
-    with pytest.raises(CloudEnded):
-        CloudTransport(name="x")
-
-
-def test_configure_still_takes_the_retired_cloud_options():
-    from cua_sandbox import configure
-
-    with pytest.warns(DeprecationWarning, match="Cua Cloud has ended"):
-        configure(client_id="id", client_secret="secret")
 
 
 async def test_an_unknown_bare_name_is_not_found_locally(monkeypatch):

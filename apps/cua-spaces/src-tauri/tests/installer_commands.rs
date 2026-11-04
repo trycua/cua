@@ -12,11 +12,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use cua_spaces_lib::installer::{
     AgentDetectReport, AgentInfo, AgentSetupBackend, AgentSetupReport, AgentSetupRequest,
-    CliAgentSetup, CliInstallRequest, CliInstaller, InstallMethod, InstallerCommands,
+    CliAgentSetup, CliInstallRequest, CliInstaller, CuaChannel, InstallMethod, InstallerCommands,
 };
 
 fn installer(dir: &Path, bundled: Option<PathBuf>, path_env: &str, symlink: bool) -> CliInstaller {
     CliInstaller {
+        channel: CuaChannel::Stable,
         bundled,
         bin_dir: dir.join("home/.local/bin"),
         path_env: path_env.to_string(),

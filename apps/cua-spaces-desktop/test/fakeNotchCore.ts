@@ -21,6 +21,8 @@ export interface FakeSpace {
   id: string;
   name: string;
   live?: boolean;
+  /** One of another machine's desktops. */
+  desktop?: boolean;
 }
 
 export const MOTION = {
@@ -59,6 +61,12 @@ export function layoutFor(screen: ScreenFacts, prompt: boolean): NotchLayout {
   };
 }
 
+/** Where a Space sorts: its pin's place, else after every pin (the list keeps its order). */
+const rank = (s: FakeState, id: string): number => {
+  const i = (s.pinned ?? []).indexOf(id);
+  return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+};
+
 export function fakeCore() {
   const events: Tagged[] = [];
   const triggerEvents: Tagged[] = [];
@@ -80,6 +88,7 @@ export function fakeCore() {
       transfer: undefined,
       keyvault: undefined,
       signedIn: [],
+      pinned: [],
       hidden: false,
       hovering: false,
       permissionMissing: false,
@@ -127,6 +136,9 @@ export function fakeCore() {
           s.keyvault = inner.label as string | undefined;
           s.signedIn = inner.signedIn as string[];
           break;
+        case "Pinned":
+          s.pinned = inner.ids as string[];
+          break;
         case "DragPermission":
           s.permissionMissing = !(inner.granted as boolean);
           break;
@@ -157,7 +169,8 @@ export function fakeCore() {
       const phase = s.open || s.drag.phase === 2 ? 1 : s.drag.phase === 1 ? 2 : 0;
       return {
         phase,
-        tiles: list.map((sp) => ({
+        // Pinned first, in pin order (the real core's `tiles_pinned`).
+        tiles: list.toSorted((a, b) => (rank(s, a.id) === rank(s, b.id) ? 0 : rank(s, a.id) < rank(s, b.id) ? -1 : 1)).map((sp) => ({
           id: sp.id,
           name: sp.name,
           os: 0,
@@ -171,6 +184,9 @@ export function fakeCore() {
           progress: undefined,
           progressLabel: undefined,
           signedIn: s.signedIn.includes(sp.id),
+          desktop: sp.desktop === true,
+          pinned: (s.pinned ?? []).includes(sp.id),
+          note: undefined,
         })),
         dropMode: s.drag.phase === 2,
         prompt: s.drag.phase === 1 ? "Teleport to Cua" : undefined,

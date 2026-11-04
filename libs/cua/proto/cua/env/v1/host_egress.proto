@@ -1,0 +1,53 @@
+// Egress policies of the Spaces a host provides (cua.env.v1): the policy
+// `CreateHostSpaceRequest.egress` and `HostSpacesService.SetHostSpaceEgress`
+// take. The host enforces it outside the guest.
+syntax = "proto3";
+
+package cua.env.v1;
+
+// Which destinations a Space may open connections to: every `deny` entry
+// blocks that destination, every `allow` entry is an exception that wins
+// over `deny`. Entries are IPv4/IPv6 addresses or CIDRs; "all" is 0.0.0.0/0
+// and ::/0; a hostname is refused.
+message HostEgressPolicy {
+  // Destinations that stay reachable where `deny` blocks them.
+  repeated string allow = 1;
+  // Destinations that are blocked.
+  repeated string deny = 2;
+}
+
+// Request for `HostSpacesService.SetHostSpaceEgress`.
+message SetHostSpaceEgressRequest {
+  // The relay machine of the Space (or its `local:<name>` on the host).
+  string space = 1;
+  // The whole policy; empty removes it.
+  HostEgressPolicy egress = 2;
+}
+
+// Response for `HostSpacesService.SetHostSpaceEgress`.
+message SetHostSpaceEgressResponse {
+  // Where the policy is enforced: "host"; empty after a removal.
+  string enforced = 1;
+}
+
+// A Space's network settings (`cua.daemon.v1.NetworkSettings`), as
+// `CreateHostSpaceRequest.network_settings` carries them to the host that
+// creates the Space and enforces them.
+message HostNetworkSettings {
+  // The preset word; empty is "internet".
+  string preset = 1;
+  // "localhost": the host loopback ports the Space may reach.
+  repeated uint32 localhost_ports = 2;
+  // "localhost": every port.
+  bool all_localhost_ports = 3;
+  // Destinations that stay reachable.
+  repeated string allow = 4;
+  // Destinations that are blocked.
+  repeated string deny = 5;
+  // "custom": "internet" (empty) or "none".
+  string custom_base = 6;
+  // Set when the Space was allowed more than its parent.
+  string widened_by = 7;
+  // Where its internet traffic leaves (see the daemon's NetworkSettings.via).
+  string via = 8;
+}

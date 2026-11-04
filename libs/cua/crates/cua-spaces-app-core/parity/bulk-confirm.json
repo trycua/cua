@@ -1,0 +1,104 @@
+{
+  "name": "bulk-confirm",
+  "about": "Deleting and leaving several Spaces (storyboard 6, 7.4, 8 and 10): the confirm dialog, the selection bar counting through (`order`: the ids as they finish), and the done toast for the results.",
+  "steps": [
+    {
+      "step": "three of yours, one running and shared with Sam",
+      "items": [
+        { "id": "local:cua-builder", "name": "cua-builder", "os": "linux", "running": true, "bytes": 14000000000, "mine": true, "place": "This Mac", "people": [{ "who": "sam@example.com", "name": "Sam", "role": "editor" }] },
+        { "id": "local:agent-sandbox", "name": "agent-sandbox", "os": "linux", "running": false, "bytes": 6000000000, "mine": true, "place": "This Mac", "people": [] },
+        { "id": "local:onb-new", "name": "onb-new", "os": "linux", "running": false, "bytes": 9000000000, "mine": true, "place": "This Mac", "people": [] }
+      ],
+      "order": ["local:cua-builder", "local:agent-sandbox", "local:onb-new"],
+      "results": [
+        { "id": "local:cua-builder", "ok": true },
+        { "id": "local:agent-sandbox", "ok": true },
+        { "id": "local:onb-new", "ok": true }
+      ]
+    },
+    {
+      "step": "one running Space from its menu",
+      "items": [
+        { "id": "relay:hetzner/ci-runner", "name": "ci-runner", "os": "linux", "running": true, "bytes": 22000000000, "mine": true, "place": "Hetzner server" }
+      ],
+      "order": ["relay:hetzner/ci-runner"],
+      "results": [{ "id": "relay:hetzner/ci-runner", "ok": true }]
+    },
+    {
+      "step": "a Space you shared with five people",
+      "items": [
+        {
+          "id": "local:design-review", "name": "design-review", "os": "macos", "running": true, "bytes": 34000000000, "mine": true, "place": "This Mac",
+          "people": [
+            { "who": "sam@example.com", "name": "Sam" },
+            { "who": "priya@example.com", "name": "Priya" },
+            { "who": "lee@example.com" },
+            { "who": "ana@example.com", "name": "Ana" },
+            { "who": "bo@example.com", "name": "Bo" }
+          ]
+        }
+      ],
+      "order": ["local:design-review"],
+      "results": [{ "id": "local:design-review", "ok": true }]
+    },
+    {
+      "step": "four on two computers, one size unknown, one fails",
+      "items": [
+        { "id": "local:tahoe-old", "name": "tahoe-old", "os": "macos", "bytes": 41000000000, "mine": true, "place": "This Mac" },
+        { "id": "local:release-checks", "name": "release-checks", "os": "macos", "bytes": 28000000000, "mine": true, "place": "This Mac" },
+        { "id": "relay:hetzner/scrape-worker", "name": "scrape-worker", "os": "linux", "bytes": 11000000000, "mine": true, "place": "Hetzner server" },
+        { "id": "relay:hetzner/old-runner", "name": "old-runner", "os": "linux", "bytes": null, "mine": true, "place": "Hetzner server" }
+      ],
+      "order": ["local:tahoe-old", "local:release-checks", "relay:hetzner/scrape-worker", "relay:hetzner/old-runner"],
+      "results": [
+        { "id": "local:tahoe-old", "ok": true },
+        { "id": "local:release-checks", "ok": true },
+        { "id": "relay:hetzner/scrape-worker", "ok": false, "error": "the Hetzner server didn't answer" },
+        { "id": "relay:hetzner/old-runner", "ok": true }
+      ]
+    },
+    {
+      "step": "delete two and leave one",
+      "items": [
+        { "id": "local:cua-builder", "name": "cua-builder", "os": "linux", "running": true, "bytes": 14000000000, "mine": true, "place": "This Mac", "people": [{ "who": "sam@example.com", "name": "Sam" }] },
+        { "id": "relay:sam-mini/qa-shared", "name": "qa-shared", "os": "linux", "mine": false, "place": "Sam's Mac mini" },
+        { "id": "local:onb-new", "name": "onb-new", "os": "linux", "bytes": 9000000000, "mine": true, "place": "This Mac" }
+      ],
+      "order": ["local:cua-builder", "local:onb-new", "relay:sam-mini/qa-shared"],
+      "results": [
+        { "id": "local:cua-builder", "ok": true },
+        { "id": "local:onb-new", "ok": true },
+        { "id": "relay:sam-mini/qa-shared", "ok": true }
+      ]
+    },
+    {
+      "step": "leave two, an older relay refuses one",
+      "items": [
+        { "id": "relay:priya-pc/label-studio", "name": "label-studio", "os": "linux", "mine": false, "place": "Priya's PC" },
+        { "id": "relay:sam-mini/qa-shared", "name": "qa-shared", "os": "linux", "mine": false, "place": "Sam's Mac mini" }
+      ],
+      "order": ["relay:priya-pc/label-studio", "relay:sam-mini/qa-shared"],
+      "results": [
+        { "id": "relay:priya-pc/label-studio", "ok": true },
+        { "id": "relay:sam-mini/qa-shared", "ok": false, "error": "Couldn't leave qa-shared: the Cua relay needs an update." }
+      ]
+    },
+    {
+      "step": "leave a team's Space",
+      "items": [
+        { "id": "relay:qa/nightly-e2e", "name": "nightly-e2e", "os": "linux", "mine": false, "team": true, "place": "QA team" }
+      ],
+      "order": ["relay:qa/nightly-e2e"],
+      "results": [{ "id": "relay:qa/nightly-e2e", "ok": true }]
+    },
+    {
+      "step": "nothing deleted",
+      "items": [
+        { "id": "local:a", "name": "a", "os": "linux", "bytes": 1000000000, "mine": true, "place": "This Mac" },
+        { "id": "local:b", "name": "b", "os": "linux", "bytes": 2000000000, "mine": true, "place": "This Mac" }
+      ],
+      "order": [],
+      "results": [{ "id": "local:a", "ok": false }, { "id": "local:b", "ok": false }]
+    }
+  ]
+}

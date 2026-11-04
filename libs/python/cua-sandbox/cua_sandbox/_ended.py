@@ -9,8 +9,9 @@ CLOUD_ENDED = (
 
 
 class CloudEnded(Unsupported):
-    """Raised by every Cua Cloud (Fleet-backed ``on="cloud"``) entry point.
-    A ``NotImplementedError``, like the other unsupported operations."""
+    """Raised wherever a caller still asks for Cua Cloud (``on="cloud"``,
+    ``local=False``, ``pool=``, a ``cloud:`` ref). A ``NotImplementedError``,
+    like the other unsupported operations."""
 
     def __init__(self) -> None:
         super().__init__(CLOUD_ENDED)

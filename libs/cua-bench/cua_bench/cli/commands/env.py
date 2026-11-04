@@ -1,57 +1,35 @@
 """``cb env``: the sandboxes behind ``cb run``.
 
-    cb env ls --local    local sandboxes
-    cb env ls | gc       managed cloud pools: Cua Cloud has ended, so they fail
-
-Managed cloud pools belonged to Cua Cloud, which has ended: ``cb env ls``
-(without ``--local``) and ``cb env gc`` print the one "Cua Cloud has ended"
-error.
+    cb env ls            local sandboxes
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from cua_bench._ended import CLOUD_ENDED
-
 from ._help import examples
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
-GREEN = "\033[92m"
-RED = "\033[91m"
 GREY = "\033[90m"
 
 
 def register_parser(subparsers) -> None:
     parser = subparsers.add_parser(
         "env",
-        help="List or garbage-collect sandboxes and pools",
-        **examples(
-            ("List managed cloud pools and claims", "cb env ls"),
-            ("Delete pools idle for an hour", "cb env gc --idle 1h"),
-        ),
+        help="List local sandboxes",
+        **examples(("List local sandboxes", "cb env ls")),
     )
     sub = parser.add_subparsers(dest="env_command")
     ls = sub.add_parser(
         "ls",
         aliases=["list"],
-        help="List managed cloud pools and claims",
-        **examples(
-            ("List managed cloud pools and claims", "cb env ls"),
-            ("List local sandboxes", "cb env ls --local"),
-        ),
+        help="List local sandboxes",
+        **examples(("List local sandboxes", "cb env ls")),
     )
-    ls.add_argument("--local", action="store_true", help="List local sandboxes instead")
-    gc = sub.add_parser(
-        "gc",
-        help="Delete idle managed pools and stuck claims",
-        **examples(
-            ("Delete pools unused for 30 minutes", "cb env gc"),
-            ("Delete pools idle for two hours", "cb env gc --idle 2h"),
-        ),
+    ls.add_argument(
+        "--local", action="store_true", help="List local sandboxes (the default; kept as a no-op)"
     )
-    gc.add_argument("--idle", default="30m", help="Delete pools unused for this long (default 30m)")
 
 
 async def _list_local() -> int:
@@ -69,12 +47,7 @@ async def _list_local() -> int:
 
 
 def execute(args) -> int:
-    command = getattr(args, "env_command", None)
-    if command in ("ls", "list") and getattr(args, "local", False):
-        return asyncio.run(_list_local())
-    if command not in ("ls", "list", "gc"):
-        print("Usage: cb env ls [--local] | cb env gc [--idle 30m]")
+    if getattr(args, "env_command", None) not in ("ls", "list"):
+        print("Usage: cb env ls")
         return 1
-    # Cua Cloud has ended: there are no managed pools to list or collect.
-    print(f"{RED}Error: {CLOUD_ENDED}{RESET}")
-    return 1
+    return asyncio.run(_list_local())

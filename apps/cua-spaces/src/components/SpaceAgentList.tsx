@@ -15,6 +15,7 @@ import {
 import { detailCopy } from "../model/window";
 import type { TeleportBridge } from "../native/teleport";
 import { AgentGlyph } from "./NavGlyphs";
+import { useT } from "../i18n";
 
 /**
  * The AGENTS section of a Space's page: one row per coding-agent run inside it.
@@ -60,6 +61,7 @@ export function SpaceAgentList({
   teleport: TeleportBridge;
   query?: string;
 }) {
+  const t = useT("spaces");
   const copy = detailCopy();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
 
@@ -111,7 +113,7 @@ export function SpaceAgentList({
           {load.runs.length > 0 ? copy.agentsNoMatch : copy.agentsEmpty}
         </p>
       ) : (
-        <ul className="swl-rows" aria-label="Agents in this Space">
+        <ul className="swl-rows" aria-label={t("spaces.agents.list_label")}>
           {runs.map((run) => (
             <li key={run.runId}>
               {/* The reason comes from the shell, so the tooltip explains the

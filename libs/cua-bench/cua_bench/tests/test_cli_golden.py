@@ -69,8 +69,8 @@ def test_every_command_parses():
         ["run", "task", "t", "--agent", "cua-agent", "--model", "m", "--on", "cloud"],
         ["run", "task", "t", "--on", "cloud", "--kind", "vm", "--image", "linux", "--cpu", "2"],
         ["run", "task", "t", "--runtime", "runc", "--platform", "linux-qemu"],
-        ["run", "task", "t", "--provider-type", "native", "--runtime", "kubevirt"],
-        ["run", "task", "t", "--memory", "4G", "--warm", "--claim-ttl", "20m", "-d"],
+        ["run", "task", "t", "--provider-type", "native", "--runtime", "qemu"],
+        ["run", "task", "t", "--memory", "4G", "-d"],
         ["run", "task", "t", "--agent-import-path", "a.b:C", "--output-dir", "o"],
         ["run", "task", "t", "--on", "cloud", "--wait", "--with", "x", "--run-id", "r"],
         ["run", "task", "t", "--session-id", "s"],
@@ -92,12 +92,9 @@ def test_every_command_parses():
         ["task", "info", "t"],
         ["task", "create", "t"],
         ["task", "generate", "prompt", "--no-interaction"],
-        ["env", "ls", "--local"],
-        ["env", "gc", "--idle", "30m"],
-        ["login", "--no-browser"],
+        ["env", "ls"],
         ["agent", "init", "my-agent", "-o", "o"],
         ["agent", "build", "p"],
-        ["agent", "push", "p"],
         ["platform", "list"],
         ["image", "list"],
         ["prune", "--runs", "--dry-run"],
@@ -264,9 +261,11 @@ def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     code = run_cb(["run", str(HELLO), "--dry-run", "--image", "windows", "--kind", "container"])
     assert code == 1
     assert "windows is VM-only: drop --kind or use --kind vm" in capsys.readouterr().out
-    code = run_cb(["run", str(HELLO), "--dry-run", "--on", "local", "--runtime", "kubevirt"])
+    code = run_cb(
+        ["run", str(HELLO), "--dry-run", "--on", "local", "--kind", "container", "--runtime", "qemu"]
+    )
     assert code == 1
-    assert "valid runtime: auto, gvisor, runc, qemu, lume" in capsys.readouterr().out
+    assert "valid runtime: auto, gvisor, runc" in capsys.readouterr().out
 
 
 def test_a_cloud_default_location_fails_unless_overridden(cli_env, monkeypatch, capsys):
@@ -332,7 +331,6 @@ def test_legacy_commands_are_deprecation_shims(cli_env, tmp_path, capsys):
         ["image", "delete", "x", "--force"],
         ["image", "clone", "a", "b"],
         ["agent", "build", "some/dir", "-t", "x"],
-        ["agent", "push", "img:tag"],
     ):
         assert run_cb(argv) == 0, argv
         assert "deprecated" in capsys.readouterr().out, argv

@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cua-driver",
-  "version": "0.36.0",
+  "version": "0.38.0",
   "description": "Rust-backed Cua Driver SDK and embedded Node host",
   "type": "module",
   "license": "MIT",
@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "electron": "43.7.6",
+    "electron": "43.8.1",
     "typescript": "^5.7.0",
     "uniffi-bindgen-react-native": "0.31.0-3"
   },

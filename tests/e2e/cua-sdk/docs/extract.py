@@ -5,9 +5,9 @@ Each fence carries exactly one disposition in its meta string (fumadocs and
 rehype-pretty-code ignore unknown attributes)::
 
     ```python test="docs" id="images-base"        # runs in lane `docs`; stable id
-    ```python test="docs,fleet" id="omarchy"      # runs in several lanes
+    ```python test="docs,container" id="omarchy"  # runs in several lanes
     ```python test="docs" session="images"        # cumulative with earlier blocks
-    ```python test="docs" prelude="fakefleet"     # hidden harness setup
+    ```python test="docs" prelude="spacesd"       # hidden harness setup
     ```text output                                # program output / not code
     ```bash skip="host-install"                   # reason from the allowlist
 
@@ -60,7 +60,7 @@ BASELINE = REPO / "docs" / "code-block-baseline.json"
 GUIDES = [
     "cua-sdk/guides/agent-frameworks.mdx",
     "cua-sdk/guides/images.mdx",
-    "cua-sdk/reference/sandbox.mdx",
+    "cua-sdk/reference/sandbox/index.mdx",
 ]
 
 FENCE = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>```+|~~~+)(?P<info>.*)$")

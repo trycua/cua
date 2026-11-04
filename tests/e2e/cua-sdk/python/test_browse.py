@@ -9,8 +9,6 @@ official MCP Python SDK (tests/e2e/browse/e2e_browse.py), no LLM:
 * container: images_list -> sandbox_create {browser: true} on the locally
   built linux -> read, fill and submit a form served inside the
   sandbox -> screenshot -> sandbox_delete.
-* fleet-env: the same session on a Fleet gVisor sandbox of
-  ``$CUA_E2E_FLEET_ENV_IMAGE``.
 """
 
 from __future__ import annotations
@@ -52,12 +50,12 @@ def _env(tmp_path: Path, image: str | None) -> dict:
     return env
 
 
-def _run(tmp_path: Path, env: dict, cloud: bool) -> dict:
+def _run(tmp_path: Path, env: dict) -> dict:
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     result: dict = {}
     try:
-        asyncio.run(asyncio.wait_for(e2e_browse.run(cloud, tmp_path, result), timeout=900))
+        asyncio.run(asyncio.wait_for(e2e_browse.run(tmp_path, result), timeout=900))
     finally:
         for k, v in old.items():
             if v is None:
@@ -123,12 +121,6 @@ def test_browse_mcp_surface(tmp_path):
 def test_browse_local_sandbox(tmp_path):
     image = e2e.desktop_image()
     e2e.require_image(image)
-    result = _run(tmp_path, _env(tmp_path, image), cloud=False)
+    result = _run(tmp_path, _env(tmp_path, image))
     assert result["submitted"].endswith("/submit?name=Ada+Lovelace&agree=yes"), result
     assert Path(result["screenshot"]).stat().st_size > 1000
-
-
-@pytest.mark.e2e("browse-the-web", "fleet-env")
-def test_browse_fleet_gvisor(tmp_path):
-    result = _run(tmp_path, _env(tmp_path, os.environ["CUA_E2E_FLEET_ENV_IMAGE"]), cloud=True)
-    assert result["submitted"].endswith("/submit?name=Ada+Lovelace&agree=yes"), result

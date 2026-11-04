@@ -8,9 +8,10 @@
  * app renders the same views.
  */
 import { core } from "../core";
+import type { Msg } from "../i18n";
 import type { DriveSyncInput } from "./persistent";
 import type { RemoteWindow } from "./teleport";
-import type { Location, Space, SpaceOs, SpaceStatus } from "./types";
+import type { Space, SpaceOs, SpaceStatus } from "./types";
 
 export interface SidebarRow {
   id: string;
@@ -18,7 +19,7 @@ export interface SidebarRow {
   /** The Space's OS icon id (the notch tiles' mark), before the name. */
   osIcon: string;
   status: SpaceStatus;
-  statusText: string;
+  statusText: Msg;
   detail: string;
   dim: boolean;
   selected: boolean;
@@ -40,7 +41,7 @@ export interface PowerButton {
   symbol: string;
   /** Tooltip and label: "Suspend", "Resume", "Turn off", "Turn on" (while
    * it runs, "Suspending…" and the like). */
-  help: string;
+  help: Msg;
   /** A press turns it on (else off). */
   turnOn: boolean;
   enabled: boolean;
@@ -50,9 +51,9 @@ export interface PowerButton {
 
 export interface SidebarView {
   thisMachine: SidebarRow | null;
-  sections: { title: string; rows: SidebarRow[] }[];
+  sections: { title: Msg; rows: SidebarRow[] }[];
   selectedId: string | null;
-  emptyText: string | null;
+  emptyText: Msg | null;
 }
 
 export function sidebar(spaces: Space[], query: string, selectedId: string | null): SidebarView {
@@ -117,9 +118,6 @@ export interface SpaceDetailView {
     cancelLabel: string;
   };
   sections: string[];
-  /** A cloud Space refused for want of credit: one line and "Add credit"
-   * (the website billing page). */
-  creditNotice?: { text: string; button: string; url: string } | null;
   /** Why turning it off or on failed, shown inline. */
   powerError?: string | null;
 }
@@ -176,10 +174,11 @@ export interface StreamRow {
   /** "desktop" or the window's handle. */
   id: string;
   kind: "desktop" | "window";
-  /** One line: "Desktop (1280×800)" or the window's title. */
+  /** One line: "Desktop" or the window's title. */
   label: string;
   /** The full label, for the tooltip. */
   help: string;
+  /** The Desktop row's display resolution ("1280×800"), its quiet right-hand detail. */
   resolution: string | null;
   icon: StreamRowIcon;
   actions: { id: "pip"; symbol: string; help: string; active: boolean }[];
@@ -301,14 +300,10 @@ export interface SettingsInput {
   signIn: SignInPhase;
   canSignOut: boolean;
   menuBar: boolean;
-  defaultLocation: Location;
-  locationLockedBy?: string | null;
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   agents?: AgentSettingsRow[] | null;
   agentsBusy: boolean;
   agentsPending: string[];
-  /** The account's Cua Cloud billing (Settings, Billing), once read. */
-  billing?: import("../native/fleet").BillingStatus | null;
   /** Launch at login, once the system was asked (none: no rows). */
   loginItem?: import("./loginItem").LoginItemInput | null;
   /** Settings, Experiments (what the page mentions follows them). */
@@ -387,4 +382,10 @@ export function trayMenu(input: MenuInput): MenuItem[] {
  * counts only while it is shared and reachable (the notch tab's count). */
 export function openableCount(spaces: readonly Space[]): number {
   return core("spaces.openableCount", { spaces });
+}
+
+/** The Spaces on or starting (the notch tab's and the menu bar item's
+ * count): never a stopped Space or This machine. */
+export function onCount(spaces: readonly Space[]): number {
+  return core("spaces.onCount", { spaces });
 }

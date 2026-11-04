@@ -8,7 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Provider → wire.
 pub fn provider_to_pb(p: ProviderKind) -> pb::SandboxProvider {
     match p {
-        ProviderKind::Fleet => pb::SandboxProvider::Fleet,
         ProviderKind::Local => pb::SandboxProvider::Local,
         ProviderKind::Direct => pb::SandboxProvider::Direct,
         ProviderKind::Contrib => pb::SandboxProvider::Contrib,
@@ -18,7 +17,6 @@ pub fn provider_to_pb(p: ProviderKind) -> pb::SandboxProvider {
 /// Wire → provider (`None` for unspecified).
 pub fn provider_from_pb(p: i32) -> Option<ProviderKind> {
     match pb::SandboxProvider::try_from(p).unwrap_or_default() {
-        pb::SandboxProvider::Fleet => Some(ProviderKind::Fleet),
         pb::SandboxProvider::Local => Some(ProviderKind::Local),
         pb::SandboxProvider::Direct => Some(ProviderKind::Direct),
         pb::SandboxProvider::Contrib => Some(ProviderKind::Contrib),
@@ -82,6 +80,52 @@ pub(crate) fn ts(t: SystemTime) -> pbjson_types::Timestamp {
     pbjson_types::Timestamp {
         seconds: d.as_secs() as i64,
         nanos: d.subsec_nanos() as i32,
+    }
+}
+
+/// A checkpoint record on the wire.
+#[allow(dead_code)] // used by the server feature
+pub(crate) fn checkpoint_to_pb(c: &cua_sandbox_core::CheckpointRecord) -> pb::Checkpoint {
+    let created = c.created_at.replace("+00:00", "Z");
+    pb::Checkpoint {
+        name: c.name.clone(),
+        source: c.source.clone(),
+        runtime_type: c.runtime_type.clone(),
+        created_at: humantime::parse_rfc3339_weak(&created).ok().map(ts),
+        image: c
+            .template
+            .image
+            .get("registry")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        pinned: c.pinned,
+        shared_memory: c.shared_memory,
+        release_with_forks: c.release_with_forks,
+        forks: c.holders.len() as u32,
+        host: String::new(),
+    }
+}
+
+/// A checkpoint another machine of yours holds (`HostSnapshot`), as a
+/// `Checkpoint` naming that machine.
+#[cfg(feature = "spaces")]
+pub(crate) fn host_snapshot_to_pb(
+    s: &cua_proto::env::v1::HostSnapshot,
+    host: &str,
+) -> pb::Checkpoint {
+    pb::Checkpoint {
+        name: s.name.clone(),
+        source: s.source.clone(),
+        runtime_type: s.runtime_type.clone(),
+        created_at: (s.created_at_ms > 0).then(|| {
+            ts(UNIX_EPOCH + Duration::from_millis(u64::try_from(s.created_at_ms).unwrap_or(0)))
+        }),
+        image: s.image.clone(),
+        pinned: s.pinned,
+        shared_memory: s.shared_memory,
+        host: host.to_string(),
+        ..Default::default()
     }
 }
 
@@ -206,10 +250,10 @@ mod tests {
     #[test]
     fn record_roundtrips() {
         let r = SandboxRecord {
-            id: "cloud:dev".into(),
+            id: "local:dev".into(),
             name: "dev".into(),
-            provider: ProviderKind::Fleet,
-            runtime_type: "fleet".into(),
+            provider: ProviderKind::Local,
+            runtime_type: "qemu".into(),
             status: Status::Running,
             ephemeral: true,
             services: [("env".to_string(), 3211u16)].into(),
@@ -217,11 +261,11 @@ mod tests {
             labels: BTreeMap::new(),
             endpoints: [("env".to_string(), "https://x".to_string())].into(),
             created_at: Some(UNIX_EPOCH + Duration::from_secs(5)),
-            location: "cloud".into(),
+            location: "local".into(),
             kind: "vm".into(),
-            runtime: "kubevirt".into(),
+            runtime: "qemu".into(),
             expires_at: Some(UNIX_EPOCH + Duration::from_secs(905)),
-            provider_details: [("claim".to_string(), "c-1".to_string())].into(),
+            provider_details: [("backend".to_string(), "qemu".to_string())].into(),
             image_info: None,
             stop_reason: Some("out of memory".into()),
         };
@@ -229,7 +273,7 @@ mod tests {
         // An older daemon sends no id: it is derived from the location.
         let mut old = info_to_pb(&r);
         old.id.clear();
-        assert_eq!(info_from_pb(&old).id, "cloud:dev");
+        assert_eq!(info_from_pb(&old).id, "local:dev");
     }
 
     #[test]
@@ -409,6 +453,33 @@ mod parity_tests {
     use super::*;
 
     #[test]
+    fn forkable_travels_in_a_create_request_to_the_create_options() {
+        let req = crate::CreateRequest {
+            location: Some("local".into()),
+            image: "ghcr.io/trycua/linux:24.04".into(),
+            forkable: true,
+            ..Default::default()
+        };
+        let wire = create_request_to_pb(req);
+        assert!(wire.forkable);
+        let back = create_request_from_pb(wire).unwrap();
+        assert!(back.forkable);
+        let o = crate::runtime::options_from(
+            back,
+            cua_sandbox_core::ProviderKind::Local,
+            cua_sandbox_core::placement::Kind::Vm,
+            cua_sandbox_core::placement::Runtime::Qemu,
+        )
+        .unwrap();
+        assert!(o.forkable);
+        assert!(
+            !create_request_from_pb(pb::CreateSandboxRequest::default())
+                .unwrap()
+                .forkable
+        );
+    }
+
+    #[test]
     fn sidecars_secrets_and_builds_round_trip() {
         let mut c = cua_sandbox_core::Sidecar::new("redis:7-alpine");
         c.ports = vec![6379];
@@ -463,5 +534,150 @@ mod parity_tests {
             ..Default::default()
         };
         assert!(build_from_pb(bad).is_err());
+    }
+}
+
+/// A daemon create request from its protocol form.
+#[allow(deprecated)]
+pub fn create_request_from_pb(r: pb::CreateSandboxRequest) -> Result<crate::CreateRequest> {
+    use crate::CreateRequest;
+    let non_empty = |s: String| (!s.is_empty()).then_some(s);
+    let wait_for = r
+        .wait_for
+        .iter()
+        .map(probe_from_pb)
+        .collect::<Result<Vec<_>>>()?;
+    let ports = r
+        .ports
+        .iter()
+        .map(|p| u16::try_from(*p).map_err(|_| Error::InvalidArgument("port".into())))
+        .collect::<Result<Vec<_>>>()?;
+    let create = CreateRequest {
+        location: non_empty(r.location),
+        kind: non_empty(r.kind),
+        runtime: non_empty(r.runtime),
+        provider: provider_from_pb(r.provider),
+        name: non_empty(r.name),
+        image: r.image,
+        url: non_empty(r.url),
+        token: non_empty(r.token),
+        pool: non_empty(r.local_pool),
+        os: non_empty(r.os),
+        cpus: Some(r.cpus),
+        memory_mb: Some(r.memory_mb),
+        ports,
+        services: r.services.into_iter().map(|(k, v)| (k, v as u16)).collect(),
+        wait_for,
+        ready_timeout: r.ready_timeout.as_ref().map(from_dur),
+        env: r.env.into_iter().collect(),
+        command: (!r.command.is_empty()).then_some(r.command),
+        labels: r.labels.into_iter().collect(),
+        sidecars: r
+            .sidecars
+            .into_iter()
+            .map(crate::convert::sidecar_from_pb)
+            .collect::<Result<Vec<_>>>()?,
+        registry_credentials: r
+            .registry_secret
+            .map(crate::convert::registry_secret_from_pb)
+            .transpose()?,
+        build: r.build.map(crate::convert::build_from_pb).transpose()?,
+        container_runtime: non_empty(r.container_runtime),
+        network: non_empty(r.network),
+        owner_pid: (r.owner_pid > 0).then_some(r.owner_pid),
+        keep_on_failure: r.keep_on_failure,
+        gpu: non_empty(r.gpu),
+        headless: r.headless,
+        spacesd: r.spacesd,
+        profile: non_empty(r.profile),
+        forkable: r.forkable,
+    };
+    Ok(create)
+}
+
+/// A daemon create request in its protocol form.
+#[allow(deprecated)]
+pub fn create_request_to_pb(r: crate::CreateRequest) -> pb::CreateSandboxRequest {
+    pb::CreateSandboxRequest {
+        location: r.location.clone().unwrap_or_default(),
+        kind: r.kind.clone().unwrap_or_default(),
+        runtime: r.runtime.clone().unwrap_or_default(),
+        name: r.name.unwrap_or_default(),
+        provider: r
+            .provider
+            .map(|p| provider_to_pb(p) as i32)
+            .unwrap_or_default(),
+        image: r.image,
+        local_pool: r.pool.unwrap_or_default(),
+        url: r.url.unwrap_or_default(),
+        token: r.token.unwrap_or_default(),
+        labels: r.labels.into_iter().collect(),
+        os: r.os.unwrap_or_default(),
+        cpus: r.cpus.unwrap_or_default(),
+        memory_mb: r.memory_mb.unwrap_or_default(),
+        ports: r.ports.iter().map(|p| *p as u32).collect(),
+        services: r.services.into_iter().map(|(k, v)| (k, v as u32)).collect(),
+        wait_for: r.wait_for.iter().map(probe_to_pb).collect(),
+        ready_timeout: r.ready_timeout.map(dur),
+        env: r.env.into_iter().collect(),
+        command: r.command.unwrap_or_default(),
+        sidecars: r
+            .sidecars
+            .iter()
+            .map(crate::convert::sidecar_to_pb)
+            .collect(),
+        registry_secret: r
+            .registry_credentials
+            .as_ref()
+            .map(crate::convert::registry_secret_to_pb),
+        build: r.build.as_ref().map(crate::convert::build_to_pb),
+        container_runtime: r.container_runtime.clone().unwrap_or_default(),
+        network: r.network.clone().unwrap_or_default(),
+        owner_pid: r.owner_pid.unwrap_or_default(),
+        keep_on_failure: r.keep_on_failure,
+        gpu: r.gpu.clone().unwrap_or_default(),
+        headless: r.headless,
+        spacesd: r.spacesd,
+        profile: r.profile.clone().unwrap_or_default(),
+        forkable: r.forkable,
+    }
+}
+
+/// A pool in its protocol form.
+#[cfg(feature = "server")]
+pub fn pool_to_pb(p: &crate::PoolInfo) -> pb::Pool {
+    pb::Pool {
+        name: p.name.clone(),
+        image: p.image.clone(),
+        location: p.location.clone(),
+        kind: p.kind.clone(),
+        runtime: p.runtime.clone(),
+        cpus: p.cpus,
+        memory_mb: p.memory_mb,
+        min: p.min,
+        max: p.max,
+        idle: p.idle.map(dur),
+        ready: p.ready,
+        starting: p.starting,
+        status: p.status.clone(),
+    }
+}
+
+/// A pool from its protocol form.
+pub fn pool_from_pb(p: pb::Pool) -> crate::PoolInfo {
+    crate::PoolInfo {
+        name: p.name,
+        image: p.image,
+        location: p.location,
+        kind: p.kind,
+        runtime: p.runtime,
+        cpus: p.cpus,
+        memory_mb: p.memory_mb,
+        min: p.min,
+        max: p.max,
+        idle: p.idle.as_ref().map(from_dur),
+        ready: p.ready,
+        starting: p.starting,
+        status: p.status,
     }
 }

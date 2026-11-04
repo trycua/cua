@@ -21,6 +21,13 @@ def run(coro):
     return asyncio.run(asyncio.wait_for(coro, timeout=60))
 
 
+def env_supports_run_as(caps):
+    return any(
+        f.name == "process.run_as" and f.attributes.get("mode") in ("root", "capabilities")
+        for f in caps.features
+    )
+
+
 def command(program, *args, stdin=False):
     return cua.SpacesdCommand(program=program, args=list(args), stdin=stdin)
 
@@ -54,6 +61,39 @@ def wait_for(cond, what, timeout=5.0):
     raise AssertionError(f"timed out waiting for {what}")
 
 
+async def file_access(env) -> None:
+    """Acting as another guest user, and extended-attribute metadata
+    (the fixture guest knows alice and bob, and refuses `locked`)."""
+    opts = cua.UploadOptions(
+        user="alice", metadata={"origin": "py"}, xattr_namespace="user.e2b."
+    )
+    await env.upload("/tmp/py/as.bin", b"as alice", opts)
+    st = await env.stat("/tmp/py/as.bin", user="alice", xattr_namespace="user.e2b.")
+    assert st.owner == "alice"
+    assert st.metadata == {"origin": "py"}
+    # The default namespace does not see the e2b one.
+    assert (await env.stat("/tmp/py/as.bin")).metadata == {}
+    rows = await env.list_dir("/tmp/py", 1, user="alice", xattr_namespace="user.e2b.")
+    assert {r.name: r.metadata.get("origin") for r in rows}["as.bin"] == "py"
+    assert await env.download("/tmp/py/as.bin", user="alice") == b"as alice"
+    moved = await env.move_path("/tmp/py/as.bin", "/tmp/py/as2.bin", create_parents=True, user="alice")
+    assert moved.path == "/tmp/py/as2.bin"
+    await env.remove("/tmp/py/as2.bin", False, user="alice")
+    made = await env.make_dir("/tmp/py/dir", user="bob")
+    assert made.owner == "bob"
+    # `user` also rides on raw requests.
+    raw = await env.call_json(
+        "FilesystemService/Stat", '{"path": "/tmp/py/blob"}', user="bob"
+    )
+    assert '"entry"' in raw
+    with pytest.raises(cua.CuaError.Env, match="no-such"):
+        await env.stat("/tmp/py/blob", user="no-such")
+    with pytest.raises(cua.CuaError.PermissionDenied):
+        await env.stat("/tmp/py/blob", user="locked")
+    with pytest.raises(cua.CuaError.InvalidArgument):
+        await env.call_json("SystemService/Health", "{}", user="alice")
+
+
 async def exercise(c: cua.Cua, fx: dict) -> None:
     sbx = c.sandboxes()
     sb = await sbx.connect_url(fx["env_url"], fx["env_token"], "py-direct")
@@ -63,6 +103,16 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
 
     caps = await env.capabilities()
     assert caps.version
+    # How the guest agent runs commands and file operations as another user:
+    # itself, with no sudo (`root` or `capabilities`), through sudo (older
+    # images) or not at all (`none`).
+    run_as = {f.name: f for f in caps.features}["process.run_as"]
+    assert run_as.supported and run_as.attributes["mode"] == "capabilities"
+    assert env_supports_run_as(caps)
+    out = await env.run(
+        cua.SpacesdCommand(program="echo", args=["as alice"], user="alice")
+    )
+    assert out.exit.success and out.stdout == b"as alice\n"
     out = await env.run(command("echo", "hi"))
     assert out.exit.success and out.stdout == b"hi\n"
     out = await env.sh("fail 4", None)
@@ -77,6 +127,8 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
     up = await env.upload("/tmp/py/blob", blob, None)
     assert up.size == len(blob)
     assert await env.download("/tmp/py/blob") == blob
+
+    await file_access(env)
 
     await env.set_clipboard("from python")
     assert await env.get_clipboard() == "from python"
@@ -105,6 +157,10 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
     assert bad.id() == sb.id() and sb.id().startswith("direct:127.0.0.1:")
     sb = await sbx.connect_url(fx["env_url"], fx["env_token"], "py-direct")
 
+    # A machine cua only connects to has no shape of its own to change.
+    with pytest.raises(cua.CuaError.Unsupported):
+        await sb.resize(2, 2048, None)
+
     listing = await sbx.list_with_warnings(None)
     rows = {s.name: s for s in listing.sandboxes}
     assert rows["py-direct"].location == "direct"
@@ -123,7 +179,7 @@ async def exercise(c: cua.Cua, fx: dict) -> None:
 
 
 def test_embedded(fixtures, tmp_path):
-    c = cua.embedded(state_dir=str(tmp_path / "sbx"), fleet_from_env=False)
+    c = cua.embedded(state_dir=str(tmp_path / "sbx"))
     assert c.mode() == cua.CuaMode.EMBEDDED
     run(exercise(c, fixtures))
 
@@ -135,23 +191,13 @@ def _assert_cloud_ended(info):
 
 
 def test_cloud_creates_fail_with_the_cloud_ended_error(fixtures, tmp_path):
-    # Even with Fleet credentials (the fake API), nothing reaches Fleet.
-    c = cua.embedded(
-        state_dir=str(tmp_path / "sbx"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-    with pytest.raises(cua.CuaError.Unsupported) as info:
-        c.fleet()
-    _assert_cloud_ended(info)
+    c = cua.embedded(state_dir=str(tmp_path / "sbx"))
 
     async def body():
         sbx = c.sandboxes()
         for opts in (
             cua.SandboxCreateOptions(on="cloud", image="img:test", kind="vm"),
-            cua.SandboxCreateOptions(image="img:test", warm=True),
-            cua.SandboxCreateOptions(image="img:test", cloud=cua.CloudOptions()),
+            cua.SandboxCreateOptions(image="pool:a-pool"),
         ):
             with pytest.raises(cua.CuaError.Unsupported) as info:
                 await sbx.create(opts)
@@ -161,43 +207,6 @@ def test_cloud_creates_fail_with_the_cloud_ended_error(fixtures, tmp_path):
         assert "cloud" not in cua.sandbox_locations()
 
     run(body())
-
-
-@pytest.mark.skip(reason="Cua Cloud has ended (CUA-1854); removed with the Fleet provider")
-def test_embedded_fleet_through_fake_api(fixtures, tmp_path):
-    c = cua.embedded(
-        state_dir=str(tmp_path / "sbx"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-    async def body():
-        fleet = c.fleet()
-        pool = await fleet.apply_pool(
-            cua.FleetPoolSpec(name="cua-e2e-py", image="img:test", runtime="gvisor")
-        )
-        assert pool.name == "cua-e2e-py"
-        sb = await c.sandboxes().create(
-            cua.SandboxCreateOptions(
-                on="cloud", pool="cua-e2e-py", name="cua-e2e-py-claim"
-            )
-        )
-        assert sb.location() == "cloud"
-        # The claim's env service is the fixture's cua-spacesd (through the
-        # fake gateway), which speaks gRPC, not plain HTTP.
-        out = await (await sb.spacesd(5_000)).sh("echo claim", None)
-        assert bytes(out.stdout) == b"claim\n"
-        await sb.delete()
-        await fleet.delete_pool("cua-e2e-py")
-
-    run(body())
-
-
-def test_fleet_fails_with_the_cloud_ended_error(tmp_path):
-    c = cua.embedded(state_dir=str(tmp_path), fleet_from_env=False)
-    with pytest.raises(cua.CuaError.Unsupported) as info:
-        c.fleet()
-    _assert_cloud_ended(info)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Unix socket")
@@ -251,3 +260,25 @@ def test_cua_console_command_runs_the_bundled_cli():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("cua ")
+
+
+def test_headless_create_and_pool_options():
+    # Hermetic: records only. `headless` (no desktop, only cua-spacesd) on
+    # creates and pools, and a pool's own `command`.
+    assert cua.SandboxCreateOptions(on="local").headless is False
+    assert cua.SandboxCreateOptions(on="local", headless=True).headless is True
+    pool = cua.PoolCreateOptions(command=["sleep", "1"], headless=True)
+    assert pool.command == ["sleep", "1"]
+    assert pool.headless is True
+    assert cua.PoolCreateOptions().command is None
+    assert cua.PoolCreateOptions().headless is False
+
+
+def test_spacesd_option_on_creates():
+    # Hermetic: records only. `spacesd` (None: a static cua-spacesd is put
+    # into an OCI image that has none, on a container or microVM, so any image
+    # is a full Space; False runs the image as it is).
+    assert cua.SandboxCreateOptions(on="local").spacesd is None
+    assert cua.SandboxCreateOptions(on="local", spacesd=False).spacesd is False
+    assert cua.SpaceCreateOptions().spacesd is None
+    assert cua.SpaceCreateOptions(spacesd=False).spacesd is False

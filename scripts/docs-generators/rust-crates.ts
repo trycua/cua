@@ -431,7 +431,7 @@ export function renderCratePage(
     if (!group.length) continue;
     body.push(`## ${heading}`, freeItems(group, krate));
   }
-  // Re-exports of crates outside the public set (the Fleet SDK types, the
+  // Re-exports of crates outside the public set (the
   // protos): one line, since their own crates document them.
   const reexports = rest.filter((i) => i.kind === 'reexport');
   if (reexports.length) {

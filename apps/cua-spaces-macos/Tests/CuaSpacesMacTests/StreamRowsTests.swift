@@ -105,7 +105,7 @@ struct StreamRowsTests {
         let m = StreamFixture.model()
         await m.refresh()
         let s = m.section()
-        #expect(s.rows.map(\.label) == ["Desktop (1280\u{d7}800)", "Mozilla Firefox", "Release notes", "xterm",
+        #expect(s.rows.map(\.label) == ["Desktop", "Mozilla Firefox", "Release notes", "xterm",
                                          StreamFixture.longTitle])
         #expect(s.rows[0].resolution == "1280\u{d7}800")
         #expect(s.rows[0].icon == .os(id: "os-ubuntu"))

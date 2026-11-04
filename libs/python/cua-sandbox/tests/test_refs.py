@@ -19,8 +19,6 @@ def test_refs_parse_with_the_legacy_spellings():
     for ref in ("local:box", "cloud:box", "direct:10.0.0.5:3211", "relay:0123abcd4567ef89"):
         assert _refs.parse(ref).id == ref
     assert _refs.parse("box") == _refs.Ref(None, "box")
-    assert _refs.parse("space://fleet/ns/box") == _refs.Ref("cloud", "box")
-    assert _refs.parse("fleet:ns:box") == _refs.Ref("cloud", "box")
     assert _refs.parse("url:h:1") == _refs.Ref("direct", "h:1")
     with pytest.raises(InvalidArgument):
         _refs.parse("moon:x")

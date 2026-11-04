@@ -21,6 +21,46 @@ after(async () => {
 const cmd = (program, args = [], extra = {}) =>
   cua.SpacesdCommand.create({ program, args, ...extra })
 
+// Acting as another guest user, and extended-attribute metadata (the fixture
+// guest knows alice and bob, and refuses `locked`).
+async function fileAccess(env) {
+  const bytes = (s) => new TextEncoder().encode(s).buffer
+  await env.upload(
+    "/tmp/ts/as.bin",
+    bytes("as alice"),
+    cua.UploadOptions.create({
+      user: "alice",
+      metadata: new Map([["origin", "ts"]]),
+      xattrNamespace: "user.e2b.",
+    }),
+  )
+  const st = await env.stat("/tmp/ts/as.bin", "alice", "user.e2b.", false)
+  assert.equal(st.owner, "alice")
+  assert.equal(st.metadata.get("origin"), "ts")
+  assert.equal((await env.stat("/tmp/ts/as.bin", undefined, undefined, false)).metadata.size, 0)
+  const rows = await env.listDir("/tmp/ts", 1, "alice", "user.e2b.")
+  assert.equal(rows.find((r) => r.name === "as.bin").metadata.get("origin"), "ts")
+  assert.equal(new TextDecoder().decode(await env.download("/tmp/ts/as.bin", "alice")), "as alice")
+  const moved = await env.movePath("/tmp/ts/as.bin", "/tmp/ts/as2.bin", false, true, "alice")
+  assert.equal(moved.path, "/tmp/ts/as2.bin")
+  await env.remove("/tmp/ts/as2.bin", false, "alice")
+  assert.equal((await env.makeDir("/tmp/ts/dir", "bob")).owner, "bob")
+  assert.match(
+    await env.callJson("FilesystemService/Stat", '{"path":"/tmp/ts/blob"}', "bob"),
+    /"entry"/,
+  )
+  await assert.rejects(
+    env.stat("/tmp/ts/blob", "no-such", undefined, false),
+    (e) => cua.CuaError.Env.instanceOf(e) && /no-such/.test(e.message),
+  )
+  await assert.rejects(env.stat("/tmp/ts/blob", "locked", undefined, false), (e) =>
+    cua.CuaError.PermissionDenied.instanceOf(e),
+  )
+  await assert.rejects(env.callJson("SystemService/Health", "{}", "alice"), (e) =>
+    cua.CuaError.InvalidArgument.instanceOf(e),
+  )
+}
+
 async function exercise(c) {
   const sbx = c.sandboxes()
   const sb = await sbx.connectUrl(fx.env_url, fx.env_token, "ts-direct")
@@ -30,6 +70,15 @@ async function exercise(c) {
 
   const caps = await env.capabilities()
   assert.ok(caps.version.length > 0)
+  // How the guest agent runs commands and file operations as another user:
+  // itself, with no sudo ("root" or "capabilities"), through sudo (older
+  // images) or not at all ("none").
+  const runAs = caps.features.find((f) => f.name === "process.run_as")
+  assert.ok(runAs.supported)
+  assert.equal(runAs.attributes.get("mode"), "capabilities")
+  const asAlice = await env.run(cmd("echo", ["as alice"], { user: "alice" }))
+  assert.ok(asAlice.exit.success)
+  assert.equal(new TextDecoder().decode(asAlice.stdout), "as alice\n")
   const out = await env.run(cmd("echo", ["hi"]))
   assert.ok(out.exit.success)
   assert.equal(new TextDecoder().decode(out.stdout), "hi\n")
@@ -42,16 +91,18 @@ async function exercise(c) {
   const blob = new Uint8Array(200_000).map((_, i) => i % 251)
   const up = await env.upload("/tmp/ts/blob", blob.buffer, undefined)
   assert.equal(up.size, BigInt(blob.length))
-  const down = new Uint8Array(await env.download("/tmp/ts/blob"))
+  const down = new Uint8Array(await env.download("/tmp/ts/blob", undefined))
   assert.deepEqual(down, blob)
+
+  await fileAccess(env)
 
   await env.setClipboard("from node")
   assert.equal(await env.getClipboard(), "from node")
-  assert.match(await env.callJson("SystemService/Health", "{}"), /^\{/)
+  assert.match(await env.callJson("SystemService/Health", "{}", undefined), /^\{/)
 
-  await assert.rejects(env.download("/nope"), (e) => cua.CuaError.NotFound.instanceOf(e))
+  await assert.rejects(env.download("/nope", undefined), (e) => cua.CuaError.NotFound.instanceOf(e))
   await assert.rejects(
-    env.callJson("ProcessService/StartProcess", "{}"),
+    env.callJson("ProcessService/StartProcess", "{}", undefined),
     (e) => cua.CuaError.InvalidArgument.instanceOf(e),
   )
 
@@ -83,6 +134,8 @@ async function exercise(c) {
   await sbx.connectUrl(fx.env_url, fx.env_token, "ts-direct")
 
   const listing = await sbx.listWithWarnings(undefined)
+  // A machine cua only connects to has no shape of its own to change.
+  await assert.rejects(sb.resize(2, 2048n, undefined), (e) => cua.CuaError.Unsupported.instanceOf(e))
   assert.ok(listing.sandboxes.some((s) => s.name === "ts-direct" && s.location === "direct"))
   assert.deepEqual(listing.warnings, [])
   // The default lists the sandboxes on this machine.
@@ -96,135 +149,34 @@ async function exercise(c) {
 
 test("embedded", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
-  const c = cua.embedded({ stateDir: join(dir, "sbx"), fleetFromEnv: false })
+  const c = cua.embedded({ stateDir: join(dir, "sbx") })
   assert.equal(c.mode(), cua.CuaMode.Embedded)
   await exercise(c)
 })
 
-// Cua Cloud has ended (CUA-1854): `fleet()` and every `on: "cloud"` create
-// fail with the one "Cua Cloud has ended" message, and never reach Fleet.
-const CLOUD_REMOVED = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"
+// Cua Cloud has ended: every `on: "cloud"` create (and a `pool:<name>` image)
+// fails with the one "Cua Cloud has ended" message.
 const cloudEnded = (e) => {
   assert.ok(cua.CuaError.Unsupported.instanceOf(e), String(e))
   assert.match(e.message, /Cua Cloud has ended/)
   return true
 }
 
-test("managed Fleet pools through the fake API", { skip: CLOUD_REMOVED }, async () => {
+test("cloud creates fail with the cloud-ended error", () => {
   const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
-  const c = cua.embedded({
-    stateDir: join(dir, "sandboxes"),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
-  })
-  // A digest-pinned image: nothing resolves tags against a registry. The
-  // kind is explicit because the fake image has no manifest to classify.
-  const image = "ghcr.io/trycua/cua-e2e-ts@sha256:0123"
-  const opts = (extra = {}) =>
-    cua.SandboxCreateOptions.create({ on: "cloud", image, kind: "vm", ...extra })
-  const sbx = c.sandboxes()
-  const pools = c.fleet().pools()
-  assert.deepEqual(await pools.list(), [])
-
-  // No pool: a managed, autoscaled pool keyed by image and shape.
-  const sb = await sbx.create(opts({ warm: true, maxPoolSize: 3, fleetTtlSeconds: 120 }))
-  assert.equal(sb.location(), "cloud")
-  assert.equal(sb.isEphemeral(), true)
-  let listed = await pools.list()
-  assert.equal(listed.length, 1)
-  const pool = listed[0]
-  assert.match(pool.name, /^cua-auto-[a-z2-7]{16}$/)
-  assert.equal(pool.managed, true)
-  assert.equal(pool.maxPoolSize, 3)
-  assert.equal(pool.replicas, 1)
-  assert.equal(pool.claims, 1)
-  assert.equal(pool.image, image)
-
-  // Same image and shape: same pool. Another cpu count: another pool.
-  const again = await sbx.create(opts())
-  assert.equal((await pools.list()).length, 1)
-  const bigger = await sbx.create(opts({ cpus: 4 }))
-  listed = await pools.list()
-  assert.equal(listed.length, 2)
-
-  // Deleting releases claims; pools stay for reuse until GC.
-  for (const s of [sb, again, bigger]) await s.delete_()
-  listed = await pools.list()
-  assert.deepEqual(listed.map((p) => p.claims), [0, 0])
-  const kept = await pools.gc(3600)
-  assert.deepEqual(kept.deletedPools, [])
-  const report = await pools.gc(0)
-  assert.deepEqual([...report.deletedPools].sort(), listed.map((p) => p.name).sort())
-  assert.deepEqual(await pools.list(), [])
-})
-
-test("cloud creates fail with the cloud-ended error, even with Fleet credentials", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
-  const c = cua.embedded({
-    stateDir: join(dir, "sandboxes"),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
-  })
+  const c = cua.embedded({ stateDir: join(dir, "sandboxes") })
   // A digest-pinned image: nothing resolves tags against a registry.
   const image = "ghcr.io/trycua/cua-e2e-ts@sha256:0123"
   const sbx = c.sandboxes()
-  await assert.rejects(
-    sbx.create(cua.SandboxCreateOptions.create({ on: "cloud", image, kind: "vm", warm: true, maxPoolSize: 3 })),
-    cloudEnded,
-  )
-  // Cloud options imply the cloud too.
-  await assert.rejects(
-    sbx.create(cua.SandboxCreateOptions.create({ image, warm: true })),
-    cloudEnded,
-  )
-  await assert.rejects(
-    sbx.create(cua.SandboxCreateOptions.create({ image, cloud: cua.CloudOptions.create({}) })),
-    cloudEnded,
-  )
-  // Nothing was created, and cloud is not a listed location.
-  assert.deepEqual((await sbx.listWithWarnings("cloud")).sandboxes, [])
-  assert.ok(!cua.sandboxLocations().includes("cloud"))
-})
-
-test("fleet() fails with the cloud-ended error, with or without credentials", () => {
-  const bare = cua.embedded({ stateDir: mkdtempSync(join(tmpdir(), "cua-ts-")), fleetFromEnv: false })
-  assert.throws(() => bare.fleet(), cloudEnded)
-  if (!fx?.fleet_base_url) return
-  const configured = cua.embedded({
-    stateDir: mkdtempSync(join(tmpdir(), "cua-ts-")),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
+  return Promise.all([
+    assert.rejects(
+      sbx.create(cua.SandboxCreateOptions.create({ on: "cloud", image, kind: "vm" })),
+      cloudEnded,
+    ),
+    assert.rejects(sbx.create(cua.SandboxCreateOptions.create({ image: "pool:a-pool" })), cloudEnded),
+  ]).then(async () => {
+    // Nothing was created, and cloud is not a listed location.
+    assert.deepEqual((await sbx.listWithWarnings("cloud")).sandboxes, [])
+    assert.ok(!cua.sandboxLocations().includes("cloud"))
   })
-  assert.throws(() => configured.fleet(), cloudEnded)
 })
-
-test(
-  "daemon topology",
-  {
-    skip:
-      process.platform === "win32" ||
-      !binary("CUA_CLI", "cua") ||
-      !binary("CUA_TEST_FIXTURES", "cua-test-fixtures"),
-  },
-  async () => {
-    const home = mkdtempSync("/tmp/cua-ts-")
-    const sock = join(home, "cua.sock")
-    const daemon = spawn(
-      binary("CUA_CLI", "cua"),
-      ["daemon", "start", "--foreground", "--socket", sock, "--state-dir", join(home, "sbx")],
-      { env: { ...process.env, CUA_HOME: home, HOME: home }, stdio: "ignore" },
-    )
-    try {
-      await waitFor("daemon socket", () => existsSync(sock), 15_000)
-      const c = cua.connect(sock)
-      assert.equal(c.mode(), cua.CuaMode.Daemon)
-      const info = await c.info()
-      assert.equal(info.daemonPid, daemon.pid)
-      await exercise(c)
-      await c.shutdownDaemon()
-      await new Promise((r) => daemon.once("exit", r))
-    } finally {
-      if (daemon.exitCode === null) daemon.kill()
-    }
-  },
-)

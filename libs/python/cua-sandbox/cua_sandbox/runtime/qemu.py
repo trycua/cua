@@ -96,10 +96,10 @@ class NativeQEMURuntime(NativeRuntime):
 
     async def _image_ref(self, image: Image, name: str, **opts) -> str:
         from cua_sandbox.builder.build import create_session_disk, has_build_work
-        from cua_sandbox.image import cloud_registry_image
+        from cua_sandbox.image import registry_image
 
         disk = opts.get("disk_path") or image._disk_path
-        ref = cloud_registry_image(image)
+        ref = registry_image(image)
         if disk and not has_build_work(image):
             return f"disk:{disk}"
         if ref is not None and not disk and not has_build_work(image):

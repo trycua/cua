@@ -86,21 +86,6 @@ class Transport(ABC):
         """The ``cua.Service`` handle for a named service (used by ``sb.mcp``)."""
         raise NotImplementedError(f"{type(self).__name__} does not expose native service handles.")
 
-    async def create_signed_service_url(
-        self,
-        name: str,
-        *,
-        label: str | None,
-        expires_in_seconds: int,
-    ) -> Any:
-        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
-
-    async def list_signed_service_urls(self) -> list[Any]:
-        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
-
-    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
-        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
-
     async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
 

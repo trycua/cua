@@ -61,7 +61,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     const { view, opened } = host(reached);
     view();
     const notice = await screen.findByRole("status");
-    expect(notice.textContent).toContain("You've reached the free plan's remote limit for this month. Your Spaces keep working.");
+    expect(notice.textContent).toContain("You're using 20.2 of 20 remote hours on the free plan. Your Spaces keep working.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_meter"]));
   });

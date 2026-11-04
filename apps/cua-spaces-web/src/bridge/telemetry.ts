@@ -16,7 +16,7 @@
 
 import { isUnsupported, type BridgeMode, type DataAdapter } from "./adapter";
 import type { CoreClient } from "./core";
-import type { TelemetryView } from "./contracts/host";
+import type { SignInFailure, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { CreateAction, CreatesState } from "./contracts/spaces";
 import { sanitizeSignals, type TelemetrySignal } from "./ops/telemetry";
@@ -52,6 +52,11 @@ export function telemetryOnboardingSkipped(core: CoreClient, state: OnboardingFl
  * as its kind (`telemetry.signInFailed`); the message never leaves the core. */
 export function telemetrySignInFailed(core: CoreClient, message: string | null): TelemetrySignal[] {
   return signals(core.tryCall("telemetry.signInFailed", { message }));
+}
+
+/** A sign-in failed for `reason` or was cancelled (null): its kind only. */
+export function telemetrySignInFailure(core: CoreClient, reason: SignInFailure | null): TelemetrySignal[] {
+  return signals(core.tryCall("telemetry.signInFailure", { reason }));
 }
 
 /** What a create, power or delete step means (`telemetry.creates`). */

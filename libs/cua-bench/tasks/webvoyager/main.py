@@ -10,7 +10,7 @@ answer. Needs egress in the guest and ``OPENAI_API_KEY``.
 ::
 
     cb run dataset libs/cua-bench/tasks/webvoyager --agent <agent> --max-variants 10
-    CUA_BENCH_WEBVOYAGER_SITES=Allrecipes,ArXiv cb run dataset libs/cua-bench/tasks/webvoyager --on cloud
+    CUA_BENCH_WEBVOYAGER_SITES=Allrecipes,ArXiv cb run dataset libs/cua-bench/tasks/webvoyager
 
 Results drift as the live sites change, so compare runs made close together.
 """

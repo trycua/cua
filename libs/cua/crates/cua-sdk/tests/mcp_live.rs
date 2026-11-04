@@ -32,7 +32,6 @@ fn cua(dirs: &tempfile::TempDir) -> Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(dirs.path().join("sandboxes").display().to_string()),
         spaces_home: Some(dirs.path().join("cua").display().to_string()),
-        fleet_from_env: false,
         ..Default::default()
     })
     .unwrap()

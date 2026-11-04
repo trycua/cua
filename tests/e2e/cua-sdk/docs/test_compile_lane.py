@@ -1,4 +1,4 @@
-"""Unit tests for the swift / kotlin compile lanes (no toolchain needed)."""
+"""Unit tests for the swift / kotlin / rust compile lanes (no toolchain needed)."""
 
 from __future__ import annotations
 
@@ -60,6 +60,41 @@ class CompileLaneTest(unittest.TestCase):
         out = f"/w/Sources/{names[1]}/Block.swift:3:5: error: bad\ne: file:///w/src/{names[0]}.kt:1:1 wrong\n"
         errs = cl.attribute(out, names, blocks)
         self.assertEqual(sorted(errs), ["p#a", "p#b"])
+
+    def test_rust_wrap(self):
+        whole = "use cua_sdk::Cua;\n\n#[tokio::main]\nasync fn main() {}\n"
+        self.assertEqual(cl.wrap(whole, "rust", "DocsR"), whole)
+        out = cl.wrap(
+            "use cua_sdk::{Cua, CuaConfig};\n\nlet c = Cua::embedded(CuaConfig::default())?;\n",
+            "rust",
+            "DocsR",
+        )
+        lines = out.splitlines()
+        self.assertEqual(lines[:2], ["#![allow(unused)]", "use cua_sdk::{Cua, CuaConfig};"])
+        self.assertIn("async fn docs_r() -> Result<(), Box<dyn std::error::Error>> {", out)
+        self.assertIn("    let c = Cua::embedded(CuaConfig::default())?;", out)
+        self.assertIn("fn main() {}", out)
+
+    def test_rust_package(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "p.mdx").write_text('```rust test="rust" id="a"\nlet x = 1;\n```\n')
+        blocks = extract.all_blocks(tmp)
+        names = cl.rust_package(tmp / "rs", blocks)
+        manifest = (tmp / "rs" / "Cargo.toml").read_text()
+        self.assertIn(str(cl.RUST_SDK), manifest)
+        self.assertIn("[workspace]", manifest)
+        self.assertTrue((tmp / "rs" / "Cargo.lock").exists())
+        self.assertTrue((tmp / "rs" / "src" / "bin" / f"{names[0]}.rs").exists())
+
+    def test_attribute_rust_errors(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "p.mdx").write_text(
+            '```rust test="rust" id="a"\nx\n```\n```rust test="rust" id="b"\ny\n```\n'
+        )
+        blocks = extract.all_blocks(tmp)
+        names = [cl.target_name(b.id) for b in blocks]
+        out = f"error[E0599]: no method named `x`\n  --> src/bin/{names[1]}.rs:3:5\n"
+        self.assertEqual(sorted(cl.attribute(out, names, blocks)), ["p#b"])
 
 
 if __name__ == "__main__":

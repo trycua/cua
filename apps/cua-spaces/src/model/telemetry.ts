@@ -47,7 +47,9 @@ export type TelemetrySignal =
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: "experiment_on" | "experiment_off"; experiment: string }
-  | { type: "experiments-on"; experiments: string[] };
+  | { type: "experiments-on"; experiments: string[] }
+  | { type: "plan-limit-shown"; surface: string; kind: string; plan: string }
+  | { type: "upgrade-link-opened"; surface: string; kind: string; plan: string };
 
 /** A fixed feature name as a signal. */
 export function featureSignals(feature: string): TelemetrySignal[] {

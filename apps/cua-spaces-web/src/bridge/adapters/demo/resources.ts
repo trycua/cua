@@ -3,7 +3,9 @@
 
 /**
  * The demo host's resource numbers (`resources.get`): This Mac and each of
- * its Spaces, and a summary from the Mac mini (the Linux box sends none).
+ * its Spaces, a summary from the Mac mini (the Linux box sends none), and
+ * what each of your Spaces on your other computers takes there (only its
+ * disk; none for a computer that is offline).
  * Busy and in-use numbers drift a little with the clock, so the bars move
  * as live ones do. `diskFree` in its state sets This Mac's free disk
  * (`?demo=low-disk`, `?demo=disk-full`).
@@ -12,8 +14,10 @@
 import type { SpaceRow } from "../../contracts/spaces";
 import type { ComputerResources, DiskWarning, ResourcesSnapshot, SpaceResources } from "../../ops/resources";
 import type { DemoContext, DemoHandlers } from "./context";
+import { DEMO_MACHINES } from "../demo-data";
 
-const GB = 1_000_000_000;
+/** GiB, labelled "GB" the way macOS labels memory (the core's convention). */
+const GB = 1024 ** 3;
 const GIB = 1024 ** 3;
 
 export interface DemoResourcesState {
@@ -42,7 +46,14 @@ const running = (row: SpaceRow) => row.powerState === "running" || (row.powerSta
 /** What each demo Space was given (cores, GB of memory, GB of disk at most) and takes on its host. */
 const ALLOCATION: Record<string, { cores: number; memory: number; disk: number; onHost: number; inside: number; shared: boolean }> = {
   "local:design-review": { cores: 4, memory: 8, disk: 80, onHost: 19, inside: 34, shared: true },
-  "local:agent-sandbox": { cores: 2, memory: 4, disk: 40, onHost: 6, inside: 6, shared: false },
+  // A container: no disk size of its own (gVisor's root overlay).
+  "local:agent-sandbox": { cores: 2, memory: 4, disk: 0, onHost: 6, inside: 6, shared: false },
+};
+
+/** The base image each demo Space is a copy-on-write copy of. */
+const BASES: Record<string, NonNullable<SpaceResources["base"]>> = {
+  "local:design-review": { key: "demo-macos-26", image: "ghcr.io/trycua/macos:26", bytes: 25 * GB, sharedWith: 1 },
+  "local:agent-sandbox": { key: "demo-linux-24.04", image: "ghcr.io/trycua/linux:24.04", bytes: 4.1 * GB, sharedWith: 1 },
 };
 
 function spaceResources(row: SpaceRow, now: number, index: number): SpaceResources {
@@ -64,11 +75,36 @@ function spaceResources(row: SpaceRow, now: number, index: number): SpaceResourc
           memoryTotal: a.memory * GB,
           memoryLimited: true,
           diskUsed: a.inside * GB,
-          diskTotal: a.disk * GB,
-          diskLimited: true,
+          diskTotal: a.disk ? a.disk * GB : null,
+          diskLimited: a.disk > 0,
         }
       : null,
     diskOnHost: { bytes: a.onHost * GB, allocated: (a.shared ? a.inside : a.onHost) * GB, sharesSpace: a.shared },
+    base: BASES[row.id] ?? null,
+  };
+}
+
+/** GB each demo Space on another computer takes there (stopped ones too). */
+const ON_OTHER_COMPUTER: Record<string, number> = {
+  "relay:mac-mini/release-checks": 21,
+  "relay:mac-mini/qa-windows": 25,
+  "relay:linux-box/ubuntu-build": 5,
+  "relay:linux-box/windows-legacy": 31,
+};
+
+const POWER_STATES = ["running", "stopped", "suspended"] as const;
+
+/** One of your Spaces on another computer: only what it takes there. */
+function remoteSpaceResources(row: SpaceRow): SpaceResources {
+  const gb = ON_OTHER_COMPUTER[row.id] ?? (row.kind === "container" ? 4 : 24);
+  return {
+    id: row.id,
+    powerState: POWER_STATES.find((p) => p === row.powerState) ?? "",
+    cpuAllocated: 0,
+    memoryAllocated: 0,
+    diskAllocated: 0,
+    usage: null,
+    diskOnHost: { bytes: gb * GB, allocated: gb * GB, sharesSpace: false },
   };
 }
 
@@ -92,7 +128,7 @@ export function demoResources(rows: readonly SpaceRow[], now: number, diskFree: 
     loadAverage1m: (cpuPercent / 100) * 12,
     memoryTotal: 64 * GB,
     memoryUsed: Math.round(drift(now, 41, 1.5) * GB),
-    diskTotal: 1000 * GB,
+    diskTotal: 1024 * GB,
     diskFree,
     spacesCount: spaces.length,
     spacesRunning: on.length,
@@ -124,7 +160,9 @@ export function demoResources(rows: readonly SpaceRow[], now: number, diskFree: 
     spacesDiskBytes: 46 * GB,
     spacesDiskExact: false,
   });
-  return { sequence: Math.floor(now / 10_000), sampledAtMs: now, thisMac, spaces, computers: [macMini], warning: thisMac.warning };
+  const online = (host: string) => DEMO_MACHINES.some((m) => m.id === host && m.online);
+  const remote = rows.filter((r) => r.provider !== "local" && r.host && online(r.host)).map(remoteSpaceResources);
+  return { sequence: Math.floor(now / 10_000), sampledAtMs: now, thisMac, spaces: [...spaces, ...remote], computers: [macMini], warning: thisMac.warning };
 }
 
 export function demoResourcesHandlers({ state, now }: DemoContext): DemoHandlers<"resources.get"> {

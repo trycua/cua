@@ -25,6 +25,12 @@ final class MockVNCService: VNCService {
         }
     }
 
+    private(set) var relocatedTo: [String] = []
+
+    func relocate(to vmDirectory: VMDirectory) {
+        relocatedTo.append(vmDirectory.name)
+    }
+
     // MARK: - VNCService Protocol
 
     var virtualMachine: VZVirtualMachine? {

@@ -487,7 +487,7 @@ fun main() {
             // Throwaway SDK state: no host state is read or written.
             val tmp = Files.createTempDirectory("cua-streaming-kotlin").toString()
             val cua = Cua.embedded(
-                CuaConfig(stateDir = "$tmp/state", fleetFromEnv = false, spacesHome = "$tmp/home", teleportHome = "$tmp/home"),
+                CuaConfig(stateDir = "$tmp/state", spacesHome = "$tmp/home", teleportHome = "$tmp/home"),
             )
             val env = cua.spacesd(cfg.url, cfg.token)
             val s = Scenario(cfg, env)

@@ -253,6 +253,15 @@ pub fn telemetry_record_signals(signals: Vec<TelemetrySignal>) {
     record(&signals);
 }
 
+/// The app's interface language (`ui_locale` on the day's `cua_app_active`):
+/// one of a fixed set, anything else is `other`. Nothing when telemetry is off.
+#[tauri::command]
+pub fn telemetry_set_ui_locale(locale: String) {
+    if let Some(t) = t() {
+        t.set_ui_locale(&locale);
+    }
+}
+
 /// A feature used in the webview (fixed names only).
 #[tauri::command]
 pub fn telemetry_record_feature(feature_name: String) {

@@ -20,9 +20,6 @@ async fn storage_mount_sync_and_cache_answer_through_the_sdk() {
     let c = Cua::embedded(CuaConfig {
         state_dir: Some(dir.path().join("sandboxes").display().to_string()),
         spaces_home: Some(dir.path().join("cua").display().to_string()),
-        fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-        fleet_from_env: false,
-        fleet_from_session: false,
         ..Default::default()
     })
     .unwrap();

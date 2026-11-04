@@ -42,7 +42,9 @@ jobs:
 
   build:
     needs: setup
-    runs-on: ubuntu-latest
+    # Native arm64 runner (free for public repos): QEMU emulation segfaults
+    # (exit 139) in dpkg post-install scripts.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

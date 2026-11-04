@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const NOTICES = path.join(ROOT, 'THIRD_PARTY_NOTICES.md');
+const NOTICES = path.join(ROOT, 'legal', 'THIRD_PARTY_NOTICES.md');
 const APPS = ['apps/cua-spaces-web', 'apps/cua-spaces-desktop'];
 const BEGIN = '<!-- BEGIN GENERATED NPM DEPENDENCIES (scripts/licenses/notices.mjs) -->';
 const END = '<!-- END GENERATED NPM DEPENDENCIES -->';

@@ -391,34 +391,3 @@ async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
         e.rt.deleted.lock().unwrap()
     );
 }
-
-/// A create journal an earlier version left for a Cua Cloud claim: recovery
-/// clears it without any Fleet client (Cua Cloud has ended, so there is
-/// nothing left to release).
-#[tokio::test]
-async fn an_interrupted_cloud_create_journal_is_cleared_without_a_client() {
-    let reg = tempfile::tempdir().unwrap();
-    let spaces = Spaces::builder().home(reg.path()).build();
-    let dir = reg.path().join("creating");
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut child = std::process::Command::new("true").spawn().unwrap();
-    let pid = child.id();
-    child.wait().unwrap();
-    std::fs::write(
-        dir.join("claim.json"),
-        serde_json::json!({
-            "kind": "cloud", "name": "claim", "id": "cloud:claim", "pid": pid, "started": 0,
-            "made": [{"type": "fleet_claim", "namespace": "test-pool", "name": "claim"}],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let got = spaces
-        .recover_interrupted_creates(Duration::from_millis(20))
-        .await;
-    assert!(
-        matches!(got.as_slice(), [r] if matches!(&r.outcome, cua_spaces::RecoveryOutcome::Deleted(m) if m.contains("Cua Cloud has ended") && !m.contains("not configured"))),
-        "{got:?}"
-    );
-    assert!(!dir.join("claim.json").exists());
-}

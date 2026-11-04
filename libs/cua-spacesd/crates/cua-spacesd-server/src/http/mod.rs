@@ -7,6 +7,8 @@
 pub mod files;
 pub mod mcp;
 pub mod mcp_envelope;
+pub mod multipart;
+pub mod share;
 
 use axum::extract::State;
 use axum::http::StatusCode;

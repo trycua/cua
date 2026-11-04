@@ -581,6 +581,37 @@ pub fn raise_focused_window_of_pid(pid: i32) -> bool {
     }
 }
 
+/// Raise exactly the window of `pid` whose CGWindowID is `window_id`, and ask
+/// the app to make it main and focused. Within an already frontmost app this
+/// is what moves the key window between siblings; a front-process change on
+/// its own leaves AppKit's key window where it was. No other window of the
+/// process is addressed.
+pub fn raise_exact_window_of_pid(pid: i32, window_id: u32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let mut target = None;
+        for window in copy_ax_windows(app) {
+            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
+                target = Some(window);
+            } else {
+                CFRelease(window as CFTypeRef);
+            }
+        }
+        CFRelease(app as CFTypeRef);
+        let Some(target) = target else {
+            return false;
+        };
+        let raised = perform_action(target, "AXRaise") == kAXErrorSuccess;
+        let main = set_bool_attr_true(target, "AXMain") == kAXErrorSuccess;
+        let focused = set_bool_attr_true(target, "AXFocused") == kAXErrorSuccess;
+        CFRelease(target as CFTypeRef);
+        raised || main || focused
+    }
+}
+
 /// The CGWindowID of the window that holds `pid`'s focused UI element
 /// (`AXFocusedUIElement` → `AXWindow`). `None` when the app reports no focused
 /// element: a LibreOffice that has never been active names a focused window

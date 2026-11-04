@@ -24,8 +24,9 @@ fn with_cursor_motion_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
+        properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
-    schema
+    cua_driver_core::fast_path::wire::with_config_property(schema)
 }
 
 fn def() -> &'static ToolDef {
@@ -45,7 +46,12 @@ fn def() -> &'static ToolDef {
             start_session cursor_motion and set_agent_cursor_motion override them; \
             reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
             minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
-            and applied to every cursor at once."
+            and applied to every cursor at once.\n\nAgent cursor extras: \
+            cursor.float (float at rest and while moving) and cursor.halo (soft \
+            glow) are on (default), off or default; cursor.marks (action marks) \
+            is on, off (default) or default; cursor.rotate is heading (default), \
+            lean, off or default. All are saved to \
+            ~/.cua-driver/config.json and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
@@ -109,6 +115,15 @@ impl Tool for SetConfigTool {
 
         let badge_key = match cursor_overlay::badge_mode::apply_config_args(&args) {
             Ok(key) => key,
+            Err(message) => return ToolResult::error(message),
+        };
+        let option_keys = match cursor_overlay::cursor_options::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+
+        let fast_path = match cua_driver_core::fast_path::wire::apply_config_args(&args) {
+            Ok(mode) => mode,
             Err(message) => return ToolResult::error(message),
         };
 
@@ -185,7 +200,13 @@ impl Tool for SetConfigTool {
                 motion_keys.join(", ")
             ));
         }
-        if let Some(key) = badge_key {
+        if let Some(mode) = fast_path {
+            pip_note.push_str(&format!(
+                " — fast_path={} (applies now, not saved)",
+                mode.as_str()
+            ));
+        }
+        for key in badge_key.into_iter().chain(option_keys) {
             pip_note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {
@@ -201,6 +222,7 @@ impl Tool for SetConfigTool {
             "version": env!("CARGO_PKG_VERSION"),
             "platform": "macos",
             "max_image_dimension": effective_dim,
+            "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }
 }

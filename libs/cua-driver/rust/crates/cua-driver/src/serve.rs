@@ -339,21 +339,6 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
-/// On Windows, returns the reserved named-pipe path of the uiAccess-elevated
-/// worker (`cua-driver-uia.exe`). Public CLI, MCP, and SDK clients never connect
-/// to this endpoint. It remains available only for a future daemon-internal
-/// forwarding path that authenticates the exact parent process. Until that path
-/// exists, elevated/AppContainer pixel input uses an interactively launched
-/// High-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
-#[cfg(target_os = "windows")]
-pub fn default_uia_pipe_path() -> String {
-    if crate::bundle::is_local_installation() {
-        r"\\.\pipe\cua-driver-local-uia".to_owned()
-    } else {
-        r"\\.\pipe\cua-driver-uia".to_owned()
-    }
-}
-
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
     let namespace = crate::bundle::state_namespace();
@@ -496,18 +481,14 @@ async fn invoke_daemon_tool(
         }
     }
 
-    // Policy enforcement — defense-in-depth for direct daemon socket connections.
-    // Evaluate before registry lookup so a deny-by-default policy does not leak
-    // whether an unapproved name happens to be registered. This also preserves
-    // the MCP policy contract now that every call passes through the daemon.
-    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
-        observe_daemon_error(observation, 1);
-        return DaemonResponse::err(error.to_string(), 1);
-    }
-
     if !known_tool {
         observe_daemon_error(observation, 64);
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
+    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
+        observe_daemon_error(observation, 1);
+        return DaemonResponse::err(error.to_string(), 1);
     }
 
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());
@@ -2321,32 +2302,34 @@ pub fn run_stop_cmd(socket_path: &str) {
         client_kind: None,
     };
     match send_request(socket_path, &req) {
-        Ok(_) => {
-            // Poll until daemon stops responding (up to 2 seconds).
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                // On Windows the pipe path isn't a filesystem file; probe liveness instead.
-                let gone = if std::path::Path::new(socket_path).exists() {
-                    false
-                } else {
-                    !is_daemon_listening(socket_path)
-                };
-                if gone {
-                    // Swift's `stop` exits silently on success (no stdout
-                    // line) — match that for byte-for-byte parity.
-                    return;
-                }
-                if std::time::Instant::now() >= deadline {
-                    eprintln!("Cua Driver daemon did not release socket within 2s");
-                    std::process::exit(1);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        }
+        Ok(_) => wait_for_release(socket_path),
         Err(e) => {
             eprintln!("stop: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Poll until the daemon stops responding (up to 2 seconds); exit 1 otherwise.
+pub(crate) fn wait_for_release(socket_path: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        // On Windows the pipe path isn't a filesystem file; probe liveness instead.
+        let gone = if std::path::Path::new(socket_path).exists() {
+            false
+        } else {
+            !is_daemon_listening(socket_path)
+        };
+        if gone {
+            // Swift's `stop` exits silently on success (no stdout
+            // line) — match that for byte-for-byte parity.
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!("Cua Driver daemon did not release socket within 2s");
+            std::process::exit(1);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
@@ -2549,6 +2532,13 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
+    #[test]
+    fn wait_for_release_accepts_an_absent_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("absent.sock");
+        super::wait_for_release(socket.to_str().unwrap());
+    }
+
     use super::{remove_owned_socket, secure_local_socket, socket_identity};
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -2705,6 +2695,26 @@ mod gate_tests {
         }
 
         let sid = "gate-test-session-A1B2C3";
+
+        let unknown_socket = socket.clone();
+        let unknown = DaemonRequest {
+            method: "call".into(),
+            name: Some("get_active_window".into()),
+            args: Some(serde_json::json!({})),
+            session_id: Some(sid.to_owned()),
+            observation_origin: None,
+            client_kind: None,
+        };
+        let response = tokio::task::spawn_blocking(move || send_request(&unknown_socket, &unknown))
+            .await
+            .unwrap()
+            .expect("unknown call response");
+        assert!(!response.ok);
+        assert_eq!(response.exit_code, Some(64));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Unknown tool: get_active_window")
+        );
 
         // 1. LIVE session call → tool runs.
         let socket1 = socket.clone();

@@ -12,7 +12,7 @@
 //! - Everything else under `/s/<id>/` (gRPC-Web, `/media`, `/files`) is a
 //!   transparent pipe to the sandbox's spacesd: bodies stream both ways,
 //!   WebSocket upgrades are spliced, and only the transport headers of the
-//!   upstream (for example a Fleet gateway bearer) are added. The viewer
+//!   upstream (for example a gateway bearer) are added. The viewer
 //!   ticket in the request authorizes each call at the spacesd.
 //!
 //! Only `Host: 127.0.0.1|localhost|[::1]` is served (DNS-rebinding guard).

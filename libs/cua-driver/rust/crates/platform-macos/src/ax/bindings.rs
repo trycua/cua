@@ -536,10 +536,26 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
 
 /// Return the CGWindowID of the application's focused AX window.
 ///
+/// A focused sheet (Finder's Go to Folder, a remote Save panel) counts as the
+/// window it is attached to, the way its elements do: the sheet is modal to
+/// that window and is where that window's keys go.
+///
 /// This is a narrow read-only proof used before global keyboard delivery: an
 /// already focused exact window must not be re-activated, because doing so can
 /// make a focus-proxy renderer drop its current key target.
 pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+    focused_window_id_with(pid, |window| unsafe {
+        super::exact_target::owning_window_id(window)
+    })
+}
+
+/// The CGWindowID of the application's focused AX window itself, a sheet's
+/// own id included.
+pub fn focused_ax_window_id_of_pid(pid: i32) -> Option<u32> {
+    focused_window_id_with(pid, |window| unsafe { ax_get_window_id(window) })
+}
+
+fn focused_window_id_with(pid: i32, id: impl FnOnce(AXUIElementRef) -> Option<u32>) -> Option<u32> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -548,7 +564,7 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
         let window = copy_element_attr(app, "AXFocusedWindow");
         CFRelease(app as CFTypeRef);
         let window = window?;
-        let window_id = ax_get_window_id(window);
+        let window_id = id(window);
         CFRelease(window as CFTypeRef);
         window_id
     }
@@ -631,7 +647,8 @@ pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
         let window = copy_element_attr(element, "AXWindow");
         CFRelease(element as CFTypeRef);
         let window = window?;
-        let window_id = ax_get_window_id(window);
+        // Like the focused window, an element in a sheet is in its window.
+        let window_id = super::exact_target::owning_window_id(window);
         CFRelease(window as CFTypeRef);
         window_id
     }

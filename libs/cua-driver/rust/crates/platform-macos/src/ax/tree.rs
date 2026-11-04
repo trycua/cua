@@ -16,7 +16,9 @@
 
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
-use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
+use super::window_scope::{
+    decide_window_or_sheet_scope, ScopeDecision, TopLevelCandidate, WindowScope,
+};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
 use std::time::Instant;
@@ -425,9 +427,24 @@ unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> S
             }
         })
         .collect();
-    decide_window_scope(&candidates, wid, || {
-        crate::windows::resolve_window_owner(pid, wid)
-    })
+    decide_window_or_sheet_scope(
+        &candidates,
+        wid,
+        || {
+            top_level
+                .iter()
+                .zip(&candidates)
+                .filter(|(_, candidate)| candidate.role == "AXWindow")
+                .filter_map(|(&window, candidate)| {
+                    Some((
+                        candidate.ax_window_id?,
+                        super::exact_target::attached_sheet_ids(window),
+                    ))
+                })
+                .collect()
+        },
+        || crate::windows::resolve_window_owner(pid, wid),
+    )
 }
 
 /// Release elements retained by [`copy_top_level`].

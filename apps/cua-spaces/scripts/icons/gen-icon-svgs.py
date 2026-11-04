@@ -4,8 +4,8 @@
 
 """Writes the Cua Spaces menu bar and onboarding marks from the Cua mark.
 
-The app / Dock icon (the blue Cua key on slate) is not drawn here:
-apps/cua-spaces-macos/scripts/dmg-art/render.sh renders it to
+The app / Dock icon (the terracotta koala keycap) is not drawn here:
+apps/cua-spaces-macos/scripts/dmg-art/render.sh builds it into
 src-tauri/icons/app-icon.png and the icon set beside it.
 
 - src-tauri/icons/tray-template.svg: the menu bar item, the same stack as a

@@ -2,6 +2,7 @@ name: "CI: Rust Windows unit"
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
@@ -59,10 +60,16 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
-  unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
-    name: Rust Windows unit and compile
+  # Three shards of the same job. Each builds (the Rust cache key is shared)
+  # and runs a third of the test steps; `unit` below keeps the check name.
+  shard:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    name: Rust Windows shard ${{ matrix.shard }}/3
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     # The suite below has been running within a hair of this budget for months:
     # the last green run on `main` (359fad56) took 28m31s of 30m. The tests this
     # branch adds push it past the line, and the failure mode is silent -- every
@@ -74,11 +81,11 @@ jobs:
     # A warm Rust cache runs in about 15 minutes (trycua/cua); the cache is
     # saved only from main, so a repository without one builds cold, where
     # the first test step alone took 22 minutes and the job passed 45.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 75 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 60 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -95,9 +102,11 @@ jobs:
         # tests; interactive behavior belongs in e2e-rust-windows.yml.
         run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-core -p cua-driver-sdk -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
       - name: Run complete desktop-independent core tests
+        if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
       - name: Run driver state isolation regressions
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
@@ -105,6 +114,7 @@ jobs:
           cargo test -p cua-driver --test testkit_host_state_isolation_test --locked
           if ($LASTEXITCODE -ne 0) { throw "driver state isolation tests failed with exit $LASTEXITCODE" }
       - name: Run extension manager security regressions
+        if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: |
           $tests = @(
@@ -125,6 +135,7 @@ jobs:
       # Run the whole inline suite so new platform-windows test modules cannot
       # be silently left out by a hand-maintained module filter list.
       - name: Run platform-windows unit tests
+        if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         env:
           # The hosted runner's clipboard is disposable; opt in to the native
@@ -132,22 +143,28 @@ jobs:
           CUA_TEST_ALLOW_CLIPBOARD: "1"
         run: cargo test --locked -p platform-windows --lib
       - name: Run MCP proxy lifecycle regressions
+        if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
       - name: Run real MCP proxy recovery regression
+        if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         env:
           CUA_PROXY_RECOVERY_IDLE_SECONDS: ${{ inputs.proxy_idle_seconds || 1 }}
         run: cargo test -p cua-driver --test protocol_proxy_recovery_test --locked -- --nocapture
       - name: Test sentinel setup barrier
+        if: matrix.shard == 1
         run: node --test libs/cua-driver/tests/fixtures/apps/cross-platform/electron/preload.test.js
       - name: Run named-pipe readiness regression
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-testkit stalled_pipe_attempt_is_bounded_and_does_not_block_the_next_probe --lib --locked
       - name: Run named-pipe instance recovery and status pid-file regressions
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver --test named_pipe_instance_recovery_test --test status_pid_file_cli_test --locked -- --nocapture
       - name: Run cross-platform cursor renderer unit tests
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         run: |
           cargo test -p cursor-overlay --lib --locked
@@ -155,8 +172,10 @@ jobs:
           cargo test -p cursor-theme-cli --locked
           if ($LASTEXITCODE -ne 0) { throw "cursor theme compiler tests failed with exit $LASTEXITCODE" }
       - name: Validate Windows Computer History uninstall ordering
+        if: matrix.shard == 3
         run: .\libs\cua-driver\scripts\tests\uninstall-windows-history-regression.ps1
       - name: Run autostart registration and self-elevation tests
+        if: matrix.shard == 2
         # The elevation tests drive the shipped PowerShell against a stubbed
         # Start-Process, so they prove the exit-code contract (a declined UAC
         # prompt must not exit 0 — trycua/cua#3179) without any real UAC
@@ -164,21 +183,25 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver autostart::tests:: --locked"
       - name: Prove unknown app launch stays bounded and responsive
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"
       - name: Validate desktop AppsFolder launch with Microsoft Edge
+        if: matrix.shard == 2
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_edge_from_apps_folder_registration --locked -- --ignored --exact --nocapture"
       - name: Prove an elevated Driver launches apps with a standard-user token
+        if: matrix.shard == 3
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test -p cua-driver --test launch_app_standard_user_test --locked -- --ignored --nocapture
       - name: Run transport-independent authorization and SDK tests
+        if: matrix.shard == 3
         working-directory: libs/cua-driver/rust
         run: |
           cargo test -p cua-driver-core session_authorization::tests:: --lib --locked
@@ -197,11 +220,11 @@ jobs:
           cargo test -p cua-driver-uia --lib authorization_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
       - name: Run full SDK unit suite in an interactive runner session
-        if: steps.runner-session.outputs.session_id != '0'
+        if: matrix.shard == 3 && steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-sdk --lib --locked -- --test-threads=1
       - name: Prove Session 0 refusal
-        if: steps.runner-session.outputs.session_id == '0'
+        if: matrix.shard == 3 && steps.runner-session.outputs.session_id == '0'
         working-directory: libs/cua-driver/rust
         shell: pwsh
         run: |
@@ -209,6 +232,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
           if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
       - name: Prove metadata commands remain desktop-free
+        if: matrix.shard == 3
         working-directory: libs/cua-driver/rust
         run: |
           cargo run -p cua-driver --locked -- list-tools | Out-Null
@@ -218,6 +242,21 @@ jobs:
           cargo run -p cua-driver --locked -- dump-docs --type cli | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "dump-docs failed with exit $LASTEXITCODE" }
       - name: Run Windows protocol schema contract
-        if: steps.runner-session.outputs.session_id != '0'
+        if: matrix.shard == 3 && steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver --test protocol_schema_test --locked
+
+  # The one check that stood for the whole suite before it was sharded.
+  unit:
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    name: Rust Windows unit and compile
+    runs-on: ubuntu-latest
+    needs: shard
+    timeout-minutes: 5
+    steps:
+      - name: All shards passed
+        env:
+          RESULT: ${{ needs.shard.result }}
+        run: |
+          echo "shards: $RESULT"
+          test "$RESULT" = success

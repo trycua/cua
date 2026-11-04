@@ -17,9 +17,9 @@ export function ShareRemovalNotice() {
   const { note, dismiss } = useShareRemovalNote(Boolean(session?.signedIn));
   if (!note) return null;
   return (
-    <div role="status" data-share-removal="" className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
+    <div role="status" data-share-removal="" className="flex shrink-0 items-center gap-3 bg-muted/60 px-4 py-2 text-xs text-muted-foreground">
       <span className="min-w-0 flex-1">{note.text}</span>
-      <Button size="sm" variant="outline" data-share-removal-invite="" onClick={() => void openExternal(note.action.url).catch(() => {})}>
+      <Button size="sm" variant="secondary" data-share-removal-invite="" onClick={() => void openExternal(note.action.url).catch(() => {})}>
         {note.action.label}
       </Button>
       <Button size="icon-sm" variant="ghost" aria-label={note.dismiss} data-share-removal-dismiss="" onClick={() => void dismiss()}>

@@ -299,6 +299,9 @@ pub struct TeleportPlan {
     /// ([`Consent::password_domains`]); `None`: those of `cookie_domains`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_domains: Option<Vec<String>>,
+    /// The browser profile to read ([`Consent::profile`]); `None`: `Default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -350,6 +353,10 @@ pub struct Consent {
     /// those of `cookie_domains` (every site when that is `None` too).
     #[serde(default)]
     pub password_domains: Option<Vec<String>>,
+    /// The browser profile to read (`Profile 1`), as chosen in the setup
+    /// sheet's picker. `None` reads `Default`.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// A plan the user approved. Only [`TeleportPlan::approve`] makes one.
@@ -431,6 +438,11 @@ impl TeleportPlan {
             .password_domains
             .clone()
             .filter(|_| consent.include_passwords);
+        self.profile = consent
+            .profile
+            .clone()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
         self.save_to_keyvault = self.sensitive && consent.save_to_keyvault;
         Ok(ApprovedPlan(self))
     }
@@ -684,6 +696,7 @@ pub fn build(
         from_vault: None,
         include_passwords: false,
         password_domains: None,
+        profile: None,
     })
 }
 
@@ -1194,6 +1207,26 @@ mod tests {
                 a.plan().consent.iter().any(|c| c.key == ck),
                 "a chosen domain keeps the store"
             );
+        }
+        // The chosen browser profile rides along, trimmed; blank or absent is
+        // `Default` (None), never invented.
+        let named = p
+            .clone()
+            .approve(Consent {
+                profile: Some(" Profile 1 ".into()),
+                ..ok.clone()
+            })
+            .unwrap();
+        assert_eq!(named.plan().profile.as_deref(), Some("Profile 1"));
+        for blank in [None, Some("  ".to_string())] {
+            let a = p
+                .clone()
+                .approve(Consent {
+                    profile: blank,
+                    ..ok.clone()
+                })
+                .unwrap();
+            assert_eq!(a.plan().profile, None);
         }
         // The vault source is carried, never invented.
         let v = p

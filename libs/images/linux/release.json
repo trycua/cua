@@ -13,6 +13,10 @@
     "full": {
       "series": "24.04",
       "tag": "build-{stamp}"
+    },
+    "docker": {
+      "series": "24.04-docker",
+      "tag": "build-docker-{stamp}"
     }
   },
   "vars": {
@@ -141,6 +145,24 @@
       ],
       "required": [
         "amd64"
+      ]
+    },
+    {
+      "id": "docker/{arch}/qemu",
+      "phase": "gate",
+      "per_arch": true,
+      "tiers": [
+        "docker"
+      ],
+      "description": "the docker tier's own gate: boot the disk under QEMU (KVM/HVF, else TCG) and check dockerd up at boot, overlay + br_netfilter loaded, iptables/ip6tables rules, a compose hello-world (smoke-docker-vm.sh)",
+      "run": [
+        "{root}/libs/images/linux/smoke-docker-vm.sh",
+        "--disk",
+        "{out}/{name}-{tier}/{arch}/disk.img",
+        "--arch",
+        "{arch}",
+        "--evidence",
+        "{evidence}/docker/{arch}-qemu"
       ]
     },
     {

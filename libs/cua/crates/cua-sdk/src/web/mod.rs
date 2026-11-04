@@ -233,6 +233,8 @@ impl SpacesdClient {
                     timeout: command.timeout_ms.map(pbjson_types_duration),
                 }),
                 tag: command.tag.unwrap_or_default(),
+                request_id: command.request_id.unwrap_or_default(),
+                epoch: command.epoch.unwrap_or_default(),
                 ..Default::default()
             };
             let mut stream = self
@@ -245,6 +247,8 @@ impl SpacesdClient {
                 exit: ExitInfo {
                     code: None,
                     signal: None,
+                    signal_number: None,
+                    signal_name: None,
                     timed_out: false,
                     error: None,
                     success: false,
@@ -281,6 +285,9 @@ impl SpacesdClient {
                                 .ok()
                                 .filter(|s| *s != pb::Signal::Unspecified)
                                 .map(|s| crate::types::enum_suffix(format!("{s:?}"))),
+                            signal_number: (end.signal_number != 0).then_some(end.signal_number),
+                            signal_name: (!end.signal_name.is_empty())
+                                .then(|| end.signal_name.clone()),
                             timed_out: end.timed_out,
                             error: (!end.error.is_empty()).then_some(end.error),
                         };
@@ -307,6 +314,9 @@ impl SpacesdClient {
                 tag: None,
                 stdin: false,
                 pty: None,
+                request_id: None,
+                epoch: None,
+                scrollback_bytes: None,
                 kill_on_disconnect: false,
             })
             .await

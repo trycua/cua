@@ -7,11 +7,13 @@
 // a session stored while it waits ends the wait even when no wait returns.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SignInRuns, type SignInEnd, type SignInView } from "../src/model/sign-in";
-import type { AccountProfile, AccountRunning, SignInAttempt } from "../src/model/services";
+import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "../src/model/services";
 
 /** Each sign-in is an attempt of its own (a loopback port), finished or failed by the test. */
 class RetryAccount implements AccountRunning {
   stored: string | null = null;
+  /** The options each start was given. */
+  readonly starts: unknown[] = [];
   readonly attempts: { url: string; finish(who: string): void; fail(e: Error): void }[] = [];
   identity() {
     return this.stored;
@@ -19,7 +21,8 @@ class RetryAccount implements AccountRunning {
   profile(): AccountProfile | null {
     return null;
   }
-  async beginSignIn(): Promise<SignInAttempt> {
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
+    this.starts.push(opts);
     const url = `http://127.0.0.1:${50000 + this.attempts.length}/callback`;
     let finish!: (who: string) => void;
     let fail!: (e: Error) => void;
@@ -59,6 +62,20 @@ const flush = () => vi.advanceTimersByTimeAsync(0);
 describe("a retried sign-in", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("starts with a code when the page asks for one (the browser never got back), then signs in", async () => {
+    const account = new RetryAccount();
+    const { seen, v } = view();
+    const runs = new SignInRuns(() => account, v);
+    void runs.begin();
+    await flush();
+    const byCode = runs.begin({ code: true });
+    await flush();
+    expect(account.starts).toEqual([undefined, { code: true }]);
+    account.attempts[1]!.finish("ada@example.com");
+    await byCode;
+    expect(seen).toMatchObject({ phase: "idle", identity: "ada@example.com", signedIn: 1 });
+  });
 
   it("finishes on the retry's attempt, and the first attempt's failure stays quiet", async () => {
     const account = new RetryAccount();

@@ -9,7 +9,10 @@
 //!   permission, no subprocess).
 //! - **Windows + Linux X11:** ffmpeg subprocess via `video_ffmpeg`
 //!   (`gdigrab` / `x11grab` input + libx264 encode).
-//! - **Linux Wayland:** platform recorder selected when capture starts.
+//! - **Linux Wayland:** compositor-routed capture via
+//!   `platform_linux::video_wayland` (GNOME Shell helper frames, wlroots
+//!   `wf-recorder`, or xdg-desktop-portal ScreenCast over PipeWire),
+//!   selected when capture starts.
 //!
 //! The factory is registered with `set_video_backend_factory` during platform
 //! tool registration, alongside the recording callbacks in `recording.rs`.

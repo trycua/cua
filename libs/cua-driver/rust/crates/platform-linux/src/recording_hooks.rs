@@ -21,7 +21,7 @@ struct LinuxVideoBackendFactory;
 impl VideoBackendFactory for LinuxVideoBackendFactory {
     fn start(&self, output_path: &std::path::Path) -> anyhow::Result<Box<dyn VideoBackend>> {
         if crate::wayland::is_wayland() {
-            crate::video_wayland::WfRecorderVideoBackendFactory.start(output_path)
+            crate::video_wayland::WaylandVideoBackendFactory.start(output_path)
         } else {
             cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory.start(output_path)
         }
@@ -236,7 +236,10 @@ fn resolve_window_for_recording(
     window_id: Option<u64>,
 ) -> Option<crate::x11::WindowInfo> {
     let windows = crate::wayland::list_windows_dispatch(Some(pid));
-    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+    // Hyprland addresses and niri window ids are stable compositor ids.
+    if crate::wayland::is_wayland()
+        && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session())
+    {
         return match window_id {
             Some(id) => windows.into_iter().find(|window| window.xid == id),
             None if windows.len() == 1 => windows.into_iter().next(),

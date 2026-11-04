@@ -44,7 +44,7 @@ fn presence_error(e: AuthError) -> CuaError {
             "Windows could not confirm it is you: set up Windows Hello, or give this account a password (Settings, Accounts, Sign-in options)".into(),
         ),
         AuthError::Unavailable if cfg!(target_os = "linux") => CuaError::Unsupported(
-            "polkit cannot ask (no authentication agent in this session, or the ai.cua.spaces.devices action is not installed)".into(),
+            "Confirm this from the Cua Spaces app on that machine, or run it in a desktop session (this session cannot ask you, or the ai.cua.spaces.devices action is not installed)".into(),
         ),
         AuthError::Unavailable => {
             CuaError::Unsupported("this system has no owner check for Cua Spaces".into())

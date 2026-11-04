@@ -1,9 +1,8 @@
 use crate::ax::bindings::{element_screen_center, AXUIElementRef};
-use crate::ax::snapshot::{AxSnapshot, Snapshots};
+use crate::ax::snapshot::AxSnapshot;
 use cua_driver_core::element_token::ResolvedElement;
-use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_store};
+use cua_driver_core::snapshot_store::current_runtime_store;
 use serde_json::Value;
-use std::sync::Arc;
 
 pub(crate) fn install() {
     cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
@@ -25,10 +24,6 @@ pub(crate) fn install() {
     cua_driver_core::video::set_video_backend_factory(Box::new(
         crate::video_sckit::SckitVideoBackendFactory,
     ));
-}
-
-pub fn set_snapshots(cache: Arc<Snapshots>) {
-    register_runtime_store(&cache);
 }
 
 /// Per-turn application state for trajectory recording. The walk shares the

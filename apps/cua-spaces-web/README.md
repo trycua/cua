@@ -61,8 +61,7 @@ CUA_WEBUI_DIST=$PWD/../cua-spaces-web/dist scripts/build-app.sh debug
 CUA_SPACES_START_VIEW=webui ".build/app/Cua Spaces.app/Contents/MacOS/CuaSpacesMac"
 ```
 
-In the app, this is Settings > Experiments > "New UI (preview)" (off by
-default), then File > "Open New UI (preview)" (⇧⌘U). A debug build with
+The app opens this UI as its only window. A debug build with
 `CUA_WEBUI_DEV=1` loads this app's dev server instead. The page runs in
 `webkit` mode against the app's own view models (see
 `src/bridge/README.md`). `CUA_SPACES_WEBUI_CAPTURE=<dir>` saves every route,

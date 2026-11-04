@@ -4,14 +4,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, defaultTeam, eligibleTeams, useShareSheet } from "@/bridge";
+import { BridgeProvider, defaultTeam, eligibleTeams, setFlagOverride, useShareSheet } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import type { CoreClient } from "@/bridge/core";
 import type { ShareInput, ShareSheetAction, ShareSheetState } from "@/bridge/contracts/share";
 import ShareSheet from "@/components/share-sheet";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const ACME = "0f1e2d3c-0000-4000-8000-0000000000a1";
 const TEAMS = {
@@ -80,6 +83,19 @@ function shareCore(): CoreClient {
           : null) as T)
       : undefined;
   return { status: "ready", methods: ["share.initial", "share.reduce", "share.view", "share.gate"], call, tryCall };
+}
+
+/** The share core, plus the core's `upsell.card` for an invite. */
+function cardCore(): CoreClient {
+  const core = shareCore();
+  const tryCall = core.tryCall;
+  return {
+    ...core,
+    tryCall: (<T,>(method: string, args: Record<string, unknown> = {}) =>
+      method === "upsell.card"
+        ? ({ reason: args.reason, title: "Sharing is for teams", body: "Teams lets you share a Space.", price: "$30 a seat a month", cta: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_card_invite" }, dismiss: "Not now" } as T)
+        : tryCall<T>(method, args)) as CoreClient["tryCall"],
+  };
 }
 
 function host(teams: typeof TEAMS | Record<string, never> = TEAMS) {
@@ -160,5 +176,32 @@ describe("Teams in Share and Add a machine", () => {
     expect(document.querySelector("[data-share-teams]")).toBeNull();
     expect((document.querySelector("[data-share-who]") as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText("See Teams")).toBeTruthy();
+  });
+
+  it("with the upsell cards on, an account with no team gets the card in place of the plain gate", async () => {
+    setFlagOverride("upsell_cards", true);
+    const opened: string[] = [];
+    const { adapter } = host({ teams: [], currentTeamId: null } as never);
+    const base = adapter.call as (o: string, a: unknown) => Promise<unknown>;
+    (adapter as { call: unknown }).call = (op: string, args: Record<string, unknown>) => {
+      if (op === "session.openExternal") {
+        opened.push(String(args.url));
+        return Promise.resolve(null);
+      }
+      return base(op, args);
+    };
+    render(
+      <BridgeProvider adapter={adapter} core={cardCore()}>
+        <Opener />
+        <ShareSheet />
+      </BridgeProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    fireEvent.click(screen.getByText("open"));
+    await waitFor(() => expect(document.querySelector('[data-upgrade-card="invite"]')).toBeTruthy());
+    expect(document.querySelector("[data-share-disabled]")).toBeNull();
+    expect(document.querySelector("[data-share-action]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start a team" }));
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_card_invite"]));
   });
 });

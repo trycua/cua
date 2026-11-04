@@ -188,7 +188,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -208,12 +208,13 @@
         "codesandbox",
         "northflank",
         "aws",
-        "gcp"
+        "gcp",
+        "hetzner"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
        "value_name": null
       },
       {
@@ -665,7 +666,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -685,12 +686,13 @@
         "codesandbox",
         "northflank",
         "aws",
-        "gcp"
+        "gcp",
+        "hetzner"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
        "value_name": null
       },
       {
@@ -1240,7 +1242,7 @@
      "aliases": [],
      "default_value": null,
      "env": null,
-     "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+     "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
      "hidden": false,
      "is_optional": true,
      "multiple_values": false,
@@ -1260,12 +1262,13 @@
       "codesandbox",
       "northflank",
       "aws",
-      "gcp"
+      "gcp",
+      "hetzner"
      ],
      "repeatable": false,
      "short_name": null,
      "takes_value": true,
-     "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+     "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
      "value_name": null
     },
     {

@@ -10,6 +10,7 @@
 // Electron's IPC.
 import { aboutMethods } from "./about";
 import { agentKeysMethods } from "./agent-keys";
+import { githubMethods } from "./github";
 import { agentsMethods, agentsSignature } from "./agents";
 import { appMethods } from "./app";
 import { checklistMethods } from "./checklist";
@@ -28,6 +29,10 @@ import { notificationsMethods } from "./notifications";
 import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
+import { linksMethods } from "./links";
+import { cliMethods } from "./cli";
+import { ciMethods } from "./ci";
+import { threadMethods } from "./thread";
 import { relayUsageMethods } from "./relay-usage";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
@@ -51,6 +56,7 @@ export const AREAS = [
   machinesMethods,
   agentsMethods,
   agentKeysMethods,
+  githubMethods,
   cloudsMethods,
   teleportMethods,
   sharingMethods,
@@ -74,6 +80,10 @@ export const AREAS = [
   nudgesMethods,
   resourcesMethods,
   checklistMethods,
+  linksMethods,
+  cliMethods,
+  ciMethods,
+  threadMethods,
   presenceMethods,
 ];
 

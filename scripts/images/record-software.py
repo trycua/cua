@@ -31,7 +31,7 @@ from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_OUT = os.path.join(ROOT, "libs", "images", "software")
-TAG_RE = re.compile(r"^(?P<version>[0-9][0-9.]*)(?:-(?P<tier>slim|xcode(?:-[0-9.]+)?))?(?:-disk)?$")
+TAG_RE = re.compile(r"^(?P<version>[0-9][0-9.]*)(?:-(?P<tier>slim|docker|xcode(?:-[0-9.]+)?))?(?:-disk)?$")
 
 
 def fail(message: str) -> None:

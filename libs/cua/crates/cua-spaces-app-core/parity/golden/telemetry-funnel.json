@@ -632,6 +632,7 @@
       "signals": [
         {
           "elapsedMs": 47000,
+          "errorSubclass": "none",
           "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
@@ -639,6 +640,7 @@
           "kind": "container",
           "location": "local",
           "outcome": "ok",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         },
@@ -654,14 +656,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -682,13 +684,15 @@
       "signals": [
         {
           "elapsedMs": 45000,
+          "errorSubclass": "none",
           "errorVariant": "InsufficientDisk",
           "failedPhase": "booting",
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "error",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }
@@ -737,6 +741,7 @@
       "signals": [
         {
           "elapsedMs": 7201000,
+          "errorSubclass": "none",
           "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": false,
@@ -744,6 +749,7 @@
           "kind": "container",
           "location": "local",
           "outcome": "error",
+          "retryAttempt": 0,
           "stalled": true,
           "type": "space-create"
         }
@@ -787,6 +793,7 @@
       "signals": [
         {
           "elapsedMs": 31000,
+          "errorSubclass": "none",
           "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": true,
@@ -794,6 +801,7 @@
           "kind": "vm",
           "location": "local",
           "outcome": "cancelled",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }
@@ -804,14 +812,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -837,13 +845,15 @@
       "signals": [
         {
           "elapsedMs": 40000,
+          "errorSubclass": "none",
           "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "ok",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         },
@@ -887,6 +897,7 @@
       "signals": [
         {
           "elapsedMs": 4000,
+          "errorSubclass": "none",
           "errorVariant": "",
           "failedPhase": "preparing",
           "gpu": true,
@@ -894,6 +905,7 @@
           "kind": "container",
           "location": "local",
           "outcome": "cancelled",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }

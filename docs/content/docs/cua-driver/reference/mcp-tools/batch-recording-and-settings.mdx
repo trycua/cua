@@ -145,7 +145,9 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.
 
-**Windows + Linux use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.
+**Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.
+
+**Linux Wayland routes by compositor**: GNOME uses the trusted Shell helper's frames, wlroots compositors use `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) record the monitor the user grants through the xdg-desktop-portal ScreenCast (one consent dialog per install; requires a build with the `portal-capture` feature and ffmpeg on PATH). Unsupported combinations report the exact limitation in `last_error`.
 
 State persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
 
@@ -286,6 +288,8 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 
 Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
+Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.marks (action marks) is on, off (default) or default; cursor.rotate is heading (default), lean, off or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
@@ -305,6 +309,8 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
+
+`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once.
 
 **Linux parameters**
 
@@ -327,6 +333,7 @@ Known keys:
 
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
+- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -346,6 +353,9 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
+| <span id="set_config--cursor-float"></span>`cursor.float` | `"on" \| "off" \| "default"` |  | Agent cursor float: a slow four-second sway, bob and slight tilt, at rest and while moving, that eases to zero on every arrival and holds there for the click, drag, drop, scroll or typing, so they land exactly upright on the hotspot. on (default). off: the cursor never floats and a resting overlay stops redrawing. Applies immediately to every cursor. |
+| <span id="set_config--cursor-halo"></span>`cursor.halo` | `"on" \| "off" \| "default"` |  | Agent cursor halo: a soft glow in the cursor's colour behind the arrow, so it is easier to follow on any background. on (default). off: no halo. Applies immediately to every cursor. |
+| <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor. |
 | <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
 | <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `"on" \| "off" \| "default"` |  | Saved default for the `magnet` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
@@ -354,6 +364,8 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--cursor-motion-effects-trail"></span>`cursor.motion.effects.trail` | `"on" \| "off" \| "default"` |  | Saved default for the `trail` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-style"></span>`cursor.motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Saved default cursor motion style for new sessions. Overridden by start_session cursor_motion and set_agent_cursor_motion; reduced motion always wins. Built-in default: signature_arc. |
 | <span id="set_config--cursor-motion-timing"></span>`cursor.motion.timing` | `"native" \| "fitts" \| "fixed" \| "relaxed" \| "steady" \| "calm" \| "deliberate"` |  | Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move). |
+| <span id="set_config--cursor-rotate"></span>`cursor.rotate` | `"off" \| "lean" \| "heading" \| "on" \| "default"` |  | Agent cursor rotation while it moves: heading (default) points the tip along the path; lean tilts the arrow at most 30 degrees toward where it is going (on is the same as heading). Both return upright before arrival, so clicks, typing and scrolling stay upright. off: the arrow always stays upright. Applies immediately to every cursor. |
+| <span id="set_config--fast_path"></span>`fast_path` | `"off" \| "shadow" \| "guard" \| "on"` |  | Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start. |
 | <span id="set_config--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 | <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 

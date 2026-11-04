@@ -221,6 +221,13 @@ export class NotchModel {
     this.send({ tag: "Keyvault", inner: { label: l, signedIn } });
   }
 
+  /** The pinned Spaces and desktops changed (`AppSettings.notchPinned`): their tiles come first. */
+  setPinned(ids: readonly string[]): void {
+    const pinned = this.state.pinned ?? [];
+    if (ids.length === pinned.length && ids.every((id, i) => id === pinned[i])) return;
+    this.send({ tag: "Pinned", inner: { ids: [...ids] } });
+  }
+
   /** Shows or hides the notch (the "Spaces tab in the notch" setting). */
   setShown(shown: boolean): void {
     if (shown) this.show();

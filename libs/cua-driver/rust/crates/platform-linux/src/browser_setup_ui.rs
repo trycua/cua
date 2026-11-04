@@ -12,10 +12,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
-
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
+use crate::interaction::{with_target_foreground, RestoreMode};
 
 fn field_equals(node: &AtspiNode, expected: &str) -> bool {
     [
@@ -90,7 +87,7 @@ fn exact_setup_checkbox<'a>(
     match matches.as_slice() {
         [] => Ok(None),
         [node] => Ok(Some(*node)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple exact remote-debugging checkboxes were exposed",
         )),
@@ -104,26 +101,8 @@ fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
     )
 }
 
-fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        if let Some(window) =
-            crate::wayland::sway_ipc::window_for_id(window_id).filter(|window| window.pid == pid)
-        {
-            crate::wayland::sway_ipc::with_focused_container(window.id, body)
-        } else {
-            crate::wayland::shell_helper::with_focused_window(pid, window_id, body)
-        }
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
-    }
-}
-
 fn close_tab(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             crate::wayland::hotkey(window_id, &["ctrl".to_owned(), "w".to_owned()])
         } else {
@@ -151,7 +130,7 @@ fn exact_omnibox<'a>(
     match matches.as_slice() {
         [] => Ok(None),
         [node] => Ok(Some(*node)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "{} exposed multiple exact address-and-search fields",
@@ -191,6 +170,7 @@ fn trusted_setup_navigation(
     pid: u32,
     window_id: u64,
     descriptor: &BrowserSetupDescriptor,
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> anyhow::Result<()> {
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
 
@@ -198,7 +178,7 @@ fn trusted_setup_navigation(
     // `ctrl+l` then focuses the address field. Both are single letters, so
     // neither depends on the keyboard layout the way punctuation does.
     let focus_omnibox = || -> anyhow::Result<()> {
-        with_target_foreground(pid, window_id, || {
+        with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
             if wayland {
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "l".to_owned()])
             } else {
@@ -207,7 +187,7 @@ fn trusted_setup_navigation(
         })
     };
 
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["ctrl".to_owned(), "t".to_owned()])
         } else {
@@ -246,13 +226,11 @@ fn trusted_setup_navigation(
     // arrives in one operation, with no per-keysym synthesis to be mistranslated
     // by the active layout or dropped by a virtual-keyboard seat. `ctrl+a` and
     // `ctrl+v` are plain letters, so they carry no layout dependency of their own.
-    use cua_driver_core::clipboard::ClipboardBackend;
-    let clipboard = crate::clipboard::LinuxClipboard::new();
     let restore = clipboard.read_text().ok().flatten();
     clipboard
         .write_text(descriptor.setup_url.to_owned())
         .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
-    let paste = with_target_foreground(pid, window_id, || {
+    let paste = with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
             std::thread::sleep(Duration::from_millis(60));
@@ -272,7 +250,7 @@ fn trusted_setup_navigation(
 
     // Commit. Enter is the one synthesized keystroke left, and it carries no
     // layout dependency.
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["enter".to_owned()])
         } else {
@@ -334,14 +312,14 @@ fn window_scoped_tree(
 ) -> Result<crate::atspi::AtspiTreeResult, BrowserRefusal> {
     let tree = crate::atspi::walk_tree(pid, window_id, None);
     if !tree.trusted {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no trusted AT-SPI tree for the approved browser window; \
              the accessibility bus must be reachable to prove which window a control belongs to",
         ));
     }
     if !tree.window_scoped {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             format!(
                 "could not prove which of pid {pid}'s accessibility top-levels renders window \
@@ -417,14 +395,14 @@ impl SetupUiHandle {
         }
         let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
         if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
-            let error = refusal(
+            let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the temporary setup page was no longer exact before cleanup",
             );
             return Err(self.abort(error));
         }
         if let Err(error) = close_tab(self.pid, self.window_id) {
-            let error = refusal(
+            let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not close the exact temporary setup tab: {error}"),
             );
@@ -461,7 +439,7 @@ pub fn retain_pending(
     let mut pending = pending_setups().lock().unwrap();
     if pending.contains_key(&(pid, window_id)) {
         drop(pending);
-        return Err(handle.abort(refusal(
+        return Err(handle.abort(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "another approved browser setup is already pending for this exact window",
         )));
@@ -476,7 +454,7 @@ pub fn commit_pending(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> 
         .unwrap()
         .remove(&(pid, window_id))
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 "the exact pending browser setup cleanup handle is missing",
             )
@@ -491,6 +469,53 @@ pub fn abort_pending(pid: u32, window_id: u64, error: BrowserRefusal) -> Browser
             "setup_cleanup": "the exact pending browser setup cleanup handle was missing"
         })),
     }
+}
+
+/// Navigate the exact window to its fixed setup page. Under niri this route
+/// has no foreground path: it focuses the window through the GNOME Shell
+/// helper and writes the address field through the user's clipboard, so it
+/// refuses before any input and before the clipboard is read or written.
+fn open_setup_page(
+    pid: u32,
+    window_id: u64,
+    descriptor: &'static BrowserSetupDescriptor,
+    on_niri: bool,
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+) -> Result<SetupUiHandle, BrowserRefusal> {
+    if on_niri {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!(
+                "existing-profile {} setup has no niri foreground route: it would focus the \
+                 window through the GNOME Shell helper and paste the setup address through \
+                 the clipboard; nothing was sent and the clipboard was not touched",
+                descriptor.product_name
+            ),
+        ));
+    }
+    let handle = SetupUiHandle {
+        pid,
+        window_id,
+        descriptor,
+        trusted_setup_navigation: true,
+        enable_attempted: false,
+        trusted_checkbox_fallback_attempted: false,
+        opened_setup_page: true,
+        enabled_remote_debugging: false,
+        focused_setup_address_field: true,
+        foregrounded_window: true,
+        injected_global_input: true,
+    };
+    if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor, clipboard) {
+        return Err(handle.abort(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "could not navigate the exact {} window to its fixed setup page: {error}",
+                descriptor.product_name
+            ),
+        )));
+    }
+    Ok(handle)
 }
 
 fn set_remote_debugging(
@@ -516,29 +541,13 @@ fn set_remote_debugging(
             injected_global_input: false,
         }
     } else {
-        let handle = SetupUiHandle {
+        open_setup_page(
             pid,
             window_id,
             descriptor,
-            trusted_setup_navigation: true,
-            enable_attempted: false,
-            trusted_checkbox_fallback_attempted: false,
-            opened_setup_page: true,
-            enabled_remote_debugging: false,
-            focused_setup_address_field: true,
-            foregrounded_window: true,
-            injected_global_input: true,
-        };
-        if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor) {
-            return Err(handle.abort(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "could not navigate the exact {} window to its fixed setup page: {error}",
-                    descriptor.product_name
-                ),
-            )));
-        }
-        handle
+            crate::wayland::is_wayland() && crate::wayland::niri::is_session(),
+            &crate::clipboard::LinuxClipboard::new(),
+        )?
     };
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
@@ -559,7 +568,7 @@ fn set_remote_debugging(
                 }
                 Some(_) if !handle.enable_attempted => {
                     if let Err(error) = crate::atspi::perform_action_walked(pid, window_id, node) {
-                        return Err(handle.abort(refusal(
+                        return Err(handle.abort(BrowserRefusal::new(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),
                         )));
@@ -573,10 +582,14 @@ fn set_remote_debugging(
                     handle.trusted_checkbox_fallback_attempted = true;
                     handle.foregrounded_window = true;
                     let trusted_navigation = handle.trusted_setup_navigation;
-                    let clicked = with_target_foreground(pid, window_id, || {
-                        std::thread::sleep(Duration::from_millis(60));
-                        let tree = crate::atspi::walk_tree(pid, window_id, None);
-                        let checkbox = exact_setup_checkbox(
+                    let clicked = with_target_foreground(
+                        pid,
+                        window_id,
+                        RestoreMode::RestorePrevious,
+                        || {
+                            std::thread::sleep(Duration::from_millis(60));
+                            let tree = crate::atspi::walk_tree(pid, window_id, None);
+                            let checkbox = exact_setup_checkbox(
                             &tree.nodes,
                             descriptor,
                             trusted_navigation,
@@ -587,53 +600,54 @@ fn set_remote_debugging(
                                 "the exact Microsoft Edge remote-debugging checkbox became stale before the trusted click"
                             )
                         })?;
-                        if checkbox.checked == Some(desired_enabled) {
-                            return Ok(false);
-                        }
-                        if checkbox.checked != Some(!desired_enabled) {
-                            anyhow::bail!(
+                            if checkbox.checked == Some(desired_enabled) {
+                                return Ok(false);
+                            }
+                            if checkbox.checked != Some(!desired_enabled) {
+                                anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had an unknown state before the trusted click"
                             );
-                        }
-                        let index = checkbox.element_index.expect("actionable checkbox index");
-                        // The frame this walk recorded for the checkbox, not a
-                        // lookup of its index in another snapshot.
-                        let (x, y, width, height) = tree
-                            .bounds
-                            .iter()
-                            .find(|(bounded, ..)| *bounded == index)
-                            .map(|&(_, x, y, width, height)| (x, y, width, height))
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "the exact Microsoft Edge remote-debugging checkbox had no screen bounds"
-                                )
-                            })?;
-                        if width <= 1 || height <= 1 {
-                            anyhow::bail!(
+                            }
+                            let index = checkbox.element_index.expect("actionable checkbox index");
+                            // The frame this walk recorded for the checkbox, not a
+                            // lookup of its index in another snapshot.
+                            let (x, y, width, height) = tree
+                                .bounds
+                                .iter()
+                                .find(|(bounded, ..)| *bounded == index)
+                                .map(|&(_, x, y, width, height)| (x, y, width, height))
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "the exact Microsoft Edge remote-debugging checkbox had no screen bounds"
+                                    )
+                                })?;
+                            if width <= 1 || height <= 1 {
+                                anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had empty screen bounds"
                             );
-                        }
-                        let center_x = x
-                            .checked_add(i32::try_from(width / 2)?)
-                            .ok_or_else(|| anyhow::anyhow!("checkbox center x overflowed"))?;
-                        let center_y = y
-                            .checked_add(i32::try_from(height / 2)?)
-                            .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
-                        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                            // AT-SPI screen bounds are layout coordinates, as in
-                            // browser_consent_ui's click_focused path, not
-                            // desktop-frame points, so no frame conversion applies.
-                            let space = crate::wayland::DesktopInputSpace::default();
-                            crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
-                        } else {
-                            crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
-                        }
-                        Ok(true)
-                    });
+                            }
+                            let center_x = x
+                                .checked_add(i32::try_from(width / 2)?)
+                                .ok_or_else(|| anyhow::anyhow!("checkbox center x overflowed"))?;
+                            let center_y = y
+                                .checked_add(i32::try_from(height / 2)?)
+                                .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
+                            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                                // AT-SPI screen bounds are layout coordinates, as in
+                                // browser_consent_ui's click_focused path, not
+                                // desktop-frame points, so no frame conversion applies.
+                                let space = crate::wayland::DesktopInputSpace::default();
+                                crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
+                            } else {
+                                crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
+                            }
+                            Ok(true)
+                        },
+                    );
                     match clicked {
                         Ok(injected) => handle.injected_global_input |= injected,
                         Err(error) => {
-                            return Err(handle.abort(refusal(
+                            return Err(handle.abort(BrowserRefusal::new(
                                 BrowserRefusalCode::BrowserWrongTargetRefused,
                                 format!(
                                     "could not toggle the exact Microsoft Edge remote-debugging checkbox: {error}"
@@ -644,7 +658,7 @@ fn set_remote_debugging(
                 }
                 Some(_) => {}
                 None => {
-                    return Err(handle.abort(refusal(
+                    return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         "AT-SPI did not expose the exact checkbox checked state",
                     )))
@@ -654,7 +668,7 @@ fn set_remote_debugging(
             Err(error) => return Err(handle.abort(error)),
         }
         if Instant::now() >= deadline {
-            return Err(handle.abort(refusal(
+            return Err(handle.abort(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 setup_not_ready_message(descriptor),
             )));
@@ -771,6 +785,50 @@ mod tests {
                 .is_none(),
             "trusted navigation must not override a visible contradictory address bar"
         );
+    }
+
+    /// Counts every clipboard call; the niri refusal must make none.
+    #[derive(Default)]
+    struct WatchedClipboard {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl cua_driver_core::clipboard::ClipboardBackend for WatchedClipboard {
+        fn available_formats(&self) -> Result<Vec<String>, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Vec::new())
+        }
+        fn read_text(&self) -> Result<Option<String>, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(None)
+        }
+        fn write_text(&self, _: String) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn write_image(&self, _: &str) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn write_file_url(&self, _: &str) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn niri_refuses_setup_navigation_without_touching_the_clipboard() {
+        let clipboard = WatchedClipboard::default();
+        let Err(refused) = open_setup_page(1, 2, descriptor(), true, &clipboard) else {
+            panic!("setup navigation ran under niri");
+        };
+        assert_eq!(refused.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(
+            refused.message.contains("no niri foreground route"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(clipboard.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]

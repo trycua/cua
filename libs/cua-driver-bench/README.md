@@ -179,7 +179,11 @@ done
   sha256 and the helper's sha256 and signature against `pins.json`
   (`claude_cu_helper`), unpacks it without moving it to `/Applications` or
   launching it, and builds `winlist` and `cu-disclaim` from source. Then give
-  `app-cu-helper` Accessibility in System Settings. No Claude Desktop binary,
+  `app-cu-helper` Accessibility in System Settings. Separately grant Apple's
+  `/usr/sbin/screencapture` Screen Recording: System Settings → Privacy & Security
+  → Screen Recording → **+**, then Go to `/usr/sbin/screencapture`.
+  The launcher wraps both helper and capture; Terminal, the adapter and launcher
+  receive no new grants. No Claude Desktop binary,
   app code or asset is included in this repository; only Cua's adapter is.
 * **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper`). Nothing extra to install beyond the matching Claude Code setup: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu`, `cc-cua-driver-script` or `cc-claude-cu-helper`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint serving `gpt-6.1-sol` (default `http://127.0.0.1:4000/v1`). The pinned CLI build is in `pins.json` (`codex_native`).
 

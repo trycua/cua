@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { BridgeMode, DataAdapter } from "../adapter";
+import { createNetworkStore } from "../network";
 import { detectMode, type HostWindow } from "../detect";
 import { createDemoAdapter, demoOptionsFromSearch } from "./demo";
 import { createElectronAdapter } from "./electron";
@@ -22,10 +23,16 @@ export function createAdapter(
     case "tauri":
       return createTauriAdapter(win);
     case "electron":
-      return createElectronAdapter(win);
+      return withNetwork(createElectronAdapter(win));
     case "webkit":
-      return createWebkitAdapter(win);
+      return withNetwork(createWebkitAdapter(win));
     case "demo":
       return createDemoAdapter(demoOptionsFromSearch(win?.location?.search ?? ""));
   }
+}
+
+/** `a` with the Space page's network store over its `network.*` operations
+ * (a host that does not answer them leaves the store empty). */
+function withNetwork(a: DataAdapter): DataAdapter {
+  return a.network ? a : Object.assign(a, { network: createNetworkStore(a) });
 }

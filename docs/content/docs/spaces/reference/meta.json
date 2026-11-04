@@ -3,6 +3,8 @@
   "pages": [
     "index",
     "spaces",
-    "agents"
+    "sharing-and-clouds",
+    "agents",
+    "threads"
   ]
 }

@@ -84,11 +84,12 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   );
 }
 
-function Inlines({ nodes, onOpenLink }: { nodes: Inline[]; onOpenLink?: (url: string) => void }): ReactNode {
+/** Inline Markdown. `renderText` draws the plain runs (the thread's mention chips). */
+export function Inlines({ nodes, onOpenLink, renderText }: { nodes: Inline[]; onOpenLink?: (url: string) => void; renderText?: (text: string, key: number) => ReactNode }): ReactNode {
   return nodes.map((n, i) => {
     switch (n.type) {
       case "text":
-        return n.text;
+        return renderText ? renderText(n.text, i) : n.text;
       case "break":
         return <br key={i} />;
       case "code":
@@ -100,13 +101,13 @@ function Inlines({ nodes, onOpenLink }: { nodes: Inline[]; onOpenLink?: (url: st
       case "strong":
         return (
           <strong key={i} className="font-semibold">
-            <Inlines nodes={n.children} onOpenLink={onOpenLink} />
+            <Inlines nodes={n.children} onOpenLink={onOpenLink} renderText={renderText} />
           </strong>
         );
       case "em":
         return (
           <em key={i}>
-            <Inlines nodes={n.children} onOpenLink={onOpenLink} />
+            <Inlines nodes={n.children} onOpenLink={onOpenLink} renderText={renderText} />
           </em>
         );
       case "link": {
@@ -117,7 +118,7 @@ function Inlines({ nodes, onOpenLink }: { nodes: Inline[]; onOpenLink?: (url: st
         };
         return (
           <a key={i} href={n.href} target="_blank" rel="noreferrer" onClick={open} className="text-brand-strong underline decoration-brand/40 underline-offset-2 hover:decoration-brand">
-            <Inlines nodes={n.children} onOpenLink={onOpenLink} />
+            <Inlines nodes={n.children} onOpenLink={onOpenLink} renderText={renderText} />
           </a>
         );
       }

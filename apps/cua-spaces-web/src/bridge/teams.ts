@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The account's Teams for "Add a machine" and "Share" (`teams.list`: the
+ * The account's Teams for "Add a computer" and "Share" (`teams.list`: the
  * organizations of `GET /v1/me` and the current team of Settings, Teams).
  * Only teams on the Teams plan (team machines) where the account is an
  * owner or admin can take a machine, so only those are offered.

@@ -14,7 +14,7 @@ use cua_teleport_bundle::bundle::{BundleReader, DEFAULT_MAX_TOTAL_BYTES};
 use cua_teleport_bundle::chromium_crypto;
 use cua_teleport_bundle::cookies::COOKIES_ENTRY;
 use cua_teleport_bundle::layout::chrome::{
-    launch_program_for, remap_to_platform, user_data_dir_for, DISPLAY, ID, TABS_JSON,
+    land_path, launch_program_for, user_data_dir_for, DISPLAY, ID, LINUX_BROWSERS, TABS_JSON,
 };
 use cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY;
 use cua_teleport_bundle::logins::LOGINS_ENTRY;
@@ -28,8 +28,27 @@ use crate::{ImportProvider, ImportRecord, Result};
 /// (the main process and its helpers all live inside the bundle).
 const MACOS_PROCESS_PATTERN: &str = "Google Chrome.app/Contents/";
 
+/// Where, relative to the home, an import leaves a note that a signed-in
+/// browser is available, for agents and people to find.
+pub const SIGNED_IN_BROWSER_NOTE: &str = ".cua/teleport/signed-in-browser.json";
+
+/// Whether a program (absolute path, or a name on `PATH`) exists.
+pub type ProgramProbe = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+fn program_exists(program: &str) -> bool {
+    let path = Path::new(program);
+    if path.is_absolute() {
+        return path.is_file();
+    }
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
+}
+
 /// The Chrome/Chromium importer.
 pub struct ChromeImporter {
+    /// Finds which browser a Linux guest has.
+    probe: ProgramProbe,
     max_total_bytes: u64,
     /// Ensuring this destination's own Safe Storage key (never the source's)
     /// goes through this host, like every other Keychain effect.
@@ -45,8 +64,42 @@ impl Default for ChromeImporter {
 impl ChromeImporter {
     pub fn new() -> Self {
         Self {
+            probe: Arc::new(program_exists),
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             host: default_host(),
+        }
+    }
+
+    /// Looks for the Linux guest's browser with `probe` instead of the
+    /// guest's own `PATH` and files.
+    pub fn with_program_probe(mut self, probe: ProgramProbe) -> Self {
+        self.probe = probe;
+        self
+    }
+
+    /// The browser an import into `platform` lands in and launches: Chrome
+    /// on macOS and Windows; on Linux the first of
+    /// [`LINUX_BROWSERS`] the guest has (Google Chrome, else Chromium, as the
+    /// Spaces image ships), falling back to Google Chrome so a missing
+    /// browser reads as "google-chrome: not found".
+    fn target(&self, platform: Platform) -> Target {
+        match platform {
+            Platform::Linux => {
+                let b = LINUX_BROWSERS
+                    .iter()
+                    .find(|b| (self.probe)(b.program))
+                    .unwrap_or(&LINUX_BROWSERS[0]);
+                Target {
+                    name: b.name,
+                    program: b.program.to_string(),
+                    user_data_dir: b.user_data_dir,
+                }
+            }
+            _ => Target {
+                name: "google-chrome",
+                program: launch_program_for(platform),
+                user_data_dir: user_data_dir_for(platform),
+            },
         }
     }
 
@@ -61,6 +114,14 @@ impl ChromeImporter {
         self.host = host;
         self
     }
+}
+
+/// The browser an import lands in.
+struct Target {
+    name: &'static str,
+    program: String,
+    /// Relative to the home.
+    user_data_dir: &'static str,
 }
 
 /// Writes localStorage items into `profile_dir`'s `Local State/leveldb`
@@ -94,6 +155,39 @@ pub(crate) fn write_local_storage(
     Ok(())
 }
 
+/// Records "a signed-in browser is available: chromium, profile Default" in
+/// the guest (a small JSON file under `~/.cua/teleport/`, ledgered so a wipe
+/// removes it) and tells the client in a notice. Names no cookie or value.
+fn note_signed_in_browser(
+    dest_home: &Path,
+    target: &Target,
+    user_data_dir: &Path,
+    source_profile: Option<&str>,
+    record: &mut ImportRecord,
+) -> Result<()> {
+    let note = serde_json::json!({
+        "signed_in_browser": true,
+        "browser": target.name,
+        "program": target.program,
+        "user_data_dir": user_data_dir,
+        "profile": "Default",
+        "source_profile": source_profile,
+        "launch": format!("{} --user-data-dir={:?}", target.program, user_data_dir.display().to_string()),
+    });
+    let path = dest_home.join(SIGNED_IN_BROWSER_NOTE);
+    if let Some(dir) = path.parent() {
+        record.create_dir_all(dir)?;
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&note).unwrap_or_default())?;
+    record.file_written(&path);
+    record.notices.push(format!(
+        "Signed-in browser available: {}, profile Default ({}). Details in ~/{SIGNED_IN_BROWSER_NOTE}.",
+        target.name,
+        user_data_dir.display()
+    ));
+    Ok(())
+}
+
 impl ImportProvider for ChromeImporter {
     fn id(&self) -> &str {
         ID
@@ -121,6 +215,8 @@ impl ImportProvider for ChromeImporter {
         if platform == Platform::MacOS {
             super::terminate_running(&*self.host, MACOS_PROCESS_PATTERN);
         }
+        let target = self.target(platform);
+        let mut source_profile: Option<String> = None;
         let mut tab_urls: Vec<String> = Vec::new();
         let mut cookies_entry: Option<Vec<u8>> = None;
         let mut local_storage_entry: Option<Vec<u8>> = None;
@@ -153,19 +249,22 @@ impl ImportProvider for ChromeImporter {
                 local_storage_entry = Some(entry.bytes);
                 continue;
             }
-            let dest = dest_home.join(remap_to_platform(&entry.rel_path, platform));
+            // One profile directory for the whole capture: the sender's
+            // `Profile 1` and the cookies below all land in `Default`.
+            let (landed, profile) = land_path(&entry.rel_path, target.user_data_dir);
+            if source_profile.is_none() {
+                source_profile = profile.map(str::to_string);
+            }
+            let dest = dest_home.join(landed);
             write_entry(&dest, &entry, false, record)?;
         }
 
-        let user_data_dir = dest_home.join(user_data_dir_for(platform));
+        let user_data_dir = dest_home.join(target.user_data_dir);
         if let Some(bytes) = cookies_entry {
             let items = cua_teleport_bundle::cookies::parse(&bytes);
             if !items.is_empty() {
-                // Single-profile scope today, matching the sender
-                // (`cua_teleport::browser_cookies`): a capture names one
-                // profile, always landed at "Default" here. Multi-profile
-                // Keyvault capture is tracked as follow-up work, not silently
-                // guessed at.
+                // A capture names one profile, always landed at "Default"
+                // here, where the files above land too.
                 let profile_dir = user_data_dir.join("Default");
                 let service = chromium_crypto::macos_safe_storage_service(ID)
                     .unwrap_or("Chrome Safe Storage");
@@ -213,8 +312,15 @@ impl ImportProvider for ChromeImporter {
             args.extend(tab_urls.iter().cloned());
         }
 
+        note_signed_in_browser(
+            dest_home,
+            &target,
+            &user_data_dir,
+            source_profile.as_deref(),
+            record,
+        )?;
         Ok(LaunchSpec {
-            program: launch_program_for(platform),
+            program: target.program,
             args,
             env: Vec::new(),
             cwd: None,
@@ -265,6 +371,7 @@ mod tests {
     fn import_lands_in_the_linux_profile_and_restores_the_session() {
         let dest = tempfile::tempdir().unwrap();
         let spec = ChromeImporter::new()
+            .with_program_probe(Arc::new(|p| p == "google-chrome"))
             .import_to(
                 &mut Cursor::new(profile_bundle(b"[]")),
                 dest.path(),
@@ -298,6 +405,163 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    /// The Spaces Linux image has Chromium and no Google Chrome: the capture
+    /// lands in Chromium's own profile (`~/.config/chromium/Default`), a
+    /// sender's `Profile 1` and the cookies share that one profile, the launch
+    /// is Chromium's wrapper, and the guest records that a signed-in browser
+    /// is available.
+    #[test]
+    fn a_chromium_only_guest_gets_one_chromium_profile_and_a_note() {
+        use cua_teleport_bundle::cookies::CookieItem;
+        let dest = tempfile::tempdir().unwrap();
+        let profile = dest.path().join(".config/chromium/Default");
+        std::fs::create_dir_all(&profile).unwrap();
+        {
+            let conn = rusqlite::Connection::open(profile.join("Cookies")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE cookies (
+                    creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL, name TEXT NOT NULL,
+                    value TEXT NOT NULL DEFAULT '', encrypted_value BLOB NOT NULL DEFAULT '',
+                    path TEXT NOT NULL, expires_utc INTEGER NOT NULL,
+                    is_secure INTEGER NOT NULL DEFAULT 0, is_httponly INTEGER NOT NULL DEFAULT 0,
+                    samesite INTEGER NOT NULL DEFAULT -1,
+                    UNIQUE (host_key, name, path)
+                );",
+            )
+            .unwrap();
+        }
+        let cookies_json = cua_teleport_bundle::cookies::serialize(&[CookieItem {
+            host_key: ".github.com".into(),
+            name: "user_session".into(),
+            value: b"gh-session-value".to_vec(),
+            path: "/".into(),
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 1,
+            extra: Default::default(),
+        }]);
+        let bytes = bundle(
+            "chrome",
+            &[
+                ("tabs.json", 0o644, b"[]"),
+                (COOKIES_ENTRY, 0o600, &cookies_json),
+                (
+                    ".config/google-chrome/Profile 1/Bookmarks",
+                    0o600,
+                    b"{\"roots\":{}}",
+                ),
+            ],
+        );
+        let mut record = ImportRecord::default();
+        let spec = ChromeImporter::new()
+            .with_program_probe(Arc::new(|p| p == "/opt/cua/bin/cua-chromium"))
+            .import_recorded(
+                &mut Cursor::new(bytes),
+                dest.path(),
+                Platform::Linux,
+                &mut record,
+            )
+            .unwrap();
+        assert_eq!(spec.program, "/opt/cua/bin/cua-chromium");
+        assert!(
+            spec.args.contains(&format!(
+                "--user-data-dir={}",
+                dest.path().join(".config/chromium").display()
+            )),
+            "{:?}",
+            spec.args
+        );
+        // The sender's Profile 1 file and the cookies are in the same profile.
+        assert_eq!(
+            std::fs::read(profile.join("Bookmarks")).unwrap(),
+            b"{\"roots\":{}}"
+        );
+        assert!(!dest.path().join(".config/chromium/Profile 1").exists());
+        assert!(!dest.path().join(".config/google-chrome").exists());
+        let conn = rusqlite::Connection::open(profile.join("Cookies")).unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM cookies WHERE name = 'user_session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        // The guest says a signed-in browser is there, and where.
+        let note: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dest.path().join(SIGNED_IN_BROWSER_NOTE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(note["signed_in_browser"], true);
+        assert_eq!(note["browser"], "chromium");
+        assert_eq!(note["profile"], "Default");
+        assert_eq!(note["source_profile"], "Profile 1");
+        assert!(
+            record
+                .notices
+                .iter()
+                .any(|n| n.starts_with("Signed-in browser available: chromium, profile Default")),
+            "{:?}",
+            record.notices
+        );
+        // The note is ledgered, so a wipe removes it.
+        assert!(record
+            .files
+            .contains(&dest.path().join(SIGNED_IN_BROWSER_NOTE)));
+        // Neither the note nor the notice carries a cookie value.
+        assert!(
+            !std::fs::read_to_string(dest.path().join(SIGNED_IN_BROWSER_NOTE))
+                .unwrap()
+                .contains("gh-session-value")
+        );
+    }
+
+    /// Drift guard: the browser the Spaces Linux image launches (its
+    /// `launch_app` claim) is one the importer knows how to land in and start.
+    #[test]
+    fn the_linux_images_browser_is_one_the_importer_launches() {
+        let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../images/linux/image.json");
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(image).unwrap()).unwrap();
+        fn find(v: &serde_json::Value) -> Option<String> {
+            match v {
+                serde_json::Value::Object(m) => m
+                    .get("launch_app")
+                    .and_then(|l| l.get("app"))
+                    .and_then(|a| a.as_str().map(str::to_string))
+                    .or_else(|| m.values().find_map(find)),
+                serde_json::Value::Array(a) => a.iter().find_map(find),
+                _ => None,
+            }
+        }
+        let launch = find(&json).expect("launch_app.app in the Linux image.json");
+        assert!(
+            LINUX_BROWSERS.iter().any(|b| b.program == launch),
+            "{launch} is not in LINUX_BROWSERS"
+        );
+    }
+
+    /// With neither browser installed the launch names Google Chrome, as before.
+    #[test]
+    fn a_guest_with_no_browser_falls_back_to_google_chrome() {
+        let dest = tempfile::tempdir().unwrap();
+        let spec = ChromeImporter::new()
+            .with_program_probe(Arc::new(|_| false))
+            .import_to(
+                &mut Cursor::new(profile_bundle(b"[]")),
+                dest.path(),
+                Platform::Linux,
+            )
+            .unwrap();
+        assert_eq!(spec.program, "google-chrome");
+        assert!(dest
+            .path()
+            .join(".config/google-chrome/Default/Cookies")
+            .exists());
     }
 
     #[test]

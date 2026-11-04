@@ -12,21 +12,18 @@ use crate::model::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Section title codes, in order: "Cua Cloud", "This Mac", "Connected",
-/// "My computers".
-pub const SECTION_ORDER: [&str; 4] = [
-    "spaces.sidebar.section.cloud",
+/// Section title codes, in order: "This Mac", "Connected", "My computers".
+pub const SECTION_ORDER: [&str; 3] = [
     "spaces.sidebar.section.this_mac",
     "spaces.sidebar.section.connected",
     "spaces.sidebar.section.my_computers",
 ];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
-    match p.unwrap_or(SpaceProvider::Cloud) {
-        SpaceProvider::Cloud => SECTION_ORDER[0],
-        SpaceProvider::Local => SECTION_ORDER[1],
-        SpaceProvider::Direct => SECTION_ORDER[2],
-        SpaceProvider::Relay => SECTION_ORDER[3],
+    match p.unwrap_or(SpaceProvider::Direct) {
+        SpaceProvider::Local => SECTION_ORDER[0],
+        SpaceProvider::Direct => SECTION_ORDER[1],
+        SpaceProvider::Relay => SECTION_ORDER[2],
     }
 }
 
@@ -181,8 +178,7 @@ pub fn location_text(space: &Space) -> &'static str {
     if space.id == THIS_MACHINE_ID {
         return "This Mac";
     }
-    match space.provider.unwrap_or(SpaceProvider::Cloud) {
-        SpaceProvider::Cloud => "Cua Cloud",
+    match space.provider.unwrap_or(SpaceProvider::Direct) {
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "By address",
         SpaceProvider::Relay => "Relay",
@@ -205,7 +201,7 @@ pub fn added_by_address(space: &Space) -> bool {
     }
 }
 
-/// A Space in your cloud (AWS, Google Cloud, Modal).
+/// A Space in your cloud (AWS, Google Cloud, Hetzner, Modal).
 pub fn in_your_cloud(space: &Space) -> bool {
     space.cloud.as_deref().is_some_and(|c| !c.is_empty())
 }
@@ -253,7 +249,7 @@ pub struct SidebarRow {
 /// A titled group of rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// "This Mac", "Connected", "My computers"
     /// (`spaces.sidebar.section.*`).
     pub title: Msg,
     /// Rows.
@@ -501,10 +497,6 @@ pub struct SpaceDetail {
     pub confirm: DeleteConfirm,
     /// The sections under the facts, in order (Stream, Agents, Teleport).
     pub sections: Vec<String>,
-    /// A cloud Space refused for want of credit: one line and "Add
-    /// credit" (the website billing page).
-    #[serde(default)]
-    pub credit_notice: Option<crate::billing::CreditNotice>,
     /// Why turning it off or on failed, shown inline under the preview.
     #[serde(default)]
     pub power_error: Option<String>,
@@ -580,7 +572,7 @@ pub fn desktop_note(space: &Space) -> Option<String> {
 pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
     format!(
         "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
-         Your other devices see and control it while Share this desktop is on.",
+         Your other machines see and control it while you let them use it.",
         os.this_machine_lower()
     )
 }
@@ -753,7 +745,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
         let elsewhere = space.cloud_delete.as_deref() == Some("elsewhere");
         let message = if elsewhere {
             format!(
-                "It runs in {place} and was created on another device. Remove from List keeps it running there."
+                "It runs in {place} and was created on another machine. Remove from List keeps it running there."
             )
         } else {
             format!(
@@ -766,7 +758,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             confirm_label: "Delete Permanently".into(),
             confirm_enabled: !elsewhere,
             disabled_reason: elsewhere.then(|| {
-                "Created on another device: delete it there, or remove it from this list.".into()
+                "Created on another machine: delete it there, or remove it from this list.".into()
             }),
             remove_label: Some("Remove from List".into()),
             cancel_label: "Cancel".into(),
@@ -961,7 +953,8 @@ fn detail_facts(
         if u.memory_limited && u.memory_total > 0 {
             facts.push(fact("Memory", usage_text(u.memory_used, u.memory_total)));
         }
-        if u.disk_limited && u.disk_total > 0 {
+        // Never a sentinel ("unlimited" as 2^63): only a real size.
+        if u.disk_limited && crate::resources::known_size(u.disk_total).is_some() {
             facts.push(fact("Storage", usage_text(u.disk_used, u.disk_total)));
         }
     }
@@ -1135,15 +1128,6 @@ pub fn detail_live(
         progress_text: creating
             .filter(|p| p.error.is_none())
             .and_then(|p| p.transfer.clone()),
-        credit_notice: creating.and_then(|p| {
-            p.credit_url
-                .clone()
-                .map(|url| crate::billing::CreditNotice {
-                    text: crate::billing::OUT_OF_CREDIT.into(),
-                    button: crate::billing::ADD_CREDIT.into(),
-                    url,
-                })
-        }),
         delete_label: delete_label.into(),
         remove_only,
         power_error: power_error(space),
@@ -1480,9 +1464,9 @@ mod tests {
         assert_eq!(enrolled, detail_with(&m, None, None, &x));
         assert!(enrolled.can_stream && enrolled.access.is_none());
         for (kind, status) in [
-            (EnrollmentKind::NeedsEnrollment, "Not enrolled"),
-            (EnrollmentKind::Waiting, "Waiting for approval"),
-            (EnrollmentKind::Due, "Re-verification due"),
+            (EnrollmentKind::NeedsEnrollment, "Not trusted yet"),
+            (EnrollmentKind::Waiting, "Waiting to be added"),
+            (EnrollmentKind::Due, "Needs a quick check"),
         ] {
             let notice = machine_access_notice(kind, Some("K7QX-M2RP")).unwrap();
             // Unreachable (the relay refuses it): still listed, still explained.
@@ -1567,7 +1551,7 @@ mod tests {
         assert_eq!(shares_desktop(&direct), None);
     }
 
-    /// The user's Macs after updating to 0.7.0: cua.local
+    /// The user's Macs after updating to 0.7.0: a spare Mac
     /// (`relay:9e9d…`, "Mac.localdomain") shares, keeps its desktop
     /// private, provides Spaces with none running and runs the cua-spacesd
     /// of an older app (0.2.2); this Mac (`relay:b695…`) is not sharing.
@@ -1652,7 +1636,7 @@ mod tests {
                 .sections
                 .iter()
                 .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
-                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1754,6 +1738,36 @@ mod tests {
     }
 
     #[test]
+    fn a_storage_fact_never_shows_a_sentinel() {
+        let space = super::super::row_to_space(
+            &local_row("local:o", Some("ghcr.io/trycua/linux:24.04"), None, None),
+            0,
+        );
+        for total in [i64::MAX as u64, u64::MAX, 0] {
+            let usage = SpaceUsage {
+                disk_used: 1 << 20,
+                disk_total: total,
+                disk_limited: true,
+                ..Default::default()
+            };
+            let d = detail_live(&space, Some(&usage), None);
+            assert_eq!(fact_of(&d, "Storage"), None, "{total}");
+        }
+        let real = SpaceUsage {
+            disk_used: 2 << 30,
+            disk_total: 4 << 30,
+            disk_limited: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            fact_of(&detail_live(&space, Some(&real), None), "Storage")
+                .unwrap()
+                .value,
+            "2 GB / 4 GB"
+        );
+    }
+
+    #[test]
     fn kind_and_architecture_facts_warn_about_emulation_on_this_mac_only() {
         let omarchy = super::super::row_to_space(
             &local_row("local:o", Some("ghcr.io/trycua/omarchy:edge"), None, None),
@@ -1793,15 +1807,6 @@ mod tests {
         assert_eq!(fact_of(&d, "Kind").unwrap().value, "Container");
         let arch = fact_of(&d, "Architecture").unwrap();
         assert_eq!((arch.value.as_str(), arch.warning.as_ref()), ("ARM", None));
-        // A cloud Space never warns; without the host's arch nothing does.
-        let cloud =
-            super::super::row_to_space(&local_row("cloud:c", None, Some("vm"), Some("amd64")), 0);
-        assert!(
-            fact_of(&detail_live(&cloud, None, Some("arm64")), "Architecture")
-                .unwrap()
-                .warning
-                .is_none()
-        );
         assert!(
             fact_of(&detail_live(&omarchy, None, None), "Architecture")
                 .unwrap()
@@ -1836,6 +1841,7 @@ mod tests {
         let row = SpaceRow {
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
+            display_name: None,
             provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -1857,6 +1863,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1885,6 +1892,7 @@ mod tests {
         let row = SpaceRow {
             id: "local:demo".into(),
             name: "demo".into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into()],
@@ -1906,6 +1914,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);
@@ -2103,10 +2112,11 @@ mod tests {
             permille: 500,
             label: "Starting".into(),
             error: None,
-            credit_url: None,
             transfer: None,
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         });
         assert!(power_button(&s).is_none());
     }
@@ -2121,10 +2131,11 @@ mod tests {
             permille: 580,
             label: "Downloading image\u{2026}".into(),
             error: None,
-            credit_url: None,
             transfer: transfer.map(str::to_string),
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         };
         // Bytes known: the bytes line says how far, not a second percentage.
         s.progress = Some(progress(Some("15.2 of 22.2 GB \u{b7} 107 MB/s")));

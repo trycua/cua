@@ -270,11 +270,60 @@ impl Auth {
     /// Revokes (best effort) and removes the session, and unlinks usage
     /// data from the account. Returns whether one existed.
     pub async fn logout(&self) -> Result<bool> {
+        // The agents this computer connected to Spaces stop at once.
+        run(async move {
+            revoke_connected_agents(this_device_ids()).await;
+            Ok(())
+        })
+        .await?;
         let session = self.session.clone();
         let existed = run(async move { Ok(session.logout().await?.0) }).await?;
         // Signed out: usage data goes back to a new anonymous install id.
         let _ = cua_telemetry::global().forget_account();
         Ok(existed)
+    }
+}
+
+/// The ids this computer joins Spaces under (`cua join`): its device key's,
+/// and the one from its machine when it has no device key.
+pub(crate) fn this_device_ids() -> Vec<String> {
+    #[cfg(feature = "host")]
+    {
+        let mut ids = vec![];
+        if let Some(k) = cua_auth::Store::from_env()
+            .load_secret(cua_host::device::DEVICE_KEY_SECRET)
+            .ok()
+            .flatten()
+            .and_then(|p| cua_host::device::DeviceKey::from_pkcs8(&p).ok())
+        {
+            ids.push(k.id());
+        }
+        if let Some(m) = cua_host::machine::machine_id() {
+            ids.push(format!("host_{}", &m[..m.len().min(24)]));
+        }
+        ids
+    }
+    #[cfg(not(feature = "host"))]
+    {
+        vec![]
+    }
+}
+
+/// Removes the Space members connected from `devices` on this computer's
+/// daemon (when one runs): their member keys stop at once.
+pub(crate) async fn revoke_connected_agents(devices: Vec<String>) {
+    if devices.is_empty() {
+        return;
+    }
+    let Ok(d) = cua_daemon::client::existing_daemon().await else {
+        return;
+    };
+    for device in devices {
+        let req = cua_proto::daemon::v1::CallSpaceToolRequest {
+            name: "thread_device_revoke".into(),
+            arguments_json: serde_json::json!({"device": device}).to_string(),
+        };
+        let _ = d.spaces().call_space_tool(req).await;
     }
 }
 

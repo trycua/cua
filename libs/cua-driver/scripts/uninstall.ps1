@@ -566,13 +566,27 @@ $LocalHome = if ($env:CUA_DRIVER_LOCAL_HOME) { $env:CUA_DRIVER_LOCAL_HOME } else
 $LocalBinDir = if ($env:CUA_DRIVER_LOCAL_INSTALL_DIR) { $env:CUA_DRIVER_LOCAL_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver-local\bin" }
 $LocalCli = Join-Path $LocalBinDir "cua-driver-local.exe"
 $LocalMarker = Join-Path $LocalHome "packages\current\cua-driver-local.exe"
-$LocalCommand = Get-Command "cua-driver-local.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+# Look the file up on PATH directly. `Get-Command -CommandType Application` for a
+# name that is not there costs about a second warm and 10 to 25 seconds on a cold
+# machine (command discovery), which made the Windows uninstall regression time out.
+function Find-OnPath([string]$FileName) {
+    foreach ($Dir in ($env:PATH -split ';')) {
+        $Dir = $Dir.Trim().Trim('"')
+        if (-not $Dir) { continue }
+        try {
+            $Candidate = [IO.Path]::Combine($Dir, $FileName)
+            if ([IO.File]::Exists($Candidate)) { return $Candidate }
+        } catch {}
+    }
+    return $null
+}
+$LocalCommandPath = Find-OnPath "cua-driver-local.exe"
 $LocalSurvivor = if (Test-Path -LiteralPath $LocalCli) {
     $LocalCli
 } elseif (Test-Path -LiteralPath $LocalMarker) {
     $LocalMarker
-} elseif ($LocalCommand) {
-    $LocalCommand.Source
+} elseif ($LocalCommandPath) {
+    $LocalCommandPath
 } else {
     $null
 }

@@ -4,7 +4,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { openableCount } from "../model/window";
+import { onCount } from "../model/window";
 import { FIXTURE_SPACES } from "../model/fixtures";
 import type { Space } from "../model/types";
 import { Ambient } from "./Ambient";
@@ -38,13 +38,15 @@ describe("Ambient (notched) teleport morph", () => {
 
 describe("Ambient tab and activity (the core's notch module)", () => {
   const remote = FIXTURE_SPACES.filter((s) => s.status !== "local");
+  const on = remote.filter((s) => s.status !== "suspended");
 
   it("is two rows: the count over the word", () => {
     const { container } = render(<Ambient spaces={FIXTURE_SPACES} displayStyle="notched" onExpand={vi.fn()} />);
-    // The Spaces the user can open (the core's count, the menu bar item's too):
-    // the fixture's This Mac provides Spaces, but a machine is not a Space.
-    const n = openableCount(FIXTURE_SPACES);
-    expect(n).toBe(remote.length);
+    // The Spaces on or starting (the core's count, the menu bar item's too):
+    // the fixture's This Mac provides Spaces, but a machine is not a Space,
+    // and its stopped Space is not counted.
+    const n = onCount(FIXTURE_SPACES);
+    expect(n).toBe(on.length);
     expect(container.querySelector(".ambient-tab-count")).toHaveTextContent(String(n));
     expect(container.querySelector(".ambient-tab-word")).toHaveTextContent(n === 1 ? "Space" : "Spaces");
   });

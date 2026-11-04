@@ -6,7 +6,7 @@ The SDK boots local VMs with a `cidata` seed whose #cloud-config writes the
 token to /etc/cua/env-token and extra variables to /etc/cua/spacesd.env. This
 reads only those two write_files entries (nothing else in the seed runs) and
 writes them root-only; ensure-env-token.sh then installs the token as usual
-(local mode). With a Fleet claim share (virtio-fs) present, the claim token is
+(local mode). With a claim share (virtio-fs) present, the claim token is
 authoritative and the seed is ignored.
 """
 import email

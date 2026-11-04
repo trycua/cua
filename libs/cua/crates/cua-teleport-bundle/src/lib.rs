@@ -42,6 +42,7 @@ pub mod bundle;
 pub mod chromium_crypto;
 pub mod cookies;
 mod error;
+pub mod firefox_nss;
 pub mod keychain;
 pub mod layout;
 pub mod local_storage;

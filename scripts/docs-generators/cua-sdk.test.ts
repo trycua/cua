@@ -177,7 +177,7 @@ const PAGES_FIXTURE: PageSpec[] = [
     items: [],
     members: [{ object: 'Sandbox', title: 'Lifecycle methods', methods: ['delete'] }],
   },
-  { slug: 'local', title: 'Local', description: 'Local.', intro: 'Intro.', items: [], modules: ['media', 'types'] },
+  { slug: 'services', title: 'Services', description: 'Services.', intro: 'Intro.', items: [], modules: ['media', 'types'] },
 ];
 
 const render = (api = fixture(), examples = new Map()) =>
@@ -199,11 +199,11 @@ test('pages are deterministic, complete and use only the shimmed components', ()
       'cua.mdx',
       'errors.mdx',
       'index.mdx',
-      'local.mdx',
       'meta.json',
       'sandbox/index.mdx',
       'sandbox/life.mdx',
       'sandbox/meta.json',
+      'services.mdx',
       'types.mdx',
     ]
   );
@@ -219,14 +219,14 @@ test('pages are deterministic, complete and use only the shimmed components', ()
   assert.match(sandbox, /pub async fn exec\(&self, command: Vec<String>, timeout_ms: Option<u64>\) -> Result<ExecResult, CuaError>/);
   assert.match(sandbox, /\| `command` \| `Vec<String>` \| required \|/);
   assert.match(sandbox, /\| `timeout_ms` \| `Option<u64>` \| `None` \|/);
-  assert.match(sandbox, /\*\*Returns\*\* \[`ExecResult`\]\(\/cua-sdk\/reference\/local#execresult-record\)/);
+  assert.match(sandbox, /\*\*Returns\*\* \[`ExecResult`\]\(\/cua-sdk\/reference\/services#execresult-record\)/);
   // A method documented on another page is indexed on its object and rendered there.
   assert.match(sandbox, /\[`delete`\]\(\/cua-sdk\/reference\/sandbox\/life#sandboxdelete\)/);
   assert.doesNotMatch(sandbox, /^### `Sandbox\.delete`$/m);
   assert.match(a.get('/out/sandbox/life.mdx')!, /^### `Sandbox\.delete`$/m);
   assert.match(sandbox, /SandboxPhase\.RUNNING/);
   assert.match(sandbox, /^## `SandboxPhase` enum$/m);
-  const media = a.get('/out/local.mdx')!;
+  const media = a.get('/out/services.mdx')!;
   assert.match(media, /\| `exit_code` \/ `exitCode` \| `i32` \|/);
   assert.match(media, /Output \\\| raw\./);
   assert.match(media, /<Callout>/);
@@ -316,8 +316,9 @@ test('nested folders get their own meta.json; a catalog page lists its subtree i
   assert.deepEqual(JSON.parse(out.get('/out/sandbox/life/meta.json')!), { title: 'Lifecycle', pages: ['results'] });
   const home = out.get('/out/sandbox/index.mdx')!;
   assert.match(home, /^## All items$/m);
-  // The index is grouped by page: one line of item links per page.
-  assert.match(home, /\*\*Results\*\*: .*\[`ExecResult`\]\(\/cua-sdk\/reference\/sandbox\/life\/results#execresult-record\)/);
+  // The index is grouped by page: one line per subpage, its title a link,
+  // then its item names; this page's own items keep their anchor links.
+  assert.match(home, /\*\*\[Results\]\(\/cua-sdk\/reference\/sandbox\/life\/results\)\*\*: .*`ExecResult`/);
   assert.match(home, /\[`Sandbox`\]\(#sandbox\)/);
   const types = out.get('/out/types.mdx')!;
   assert.doesNotMatch(types, /\[`ExecResult`\]/);

@@ -1,14 +1,16 @@
 {
-  "version": "0.1.0",
+  "version": "0.5.2",
   "protocolVersion": 1,
-  "protocolRevision": 3,
+  "protocolRevision": 8,
   "os": {
     "family": "OS_FAMILY_LINUX",
     "name": "Ubuntu",
     "version": "22.04",
-    "kernel": "6.8.0-117-generic"
+    "kernel": "4.19.0-gvisor",
+    "prettyName": "Ubuntu 22.04.3 LTS"
   },
-  "runtime": "RUNTIME_CONTAINER",
+  "runtime": "RUNTIME_GVISOR",
+  "runtimeDetail": "runsc",
   "arch": "ARCHITECTURE_X86_64",
   "displayServer": "DISPLAY_SERVER_X11",
   "displays": [
@@ -34,7 +36,8 @@
     },
     {
       "name": "audio.desktop",
-      "supported": true
+      "supported": true,
+      "limitation": "under gVisor (runsc) the guest audio server's playback path adds ~15-25 ms over runc, so audio from apps that do not compensate for output latency reaches the capture 40-55 ms after their matching video (budget elsewhere is \u00b140 ms); capture timestamps themselves are accurate"
     },
     {
       "name": "audio.opus",
@@ -56,6 +59,10 @@
     },
     {
       "name": "clipboard.files",
+      "supported": true
+    },
+    {
+      "name": "clipboard.image",
       "supported": true
     },
     {
@@ -95,6 +102,15 @@
       "supported": true
     },
     {
+      "name": "presence.cursor_shape",
+      "supported": true,
+      "attributes": {
+        "probe": "xtest",
+        "hit_test": "atspi",
+        "system": "xfixes"
+      }
+    },
+    {
       "name": "pty",
       "supported": true
     },
@@ -104,6 +120,10 @@
       "attributes": {
         "port": "3212"
       }
+    },
+    {
+      "name": "relay_attach",
+      "supported": true
     },
     {
       "name": "teleport.chrome",
@@ -122,6 +142,10 @@
       "supported": true
     },
     {
+      "name": "teleport.notion",
+      "supported": true
+    },
+    {
       "name": "teleport.slack",
       "supported": true
     },
@@ -134,12 +158,27 @@
       "supported": true
     },
     {
+      "name": "teleport.vscode",
+      "supported": true
+    },
+    {
       "name": "teleport.whatsapp",
+      "supported": true
+    },
+    {
+      "name": "teleport.wipe",
       "supported": true
     },
     {
       "name": "tunnel.forward",
       "supported": true
+    },
+    {
+      "name": "volume.mount",
+      "supported": true,
+      "attributes": {
+        "backend": "fs"
+      }
     },
     {
       "name": "window_stream",
@@ -153,9 +192,8 @@
       "supported": true
     }
   ],
-  "hostname": "9c38945760bd",
-  "initialized": true,
-  "bootTime": "2026-09-22T23:51:50+00:00",
+  "hostname": "703de14e36ac",
+  "bootTime": "2026-10-03T22:19:39+00:00",
   "sideChannels": {
     "mediaWsPath": "/media",
     "mediaQuicPort": 3212,
@@ -168,5 +206,6 @@
     "maxMessageBytes": 8388608,
     "preferredChunkBytes": 1048576,
     "defaultScrollbackBytes": "8388608"
-  }
+  },
+  "machineSealPublicKey": "XhubVhoMENp7+SDES22XD2Nx9QbctA1m7FDjeus8g0o="
 }

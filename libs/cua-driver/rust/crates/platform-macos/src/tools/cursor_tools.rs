@@ -179,6 +179,10 @@ impl Tool for SetAgentCursorMotionTool {
             None,
             number(args.get("turn_radius")),
         );
+        let motion = match motion.with_style_args(&args) {
+            Ok(motion) => motion,
+            Err(message) => return ToolResult::error(message),
+        };
         crate::cursor::overlay::send_command(
             session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
@@ -188,17 +192,7 @@ impl Tool for SetAgentCursorMotionTool {
         ))
         .with_structured(serde_json::json!({
             "session": session,
-            "motion": {
-                "start_handle": motion.start_handle,
-                "end_handle": motion.end_handle,
-                "arc_size": motion.arc_size,
-                "arc_flow": motion.arc_flow,
-                "spring": motion.spring,
-                "glide_duration_ms": motion.glide_duration_ms,
-                "dwell_after_click_ms": motion.dwell_after_click_ms,
-                "idle_hide_ms": motion.idle_hide_ms,
-                "turn_radius": motion.turn_radius
-            }
+            "motion": motion.output_json()
         }))
     }
 }
@@ -367,17 +361,7 @@ impl Tool for GetAgentCursorStateTool {
                     "frame": visual.frame(),
                     "preempted_count": visual.preempted_count
                 },
-                "motion": {
-                    "start_handle": motion.start_handle,
-                    "end_handle": motion.end_handle,
-                    "arc_size": motion.arc_size,
-                    "arc_flow": motion.arc_flow,
-                    "spring": motion.spring,
-                    "glide_duration_ms": motion.glide_duration_ms,
-                    "dwell_after_click_ms": motion.dwell_after_click_ms,
-                    "idle_hide_ms": motion.idle_hide_ms,
-                    "turn_radius": motion.turn_radius
-                }
+                "motion": motion.output_json()
             }),
         )
     }

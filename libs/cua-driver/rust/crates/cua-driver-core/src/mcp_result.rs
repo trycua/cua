@@ -398,6 +398,15 @@ mod tests {
                 "dwell_after_click_ms": 400.0,
                 "idle_hide_ms": 3000.0,
                 "turn_radius": 12.0,
+                "style": "signature_arc",
+                "timing": "native",
+                "effects": {
+                    "trail": false,
+                    "glow": true,
+                    "magnet": false,
+                    "ripple": true,
+                    "squish": true,
+                },
             },
         })
     }

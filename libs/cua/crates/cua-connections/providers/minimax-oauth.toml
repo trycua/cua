@@ -1,0 +1,23 @@
+id = "minimax-oauth"
+name = "MiniMax sign-in"
+icon = "minimax"
+tier = "more"
+rank = 360
+kind = "hosted"
+hidden = true
+hidden_reason = "Subscription login: Cua has not reviewed the provider's terms for use in a third-party app yet."
+terms = "review"
+aliases = ["minimax coding plan"]
+wire = "anthropic"
+base_url = "https://api.minimax.io/anthropic"
+default_model = "MiniMax-M3"
+hermes_id = "minimax-oauth"
+key_help = "Sign in with your MiniMax account."
+
+[[method]]
+id = "portal"
+kind = "subscription_login"
+scope = "hermes"
+terms = "review"
+label = "Sign in with MiniMax"
+help = "Opens MiniMax in your browser. Only Hermes uses this sign-in."

@@ -204,8 +204,13 @@ daemon child.
 
 After an input action, the driver watches the window list for a short time so
 it can report a menu, dialog, or new window that the action opened. On macOS,
-that watch lasts up to 1000 ms for an action that opens nothing, which makes it
-the largest part of a background click's latency. A host that already observes
+the watch lasts up to 1000 ms. The action's result waits for at most the first
+300 ms of it; when nothing has changed by then, the result returns and the rest
+of the watch runs detached, still holding the focus-steal lease. A window that
+opens during that remainder is reported on the next action's result as
+`After the previous action returned, it opened new window(s): …`. The next
+action, or any activation the driver performs, ends the detached remainder
+first. On Linux X11 the result waits for the whole watch. A host that already observes
 its target continuously can shorten it through two variables set at trusted
 launch, in the environment of the `serve --embedded` child (or of the host
 process when you use the same-process runtime). `EmbeddedCuaDriverHost` starts
@@ -257,13 +262,85 @@ Measured on macOS with Calculator in the background and Terminal frontmost, a
 background AX click took 1153 ms with the default, 325 ms with `200`, and 78 ms
 with `0`.
 
+### Steps inside `run_steps` and `run_script` (macOS)
+
+Two waits make up most of a macOS action's latency: the agent cursor's glide to
+the target (600 ms or more with the default `steady` timing) and the first 300 ms
+of the window watch above. A call that is one step of a `run_steps` batch or a
+`run_script` program is followed at once by another step, so the driver shortens
+both for it: the step waits at most 120 ms for the cursor to arrive and 100 ms
+for a window change. The cursor keeps gliding and the watch keeps running
+detached, as above, so a window that opens late is still reported on the next
+action's result. The last step of a `run_steps` batch, and every direct call,
+keep the full waits, so the batch's final result still reports what it left
+open. A script has no last step the driver can know in advance; read the window
+with `getState()` or `waitFor()` after the action that opens something.
+
+An embedding host that wants every step to play the full glide and watch, for
+example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same
+environment as the variables above. Any other value, or none, applies the
+shortened waits. No tool argument can change it.
+
+### Skipping the report wait per call (macOS)
+
+An agent that reads the window state after every action does not need the
+result to wait for the window watch. Each action that waits for it (`click`,
+`double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`,
+`hotkey` and `set_value`) accepts an optional `post_action_wait` argument:
+
+- `"default"`, or omitting it, keeps the behavior above.
+- `"none"` returns as soon as the input is delivered. The result ends with
+  `Window changes not observed: post_action_wait "none" returned without
+  waiting.` instead of reporting no change. The watch still runs detached for
+  its whole deadline and keeps the focus-steal lease, exactly like the
+  remainder of a quiet watch above, so focus protection is unchanged and a
+  window that opens is reported on the next action's result.
+
+Linux and Windows do not advertise `post_action_wait`, and their action
+schemas refuse it as an unknown argument (`invalid_arguments`): the Linux X11
+foreground transaction uses its window watch as delivery evidence, and the
+Windows adapter does not wait for window changes after an action.
+
+Measured on macOS 26 with Calculator in the background (medians of 20 calls
+over three runs), an `element_token` click (AXPress) took 570 to 750 ms with
+the default and 250 to 350 ms with `"none"`. A coordinate click that
+Calculator routes through the pixel path took 870 to 1160 ms and 510 to 690 ms.
+A coordinate click that resolves to an AX press through the hit-test does not
+watch the window list, so the argument does not change it.
+
+## Pacing synthesized keystrokes (macOS)
+
+The macOS keyboard adapter waits a fixed gap between each key down and up and
+between consecutive keys. For `type_text`, `press_key`, and `hotkey`, that gap
+is most of the call's latency. A host whose targets accept faster input can
+shorten it at trusted launch with one variable, in the same environment as the
+window-observation variables above. `EmbeddedCuaDriverHost` admits it too:
+
+| Variable                | Meaning                                         | Default | Accepted range                                        |
+| ----------------------- | ----------------------------------------------- | ------- | ----------------------------------------------------- |
+| `CUA_DRIVER_KEY_GAP_MS` | Gap between synthesized key events, per event.  | 8       | 2 to 100; smaller values are raised, larger clamped   |
+
+Unset, empty, or unparsable values keep the default. No tool argument can
+change the gap. An explicit `type_text` `delay_ms` still applies on top of it.
+
+- **macOS only.** Linux keeps its fixed 10 ms key delay and Windows its own
+  pacing; neither reads this variable.
+- **What a shorter gap costs.** Some targets coalesce or drop key events that
+  arrive back to back, most often remote-input forwarders and apps under heavy
+  load. Read the field back after typing before relying on a low value for a
+  new target. The 2 ms floor exists because `0` posts events with no gap at all.
+
+Measured on macOS 27 with TextEdit in the background, typing a 185-character
+ASCII sentence through the PID-routed key path took about 3650 ms at the default
+and about 980 ms at `2`. All ten read-backs (five per value) matched exactly.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                               | Standalone                    | Embedded (`CUA_DRIVER_EMBEDDED=1`)     |
 | --------------------------------------------- | ----------------------------- | -------------------------------------- |
 | Responsibility disclaim re-exec               | ON (owns its TCC identity)    | OFF (stays in the host's chain)        |
 | Tool execution process                        | `serve` daemon                | host-spawned `serve --embedded` daemon |
-| Daemon auto-relaunch via `open -a CuaDriver`  | Yes, when installed           | Never (would leave the host's chain)   |
+| Daemon auto-relaunch of the installed app     | Yes, when installed           | Never (would leave the host's chain)   |
 | TCC identity                                  | `com.trycua.driver`           | the host app                           |
 | Permission prompts / startup gate             | May prompt once               | **Never prompts**                      |
 | Settings → Privacy & Security entries         | CuaDriver                     | your app only                          |
@@ -284,7 +361,7 @@ would treat it as its own responsible process: your user would get a _second_ pr
 attributed to the driver binary, a second Settings entry, and capture/AX
 would fail until that second grant. That is the exact experience embedding exists
 to eliminate. Embedded mode short-circuits the disclaim re-exec
-(`responsibility.rs`) and the `open -a CuaDriver` daemon relaunch. MCP is
+(`responsibility.rs`) and the installed-app daemon relaunch. MCP is
 always a proxy, so the embedded daemon remains the single process that checks
 TCC and executes tools.
 

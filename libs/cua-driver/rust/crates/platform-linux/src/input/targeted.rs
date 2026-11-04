@@ -182,6 +182,7 @@ pub(crate) fn connect() -> Result<(RustConnection, Window), TargetedInputError> 
             std::env::var("DISPLAY").ok()
         ))
     })?;
+    crate::input::action::fence(conn.stream()).map_err(failed)?;
     let root = conn.setup().roots[screen].root;
     Ok((conn, root))
 }
@@ -351,12 +352,15 @@ pub(crate) fn activate(
     if let Some(message_type) = atom(conn, "_NET_ACTIVE_WINDOW") {
         let event =
             ClientMessageEvent::new(32, window, message_type, [1, x11rb::CURRENT_TIME, 0, 0, 0]);
-        conn.send_event(
-            false,
-            root,
-            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-            event,
-        )
+        crate::input::action::admit(|| {
+            conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+        })
+        .map_err(failed)?
         .map_err(failed)?;
     }
     let _ = conn.configure_window(
@@ -528,21 +532,6 @@ impl KeyboardMap {
     pub(crate) fn lookup(&self, keysym: u32) -> Option<(u8, bool)> {
         super::char_to_keycode_shift(&self.mapping, keysym)
     }
-
-    /// Like [`lookup`](Self::lookup), but borrows a spare keycode when the map
-    /// has no keycode for `keysym` (non-Latin text on a US map, sparse
-    /// headless keymaps). The guard restores the map on drop.
-    pub(crate) fn lookup_or_remap<'a>(
-        &self,
-        conn: &'a RustConnection,
-        keysym: u32,
-    ) -> Result<(u8, bool, Option<super::RemappedKeycode<'a>>), TargetedInputError> {
-        if let Some((code, shift)) = self.lookup(keysym) {
-            return Ok((code, shift, None));
-        }
-        let guard = super::remap_spare_keycode(conn, &self.mapping, keysym).map_err(failed)?;
-        Ok((guard.keycode, false, Some(guard)))
-    }
 }
 
 pub(crate) fn fake_motion(
@@ -553,7 +542,8 @@ pub(crate) fn fake_motion(
 ) -> Result<(), TargetedInputError> {
     let x = x.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
     let y = y.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x, y, 0)
+    crate::input::action::admit(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x, y, 0))
+        .map_err(failed)?
         .map_err(failed)?;
     Ok(())
 }
@@ -569,8 +559,13 @@ pub(crate) fn fake_button(
     } else {
         BUTTON_RELEASE_EVENT
     };
-    conn.xtest_fake_input(kind, button, 0, root, 0, 0, 0)
-        .map_err(failed)?;
+    let send = || conn.xtest_fake_input(kind, button, 0, root, 0, 0, 0);
+    if press {
+        crate::input::action::admit(send).map_err(failed)?
+    } else {
+        send()
+    }
+    .map_err(failed)?;
     Ok(())
 }
 
@@ -585,8 +580,13 @@ pub(crate) fn fake_key(
     } else {
         KEY_RELEASE_EVENT
     };
-    conn.xtest_fake_input(kind, keycode, 0, root, 0, 0, 0)
-        .map_err(failed)?;
+    let send = || conn.xtest_fake_input(kind, keycode, 0, root, 0, 0, 0);
+    if press {
+        crate::input::action::admit(send).map_err(failed)?
+    } else {
+        send()
+    }
+    .map_err(failed)?;
     Ok(())
 }
 
@@ -658,21 +658,27 @@ pub(crate) fn type_xtest(
     keymap: &KeyboardMap,
     text: &str,
 ) -> Result<(), TargetedInputError> {
-    for character in text.chars() {
-        let sym = match character {
-            '\n' | '\r' => XK_RETURN,
-            '\t' => XK_TAB,
-            other => char_keysym(other),
-        };
-        let (code, shift, guard) = keymap.lookup_or_remap(conn, sym)?;
-        tap(conn, root, keymap, code, shift)?;
-        if guard.is_some() {
-            // Let the focused client translate the event under the temporary
-            // mapping before the guard restores it.
-            sync(conn)?;
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        drop(guard);
+    let guards = super::type_text_with_preflight(
+        text,
+        &keymap.mapping,
+        |character, mapping| {
+            super::keycode_for_keysym(
+                conn,
+                mapping,
+                super::mpx_keyboard::keysym_for_char(character),
+                &character.to_string(),
+            )
+        },
+        |code, shift| Ok(tap(conn, root, keymap, code, shift)?),
+    )
+    .map_err(|error| {
+        error
+            .downcast::<TargetedInputError>()
+            .unwrap_or_else(failed)
+    })?;
+    if !guards.is_empty() {
+        sync(conn)?;
+        std::thread::sleep(Duration::from_millis(10));
     }
     Ok(())
 }

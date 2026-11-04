@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use jsonwebtoken::jwk::{AlgorithmParameters, JwkSet};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 
+use crate::auth_log::Reason;
+
 /// Default audience relay account tokens must carry.
 pub const DEFAULT_AUDIENCE: &str = "cua-relay";
 
@@ -40,6 +42,13 @@ pub struct OidcConfig {
     /// `amr` values that count as multi-factor (RFC 8176), checked in
     /// addition to `mfa_acr_values`. Defaults to [`DEFAULT_MFA_AMR_VALUES`].
     pub mfa_amr_values: Vec<String>,
+    /// OAuth clients (`azp`) whose tokens are accepted. Empty (the default)
+    /// accepts any client of the issuer, as before; set it to pin the relay
+    /// to the clients it is meant for (the CLI, the apps and the phone app).
+    pub authorized_parties: Vec<String>,
+    /// Refuse a token whose `nbf` (not before) is still in the future. Off
+    /// by default (as before); the relay turns it on with phone support.
+    pub validate_nbf: bool,
 }
 
 impl OidcConfig {
@@ -55,6 +64,8 @@ impl OidcConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            authorized_parties: Vec::new(),
+            validate_nbf: false,
         }
     }
 }
@@ -81,16 +92,114 @@ pub struct Identity {
     /// an account that already has a strong enrolled device (S4) without
     /// needing an approval.
     pub mfa: bool,
+    /// Keycloak Organizations the user is in (the `organization` claim),
+    /// with the role their org group gives. Empty when the token has none.
+    pub orgs: Vec<OrgClaim>,
+    /// The OAuth client the token was issued to (`azp`), when the issuer says. Never a client-supplied value: it is read from
+    /// the signed token.
+    pub azp: Option<String>,
 }
 
-/// Minimum time between JWKS refreshes triggered by unknown key ids.
+/// One entry of the `organization` claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgClaim {
+    /// The organization's alias (the claim's key).
+    pub alias: String,
+    /// The organization's id, when the mapper includes it.
+    pub id: Option<String>,
+    /// `owner`, `admin` or `member` (from the `/owner` and `/admin` org
+    /// groups; no group is a member).
+    pub role: &'static str,
+}
+
+impl OrgClaim {
+    /// The id the Spaces API knows the organization by: its id, else its
+    /// alias.
+    pub fn key(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.alias)
+    }
+}
+
+/// Reads the `organization` claim: an object of alias -> `{id, groups}`
+/// (the Organization Group Membership mapper) or a plain list of aliases.
+pub fn org_claims(claims: &serde_json::Value) -> Vec<OrgClaim> {
+    let role = |groups: Option<&serde_json::Value>| {
+        let groups: Vec<&str> = groups
+            .and_then(|g| g.as_array())
+            .map(|a| a.iter().filter_map(|g| g.as_str()).collect())
+            .unwrap_or_default();
+        let has = |name: &str| {
+            groups
+                .iter()
+                .any(|g| g.trim_start_matches('/').eq_ignore_ascii_case(name))
+        };
+        if has("owner") {
+            "owner"
+        } else if has("admin") {
+            "admin"
+        } else {
+            "member"
+        }
+    };
+    let mut out = match claims.get("organization") {
+        Some(serde_json::Value::Object(map)) => map
+            .iter()
+            .filter(|(alias, _)| !alias.is_empty())
+            .map(|(alias, v)| OrgClaim {
+                alias: alias.clone(),
+                id: v
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .filter(|i| !i.is_empty())
+                    .map(str::to_owned),
+                role: role(v.get("groups")),
+            })
+            .collect(),
+        Some(serde_json::Value::Array(list)) => list
+            .iter()
+            .filter_map(|a| a.as_str())
+            .filter(|a| !a.is_empty())
+            .map(|alias| OrgClaim {
+                alias: alias.to_owned(),
+                id: None,
+                role: "member",
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    out.truncate(64);
+    out
+}
+
+/// Minimum time between two JWKS fetch attempts, whether the last one
+/// worked or not. A failing issuer is therefore asked about twice a minute,
+/// never once per request.
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
-/// Keys are refreshed at least this often.
-const MAX_KEY_AGE: Duration = Duration::from_secs(3600);
+/// The background refresher renews the keys this often. Requests never wait
+/// for it: they validate against the keys already held (CUA-2323).
+const REFRESH_EVERY: Duration = Duration::from_secs(600);
+/// How often the background refresher checks whether a renewal is due.
+const REFRESH_TICK: Duration = Duration::from_secs(15);
+/// Most a request waits for a JWKS fetch (only when there are no keys at all
+/// or its key id is unknown); also the budget of one whole fetch.
+const FETCH_BUDGET: Duration = Duration::from_secs(6);
 
 struct Keys {
     set: Option<JwkSet>,
     fetched: Option<Instant>,
+    /// Start of the last fetch attempt, successful or not.
+    attempted: Option<Instant>,
+}
+
+/// Why the keys are being fetched.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Why {
+    /// No keys held yet (first request after a start).
+    Missing,
+    /// A token names a key id that is not held.
+    Unknown,
+    /// The background renewal.
+    Scheduled,
 }
 
 /// Validates account tokens.
@@ -115,12 +224,14 @@ impl OidcValidator {
         Self {
             config,
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .expect("http client"),
             keys: RwLock::new(Keys {
                 set: None,
                 fetched: None,
+                attempted: None,
             }),
             fetch: tokio::sync::Mutex::new(()),
         }
@@ -132,6 +243,8 @@ impl OidcValidator {
         *v.keys.write().expect("keys") = Keys {
             set: Some(jwks),
             fetched: Some(Instant::now() + Duration::from_secs(10 * 365 * 86400)),
+            // Fixed keys are never fetched, not even for an unknown key id.
+            attempted: Some(Instant::now() + Duration::from_secs(10 * 365 * 86400)),
         };
         v
     }
@@ -141,17 +254,79 @@ impl OidcValidator {
         &self.config
     }
 
-    async fn refresh(&self, force: bool) -> Result<(), String> {
-        let _guard = self.fetch.lock().await;
-        {
-            let keys = self.keys.read().expect("keys");
-            if let Some(fetched) = keys.fetched {
-                let age = Instant::now().saturating_duration_since(fetched);
-                if (force && age < REFRESH_COOLDOWN) || (!force && age < MAX_KEY_AGE) {
-                    return Ok(());
-                }
+    /// Starts the background renewal of the signing keys. Requests only
+    /// ever read the keys already held, so a slow or unreachable issuer
+    /// costs them nothing (CUA-2323).
+    pub fn spawn_refresher(self: &std::sync::Arc<Self>) {
+        let me = std::sync::Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                let Some(v) = me.upgrade() else { return };
+                let _ = v.refresh(Why::Scheduled).await;
+                drop(v);
+                tokio::time::sleep(REFRESH_TICK).await;
+            }
+        });
+    }
+
+    /// Whether a fetch for `why` is wanted now. `Err` when there is nothing
+    /// to serve from and a recent attempt failed.
+    fn wanted(&self, why: Why) -> Result<bool, String> {
+        let keys = self.keys.read().expect("keys");
+        let now = Instant::now();
+        if let Some(at) = keys.attempted {
+            if now.saturating_duration_since(at) < REFRESH_COOLDOWN {
+                return match (why, keys.set.is_some()) {
+                    (Why::Missing, false) => {
+                        Err("signing keys unavailable (fetch failed recently)".into())
+                    }
+                    _ => Ok(false),
+                };
             }
         }
+        Ok(match why {
+            Why::Missing => keys.set.is_none(),
+            Why::Unknown => true,
+            Why::Scheduled => keys
+                .fetched
+                .is_none_or(|f| now.saturating_duration_since(f) >= REFRESH_EVERY),
+        })
+    }
+
+    async fn refresh(&self, why: Why) -> Result<(), String> {
+        if !self.wanted(why)? {
+            return Ok(());
+        }
+        let _guard = tokio::time::timeout(FETCH_BUDGET, self.fetch.lock())
+            .await
+            .map_err(|_| "signing keys: a refresh is already running".to_owned())?;
+        // Another caller may have fetched while this one waited.
+        if !self.wanted(why)? {
+            return Ok(());
+        }
+        self.keys.write().expect("keys").attempted = Some(Instant::now());
+        let fetched = tokio::time::timeout(FETCH_BUDGET, self.fetch_keys())
+            .await
+            .unwrap_or_else(|_| Err(format!("timed out after {}s", FETCH_BUDGET.as_secs())));
+        match fetched {
+            Ok(set) => {
+                let mut keys = self.keys.write().expect("keys");
+                keys.set = Some(set);
+                keys.fetched = Some(Instant::now());
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    issuer = %self.config.issuer,
+                    error = %e,
+                    "signing keys not refreshed; keeping the keys held"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    async fn fetch_keys(&self) -> Result<JwkSet, String> {
         let jwks_url = match &self.config.jwks_url {
             Some(url) => url.clone(),
             None => {
@@ -175,8 +350,7 @@ impl OidcValidator {
                     .to_owned()
             }
         };
-        let set: JwkSet = self
-            .http
+        self.http
             .get(&jwks_url)
             .send()
             .await
@@ -184,12 +358,7 @@ impl OidcValidator {
             .map_err(|e| format!("JWKS {jwks_url}: {e}"))?
             .json()
             .await
-            .map_err(|e| format!("JWKS {jwks_url}: {e}"))?;
-        *self.keys.write().expect("keys") = Keys {
-            set: Some(set),
-            fetched: Some(Instant::now()),
-        };
-        Ok(())
+            .map_err(|e| format!("JWKS {jwks_url}: {e}"))
     }
 
     fn key_for(&self, kid: Option<&str>, alg: Algorithm) -> Option<DecodingKey> {
@@ -223,21 +392,49 @@ impl OidcValidator {
     }
 
     /// Validates an account token.
-    pub async fn validate(&self, token: &str) -> Result<Identity, String> {
-        let header = jsonwebtoken::decode_header(token).map_err(|_| "not a JWT".to_owned())?;
+    pub async fn validate(&self, token: &str) -> Result<Identity, TokenError> {
+        self.validate_inner(token)
+            .await
+            .map_err(|(reason, message)| {
+                let facts = crate::auth_log::TokenFacts::from_token(
+                    token,
+                    reason,
+                    &self.config.issuer,
+                    &self.config.audiences,
+                );
+                TokenError {
+                    reason,
+                    message,
+                    facts,
+                }
+            })
+    }
+
+    async fn validate_inner(&self, token: &str) -> Result<Identity, (Reason, String)> {
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|_| (Reason::Malformed, "not a JWT".to_owned()))?;
         if matches!(
             header.alg,
             Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
         ) {
-            return Err("symmetric JWTs are not accepted".into());
+            return Err((
+                Reason::UnsupportedAlgorithm,
+                "symmetric JWTs are not accepted".into(),
+            ));
         }
-        let _ = self.refresh(false).await;
+        // No fetch on the request path while keys are held: the background
+        // refresher renews them. Only a first request (no keys) or an
+        // unknown key id waits, for a bounded time and at most once per
+        // cooldown.
+        let _ = self.refresh(Why::Missing).await;
         let key = match self.key_for(header.kid.as_deref(), header.alg) {
             Some(key) => key,
             None => {
-                self.refresh(true).await?;
+                self.refresh(Why::Unknown)
+                    .await
+                    .map_err(|e| (Reason::JwksUnavailable, e))?;
                 self.key_for(header.kid.as_deref(), header.alg)
-                    .ok_or("unknown signing key")?
+                    .ok_or((Reason::UnknownSigningKey, "unknown signing key".to_owned()))?
             }
         };
         let mut validation = Validation::new(header.alg);
@@ -248,9 +445,26 @@ impl OidcValidator {
         validation.set_audience(&self.config.audiences);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.leeway = 30;
+        // A token that is not valid yet is not valid.
+        validation.validate_nbf = self.config.validate_nbf;
         let data = jsonwebtoken::decode::<serde_json::Value>(token, &key, &validation)
-            .map_err(|e| format!("account token: {e}"))?;
+            .map_err(|e| (jwt_reason(e.kind()), format!("account token: {e}")))?;
         let claims = data.claims;
+        let azp = claims
+            .get("azp")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        if !self.config.authorized_parties.is_empty()
+            && !azp
+                .as_deref()
+                .is_some_and(|a| self.config.authorized_parties.iter().any(|p| p == a))
+        {
+            return Err((
+                Reason::UnauthorizedParty,
+                "account token: this client may not use this relay".to_owned(),
+            ));
+        }
         let text = |name: &str| {
             claims
                 .get(name)
@@ -258,7 +472,8 @@ impl OidcValidator {
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
         };
-        let user = text("sub").ok_or("account token has no sub")?;
+        let user =
+            text("sub").ok_or((Reason::MissingClaim, "account token has no sub".to_owned()))?;
         let account = text(&self.config.account_claim).unwrap_or_else(|| user.clone());
         // Sharing by email grants access, so only an address the issuer
         // verified counts (some issuers encode the flag as a string).
@@ -294,7 +509,43 @@ impl OidcValidator {
             name: text("name").or_else(|| text("preferred_username")),
             auth_time: claims.get("auth_time").and_then(|v| v.as_u64()),
             mfa,
+            orgs: org_claims(&claims),
+            azp,
         })
+    }
+}
+
+/// A refused account token: the message (shown to the caller, as before)
+/// and the facts the relay logs about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenError {
+    /// Why, as logged.
+    pub reason: Reason,
+    /// The caller-facing message.
+    pub message: String,
+    /// Safe-to-log token details.
+    pub facts: crate::auth_log::TokenFacts,
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for TokenError {}
+
+fn jwt_reason(kind: &jsonwebtoken::errors::ErrorKind) -> Reason {
+    use jsonwebtoken::errors::ErrorKind as K;
+    match kind {
+        K::InvalidSignature => Reason::BadSignature,
+        K::ExpiredSignature => Reason::Expired,
+        K::ImmatureSignature => Reason::NotYetValid,
+        K::InvalidIssuer => Reason::WrongIssuer,
+        K::InvalidAudience => Reason::WrongAudience,
+        K::MissingRequiredClaim(_) => Reason::MissingClaim,
+        K::InvalidAlgorithm | K::MissingAlgorithm => Reason::UnsupportedAlgorithm,
+        _ => Reason::Malformed,
     }
 }
 
@@ -314,6 +565,8 @@ pub mod testing {
         amrs: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
         /// `acr` claims per subject (none by default).
         acrs: std::sync::Mutex<std::collections::HashMap<String, String>>,
+        /// `organization` claims per subject (none by default).
+        orgs: std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
         kid: String,
         encoding: jsonwebtoken::EncodingKey,
         public: Vec<u8>,
@@ -332,6 +585,7 @@ pub mod testing {
                 auth_times: std::sync::Mutex::default(),
                 amrs: std::sync::Mutex::default(),
                 acrs: std::sync::Mutex::default(),
+                orgs: std::sync::Mutex::default(),
                 kid: format!("fake-{}", uuid::Uuid::new_v4().simple()),
                 encoding: jsonwebtoken::EncodingKey::from_ec_der(pkcs8.as_ref()),
                 public: pair.public_key().as_ref().to_vec(),
@@ -381,6 +635,16 @@ pub mod testing {
             self.acrs.lock().expect("acrs").get(sub).cloned()
         }
 
+        /// Tokens for `sub` carry this `organization` claim from now on
+        /// (Keycloak Organizations, e.g. `{"acme": {"id": "…", "groups":
+        /// ["/owner"]}}`).
+        pub fn set_orgs(&self, sub: &str, organization: serde_json::Value) {
+            self.orgs
+                .lock()
+                .expect("orgs")
+                .insert(sub.to_owned(), organization);
+        }
+
         /// The issuer's JWKS as JSON.
         pub fn jwks_json(&self) -> serde_json::Value {
             let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -402,6 +666,23 @@ pub mod testing {
             self.token_with(sub, email, true, aud, ttl)
         }
 
+        /// Like [`Self::token`], issued to the OAuth client `azp`.
+        pub fn token_for_client(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            aud: &str,
+            ttl: i64,
+            azp: &str,
+        ) -> String {
+            self.build(sub, email, true, aud, ttl, Some(azp), None)
+        }
+
+        /// Like [`Self::token`], not valid until `nbf_in_secs` from now.
+        pub fn token_not_before(&self, sub: &str, aud: &str, ttl: i64, nbf_in_secs: i64) -> String {
+            self.build(sub, None, true, aud, ttl, None, Some(nbf_in_secs))
+        }
+
         /// Like [`Self::token`], choosing whether the email is verified.
         pub fn token_with(
             &self,
@@ -411,11 +692,31 @@ pub mod testing {
             aud: &str,
             ttl: i64,
         ) -> String {
+            self.build(sub, email, email_verified, aud, ttl, None, None)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn build(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            email_verified: bool,
+            aud: &str,
+            ttl: i64,
+            azp: Option<&str>,
+            nbf_in_secs: Option<i64>,
+        ) -> String {
             let now = super::super::assertion::now_secs() as i64;
             let mut claims = serde_json::json!({
                 "iss": self.issuer, "sub": sub, "aud": aud,
                 "iat": now, "exp": now + ttl, "name": format!("User {sub}"),
             });
+            if let Some(azp) = azp {
+                claims["azp"] = azp.into();
+            }
+            if let Some(nbf) = nbf_in_secs {
+                claims["nbf"] = (now + nbf).into();
+            }
             if let Some(auth_time) = self.auth_time(sub) {
                 claims["auth_time"] = auth_time.into();
             }
@@ -424,6 +725,9 @@ pub mod testing {
             }
             if let Some(acr) = self.acr(sub) {
                 claims["acr"] = acr.into();
+            }
+            if let Some(orgs) = self.orgs.lock().expect("orgs").get(sub).cloned() {
+                claims["organization"] = orgs;
             }
             if let Some(email) = email {
                 claims["email"] = email.into();
@@ -440,6 +744,26 @@ pub mod testing {
 mod tests {
     use super::testing::FakeIssuer;
     use super::*;
+
+    #[test]
+    fn reads_the_organization_claim() {
+        let claims = serde_json::json!({"organization": {
+            "aigis": {"id": "o1", "groups": ["/owner"]},
+            "acme": {"id": "o2", "groups": ["/admin"]},
+            "solo": {},
+        }});
+        let orgs = org_claims(&claims);
+        let find = |a: &str| orgs.iter().find(|o| o.alias == a).cloned().unwrap();
+        assert_eq!(find("aigis").role, "owner");
+        assert_eq!(find("aigis").key(), "o1");
+        assert_eq!(find("acme").role, "admin");
+        assert_eq!(find("solo").role, "member");
+        assert_eq!(find("solo").key(), "solo");
+        let list = org_claims(&serde_json::json!({"organization": ["aigis"]}));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].role, "member");
+        assert!(org_claims(&serde_json::json!({})).is_empty());
+    }
 
     #[tokio::test]
     async fn validates_issuer_audience_and_expiry() {
@@ -480,6 +804,95 @@ mod tests {
             .validate(&issuer.token("u1", None, "cua-relay", 300))
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_token_not_valid_yet_is_refused() {
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.validate_nbf = true;
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let e = v
+            .validate(&issuer.token_not_before("u1", "cua-relay", 7200, 3600))
+            .await
+            .unwrap_err();
+        assert_eq!(e.reason, Reason::NotYetValid);
+        assert!(v
+            .validate(&issuer.token_not_before("u1", "cua-relay", 7200, -10))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn only_the_configured_clients_may_use_the_relay() {
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.authorized_parties = vec!["cua-spaces-mobile".into(), "cua-cli".into()];
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let phone = v
+            .validate(&issuer.token_for_client("u1", None, "cua-relay", 300, "cua-spaces-mobile"))
+            .await
+            .unwrap();
+        assert_eq!(phone.azp.as_deref(), Some("cua-spaces-mobile"));
+        // Another client of the same issuer, and a token that names none.
+        for token in [
+            issuer.token_for_client("u1", None, "cua-relay", 300, "some-other-app"),
+            issuer.token("u1", None, "cua-relay", 300),
+        ] {
+            let e = v.validate(&token).await.unwrap_err();
+            assert_eq!(e.reason, Reason::UnauthorizedParty);
+            assert_eq!(
+                e.message,
+                "account token: this client may not use this relay"
+            );
+        }
+        // Not set: any client, as before.
+        let any = OidcValidator::with_jwks(OidcConfig::new(issuer.issuer.clone()), issuer.jwks());
+        assert!(any
+            .validate(&issuer.token_for_client("u1", None, "cua-relay", 300, "some-other-app"))
+            .await
+            .is_ok());
+    }
+
+    /// CUA-2323: with keys held, validating a token never touches the
+    /// network, even when the issuer's key endpoint hangs.
+    #[tokio::test]
+    async fn held_keys_validate_without_asking_the_issuer() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.jwks_url = Some(format!("http://{}/certs", silent.local_addr().unwrap()));
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let started = Instant::now();
+        for _ in 0..20 {
+            v.validate(&issuer.token("u1", None, "cua-relay", 300))
+                .await
+                .unwrap();
+        }
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    /// CUA-2323: an issuer that cannot be reached is asked about once per
+    /// cooldown, not once per request.
+    #[tokio::test]
+    async fn a_failed_key_fetch_is_not_repeated_on_every_request() {
+        let closed = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.jwks_url = Some(format!("http://{closed}/certs"));
+        let v = OidcValidator::new(config);
+        let token = issuer.token("u1", None, "cua-relay", 300);
+        assert!(v.validate(&token).await.is_err());
+        let first = v.keys.read().unwrap().attempted.expect("attempted");
+        let started = Instant::now();
+        for _ in 0..20 {
+            assert!(v.validate(&token).await.is_err());
+        }
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert_eq!(v.keys.read().unwrap().attempted, Some(first));
     }
 
     #[tokio::test]

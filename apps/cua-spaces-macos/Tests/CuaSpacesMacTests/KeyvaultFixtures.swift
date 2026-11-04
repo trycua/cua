@@ -70,7 +70,7 @@ enum KeyvaultFixtures {
         KvStatus(version: "0.1.0", initialized: true, unlocked: true, disabled: false, callerFirstParty: true,
                  callerDisplay: "Cua Spaces", items: 27, pending: 0, unlockPolicy: "auto", autoWipe: false,
                  osProtectorAvailable: true, passphraseAvailable: true, unlockProtectors: ["macos-keychain"],
-                 browseUntilMs: nil, skipUnlockPrompt: skipPrompt, resetNotice: nil)
+                 browseUntilMs: nil, skipUnlockPrompt: skipPrompt, features: [], resetNotice: nil)
     }
 
     /// The vault as the broker serves it (`namesVisible`: the user opened

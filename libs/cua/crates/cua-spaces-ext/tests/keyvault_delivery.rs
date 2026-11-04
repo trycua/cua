@@ -260,6 +260,50 @@ async fn broker_delivers_a_granted_capability_and_wipes_on_release() {
     );
 }
 
+async fn deliver_to_target(r: &Rig) -> Vec<String> {
+    let (token, items) = grant(r, &r.target).await;
+    r.broker
+        .teleport(
+            &r.koala,
+            TeleportRequest {
+                token: Some(token),
+                items: items.clone(),
+                target: r.target.clone(),
+                include_passwords: false,
+                launch: false,
+            },
+        )
+        .await
+        .unwrap();
+    items
+}
+
+/// #4887: deleting items delivered to a Space the user has since removed.
+#[tokio::test]
+async fn items_delivered_to_a_removed_space_can_be_deleted() {
+    let r = rig().await;
+    let items = deliver_to_target(&r).await;
+    r.spaces.remove(&r.target).await.unwrap();
+    r.broker.delete_items(&r.cua, items.clone()).await.unwrap();
+    assert!(matches!(
+        r.broker.delete_items(&r.cua, items).await,
+        Err(cua_keyvault::Error::NotFound(_))
+    ));
+}
+
+/// #4887: the Space exists again (or still) but no longer knows the import.
+#[tokio::test]
+async fn items_whose_import_expired_on_the_target_can_be_deleted() {
+    let r = rig().await;
+    let items = deliver_to_target(&r).await;
+    r.mock.state.expire_teleport_imports();
+    r.broker.delete_items(&r.cua, items.clone()).await.unwrap();
+    assert!(matches!(
+        r.broker.delete_items(&r.cua, items).await,
+        Err(cua_keyvault::Error::NotFound(_))
+    ));
+}
+
 #[tokio::test]
 async fn a_capability_for_a_different_target_is_refused() {
     let r = rig().await;

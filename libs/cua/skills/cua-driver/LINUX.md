@@ -330,10 +330,10 @@ uninstrumented module hash are unchanged at
 `1133a06e4f205cf80188a7ac9e41102f37611fea`. The proof covers recorded actions
 and observation intervals, not every application operation or release package.
 Portable tests and historical experiments do not replace complete native
-harness acceptance. Compatible release artifacts and final Fleet image
-packaging and lifecycle validation require separate evidence. Physical Omarchy
-parity requires separate acceptance; it is not a gate for publishing a validated
-Fleet image.
+harness acceptance. Compatible release artifacts and final image packaging
+and lifecycle validation require separate evidence. Physical Omarchy parity
+requires separate acceptance; it is not a gate for publishing a validated
+image.
 
 ## Quick triage
 

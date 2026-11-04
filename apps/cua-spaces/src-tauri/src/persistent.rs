@@ -17,6 +17,17 @@ use crate::core::{AppCore, CmdResult};
 
 /// The Spaces tools these pages may call (nothing that creates or deletes).
 pub const TOOLS: &[&str] = &[
+    // Settings → Connectors (the daemon's app methods, not MCP tools). A key's
+    // value only ever travels in `agent_keys.set`'s arguments.
+    "agent_keys.list",
+    "agent_keys.set",
+    "agent_keys.remove",
+    "agent_keys.use",
+    // Settings → Connections → GitHub: the sign-in an approved push uses (names, accounts and scopes; never a token).
+    "github.status",
+    "github.rescan",
+    "github.use",
+    "github.enable",
     "persistent_agent_list",
     "persistent_agent_save",
     "agent_pause",

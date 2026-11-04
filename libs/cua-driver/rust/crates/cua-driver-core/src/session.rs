@@ -369,6 +369,7 @@ pub struct LifecycleSessionSnapshot {
     pub ending: bool,
     pub started_for: Duration,
     pub idle: Duration,
+    pub idle_ttl: Duration,
     pub expires_in: Duration,
 }
 
@@ -727,6 +728,7 @@ pub fn session_snapshot(
         ending: record.pending_end.is_some(),
         started_for: record.started_at.elapsed(),
         idle,
+        idle_ttl: ttl,
         expires_in: ttl.saturating_sub(idle),
     })
 }
@@ -817,6 +819,7 @@ pub fn list_session_snapshots_with_prefix(
         .into_iter()
         .map(|(_, runtime_id, record)| {
             let idle = session_idle_duration(&runtime_id).unwrap_or_default();
+            let idle_ttl = record.idle_ttl.unwrap_or(ttl);
             LifecycleSessionSnapshot {
                 runtime_id,
                 public_label: record.public_label,
@@ -827,7 +830,8 @@ pub fn list_session_snapshots_with_prefix(
                 ending: record.pending_end.is_some(),
                 started_for: record.started_at.elapsed(),
                 idle,
-                expires_in: record.idle_ttl.unwrap_or(ttl).saturating_sub(idle),
+                idle_ttl,
+                expires_in: idle_ttl.saturating_sub(idle),
             }
         })
         .collect()
@@ -1134,22 +1138,6 @@ impl Drop for SessionReviveHookRegistration {
     }
 }
 
-/// Notify session-owned subsystems after `start_session` has successfully
-/// revived and rebound a recycled id. Unlike [`revive_session`], this does not
-/// alter core lifecycle state; it fans the completed transition out to
-/// platform-owned tombstones.
-pub fn fire_session_revive(session_id: &str) {
-    let owner = lifecycle_records()
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .map(|record| record.owner_transport.clone());
-    if let Some(owner) = owner {
-        let _ = fire_session_revive_for_owner(session_id, &owner);
-    }
-}
-
-/// Notify render-side owners only while the revived episode is still live and
 /// owned by the same transport. Holding the tombstone lock across callbacks
 /// orders a racing end after revival, so its cleanup cannot be followed by a
 /// late overlay resurrection.

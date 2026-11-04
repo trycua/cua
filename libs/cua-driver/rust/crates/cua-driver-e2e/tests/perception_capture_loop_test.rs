@@ -378,7 +378,10 @@ fn installed_macos_binary() -> PathBuf {
             .expect("CUA_E2E_INSTALLED_DRIVER_BIN must identify the installed, TCC-authorized app"),
     );
     assert!(binary.is_file(), "installed Driver is missing: {binary:?}");
-    binary
+    // The Lume runner exports the ~/.local/bin symlink; the daemon is launched
+    // from the app bundle it points to.
+    std::fs::canonicalize(&binary)
+        .unwrap_or_else(|error| panic!("resolve installed Driver {binary:?}: {error}"))
 }
 
 /// A second instance of the installed app, sharing its TCC grants but not its

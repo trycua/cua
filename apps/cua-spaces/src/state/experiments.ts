@@ -35,8 +35,8 @@ export function currentExperiments(): Experiments {
   }
   const value: Experiments = {
     cuaVolume: stored.cuaVolume === true,
-    yourCloud: stored.yourCloud === true,
-    sharing: stored.sharing === true,
+    yourCloud: stored.yourCloud !== false,
+    sharing: stored.sharing !== false,
   };
   cache = { raw, value: { ...NO_EXPERIMENTS, ...value } };
   return cache.value;

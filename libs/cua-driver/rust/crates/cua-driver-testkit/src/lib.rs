@@ -53,6 +53,7 @@ mod raw;
 mod reaper;
 mod response;
 pub mod sentinel;
+pub mod vertex;
 mod windows_setup;
 
 pub use browser_fixture::BrowserFixtureServer;

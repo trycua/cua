@@ -60,8 +60,44 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.source_sha || github.sha }}
 
+      - name: Download artifacts
+        if: inputs.attach_artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        if: inputs.attach_artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -lah release-assets/
+
+      # A package on Release Please already has a draft release for its tag,
+      # holding the generated changelog (release-notes.yml adds the contributor
+      # credits). Upload to it and publish it instead of creating a second
+      # release for the same tag.
+      - name: Publish the Release Please draft for this tag
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag_name }}
+          NAME: ${{ inputs.release_name }}
+          ATTACH: ${{ inputs.attach_artifacts }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .github/scripts/release_notes.py ]; then
+            echo "adopted=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ARGS=(publish-draft --tag "$TAG" --repository "$GITHUB_REPOSITORY" --name "$NAME")
+          [ "$ATTACH" = true ] && ARGS+=(--asset-dir release-assets)
+          [ "$PRERELEASE" = true ] && ARGS+=(--prerelease)
+          python3 .github/scripts/release_notes.py "${ARGS[@]}"
+
       - name: Generate path-filtered release notes
-        if: inputs.module_path != '' && inputs.generate_notes
+        if: steps.draft.outputs.adopted != 'true' && inputs.module_path != '' && inputs.generate_notes
         id: release-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,20 +163,8 @@ jobs:
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Download artifacts
-        if: inputs.attach_artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
-
-      - name: List downloaded artifacts
-        if: inputs.attach_artifacts
-        run: |
-          echo "Downloaded artifacts:"
-          ls -lah release-assets/
-
       - name: Prepare release body
+        if: steps.draft.outputs.adopted != 'true'
         id: prepare-body
         env:
           # Use env vars to avoid shell interpretation of backticks in commit messages
@@ -172,6 +196,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
+        if: steps.draft.outputs.adopted != 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.tag_name }}

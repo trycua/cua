@@ -169,8 +169,9 @@ capture_command_output() {
 # Manual dispatch, or the stable Cua Driver tag release gate. Pull request
 # events never seed hosted TCC state.
 if [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]]; then
-  [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ]] \
-    || fail "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate"
+  [[ ( "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ) \
+      || ( "${GITHUB_EVENT_NAME:-}" == schedule && "${GITHUB_REF:-}" == refs/heads/main ) ]] \
+    || fail "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"
 fi
 [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] \
   || fail "requires a GitHub-hosted runner"
@@ -374,6 +375,8 @@ codesign --verify --deep --strict "${LOCAL_APP}"
 # macOS 15+ separately reminds each responsible app before direct capture,
 # even when Screen Recording is granted. The hosted image pre-approves its
 # runner agent, but this signed app is the responsible ScreenCaptureKit client.
+# The driver reads this bundle-identifier entry as recorded consent; without
+# it, implicit captures refuse with direct_capture_consent_required (CUA-1792).
 echo "[CAPTURE] Suppressing the app-specific private-window-picker reminder"
 mark_phase "screen-capture-approval"
 mkdir -p "$(dirname "${SCREEN_CAPTURE_APPROVALS}")"

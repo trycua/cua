@@ -258,7 +258,33 @@ def sdk_versions(root: Path) -> tuple[str, dict[str, str]]:
         "typescript/package.json": str(package["version"]),
         "typescript/package-lock.json": str(lock["version"]),
         "typescript/package-lock.json:root": str(lock["packages"][""]["version"]),
+        **sdk_crate_versions(base),
     }
+
+
+def sdk_crate_versions(base: Path) -> dict[str, str]:
+    """The libs/cua Cargo workspace releases at the SDK version: its package
+    version, the versions its crates require of each other, and their
+    entries in libs/cua/Cargo.lock (cua-sdk and the crates it needs are
+    published to crates.io at it)."""
+    workspace = tomllib.loads((base / "Cargo.toml").read_text())["workspace"]
+    values = {"Cargo.toml:workspace.package.version": str(workspace["package"]["version"])}
+    for name, dep in workspace["dependencies"].items():
+        if isinstance(dep, dict) and str(dep.get("path", "")).startswith("crates/") and "version" in dep:
+            values[f"Cargo.toml:workspace.dependencies.{name}"] = str(dep["version"])
+    sdk = tomllib.loads((base / "crates/cua-sdk/Cargo.toml").read_text())
+    for name, dep in sdk.get("dependencies", {}).items():
+        if isinstance(dep, dict) and "path" in dep and "version" in dep:
+            values[f"crates/cua-sdk/Cargo.toml:dependencies.{name}"] = str(dep["version"])
+    members = {
+        tomllib.loads(manifest.read_text())["package"]["name"]
+        for manifest in base.glob("crates/*/Cargo.toml")
+    }
+    lock = tomllib.loads((base / "Cargo.lock").read_text())
+    for entry in lock["package"]:
+        if entry["name"] in members and "source" not in entry:
+            values[f"Cargo.lock:{entry['name']}"] = str(entry["version"])
+    return values
 
 
 def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
@@ -284,6 +310,64 @@ def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
         "apps/cua-spaces/src-tauri/Cargo.toml": str(cargo["package"]["version"]),
         "apps/cua-spaces/src-tauri/Cargo.lock": str(locked[0]["version"]),
     }
+
+
+# Packages whose Release Please entry is the whole version contract: the
+# manifest version must equal every extra file Release Please bumps.
+CONFIG_ONLY_PACKAGES = (
+    "libs/python/agent",
+    "libs/python/core",
+    "libs/cua-bench",
+    "libs/python/bench-ui",
+    "libs/python/som",
+    "libs/python/cua-sandbox-apps",
+    "libs/typescript/core",
+    "libs/typescript/playground",
+    "libs/cuabot",
+)
+LOCK_ENTRY = re.compile(r"^\$\.package\[\?\(@\.name\.value=='([^']+)'\)\]\.version$")
+
+
+def extra_file_version(root: Path, package_path: str, extra: dict) -> str:
+    path = extra["path"]
+    file = root / path.lstrip("/") if path.startswith("/") else root / package_path / path
+    jsonpath = extra["jsonpath"]
+    if extra["type"] == "json":
+        data = json.loads(file.read_text())
+    elif extra["type"] == "toml":
+        data = tomllib.loads(file.read_text())
+    else:
+        raise VersionError(f"{package_path}: unsupported extra-file type {extra['type']}")
+    lock = LOCK_ENTRY.match(jsonpath)
+    if lock:
+        entries = [e for e in data.get("package", []) if e.get("name") == lock.group(1)]
+        if len(entries) != 1:
+            raise VersionError(f"{file.relative_to(root)} must lock {lock.group(1)} exactly once")
+        return str(entries[0]["version"])
+    node = data
+    for key in jsonpath.removeprefix("$.").split("."):
+        node = node[key]
+    return str(node)
+
+
+def config_only_package_versions(root: Path) -> dict[str, tuple[str, dict[str, str]]]:
+    config = json.loads((root / "release-please-config.json").read_text())
+    manifest = json.loads((root / ".release-please-manifest.json").read_text())
+    results = {}
+    for package_path in CONFIG_ONLY_PACKAGES:
+        package = config["packages"].get(package_path)
+        if package is None:
+            raise VersionError(f"{package_path} is not a Release Please package")
+        expected = str(manifest[package_path])
+        stable_version_tuple(expected)
+        values = {
+            f"{extra['path']}:{extra['jsonpath']}": extra_file_version(root, package_path, extra)
+            for extra in package.get("extra-files", [])
+        }
+        if not values:
+            raise VersionError(f"{package_path} has no version file for Release Please to bump")
+        results[package_path] = (expected, values)
+    return results
 
 
 def validate(root: Path, product: str) -> None:
@@ -337,6 +421,9 @@ def validate(root: Path, product: str) -> None:
         expected, values = sdk_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/cua"])
         require_equal("cua SDK", expected, values)
+    if product in {"all", "packages"}:
+        for package_path, (expected, values) in config_only_package_versions(root).items():
+            require_equal(package_path, expected, values)
     if product in {"all", "spaces"}:
         expected, values = spaces_app_versions(root)
         values[".release-please-manifest.json"] = str(manifest["apps/cua-spaces-macos"])
@@ -348,7 +435,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument(
         "--product",
-        choices=("all", "driver", "perception", "lume", "sandbox", "spacesd", "sdk", "spaces"),
+        choices=(
+            "all", "driver", "perception", "lume", "sandbox", "spacesd", "sdk", "spaces", "packages"
+        ),
         default="all",
     )
     args = parser.parse_args(argv)

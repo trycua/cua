@@ -20,7 +20,7 @@ fn def() -> &'static ToolDef {
         name: "zoom".into(),
         description: "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot \
             pixel coordinates, with 20% padding added on each side. The output image is at most \
-            500 px wide.\n\n\
+            500 px wide. Corners, not a size: x1,y1 is the top-left and x2,y2 the bottom-right (x,y,width,height is also accepted and converted).\n\n\
             After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates \
             back to full-window space. Coordinate actions return `screenshot_context_missing` \
             when no current snapshot contains a screenshot owned by this session. \
@@ -54,6 +54,18 @@ impl Tool for ZoomTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
+        if ["x1", "y1", "x2", "y2"]
+            .iter()
+            .all(|key| args.get(*key).is_none())
+        {
+            return ToolResult::error(
+                "zoom needs a region of the window's screenshot: x1,y1 (top-left) and x2,y2 \
+                 (bottom-right) in screenshot pixels, or x,y,width,height. To see the whole \
+                 window, call get_window_state (it returns the screenshot).",
+            );
+        }
         let window_id = match args.require_u32("window_id") {
             Ok(v) => v,
             Err(e) => return e,

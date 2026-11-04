@@ -586,6 +586,21 @@ fn probe(dest_home: &Path, rel: &Path) -> Result<Probe, String> {
 /// either way.
 fn delete_cookie_row(db: &Path, host_key: &str, name: &str, path: &str) -> rusqlite::Result<usize> {
     let conn = rusqlite::Connection::open(db)?;
+    // A Firefox `cookies.sqlite` names its table and columns differently.
+    let firefox: bool = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'moz_cookies'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    if firefox {
+        return conn.execute(
+            "DELETE FROM moz_cookies WHERE host = ?1 AND name = ?2 AND path = ?3",
+            rusqlite::params![host_key, name, path],
+        );
+    }
     conn.execute(
         "DELETE FROM cookies WHERE host_key = ?1 AND name = ?2 AND path = ?3",
         rusqlite::params![host_key, name, path],

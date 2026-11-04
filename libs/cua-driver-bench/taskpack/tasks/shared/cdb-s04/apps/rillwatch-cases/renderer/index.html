@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'"><title>Rillwatch Cases</title><link rel="stylesheet" href="styles.css"></head>
+<body><aside><h1>Rillwatch Cases</h1><p id="workspace" class="muted"></p><ul id="case-list" aria-label="Cases"></ul></aside>
+<main id="detail" aria-live="polite"><p class="muted">Select a case.</p></main>
+<template id="case-template"><header><p class="case-id"></p><h2 class="case-title"></h2></header>
+<dl><dt>Status</dt><dd class="fact-status"></dd><dt>Component</dt><dd class="fact-component"></dd><dt>Reported</dt><dd class="fact-reported"></dd><dt>Duplicate of</dt><dd class="fact-duplicate"></dd></dl>
+<section><h3>Report</h3><pre class="case-body"></pre></section>
+<section class="editor"><h3>Case disposition</h3><p class="readonly-note"></p><form class="update-form">
+<label>Status<select name="status"><option value="open">Open</option><option value="duplicate">Duplicate</option></select></label>
+<label>Duplicate of<select name="duplicate_of"><option value="">Unlinked</option><option value="RWC-184">RWC-184</option></select></label>
+<fieldset><legend>Structured evidence</legend><label>Wiki section<input name="wiki_ref" autocomplete="off"></label><label>Exact reproduction URL<input name="repro_url" autocomplete="off"></label><label>Log reference<input name="log_ref" autocomplete="off"></label></fieldset>
+<button type="submit">Save case</button><span class="save-status" role="status"></span></form></section></template>
+<script src="app.js"></script></body></html>

@@ -224,7 +224,7 @@ export function createFakeHostBridge(
       const spare = request.profile === "spare";
       state.status = {
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: request.provideSpaces ?? spare,
+        provideSpaces: request.provideSpaces ?? (request.mode !== "direct"),
         maxSpaces: 4,
         maxMacosVms: options.platform === "macos" ? 2 : 0,
         providedSpaces: [],
@@ -234,7 +234,7 @@ export function createFakeHostBridge(
         relayUrl: request.mode === "relay" ? request.relayUrl ?? DEFAULT_RELAY_URL : null,
         directUrl: request.mode === "direct" ? `http://${request.direct}` : null,
         machineId: "0123abcd4567",
-        name: request.name ?? "This machine",
+        name: request.name ?? "This computer",
         sharing: true,
         service: {
           installed: true,

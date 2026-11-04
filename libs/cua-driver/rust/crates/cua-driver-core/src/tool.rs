@@ -36,6 +36,8 @@ tokio::task_local! {
     /// Opaque generation for runtime-owned mutable resources. Nested
     /// dispatches inherit this key, while public arguments can never select it.
     static DISPATCH_RUNTIME_SCOPE: String;
+    /// The physical desktop action this task dispatches.
+    static DESKTOP_LEASE: DesktopLease;
 }
 
 /// Return the immutable authorization context bound to the current dispatch.
@@ -71,9 +73,154 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
     action()
 }
 
-fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
-    static COORDINATOR: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
+/// How long a call waits for the desktop lane once its holder is a worker
+/// whose call already ended. It matches the base budget of one foreground
+/// input call, so a waiting call never outlasts its own budget behind it.
+const STALE_LANE_WAIT: Duration = Duration::from_secs(12);
+
+/// The process-wide physical input lane: one desktop action at a time.
+struct DesktopLane {
+    lock: Arc<tokio::sync::Mutex<()>>,
+    holder: Arc<Mutex<LaneHolder>>,
+    stale_wait: Duration,
+}
+
+/// Which hold of the lane is current, and when its call ended while a
+/// worker still held the lane. A mark belongs to its holder's generation,
+/// so it never applies to the holder after it.
+#[derive(Default)]
+struct LaneHolder {
+    generation: u64,
+    stale_since: Option<tokio::time::Instant>,
+}
+
+fn desktop_lane() -> &'static DesktopLane {
+    static LANE: OnceLock<DesktopLane> = OnceLock::new();
+    LANE.get_or_init(|| DesktopLane::new(STALE_LANE_WAIT))
+}
+
+fn lock_holder(holder: &Mutex<LaneHolder>) -> std::sync::MutexGuard<'_, LaneHolder> {
+    holder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl DesktopLane {
+    fn new(stale_wait: Duration) -> Self {
+        Self {
+            lock: Arc::new(tokio::sync::Mutex::new(())),
+            holder: Arc::new(Mutex::new(LaneHolder::default())),
+            stale_wait,
+        }
+    }
+
+    /// Wait for the lane. Waiting behind a call still running is ordinary
+    /// serialization; waiting behind a worker that outlived its call gives
+    /// up after `stale_wait` with an `input_busy` refusal.
+    async fn acquire(&self) -> Result<DesktopCall, ToolResult> {
+        // Avoid yielding the dispatch task when the process-wide input
+        // lane is uncontended. On Windows, that yield creates a window in
+        // which the foreground target can lose keyboard eligibility
+        // between the fixture's focus proof and SendInput. Contended
+        // runtimes still wait and serialize through the same mutex.
+        let guard = match self.lock.clone().try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                let wait = self.lock.clone().lock_owned();
+                tokio::pin!(wait);
+                loop {
+                    // Read the holder on every pass, the first one before any
+                    // wait included: a stale worker seen earlier may have
+                    // stopped, and its successor be a call still running.
+                    let stale_since = lock_holder(&self.holder).stale_since;
+                    if stale_since
+                        .is_some_and(|since| tokio::time::Instant::now() >= since + self.stale_wait)
+                    {
+                        return Err(protected_refusal(
+                            "input_busy",
+                            "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped",
+                        ));
+                    }
+                    tokio::select! {
+                        guard = &mut wait => break guard,
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    }
+                }
+            }
+        };
+        let generation = {
+            let mut holder = lock_holder(&self.holder);
+            holder.generation += 1;
+            holder.stale_since = None;
+            holder.generation
+        };
+        Ok(DesktopCall(DesktopLease(Arc::new(HeldLane {
+            holder: self.holder.clone(),
+            generation,
+            _guard: guard,
+        }))))
+    }
+}
+
+struct HeldLane {
+    holder: Arc<Mutex<LaneHolder>>,
+    generation: u64,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl Drop for HeldLane {
+    fn drop(&mut self) {
+        // Runs before `_guard` unlocks the lane for the next holder.
+        let mut holder = lock_holder(&self.holder);
+        if holder.generation == self.generation {
+            holder.stale_since = None;
+        }
+    }
+}
+
+/// One physical desktop action's hold on the process-wide input lane, freed
+/// once every clone is dropped. A platform worker that outlives its call (it
+/// timed out, or its caller went away) keeps a clone, as does any cleanup it
+/// hands off, so the next desktop action waits until both have stopped
+/// instead of overlapping their late input, for at most [`STALE_LANE_WAIT`].
+#[derive(Clone)]
+pub struct DesktopLease(Arc<HeldLane>);
+
+impl DesktopLease {
+    /// The lease of the desktop action this task runs, if it holds one.
+    pub fn current() -> Option<Self> {
+        DESKTOP_LEASE.try_with(Clone::clone).ok()
+    }
+}
+
+/// The dispatching call's own hold on the desktop lane. Dropping it while a
+/// worker still holds a [`DesktopLease`] clone marks that worker stale.
+pub struct DesktopCall(DesktopLease);
+
+impl DesktopCall {
+    /// Wait for the process-wide input lane, or refuse with `input_busy`
+    /// once a worker that outlived its call has held it too long.
+    pub async fn acquire() -> Result<Self, ToolResult> {
+        desktop_lane().acquire().await
+    }
+
+    /// Run `action` as the desktop action holding this lane, so that
+    /// [`DesktopLease::current`] returns it.
+    pub async fn scope<F: std::future::Future>(&self, action: F) -> F::Output {
+        DESKTOP_LEASE.scope(self.0.clone(), action).await
+    }
+}
+
+impl Drop for DesktopCall {
+    fn drop(&mut self) {
+        let held = &self.0 .0;
+        // Checked under the holder lock that the last clone's drop takes,
+        // so a worker stopping now cannot leave its mark behind.
+        let mut holder = lock_holder(&held.holder);
+        if holder.generation == held.generation && Arc::strong_count(held) > 1 {
+            holder.stale_since = Some(tokio::time::Instant::now());
+        }
+    }
 }
 
 fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
@@ -166,9 +313,15 @@ impl ToolDef {
         let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
         let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
+        // Tools that most often need a guide point at `get_guide`, so an agent
+        // that never reads the skill still learns where the guidance lives.
+        let description = match crate::guide::description_hint(&self.name) {
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
+        };
         let mut entry = serde_json::json!({
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
@@ -196,20 +349,412 @@ impl ToolDef {
     }
 }
 
-/// First argument name absent from the tool's advertised closed schema.
+/// The argument names absent from the tool's advertised closed schema, as one
+/// refusal message that also lists the accepted names, so the caller can fix
+/// every name in one retry instead of guessing one at a time.
 fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     let schema = advertised_runtime_input_schema(&def.name, &def.input_schema);
     if schema["additionalProperties"] != false {
         return None;
     }
     let properties = schema.get("properties").and_then(Value::as_object);
-    args.as_object()?
+    let unknown: Vec<&str> = args
+        .as_object()?
         .keys()
-        .find(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
-        .cloned()
+        .filter(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    // A direct action named by role/name: that targeting lives in run_steps.
+    const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
+    let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
+        && unknown.iter().all(|name| NAME_TARGET.contains(name));
+    let accepted: Vec<&str> = properties
+        .map(|properties| {
+            properties
+                .keys()
+                .map(String::as_str)
+                .filter(|name| *name != "session")
+                .collect()
+        })
+        .unwrap_or_default();
+    let noun = if unknown.len() == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
+    let hint = if name_targeted {
+        format!(
+            ". To target by role/name/app/window, send the same arguments as one run_steps \
+             step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            def.name
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "{noun} {}; accepted: {}{hint}",
+        unknown.join(", "),
+        accepted.join(", ")
+    ))
 }
 
-fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
+/// Rewrite argument spellings models guess into the advertised ones, before
+/// the closed schema is checked. Shared by dispatch and `run_steps` step
+/// validation, so a batch step accepts what a direct call accepts. `Err` is a
+/// refusal detail for an alias that cannot be translated.
+pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if cfg!(target_os = "linux") && tool_name == "set_value" {
+        if let Some(value @ Value::Number(_)) = args.get_mut("value") {
+            *value = Value::String(value.to_string());
+        }
+    }
+    normalize_zoom_args(tool_name, args);
+    normalize_key_args(tool_name, args);
+    normalize_menu_args(tool_name, args);
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
+        return Ok(());
+    };
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
+        }
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
+    }
+}
+
+/// `invoke_menu` takes `path` as a list of labels. Models also send
+/// `menu_path`, a JSON-encoded list, or one "File > Save As..." string.
+fn normalize_menu_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "invoke_menu" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    if !arguments.contains_key("path") {
+        if let Some(alias) = ["menu_path", "menu", "items"]
+            .iter()
+            .find(|alias| arguments.contains_key(**alias))
+        {
+            let value = arguments.remove(*alias).expect("present");
+            arguments.insert("path".to_owned(), value);
+        }
+    }
+    let Some(Value::String(text)) = arguments.get("path") else {
+        return;
+    };
+    let text = text.trim();
+    let labels: Vec<String> = match serde_json::from_str::<Vec<String>>(text) {
+        Ok(labels) => labels,
+        Err(_) => text
+            .split(['>', '→'])
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    if !labels.is_empty() {
+        arguments.insert(
+            "path".to_owned(),
+            Value::Array(labels.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
+/// The JSON types a property schema admits, from `type` (a string or a list)
+/// and the `type` of each `anyOf`/`oneOf` branch. Empty when the schema
+/// declares none.
+fn declared_types(schema: &Value) -> Vec<&str> {
+    fn add<'v>(types: &mut Vec<&'v str>, value: Option<&'v Value>) {
+        match value {
+            Some(Value::String(name)) => types.push(name.as_str()),
+            Some(Value::Array(names)) => types.extend(names.iter().filter_map(Value::as_str)),
+            _ => {}
+        }
+    }
+    let mut types = Vec::new();
+    add(&mut types, schema.get("type"));
+    for key in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(key).and_then(Value::as_array) {
+            for branch in branches {
+                add(&mut types, branch.get("type"));
+            }
+        }
+    }
+    types
+}
+
+/// Models sometimes send scalars as strings (`"include_screenshot": "false"`,
+/// `"observe": "true"`, `"pid": "4211"`). A tool reading `as_bool()` would
+/// silently take `"false"` as absent and use the default, which is the
+/// opposite of what was asked. Rewrite a top-level string argument into the
+/// boolean, integer or number its schema declares, but only when the schema
+/// does not also admit a string, so no string-valued field is reinterpreted.
+pub(crate) fn coerce_string_scalars(schema: &Value, args: &mut Value) {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for (name, value) in arguments.iter_mut() {
+        let Value::String(text) = value else {
+            continue;
+        };
+        let Some(property) = properties.get(name) else {
+            continue;
+        };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        let text = text.trim();
+        let coerced = if types.contains(&"boolean") && text.eq_ignore_ascii_case("true") {
+            Some(Value::Bool(true))
+        } else if types.contains(&"boolean") && text.eq_ignore_ascii_case("false") {
+            Some(Value::Bool(false))
+        } else if types.contains(&"integer") {
+            text.parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| text.parse::<u64>().map(Value::from))
+                .ok()
+        } else if types.contains(&"number") {
+            text.parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+                .and_then(|number| serde_json::Number::from_f64(number).map(Value::Number))
+        } else {
+            None
+        };
+        if let Some(coerced) = coerced {
+            *value = coerced;
+        }
+    }
+}
+
+/// Key spellings models reach for that every platform's key table spells
+/// differently. Only unambiguous renames: `delete` itself means backspace on
+/// macOS and forward delete elsewhere, so it is left alone.
+fn canonical_key_name(key: &str) -> Option<&'static str> {
+    let folded: String = key
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(match folded.as_str() {
+        "pagedown" | "pgdn" | "pgdown" | "pagedn" => "pagedown",
+        "pageup" | "pgup" => "pageup",
+        "arrowleft" | "leftarrow" => "left",
+        "arrowright" | "rightarrow" => "right",
+        "arrowup" | "uparrow" => "up",
+        "arrowdown" | "downarrow" => "down",
+        "forwarddelete" | "fwddelete" | "deleteforward" => {
+            if cfg!(target_os = "macos") {
+                "forward_delete"
+            } else {
+                "delete"
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// `press_key` takes one key plus `modifiers`, `hotkey` a list of keys.
+/// Rewrite the shapes models send instead: a combination in `key`
+/// ("shift+Right" becomes key "Right" with modifiers ["shift"]), `hotkey`
+/// keys as one "cmd+s" string, and spellings such as "Page_Down".
+fn normalize_key_args(tool_name: &str, args: &mut Value) {
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    match tool_name {
+        "press_key" => {
+            let Some(key) = arguments
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return;
+            };
+            let mut key = key.trim().to_owned();
+            if key.chars().count() > 1 && key.contains('+') && !key.ends_with('+') {
+                let parts: Vec<String> =
+                    key.split('+').map(|part| part.trim().to_owned()).collect();
+                if parts.iter().all(|part| !part.is_empty()) {
+                    let (modifiers, last) = parts.split_at(parts.len() - 1);
+                    let existing = arguments
+                        .get("modifiers")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut merged: Vec<Value> = existing;
+                    for modifier in modifiers {
+                        let modifier = Value::String(modifier.to_lowercase());
+                        if !merged.contains(&modifier) {
+                            merged.push(modifier);
+                        }
+                    }
+                    arguments.insert("modifiers".to_owned(), Value::Array(merged));
+                    key = last[0].clone();
+                }
+            }
+            if let Some(canonical) = canonical_key_name(&key) {
+                key = canonical.to_owned();
+            }
+            arguments.insert("key".to_owned(), Value::String(key));
+        }
+        "hotkey" => {
+            if let Some(Value::String(combo)) = arguments.get("keys") {
+                let keys: Vec<Value> = combo
+                    .split('+')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| Value::String(part.to_owned()))
+                    .collect();
+                arguments.insert("keys".to_owned(), Value::Array(keys));
+            }
+            if let Some(Value::Array(keys)) = arguments.get_mut("keys") {
+                for key in keys.iter_mut() {
+                    if let Some(canonical) = key.as_str().and_then(canonical_key_name) {
+                        *key = Value::String(canonical.to_owned());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A larger `dx`/`dy` magnitude than this many notches is read as pixels.
+const SCROLL_MAX_NOTCHES: f64 = 50.0;
+/// Pixels per wheel notch when `dx`/`dy` is given in pixels (a Chromium
+/// wheel notch scrolls about 100 px).
+const SCROLL_PIXELS_PER_NOTCH: f64 = 100.0;
+
+/// `scroll` takes `direction` plus `amount` (wheel notches) on every platform.
+/// Models reach for signed `dx`/`dy` deltas (sometimes as strings), so
+/// translate them: positive `dy` scrolls down and positive `dx` right, as in
+/// DOM `scrollBy` and wheel `deltaY`. A magnitude up to 50 counts notches; a
+/// larger one is pixels at 100 px per notch, clamped to 50 notches. An
+/// explicit `direction` (and `amount`) wins over `dx`/`dy`.
+fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if tool_name != "scroll" {
+        return Ok(());
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return Ok(());
+    };
+    let read = |value: Option<Value>| -> Result<f64, String> {
+        match value {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(value) => value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+                .filter(|number: &f64| number.is_finite())
+                .ok_or_else(|| format!("dx/dy must be numbers, got {value}")),
+        }
+    };
+    if !arguments.contains_key("dx") && !arguments.contains_key("dy") {
+        return Ok(());
+    }
+    let dx = read(arguments.remove("dx"))?;
+    let dy = read(arguments.remove("dy"))?;
+    if arguments.contains_key("direction") {
+        return Ok(());
+    }
+    let (direction, delta) = match (dx != 0.0, dy != 0.0) {
+        (true, true) => {
+            return Err(format!(
+                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
+                 dy (or direction and amount), or use two scroll steps in run_steps."
+            ))
+        }
+        (false, false) => {
+            return Err(
+                "dx and dy are both 0, so there is nothing to scroll. Pass direction \
+                 (up, down, left or right) and amount (wheel notches). To hover without \
+                 scrolling, use move_cursor."
+                    .to_owned(),
+            )
+        }
+        (false, true) => (if dy > 0.0 { "down" } else { "up" }, dy),
+        (true, false) => (if dx > 0.0 { "right" } else { "left" }, dx),
+    };
+    let magnitude = delta.abs();
+    let notches = if magnitude <= SCROLL_MAX_NOTCHES {
+        magnitude
+    } else {
+        magnitude / SCROLL_PIXELS_PER_NOTCH
+    };
+    let notches = notches.round().clamp(1.0, SCROLL_MAX_NOTCHES) as u64;
+    arguments.insert("direction".to_owned(), Value::String(direction.to_owned()));
+    arguments
+        .entry("amount")
+        .or_insert_with(|| serde_json::json!(notches));
+    Ok(())
+}
+
+/// `zoom` takes a region as two corners (`x1,y1`-`x2,y2`). Models reach for
+/// `x, y, width, height` (and pass numbers as strings), so rewrite that shape
+/// into corners before the closed schema is checked. Explicit corners win.
+fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "zoom" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "x1", "y1", "x2", "y2", "x", "y", "width", "height", "w", "h",
+    ] {
+        if let Some(number) = arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+        {
+            arguments.insert(key.to_owned(), serde_json::json!(number));
+        }
+    }
+    for (short, long) in [("w", "width"), ("h", "height")] {
+        if !arguments.contains_key(long) {
+            if let Some(value) = arguments.remove(short) {
+                arguments.insert(long.to_owned(), value);
+            }
+        }
+    }
+    let num = |arguments: &serde_json::Map<String, Value>, key: &str| {
+        arguments.get(key).and_then(Value::as_f64)
+    };
+    for (origin, extent, first, second) in [("x", "width", "x1", "x2"), ("y", "height", "y1", "y2")]
+    {
+        if arguments.contains_key(first) || arguments.contains_key(second) {
+            continue;
+        }
+        if let (Some(start), Some(size)) = (num(arguments, origin), num(arguments, extent)) {
+            arguments.remove(origin);
+            arguments.remove(extent);
+            arguments.insert(first.to_owned(), serde_json::json!(start));
+            arguments.insert(second.to_owned(), serde_json::json!(start + size));
+        }
+    }
+}
+
+pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
     let closed = schema["additionalProperties"] == false;
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
@@ -221,11 +766,16 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
             .entry("session")
             .or_insert_with(crate::tool_schema::session_schema);
     }
+    // Dispatch reads `post_action_wait` for every action that waits for the
+    // post-action window-change report (see `crate::post_action_wait`).
+    if crate::post_action_wait::accepts(tool_name) {
+        properties
+            .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
+            .or_insert_with(crate::post_action_wait::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
-    // Reuse the portable contract's exact tagged-union schema while retaining
-    // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
         if let Some(portable_properties) = portable
             .input_schema
@@ -238,6 +788,30 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
         }
     }
     schema
+}
+
+/// Tools renamed before 0.35.0, as (old name, new name). The old name still
+/// dispatches to the new tool, but it is not registered, so tools/list shows
+/// only the new name, and its result ends with a one-line deprecation note.
+/// To be removed in a future release.
+pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
+
+/// `~/.cua-driver/config.json` key that turns `run_script` off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns `run_script` off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
+
+/// The current name of a renamed tool, or `None` when `name` is not an old name.
+pub fn renamed_tool(name: &str) -> Option<&'static str> {
+    RENAMED_TOOLS
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn deprecated_name_note(old: &str, new: &str) -> String {
+    format!("Note: `{old}` is deprecated and will be removed in a future release; call `{new}` instead.")
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -254,6 +828,8 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -284,7 +860,7 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
-/// - `driver.update_check`, `driver.probe`
+/// - `driver.update_check`, `driver.guide`, `driver.probe`
 /// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -403,6 +979,8 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
+        "run_steps" => &["input.batch"],
+        "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
 
@@ -419,6 +997,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_select" => &["browser.input.select"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
@@ -426,6 +1005,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
+        "get_guide" => &["driver.guide"],
         "probe" => &["driver.probe"],
 
         // ── encrypted local Computer History ─────────────────────────
@@ -441,10 +1021,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
@@ -457,6 +1037,16 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
     }
     capabilities
 }
@@ -515,6 +1105,42 @@ pub enum ProtectedResourceOwnership {
     DriverOwned,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectedResourceScopeError {
+    pub code: Option<&'static str>,
+    pub message: String,
+}
+
+impl From<String> for ProtectedResourceScopeError {
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl From<&str> for ProtectedResourceScopeError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+impl From<crate::browser::BrowserRefusal> for ProtectedResourceScopeError {
+    fn from(refusal: crate::browser::BrowserRefusal) -> Self {
+        Self {
+            code: Some(refusal.code.as_str()),
+            message: refusal.message,
+        }
+    }
+}
+
+impl std::fmt::Display for ProtectedResourceScopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -549,7 +1175,7 @@ pub trait Tool: Send + Sync {
         &self,
         _adapter_id: &str,
         _args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, ProtectedResourceScopeError> {
         Ok(None)
     }
 
@@ -560,11 +1186,11 @@ pub trait Tool: Send + Sync {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProtectedResourceScopeError> {
         match self.protected_resource_scope(adapter_id, args).await? {
             Some(current) if current == *approved_scope => Ok(()),
-            Some(_) => Err("the protected resource identity changed before dispatch".to_owned()),
-            None => Err("the protected resource identity cannot be re-proven".to_owned()),
+            Some(_) => Err("the protected resource identity changed before dispatch".into()),
+            None => Err("the protected resource identity cannot be re-proven".into()),
         }
     }
 
@@ -864,6 +1490,10 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn is_known_tool(&self, name: &str) -> bool {
+        name == "type_text_chars" || self.tools.contains_key(renamed_tool(name).unwrap_or(name))
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,
@@ -932,6 +1562,35 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register(Box::new(crate::guide::GetGuideTool));
+        self.register_batch_tools();
+    }
+
+    /// Register `run_steps`, which re-enters this registry for every step.
+    /// Called from [`Self::register_session_tools`] so every platform that
+    /// registers sessions gets it; [`Self::init_self_weak`] supplies the
+    /// registry handle, as for `replay_trajectory`.
+    fn register_batch_tools(&mut self) {
+        self.register(Box::new(crate::batch_tools::RunStepsTool::new(
+            self.replay_registry.clone(),
+        )));
+        // On by default; the operator can turn it off (see script_tool).
+        #[cfg(feature = "script")]
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
+        }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
+    }
+
+    /// Register the `run_script` tool, which, like
+    /// `run_steps`, re-enters this registry for every driver call.
+    #[cfg(feature = "script")]
+    pub fn register_script_tool(&mut self) {
+        self.register(Box::new(crate::script_tool::RunScriptTool::new(
+            self.replay_registry.clone(),
+        )));
     }
 
     pub fn register_perception_tool(
@@ -1212,7 +1871,65 @@ impl ToolRegistry {
             .await
     }
 
+    /// The canonical native dispatch boundary. Every refusal and every
+    /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
+    /// exists); see [`crate::recovery_hint`].
     async fn invoke_authorized(
+        &self,
+        name: &str,
+        args: Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        evidence: &TrustedInvocationEvidence,
+    ) -> ToolResult {
+        let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
+        let tool = match name {
+            "type_text_chars" => "type_text",
+            other => renamed_tool(other).unwrap_or(other),
+        };
+        let wait = if crate::post_action_wait::accepts(tool) {
+            crate::post_action_wait::from_args(tool, &args)
+        } else {
+            Ok(crate::post_action_wait::PostActionWait::Default)
+        };
+        let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
+            .then(|| crate::fast_path::wire::delta_target(&args))
+            .flatten();
+        let mut result = match wait {
+            Ok(wait) => {
+                crate::post_action_wait::scope(
+                    wait,
+                    self.invoke_authorized_unannotated(name, args, context, evidence),
+                )
+                .await
+            }
+            Err((message, structured)) => ToolResult::error(message).with_structured(structured),
+        };
+        // Fast path `on` (CUA-3102): a direct action returns the window's
+        // delta in the same result, so the agent needs no separate re-read.
+        if let Some((pid, window_id)) = delta_target.filter(|_| result.is_error != Some(true)) {
+            let mut read = serde_json::json!({
+                "pid": pid,
+                "window_id": window_id,
+                "since": "latest",
+            });
+            if let Some(session) = session.as_deref() {
+                read["session"] = Value::String(session.to_owned());
+            }
+            let delta =
+                Box::pin(self.invoke_authorized("get_window_state", read, context, evidence)).await;
+            crate::fast_path::wire::attach_delta(&mut result, delta);
+        }
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        result
+    }
+
+    async fn invoke_authorized_unannotated(
         &self,
         name: &str,
         mut args: Value,
@@ -1225,6 +1942,7 @@ impl ToolRegistry {
         // fields carry registry-internal attestations and must not be
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
+        let original_name = name;
 
         if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
             return protected_refusal(
@@ -1249,7 +1967,7 @@ impl ToolRegistry {
                 eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                 "type_text"
             }
-            other => other,
+            other => renamed_tool(other).unwrap_or(other),
         };
 
         let Some(tool) = self.tools.get(resolved_name) else {
@@ -1274,7 +1992,17 @@ impl ToolRegistry {
 
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
+        coerce_string_scalars(&tool.def().input_schema, &mut args);
         normalize_delivery_mode_args(tool.def(), &mut args);
+        if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
+            return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(
+                serde_json::json!({
+                    "code": "invalid_arguments",
+                    "tool": resolved_name,
+                    "detail": detail,
+                }),
+            );
+        }
         let unknown_argument = unknown_argument(tool.def(), &args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
@@ -1439,10 +2167,34 @@ impl ToolRegistry {
             );
         }
 
-        if let Some(name) = unknown_argument {
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+        if let Some(key) = [DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY]
+            .into_iter()
+            .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
+        }
+
+        if let Some(detail) = unknown_argument {
             return protected_refusal(
                 "invalid_arguments",
-                &format!("{resolved_name}: unknown argument {name}"),
+                &format!("{resolved_name}: unknown {detail}"),
             );
         }
 
@@ -1723,27 +2475,23 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
+                    | "run_steps"
+                    | "run_script"
                     | "start_session"
                     | "end_session"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if requires_desktop_coordination(
+        let (desktop_call, lane_refusal) = if requires_desktop_coordination(
             resolved_name,
             &args,
             tool.has_independent_input_lane(&args),
         ) {
-            let coordinator = desktop_action_coordinator();
-            // Avoid yielding the dispatch task when the process-wide input
-            // lane is uncontended. On Windows, that yield creates a window in
-            // which the foreground target can lose keyboard eligibility
-            // between the fixture's focus proof and SendInput. Contended
-            // runtimes still wait and serialize through the same mutex.
-            Some(match coordinator.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => coordinator.lock().await,
-            })
+            match DesktopCall::acquire().await {
+                Ok(call) => (Some(call), None),
+                Err(refusal) => (None, Some(refusal)),
+            }
         } else {
-            None
+            (None, None)
         };
         let pending_turn = should_record
             .then(|| {
@@ -1782,11 +2530,17 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
-        let mut result = crate::recording::scope_dispatch_click_capture(
-            pending_turn.as_ref(),
-            tool.invoke(args.clone()),
-        )
-        .await;
+        crate::tool_activity::note_tool_activity();
+        let invoke = tool.invoke(args.clone());
+        let mut result =
+            crate::recording::scope_dispatch_click_capture(pending_turn.as_ref(), async {
+                match (&desktop_call, lane_refusal) {
+                    (_, Some(refusal)) => refusal,
+                    (Some(call), None) => call.scope(invoke).await,
+                    (None, None) => invoke.await,
+                }
+            })
+            .await;
         match resolved_name {
             "get_desktop_state" if result.is_error != Some(true) => {
                 crate::desktop_capture_scale::record_desktop_state(
@@ -1845,8 +2599,9 @@ impl ToolRegistry {
         // Coordinate the physical action itself, not post-action evidence
         // capture or result shaping. Keeping the global desktop lock through
         // recording/PiP screenshots would unnecessarily block an unrelated
-        // runtime after the input side effect has already completed.
-        drop(_desktop_action);
+        // runtime after the input side effect has already completed. A
+        // platform worker still running keeps its own clone of the lease.
+        drop(desktop_call);
         restore_public_runtime_result(&mut result, &runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
@@ -1945,6 +2700,13 @@ impl ToolRegistry {
             }
         }
 
+        if renamed_tool(original_name).is_some() {
+            result.content.push(Content::text(deprecated_name_note(
+                original_name,
+                resolved_name,
+            )));
+        }
+
         result
     }
 
@@ -1974,7 +2736,7 @@ impl ToolRegistry {
                 && tool
                     .protected_resource_scope("private_observation", args)
                     .await
-                    .map_err(crate::consent::ConsentError::Provider)?
+                    .map_err(crate::consent::ConsentError::ProtectedScope)?
                     .is_none()
             {
                 return Err(crate::consent::ConsentError::Provider(
@@ -1990,7 +2752,7 @@ impl ToolRegistry {
         let browser_scope = if history_resource.is_none() {
             tool.protected_resource_scope("private_observation", args)
                 .await
-                .map_err(crate::consent::ConsentError::Provider)?
+                .map_err(crate::consent::ConsentError::ProtectedScope)?
         } else {
             None
         };
@@ -2459,7 +3221,7 @@ impl ToolRegistry {
         let mut resource = tool
             .protected_resource_scope(adapter_id, args)
             .await
-            .map_err(|message| protected_scope_refusal(&message))?
+            .map_err(|error| protected_scope_error_refusal(&error))?
             .ok_or_else(|| {
                 protected_scope_refusal(
                     "the concrete tool cannot attest an exact protected resource scope",
@@ -2510,10 +3272,12 @@ impl ToolRegistry {
                 scope.remove("driver_owned");
             }
         }
-        if let Err(message) = tool
+        if let Err(error) = tool
             .validate_protected_resource_scope(adapter_id, args, &validation_scope)
             .await
         {
+            // Any validation error revokes the grant, whatever code it carries:
+            // a CDP timeout here still means the caller must re-bind, not wait.
             if let Some(grant) = self.protected_resource_grants.revoke_resource(
                 context,
                 lifecycle_session,
@@ -2523,8 +3287,8 @@ impl ToolRegistry {
                 self.approval_broker.revoke(&grant).await;
             }
             return Err(protected_refusal(
-                "protected_resource_scope_stale",
-                &message,
+                error.code.unwrap_or("protected_resource_scope_stale"),
+                &error.message,
             ));
         }
         Ok(())
@@ -2537,20 +3301,6 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "action.target",
-                })),
-            );
-        }
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
@@ -2577,25 +3327,8 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -2984,6 +3717,7 @@ fn session_requiring_tool(tool_name: &str) -> bool {
         tool_name,
         "check_permissions"
             | "health_report"
+            | "get_guide"
             | "get_session"
             | "list_sessions"
             | "get_session_state"
@@ -3080,9 +3814,9 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 #[cfg(test)]
 mod runtime_isolation_tests {
     use super::{
-        canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        publish_action_result, restore_public_runtime_result, try_admit_text_input,
-        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        canonical_proposed_path, namespace_runtime_args, publish_action_result,
+        restore_public_runtime_result, try_admit_text_input, DesktopCall, DesktopLane,
+        DesktopLease, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -3167,6 +3901,27 @@ mod runtime_isolation_tests {
         def: super::ToolDef,
     }
 
+    /// Records the post-action wait each invocation runs under.
+    struct WaitProbe {
+        seen: Arc<Mutex<Vec<crate::post_action_wait::PostActionWait>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WaitProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(crate::post_action_wait::current());
+            crate::protocol::ToolResult::text("input delivered")
+        }
+    }
+
     struct AttestedProbe {
         hits: Arc<AtomicUsize>,
         scope: serde_json::Value,
@@ -3184,7 +3939,7 @@ mod runtime_isolation_tests {
             &self,
             _adapter_id: &str,
             _args: &serde_json::Value,
-        ) -> Result<Option<serde_json::Value>, String> {
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
             Ok(Some(self.scope.clone()))
         }
 
@@ -3193,14 +3948,14 @@ mod runtime_isolation_tests {
             _adapter_id: &str,
             _args: &serde_json::Value,
             approved_scope: &serde_json::Value,
-        ) -> Result<(), String> {
+        ) -> Result<(), super::ProtectedResourceScopeError> {
             if self.stale_before_dispatch {
-                return Err("synthetic process identity changed".to_owned());
+                return Err("synthetic process identity changed".into());
             }
             if *approved_scope == self.scope {
                 Ok(())
             } else {
-                Err("synthetic scope mismatch".to_owned())
+                Err("synthetic scope mismatch".into())
             }
         }
 
@@ -3237,6 +3992,29 @@ mod runtime_isolation_tests {
                 "window_id": args["window_id"].as_u64().unwrap_or(7),
                 "snapshot_id": "synthetic-snapshot", "elements": []
             }))
+        }
+    }
+
+    struct StringScopeProbe {
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for StringScopeProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn protected_resource_scope(
+            &self,
+            _adapter_id: &str,
+            _args: &serde_json::Value,
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
+            Err("synthetic scope lookup failed".into())
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("must not run")
         }
     }
 
@@ -3665,6 +4443,51 @@ mod runtime_isolation_tests {
                 .await;
             assert_eq!(result.is_error != Some(true), expected_allowed);
             assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
+    }
+
+    #[tokio::test]
+    async fn manifest_launch_reaches_the_platform_only_for_launchable_apps() {
+        const MANIFEST: &str = "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  apps:\n    - bundle_id: com.apple.TextEdit\n      launch: true\n    - bundle_id: com.apple.Preview\n      launch: false\nallow:\n  tools: [launch_app]\n";
+        // A loaded manifest narrows every mode, so the launch grant applies to
+        // standard and unrestricted runtimes as well as bounded ones.
+        for mode in [
+            PermissionMode::Bounded,
+            PermissionMode::Standard,
+            PermissionMode::Unrestricted,
+        ] {
+            for (bundle_id, expected_allowed) in [
+                ("com.apple.TextEdit", true),
+                ("com.apple.Preview", false),
+                ("com.apple.calculator", false),
+            ] {
+                let hits = Arc::new(AtomicUsize::new(0));
+                let registry = observation_registry_for("launch_app", None, hits.clone());
+                let context = manifest_context(mode, MANIFEST);
+                let result = registry
+                    .invoke_with_context(
+                        "launch_app",
+                        serde_json::json!({"bundle_id": bundle_id, "session": "review"}),
+                        context,
+                    )
+                    .await;
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    usize::from(expected_allowed),
+                    "{mode:?} {bundle_id}"
+                );
+                if expected_allowed {
+                    assert_ne!(result.is_error, Some(true));
+                } else {
+                    let structured = result.structured_content.unwrap();
+                    assert_eq!(structured["refusal"]["code"], "permission_denied");
+                    let expected = format!(
+                        "Permission denied: launch_app bundle_id '{bundle_id}' {}",
+                        "is outside the capability manifest"
+                    );
+                    assert_eq!(structured["refusal"]["message"], expected, "{mode:?}");
+                }
+            }
         }
     }
 
@@ -4452,6 +5275,150 @@ resources:
     }
 
     #[tokio::test]
+    async fn dispatch_resolves_type_text_chars_before_reading_the_wait() {
+        use crate::post_action_wait::{PostActionWait, SKIP_SUPPORTED};
+        use serde_json::json;
+        if !SKIP_SUPPORTED {
+            return;
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test input".into(),
+                input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let ok = registry
+            .invoke_with_context(
+                "type_text_chars",
+                json!({"post_action_wait": "none"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(ok.is_error, Some(true), "{ok:?}");
+        assert_eq!(seen.lock().unwrap().as_slice(), &[PostActionWait::None]);
+        for value in [json!(null), json!("off")] {
+            let r = registry
+                .invoke_with_context(
+                    "type_text_chars",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(r.structured_content.unwrap()["code"], "invalid_arguments");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_runs_the_action_under_its_post_action_wait() {
+        use crate::post_action_wait::{
+            current, PostActionWait, POST_ACTION_WAIT_ARG, POST_ACTION_WAIT_TOOLS, SKIP_SUPPORTED,
+        };
+        use serde_json::json;
+        let schema = json!({"type": "object", "properties": {}, "additionalProperties": false});
+        for tool in POST_ACTION_WAIT_TOOLS {
+            let advertised = super::advertised_runtime_input_schema(tool, &schema);
+            assert_eq!(
+                advertised["properties"].get(POST_ACTION_WAIT_ARG).is_some(),
+                SKIP_SUPPORTED,
+                "{tool}"
+            );
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(WaitProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: schema,
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let refusal_code = |result: crate::protocol::ToolResult| {
+            assert_eq!(result.is_error, Some(true), "{result:?}");
+            let structured = result.structured_content.expect("structured refusal");
+            if SKIP_SUPPORTED {
+                structured["code"].clone()
+            } else {
+                structured["refusal"]["code"].clone()
+            }
+        };
+
+        // Omitted keeps the wait.
+        let result = registry
+            .invoke_with_context("click", json!({}), standard_context())
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+
+        // "default" and "none" reach the adapter through the task-local scope
+        // on macOS; elsewhere the closed schema refuses the argument.
+        for value in ["default", "none"] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+            } else {
+                assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+            }
+        }
+        let expected: &[PostActionWait] = if SKIP_SUPPORTED {
+            &[
+                PostActionWait::Default,
+                PostActionWait::Default,
+                PostActionWait::None,
+            ]
+        } else {
+            &[PostActionWait::Default]
+        };
+        assert_eq!(seen.lock().unwrap().as_slice(), expected);
+        assert_eq!(
+            current(),
+            PostActionWait::Default,
+            "the choice must not leak"
+        );
+
+        // Values outside the enum, null included, never reach the tool.
+        for value in [json!(null), json!("off"), json!(0)] {
+            let result = registry
+                .invoke_with_context(
+                    "click",
+                    json!({"post_action_wait": value}),
+                    standard_context(),
+                )
+                .await;
+            if SKIP_SUPPORTED {
+                assert!(result.structured_content.as_ref().unwrap()["hint"].is_string());
+            }
+            assert_eq!(refusal_code(result), "invalid_arguments", "{value}");
+        }
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            expected,
+            "must refuse before invocation"
+        );
+    }
+
+    #[tokio::test]
     async fn desktop_background_click_refuses_before_platform_invocation() {
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
@@ -4493,9 +5460,18 @@ resources:
                 .invoke_with_context("click", args, standard_context())
                 .await;
             assert_eq!(result.is_error, Some(true));
+            let mut structured = result.structured_content.expect("structured refusal");
+            // The refusal also carries a recovery hint (see `recovery_hint`).
+            let hint = structured
+                .as_object_mut()
+                .and_then(|object| object.remove("hint"))
+                .expect("a desktop background refusal carries a hint");
+            assert!(hint
+                .as_str()
+                .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
             assert_eq!(
-                result.structured_content,
-                Some(serde_json::json!({
+                structured,
+                serde_json::json!({
                     "code": "background_unavailable",
                     "effect": "refused",
                     "suggestion": "Retry this action with delivery_mode:\"foreground\".",
@@ -4503,7 +5479,7 @@ resources:
                         "recommended": "foreground",
                         "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
                     },
-                }))
+                })
             );
             assert_eq!(
                 hits.load(Ordering::SeqCst),
@@ -5006,6 +5982,51 @@ resources:
     }
 
     #[tokio::test]
+    async fn a_plain_string_scope_error_keeps_the_generic_refusal_codes() {
+        for (name, read_only, code) in [
+            ("get_browser_state", true, "authorization_host_failed"),
+            ("browser_click", false, "protected_resource_scope_invalid"),
+        ] {
+            let mut registry = super::ToolRegistry::new_with_protected_consent_provider(Some(
+                Arc::new(AcceptingProvider {
+                    requests: AtomicUsize::new(0),
+                }),
+            ));
+            registry.register(Box::new(StringScopeProbe {
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "test string scope error".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only,
+                    destructive: false,
+                    idempotent: read_only,
+                    open_world: true,
+                },
+            }));
+            let result = registry
+                .invoke_with_context(
+                    name,
+                    serde_json::json!({
+                        "target_id": "target-1",
+                        "tab_id": "tab-1",
+                        "session": "browser"
+                    }),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str),
+                Some(code),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn browser_observation_without_a_live_origin_attestation_fails_closed() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
@@ -5135,10 +6156,23 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
@@ -5279,9 +6313,29 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route", "summary"]
+            [
+                "delivery",
+                "effect",
+                "hint",
+                "next_call",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(structured["effect"], "unverifiable");
+        // An unconfirmed click says what to read next, built from the request.
+        assert_eq!(
+            structured["next_call"],
+            serde_json::json!({
+                "tool": "get_window_state",
+                "arguments": {
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "since": "latest",
+                },
+            })
+        );
         assert_eq!(structured["delivery"]["mode"], "unknown");
         // The producer's text travels inside the closed contract for clients
         // that surface only structuredContent.
@@ -5390,7 +6444,7 @@ resources:
             let active = active.clone();
             let max_active = max_active.clone();
             tasks.push(tokio::spawn(async move {
-                let _admission = desktop_action_coordinator().lock().await;
+                let _admission = DesktopCall::acquire().await.unwrap();
                 let now = active.fetch_add(1, Ordering::SeqCst) + 1;
                 max_active.fetch_max(now, Ordering::SeqCst);
                 tokio::task::yield_now().await;
@@ -5401,6 +6455,85 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_behind_a_worker_that_never_returns_is_refused_within_its_budget() {
+        let lane = DesktopLane::new(Duration::from_millis(300));
+        let call = lane.acquire().await.unwrap();
+        // The call timed out; its platform worker never returns, so its lease
+        // clone is never dropped.
+        call.scope(async { std::mem::forget(DesktopLease::current().unwrap()) })
+            .await;
+        drop(call);
+        let next = tokio::time::timeout(Duration::from_secs(10), lane.acquire())
+            .await
+            .expect("the next call waited forever behind a stale worker");
+        let Err(refusal) = next else {
+            panic!("the lane was handed out while the stale worker still holds it");
+        };
+        assert_eq!(
+            refusal.structured_content.as_ref().unwrap()["refusal"]["code"],
+            "input_busy"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn calls_after_the_stale_bound_are_refused_without_waiting_again() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        let call = lane.acquire().await.unwrap();
+        let _worker = call.scope(async { DesktopLease::current().unwrap() }).await;
+        drop(call);
+        assert!(lane.acquire().await.is_err());
+        let started = tokio::time::Instant::now();
+        assert!(lane.acquire().await.is_err());
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_behind_the_healthy_successor_of_a_stale_worker_waits_its_turn() {
+        let lane = Arc::new(DesktopLane::new(Duration::from_secs(12)));
+        let call = lane.acquire().await.unwrap();
+        let worker = call.scope(async { DesktopLease::current().unwrap() }).await;
+        drop(call);
+        // Queued first: runs for 400 ms once the stale worker stops.
+        let first = tokio::spawn({
+            let lane = lane.clone();
+            async move {
+                let call = lane.acquire().await.ok()?;
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                drop(call);
+                Some(())
+            }
+        });
+        tokio::task::yield_now().await;
+        let second = tokio::spawn({
+            let lane = lane.clone();
+            async move { lane.acquire().await.map(drop) }
+        });
+        // The stale worker stops just before the bound.
+        tokio::time::sleep(Duration::from_millis(11_983)).await;
+        drop(worker);
+        assert!(first.await.unwrap().is_some());
+        let second = second.await.unwrap();
+        assert!(
+            second.is_ok(),
+            "refused behind a call still running: {:?}",
+            second.err().map(|refusal| refusal.structured_content)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_still_running_is_waited_for_past_the_stale_bound() {
+        let lane = Arc::new(DesktopLane::new(Duration::from_millis(100)));
+        let call = lane.acquire().await.unwrap();
+        let next = tokio::spawn({
+            let lane = lane.clone();
+            async move { lane.acquire().await.is_ok() }
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        drop(call);
+        assert!(next.await.unwrap());
     }
 
     #[test]
@@ -5579,6 +6712,9 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
         crate::consent::ConsentError::DigestMismatch => "authorization_scope_mismatch",
         crate::consent::ConsentError::Expired => "authorization_expired",
         crate::consent::ConsentError::Provider(_) => "authorization_host_failed",
+        crate::consent::ConsentError::ProtectedScope(error) => {
+            error.code.unwrap_or("authorization_host_failed")
+        }
         crate::consent::ConsentError::BoundedResource(_) => "bounded_resource_outside_manifest",
     };
     let message = error.to_string();
@@ -5593,6 +6729,13 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
 
 fn protected_scope_refusal(message: &str) -> ToolResult {
     protected_refusal("protected_resource_scope_invalid", message)
+}
+
+fn protected_scope_error_refusal(error: &ProtectedResourceScopeError) -> ToolResult {
+    protected_refusal(
+        error.code.unwrap_or("protected_resource_scope_invalid"),
+        &error.message,
+    )
 }
 
 /// Recovery text for a call on an ended lifecycle episode. A named session is
@@ -5903,6 +7046,7 @@ mod capability_tests {
         // misc
         "page",
         "check_for_update",
+        "get_guide",
         "probe",
         // browser-tool v1
         "get_browser_state",
@@ -5910,6 +7054,7 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_select",
         "browser_dialog",
         "browser_set_input_files",
         "browser_download",
@@ -5931,6 +7076,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -6000,12 +7146,14 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.select",
         "browser.input.files",
         "browser.dialog",
         "browser.download",
         "browser.input.pointer",
         // driver self
         "driver.update_check",
+        "driver.guide",
         "driver.probe",
         // encrypted local history
         "history.status",
@@ -6215,6 +7363,61 @@ mod capability_tests {
             .expect("capabilities array")
             .iter()
             .any(|capability| capability == "input.delivery_mode"));
+    }
+
+    #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
     }
 
     #[test]
@@ -6451,5 +7654,331 @@ mod capability_tests {
             .any(|adapter| {
                 adapter["id"] == "browser_prepare.existing_profile" && adapter["state"] == "active"
             }));
+    }
+}
+
+#[cfg(test)]
+mod argument_shape_tests {
+    use super::{
+        coerce_string_scalars, normalize_argument_aliases, normalize_zoom_args, unknown_argument,
+        ToolDef,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn string_scalars_follow_the_declared_type() {
+        // v036: "include_screenshot": "false" was read as absent, so the
+        // screenshot the model declined was sent anyway.
+        let schema = json!({"type": "object", "properties": {
+            "include_screenshot": {"type": "boolean"},
+            "observe": {"type": ["object", "boolean"]},
+            "pid": {"type": "integer"},
+            "x": {"type": "number"},
+            "text": {"type": "string"},
+            "value": {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+            "since": {"type": ["string", "null"]},
+            "untyped": {}
+        }});
+        let mut args = json!({
+            "include_screenshot": "False", "observe": " true", "pid": "4211", "x": "12.5",
+            "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+        });
+        coerce_string_scalars(&schema, &mut args);
+        assert_eq!(
+            args,
+            json!({
+                "include_screenshot": false, "observe": true, "pid": 4211, "x": 12.5,
+                "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+            })
+        );
+        // Not a number or boolean: left for the schema check to name.
+        let mut junk = json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"});
+        coerce_string_scalars(&schema, &mut junk);
+        assert_eq!(
+            junk,
+            json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"})
+        );
+    }
+
+    #[test]
+    fn menu_paths_in_the_shapes_models_send() {
+        let menu = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("invoke_menu", &mut args).unwrap();
+            args
+        };
+        // v036 shapes.
+        assert_eq!(
+            menu(json!({"pid": 1, "menu_path": "[\"Sheet\",\"Navigate\",\"Next Sheet\"]"})),
+            json!({"pid": 1, "path": ["Sheet", "Navigate", "Next Sheet"]})
+        );
+        assert_eq!(
+            menu(json!({"path": "File > Reload"})),
+            json!({"path": ["File", "Reload"]})
+        );
+        assert_eq!(
+            menu(json!({"menu": ["Edit", "Copy"]})),
+            json!({"path": ["Edit", "Copy"]})
+        );
+        // A real path and an explicit path win.
+        assert_eq!(
+            menu(json!({"path": ["File", "Save As..."], "menu_path": "x"})),
+            json!({"path": ["File", "Save As..."], "menu_path": "x"})
+        );
+    }
+
+    #[test]
+    fn a_direct_action_named_by_role_points_to_run_steps() {
+        let click = ToolDef {
+            name: "click".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object", "properties": {"pid": {"type": "integer"}}, "additionalProperties": false}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let detail =
+            unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
+        assert!(detail.contains("one run_steps step"), "{detail}");
+        let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
+        assert!(!other.contains("run_steps"), "{other}");
+    }
+
+    #[test]
+    fn key_combinations_and_spellings_are_normalized() {
+        let press = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("press_key", &mut args).unwrap();
+            args
+        };
+        assert_eq!(
+            press(json!({"key": "shift+Right"})),
+            json!({"key": "Right", "modifiers": ["shift"]})
+        );
+        assert_eq!(
+            press(json!({"key": "cmd+shift+z", "modifiers": ["shift"]})),
+            json!({"key": "z", "modifiers": ["shift", "cmd"]})
+        );
+        assert_eq!(
+            press(json!({"key": "Page_Down"})),
+            json!({"key": "pagedown"})
+        );
+        assert_eq!(press(json!({"key": "ArrowLeft"})), json!({"key": "left"}));
+        let forward = if cfg!(target_os = "macos") {
+            "forward_delete"
+        } else {
+            "delete"
+        };
+        assert_eq!(
+            press(json!({"key": "forwarddelete"})),
+            json!({"key": forward})
+        );
+        // A bare "+" and plain names stay as sent.
+        assert_eq!(press(json!({"key": "+"})), json!({"key": "+"}));
+        assert_eq!(press(json!({"key": "Return"})), json!({"key": "Return"}));
+        assert_eq!(press(json!({"key": "delete"})), json!({"key": "delete"}));
+
+        let mut hotkey = json!({"keys": ["ctrl", "Page_Down"]});
+        normalize_argument_aliases("hotkey", &mut hotkey).unwrap();
+        assert_eq!(hotkey, json!({"keys": ["ctrl", "pagedown"]}));
+        let mut combo = json!({"keys": "cmd+s"});
+        normalize_argument_aliases("hotkey", &mut combo).unwrap();
+        assert_eq!(combo, json!({"keys": ["cmd", "s"]}));
+    }
+
+    fn zoom_def() -> ToolDef {
+        ToolDef {
+            name: "zoom".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "window_id": {"type": "integer"}, "pid": {"type": "integer"},
+                    "x1": {"type": "number"}, "y1": {"type": "number"},
+                    "x2": {"type": "number"}, "y2": {"type": "number"}
+                },
+                "additionalProperties": false
+            }),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+    }
+
+    #[test]
+    fn zoom_accepts_origin_and_size_as_corners() {
+        // The exact shape models sent in the v035 bench (numbers as strings).
+        let mut args = json!({"pid": 1, "window_id": 928, "x": "0", "y": "100", "width": "1180", "height": "640"});
+        normalize_zoom_args("zoom", &mut args);
+        assert_eq!(
+            args,
+            json!({"pid": 1, "window_id": 928, "x1": 0.0, "y1": 100.0, "x2": 1180.0, "y2": 740.0})
+        );
+        assert_eq!(unknown_argument(&zoom_def(), &args), None);
+
+        let mut short = json!({"window_id": 1, "x": 10, "y": 20, "w": 5, "h": 6});
+        normalize_zoom_args("zoom", &mut short);
+        assert_eq!(
+            short,
+            json!({"window_id": 1, "x1": 10.0, "y1": 20.0, "x2": 15.0, "y2": 26.0})
+        );
+
+        let mut corners = json!({"window_id": 1, "x1": "1", "y1": 2, "x2": 3, "y2": 4});
+        normalize_zoom_args("zoom", &mut corners);
+        assert_eq!(
+            corners,
+            json!({"window_id": 1, "x1": 1.0, "y1": 2, "x2": 3, "y2": 4})
+        );
+
+        let mut other_tool = json!({"x": 1, "width": 2});
+        normalize_zoom_args("click", &mut other_tool);
+        assert_eq!(other_tool, json!({"x": 1, "width": 2}));
+    }
+
+    fn scroll(args: serde_json::Value) -> Result<serde_json::Value, String> {
+        let mut args = args;
+        normalize_argument_aliases("scroll", &mut args).map(|()| args)
+    }
+
+    #[test]
+    fn scroll_translates_signed_deltas_into_direction_and_notches() {
+        // Shapes models sent in the v035 bench and the live check of #4812.
+        let base = json!({"pid": 1, "window_id": 2, "x": 450, "y": 500});
+        let with = |extra: serde_json::Value| {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        for (delta, direction, amount) in [
+            (json!({"dy": "10"}), "down", 10),
+            (json!({"dy": 20}), "down", 20),
+            (json!({"dy": -3}), "up", 3),
+            (json!({"dy": 500}), "down", 5),
+            (json!({"dy": "1500"}), "down", 15),
+            (json!({"dy": "2000"}), "down", 20),
+            (json!({"dy": 99999}), "down", 50),
+            (json!({"dy": 0.2}), "down", 1),
+            (json!({"dx": 5, "dy": 0}), "right", 5),
+            (json!({"dx": "-120"}), "left", 1),
+        ] {
+            let out = scroll(with(delta.clone())).unwrap();
+            assert_eq!(out["direction"], direction, "{delta}");
+            assert_eq!(out["amount"], amount, "{delta}");
+            assert!(
+                out.get("dx").is_none() && out.get("dy").is_none(),
+                "{delta}"
+            );
+            assert_eq!(out["x"], 450);
+        }
+    }
+
+    #[test]
+    fn scroll_keeps_explicit_direction_and_amount_and_refuses_what_it_cannot_translate() {
+        let out = scroll(json!({"direction": "up", "amount": 2, "dy": 900})).unwrap();
+        assert_eq!(out, json!({"direction": "up", "amount": 2}));
+        let out = scroll(json!({"dy": 400, "amount": 7})).unwrap();
+        assert_eq!(out, json!({"direction": "down", "amount": 7}));
+        let both = scroll(json!({"dx": 3, "dy": 4})).unwrap_err();
+        assert!(both.contains("one axis per call"), "{both}");
+        let zero = scroll(json!({"dx": 0, "dy": "0"})).unwrap_err();
+        assert!(zero.contains("nothing to scroll"), "{zero}");
+        let junk = scroll(json!({"dy": "lots"})).unwrap_err();
+        assert!(junk.contains("must be numbers"), "{junk}");
+        let untouched = json!({"direction": "down", "amount": 3});
+        assert_eq!(scroll(untouched.clone()).unwrap(), untouched);
+        let mut click = json!({"dy": 4});
+        normalize_argument_aliases("click", &mut click).unwrap();
+        assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
+    }
+
+    #[test]
+    fn unknown_arguments_are_all_named_with_the_accepted_ones() {
+        let detail = unknown_argument(
+            &zoom_def(),
+            &json!({"window_id": 1, "height": 2, "width": 3}),
+        )
+        .unwrap();
+        assert_eq!(
+            detail,
+            "arguments height, width; accepted: pid, window_id, x1, x2, y1, y2"
+        );
+        let detail = unknown_argument(&zoom_def(), &json!({"window_id": 1, "height": 2})).unwrap();
+        assert!(
+            detail.starts_with("argument height; accepted: "),
+            "{detail}"
+        );
     }
 }

@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as appCore from "../core";
 import type { TelemetryBridge, TelemetryView } from "../native/telemetry";
 import { fakeDrive, MOUNT_OFF, MOUNTED, NEEDS_APPROVAL } from "../test/fakeDrive";
+import { currentUiLocale } from "../i18n";
+import { setLocaleChoice } from "../i18n/preference";
+import * as telemetryModule from "../native/telemetry";
 import { SettingsPanel, SIGN_IN_URL } from "./SettingsPanel";
 
 beforeEach(() => {
@@ -18,8 +21,6 @@ function renderPanel(overrides: Partial<Parameters<typeof SettingsPanel>[0]> = {
   const props = {
     menuBar: false,
     onMenuBarMode: vi.fn(),
-    fleetLive: false,
-    clientId: undefined,
     onOpenExternal: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
@@ -53,33 +54,12 @@ describe("SettingsPanel notch tab control", () => {
 });
 
 describe("SettingsPanel account section", () => {
-  it("shows a sign-in button that opens Cua when not live", async () => {
+  it("shows a sign-in button that opens Cua when not signed in", async () => {
     const user = userEvent.setup();
-    const props = renderPanel({ fleetLive: false });
+    const props = renderPanel();
     const button = screen.getByRole("button", { name: "Sign in to Cua" });
     await user.click(button);
     expect(props.onOpenExternal).toHaveBeenCalledWith(SIGN_IN_URL);
-  });
-
-  it("shows the API-key state but still offers account sign-in when env creds are live", () => {
-    renderPanel({ fleetLive: true, clientId: "client-abc" });
-    // The env machine key reads as "signed in via API key" with the client id…
-    expect(screen.getByText("Signed in via API key")).toBeInTheDocument();
-    expect(screen.getByText("client-abc")).toBeInTheDocument();
-    // …but it does NOT masquerade as a Cua account, and account sign-in stays available.
-    expect(screen.queryByText("Signed in to Cua")).toBeNull();
-    expect(screen.getByRole("button", { name: "Sign in to Cua" })).toBeInTheDocument();
-  });
-});
-
-describe("SettingsPanel default location", () => {
-  it("offers no default-location choice while the apps do not offer Cua Cloud", () => {
-    renderPanel({
-      defaultLocation: { value: "cloud", source: "env", env: "CUA_DEFAULT_ON", path: "/tmp/cua/config.toml" },
-      onDefaultLocation: vi.fn(),
-    });
-    expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    expect(screen.queryByText(/Cua Cloud/)).toBeNull();
   });
 });
 
@@ -262,8 +242,6 @@ describe("SettingsPanel AI agents", () => {
         <Panel
           menuBar={false}
           onMenuBarMode={vi.fn()}
-          fleetLive={false}
-          clientId={undefined}
           onOpenExternal={vi.fn()}
           onClose={vi.fn()}
         />,
@@ -379,6 +357,7 @@ describe("SettingsPanel Privacy", () => {
         view = { ...view, enabled, source: "config /tmp/cua/config.toml", sourceKind: "config" };
         return view;
       },
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},
@@ -390,7 +369,7 @@ describe("SettingsPanel Privacy", () => {
   it("acknowledges the notice, turns usage telemetry off and links the docs", async () => {
     const telemetry = fakeTelemetry();
     const props = renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     expect(telemetry.calls).toEqual(["ack"]);
     await userEvent.click(screen.getByRole("radio", { name: "Off" }));
     expect(telemetry.calls).toContain("set:false");
@@ -406,12 +385,12 @@ describe("SettingsPanel Privacy", () => {
     expect(screen.getByTitle("Set by env DO_NOT_TRACK")).toBeInTheDocument();
   });
 
-  it("lists Account, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
+  it("lists Account, Teams, General, Runtimes, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "General", "Privacy", "AI agents", "Experiments"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Runtimes", "Privacy", "AI agents", "Experiments", "Language"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -434,34 +413,37 @@ describe("SettingsPanel Experiments", () => {
       acknowledgeNotice: async () => view,
       setEnabled: async () => view,
       welcomeLeft: async () => view,
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},
       recordSignals: vi.fn(),
     };
     renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud", "Sharing"]) {
-      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
+    expect(experiments.getByRole("switch", { name: "Cua Volume" })).toHaveAttribute("aria-checked", "false");
+    // Sharing is on by default (cua.ai/pricing lists it), and so is Your cloud (a linked cloud shows under Run on).
+    for (const name of ["Sharing", "Your cloud"]) {
+      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "true");
     }
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles.slice(0, 3)).toEqual(["Account", "General", "Storage"]);
+    expect(titles.slice(0, 4)).toEqual(["Account", "Teams", "General", "Storage"]);
     expect(JSON.parse(window.localStorage.getItem("cua.settings.experiments") ?? "{}")).toMatchObject({
       cuaVolume: true,
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume"] },
+      { type: "experiments-on", experiments: ["cua_volume", "your_cloud", "sharing"] },
     ]);
   });
 });
 
-describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the Teams waitlist", async () => {
+describe("SettingsPanel Teams", () => {
+  it("opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -470,21 +452,12 @@ describe("SettingsPanel billing and Teams", () => {
       onSignedOut: vi.fn(async () => () => {}),
     };
     const props = renderPanel({
-      fleetLive: true,
       signedInIdentity: "you@example.com",
       auth,
-      billingStatus: async () => ({
-        billingEnabled: true,
-        card: null,
-        credit: { balanceUsdCents: 742 },
-        billingUrl: "https://run.cua.ai/billing",
-      }),
     });
-    expect(await screen.findByText("Coming soon")).toBeInTheDocument();
-    expect(screen.queryByText("$7.42 credit left")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Join the waitlist" }));
-    expect(props.onOpenExternal).toHaveBeenCalledWith("https://cua.ai/teams");
+    expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
+    expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
 });
 
@@ -742,5 +715,39 @@ describe("SettingsPanel launch at login", () => {
     await user.click(toggle);
     expect(await screen.findByText("Permission denied")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+});
+
+describe("SettingsPanel language", () => {
+  afterEach(async () => {
+    await act(async () => {
+      await setLocaleChoice("system");
+    });
+  });
+
+  it("offers System default and the six languages, saves the choice and switches live", async () => {
+    const user = userEvent.setup();
+    const report = vi.spyOn(telemetryModule, "telemetryBridge");
+    renderPanel();
+    const select = screen.getByRole("combobox", { name: "Language" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "System default",
+      "English",
+      "简体中文",
+      "한국어",
+      "Português (Brasil)",
+      "日本語",
+      "Español",
+    ]);
+    expect(select).toHaveValue("system");
+    await user.selectOptions(select, "ja");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBe("ja"));
+    expect(currentUiLocale()).toBe("ja");
+    expect(report).toHaveBeenCalled(); // setUiLocale goes out through the telemetry bridge
+    expect(await screen.findByRole("combobox", { name: "言語" })).toHaveValue("ja");
+    await user.selectOptions(screen.getByRole("combobox", { name: "言語" }), "system");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBeNull());
+    expect(currentUiLocale()).toBe("en");
+    report.mockRestore();
   });
 });

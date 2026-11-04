@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use bytes::Bytes;
+use sha2::{Digest as _, Sha256};
 use tokio::sync::watch;
 
 /// Which stream a chunk came from.
@@ -47,6 +48,8 @@ struct State {
     /// Offset one past the newest byte.
     end: u64,
     capacity: u64,
+    /// SHA-256 of every byte pushed, in offset order (exec ledger only).
+    digest: Option<Sha256>,
 }
 
 /// Progress published to subscribers.
@@ -78,6 +81,16 @@ pub struct ReadBatch {
 impl Output {
     /// Creates a ring holding at most `capacity` bytes (at least 1).
     pub fn new(capacity: u64) -> Self {
+        Self::build(capacity, false)
+    }
+
+    /// Like [`Output::new`], also hashing every byte pushed (see
+    /// [`Output::sha256`]).
+    pub fn with_digest(capacity: u64) -> Self {
+        Self::build(capacity, true)
+    }
+
+    fn build(capacity: u64, digest: bool) -> Self {
         let (progress, _) = watch::channel(Progress::default());
         Self {
             state: Mutex::new(State {
@@ -85,9 +98,20 @@ impl Output {
                 start: 0,
                 end: 0,
                 capacity: capacity.max(1),
+                digest: digest.then(Sha256::new),
             }),
             progress,
         }
+    }
+
+    /// Lowercase hex SHA-256 of all output pushed so far, in offset order,
+    /// when built [`Output::with_digest`].
+    pub fn sha256(&self) -> Option<String> {
+        let state = self.state.lock().expect("ring lock");
+        state
+            .digest
+            .as_ref()
+            .map(|d| hex::encode(d.clone().finalize()))
     }
 
     /// Appends output. Never blocks on subscribers.
@@ -99,6 +123,9 @@ impl Output {
             let mut state = self.state.lock().expect("ring lock");
             let offset = state.end;
             state.end += data.len() as u64;
+            if let Some(digest) = state.digest.as_mut() {
+                digest.update(&data);
+            }
             // Coalesce small writes of the same kind to keep chunk count low.
             let merged = match state.chunks.back_mut() {
                 Some(last)
@@ -258,6 +285,18 @@ mod tests {
         assert_eq!(batch.chunks.len(), 2);
         assert_eq!(&batch.chunks[0].data[..], b"o1o2");
         assert_eq!(batch.chunks[1].offset, 4);
+    }
+
+    #[test]
+    fn digest_covers_evicted_output_in_offset_order() {
+        let ring = Output::with_digest(4);
+        ring.push(OutKind::Stdout, Bytes::from_static(b"hello "));
+        ring.push(OutKind::Stderr, Bytes::from_static(b"world"));
+        assert_eq!(
+            ring.sha256().unwrap(),
+            hex::encode(Sha256::digest(b"hello world"))
+        );
+        assert!(Output::new(4).sha256().is_none());
     }
 
     #[tokio::test]

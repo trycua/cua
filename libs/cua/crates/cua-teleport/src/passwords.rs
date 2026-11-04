@@ -143,6 +143,8 @@ pub struct ChromePasswords {
     host: std::sync::Arc<dyn HostEffects>,
     platform: Platform,
     profile_dir: Option<PathBuf>,
+    local_state: Option<PathBuf>,
+    dpapi: Option<std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>>,
     profile: Option<String>,
 }
 
@@ -153,6 +155,8 @@ impl ChromePasswords {
             host,
             platform: Platform::current(),
             profile_dir: None,
+            local_state: None,
+            dpapi: None,
             profile: None,
         }
     }
@@ -164,6 +168,35 @@ impl ChromePasswords {
     }
 
     /// Read this exact profile directory.
+    /// The `Local State` holding the Windows key (default: next to the
+    /// profile; see [`crate::safe_storage::default_local_state`]).
+    pub fn with_local_state(mut self, path: impl Into<PathBuf>) -> Self {
+        self.local_state = Some(path.into());
+        self
+    }
+
+    /// DPAPI for the Windows key (the system's by default).
+    pub fn with_dpapi(
+        mut self,
+        dpapi: std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>,
+    ) -> Self {
+        self.dpapi = Some(dpapi);
+        self
+    }
+
+    fn keys<'a>(&'a self, dir: &std::path::Path, service: &'static str) -> SafeStorageKeys<'a> {
+        let mut k = SafeStorageKeys::new(self.host.as_ref(), self.platform, service)
+            .with_local_state(
+                self.local_state
+                    .clone()
+                    .or_else(|| crate::safe_storage::default_local_state(dir)),
+            );
+        if let Some(d) = &self.dpapi {
+            k = k.with_dpapi(d.clone());
+        }
+        k
+    }
+
     pub fn with_profile_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.profile_dir = Some(dir.into());
         self
@@ -217,7 +250,7 @@ impl ChromePasswords {
             .iter()
             .map(|s| s.trim().to_ascii_lowercase())
             .collect();
-        let mut keys = SafeStorageKeys::new(self.host.as_ref(), self.platform, MAC_SAFE_STORAGE);
+        let mut keys = self.keys(&dir, MAC_SAFE_STORAGE);
         let mut out = PasswordRead::default();
         for r in rows {
             let Some(origin) = origin_of(&r.origin_url) else {
@@ -559,5 +592,40 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("Windows"), "{err}");
+    }
+
+    /// A Windows source: `v10` AES-GCM passwords unwrap through Local State; an
+    /// app-bound one is reported, not fatal.
+    #[test]
+    fn windows_v10_passwords_decrypt_through_local_state() {
+        use cua_chromium_storage::dpapi::{FakeDpapi, ensure_local_state_key};
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("Default");
+        let (key, _) =
+            ensure_local_state_key(&root.path().join("Local State"), &FakeDpapi, [8u8; 32])
+                .unwrap();
+        let mut v20 = b"v20".to_vec();
+        v20.extend_from_slice(&[1u8; 40]);
+        write_login_data_for_tests(
+            &profile,
+            &[
+                (
+                    "https://github.com/login",
+                    "octo",
+                    cua_teleport_bundle::chromium_crypto::gcm::encrypt(&key, &[4u8; 12], b"gh-pw"),
+                ),
+                ("https://bank.test/", "ada", v20),
+            ],
+        )
+        .unwrap();
+        let read = ChromePasswords::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Windows)
+            .with_profile_dir(&profile)
+            .with_dpapi(Arc::new(FakeDpapi))
+            .read_report(&[])
+            .unwrap();
+        assert_eq!(read.logins.len(), 1);
+        assert_eq!(&**read.logins[0].password, "gh-pw");
+        assert_eq!(read.unavailable.len(), 1);
     }
 }

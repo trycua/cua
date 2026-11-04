@@ -174,8 +174,8 @@ def _env_float(name: str) -> Optional[float]:
 
 
 #: Sandbox refs (``local:<name>``, ``cloud:<name>``, ``direct:<host:port>``,
-#: ``relay:<id>``) and the legacy ``fleet:`` spelling: always cua-spacesd.
-_REF_PREFIXES = ("local:", "cloud:", "direct:", "relay:", "fleet:", "space://")
+#: ``relay:<id>``): always cua-spacesd. A ``cloud:`` ref fails: Cua Cloud has ended.
+_REF_PREFIXES = ("local:", "cloud:", "direct:", "relay:", "space://")
 
 
 def is_sandbox_ref(value: str) -> bool:
@@ -270,7 +270,7 @@ class RemoteDesktopSession:
 
     Full lifecycle mode opens the sandbox exactly like ``cb run``: the
     canonical ``ghcr.io/trycua/<os>`` image unless ``image=`` names a registry
-    ref, locally unless ``provider_type="cloud"`` (Fleet).
+    ref, locally (``provider_type="cloud"``: Cua Cloud has ended, it raises).
 
     Supports full bench_ui integration when bench_ui is installed in the
     remote environment, enabling:
@@ -329,7 +329,7 @@ class RemoteDesktopSession:
             height: Screen height
             os_type: Operating system type ("linux", "windows", "android")
             image: Registry image (default: the canonical image for os_type)
-            provider_type: "cloud" runs on Fleet; anything else runs locally
+            provider_type: "cloud" raises (Cua Cloud has ended); anything else runs locally
             memory: VM memory allocation (e.g., "8GB")
             cpu: VM CPU allocation (e.g., "4")
             name: Container/VM name (auto-generated if empty)
@@ -416,7 +416,7 @@ class RemoteDesktopSession:
         """Wrap an already-connected ``cua_sandbox.Sandbox``.
 
         The caller owns the sandbox: :meth:`close` only drops the reference
-        (the runner releases the sandbox or its Fleet claim itself).
+        (the runner releases the sandbox itself).
         """
         session = cls(
             os_type=os_type,
@@ -568,7 +568,7 @@ class RemoteDesktopSession:
         if self._provider_type not in ("docker", "cloud", "local", "native", ""):
             _warn_deprecated(
                 f"RemoteDesktopSession(provider_type={self._provider_type!r}) is deprecated: "
-                "the sandbox runtime follows the image (use provider_type='cloud' for Fleet)"
+                "the sandbox runtime follows the image"
             )
         if self._storage:
             _warn_deprecated(
@@ -1111,8 +1111,8 @@ class RemoteDesktopSession:
             return
         lifecycle, self._lifecycle = self._lifecycle, None
         if lifecycle is not None:
-            # A sandbox this session opened: release it (local teardown or
-            # the Fleet claim) through the same context that created it.
+            # A sandbox this session opened: release it through the same
+            # context that created it.
             self._sandbox = None
             self._initialized = False
             try:
@@ -1291,12 +1291,18 @@ class RemoteDesktopSession:
         await self.interface.write_bytes(path, data)
 
     async def file_exists(self, path: str) -> bool:
-        """Whether ``path`` is an existing file (not a directory), as in 0.2.x."""
+        """Whether ``path`` is an existing file (not a directory), as in 0.2.x.
+
+        On a cua-sandbox session, raises if the sandbox does not answer.
+        """
         await self._ensure_computer()
         return await self.interface.file_exists(path)
 
     async def directory_exists(self, path: str) -> bool:
-        """Check if a directory exists in the environment."""
+        """Check if a directory exists in the environment.
+
+        On a cua-sandbox session, raises if the sandbox does not answer.
+        """
         await self._ensure_computer()
         return await self.interface.directory_exists(path)
 

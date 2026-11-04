@@ -280,22 +280,30 @@ pub fn walk_tree_bounded_within(
 /// `unverifiable` with an explicit note, never as a plain confirmed/dispatched
 /// success.
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
-    perform_action_in(pid, None, idx)
-}
-
-/// [`perform_action`] that first tries the element identity cached by the last
-/// `get_window_state` snapshot of (pid, xid) — no re-walk — and only resolves
-/// the index against a fresh walk when the cached object is gone.
-pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(String, bool, bool)> {
-    if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
-        match native::perform_action_ref(&object_ref) {
-            Ok(done) => return Ok(done),
-            Err(error) => tracing::debug!(
-                "cached element {idx} (pid {pid}) action failed, re-resolving: {error:#}"
-            ),
-        }
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return TokenElement::new(idx, observed, WindowProof::NotRequired)
+            .act(native::perform_action_ref, |idx| {
+                native::perform_action(pid, idx)
+            });
     }
     native::perform_action(pid, idx)
+}
+
+pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(String, bool, bool)> {
+    let (identity, object_ref) = walked_object(node)?;
+    require_window_element(pid, xid, WindowElement::Identity(identity))?;
+    native::perform_action_ref(object_ref)
+}
+
+/// The proven identity and the D-Bus object of a walked node: what an action
+/// on that node addresses.
+fn walked_object(node: &AtspiNode) -> Result<(AtspiIdentity, &native::ObjectRef)> {
+    match (&node.identity, &node.object_ref) {
+        (Some(identity), Some(object_ref)) => Ok((identity.clone(), object_ref)),
+        _ => Err(anyhow::anyhow!(
+            "the walked element has no proven AT-SPI identity"
+        )),
+    }
 }
 
 /// [`perform_action`] on the exact object a snapshot observed. Never re-walks
@@ -323,13 +331,11 @@ pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> 
 
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
-    if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
-        match native::focus_element_ref(&object_ref) {
-            Ok(done) => return Ok(done),
-            Err(error) => tracing::debug!(
-                "cached element {idx} (pid {pid}) focus failed, re-resolving: {error:#}"
-            ),
-        }
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return focus_token(
+            pid,
+            &TokenElement::new(idx, observed, WindowProof::NotRequired),
+        );
     }
     native::focus_element(pid, idx)
 }
@@ -343,7 +349,7 @@ pub fn scroll_element(
     amount: usize,
     by: cua_driver_contract::ScrollBy,
 ) -> Result<ScrollProgress> {
-    native::scroll_element(pid, idx, direction, amount, by)
+    native::scroll_element(pid, &WindowElement::Index(idx), direction, amount, by)
 }
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
@@ -463,19 +469,6 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
     native::type_into_editable(pid, text)
 }
 
-/// Type into the exact indexed editable from the caller's accessibility snapshot.
-pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
-    if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
-        match native::type_into_editable_ref(&object_ref, text) {
-            Ok(()) => return Ok(()),
-            Err(error) => tracing::debug!(
-                "cached element {idx} (pid {pid}) editable write failed, re-resolving: {error:#}"
-            ),
-        }
-    }
-    native::type_into_editable_at(pid, idx, text)
-}
-
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
 /// Tries `EditableText.set_text_contents(value)` first, then
 /// `Value.set_current_value(float)`.
@@ -483,30 +476,23 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     native::set_value(pid, idx, value)
 }
 
-/// [`set_value`] on the exact object the caller's snapshot indexed, when the
-/// snapshot cache still knows it; a fresh walk (same index space as the
-/// snapshot of `xid`) otherwise. `Err` messages starting with
-/// [`native::NO_VALUE_ROUTE`] mean the element has no accessibility write
-/// route at all.
-pub fn set_value_in(pid: u32, xid: Option<u64>, idx: usize, value: &str) -> Result<()> {
-    if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
-        match native::set_value_ref(&object_ref, value) {
-            Ok(()) => return Ok(()),
-            Err(error) if native::is_no_value_route(&error) => return Err(error),
-            Err(error) => tracing::debug!(
-                "cached element {idx} (pid {pid}) set_value failed, re-resolving: {error:#}"
-            ),
-        }
+/// A combo box or list without an editable value: pick the option `value`
+/// names through the element's `Selection`. `None` when it lists no
+/// selectable options (the caller keeps its no-value-route error).
+fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<()>> {
+    match native::select_option_ref(object_ref, value) {
+        Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
+        Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
+        Ok(native::OptionPick::Unavailable) => None,
+        Err(error) => Some(Err(error)),
     }
-    native::set_value(pid, idx, value)
 }
 
-/// Read the current value/text of a snapshot-cached element (for the
-/// read-back after `set_value`). `None` when the cache has no live object
-/// for it or the element exposes neither `Value` nor `Text`.
-pub fn read_value_in(pid: u32, xid: Option<u64>, idx: usize) -> Option<String> {
-    let object_ref = cache::cached_element(pid, xid, idx)?.object_ref?;
-    native::read_value_ref(&object_ref).ok().flatten()
+fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{}: no option {value:?}; options: {options:?}",
+        native::NO_SUCH_OPTION
+    )
 }
 
 /// Insert `text` into a GUI app's editable field via AT-SPI EditableText —
@@ -570,6 +556,170 @@ fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u3
             );
             None
         }
+    }
+}
+
+pub use native::{is_window_membership_unproven, WindowElement, WindowProof};
+
+/// Whether `get_window_state` may bind this snapshot's elements to window
+/// `xid` as element tokens. See [`native::snapshot_binds_window_for`].
+pub fn snapshot_binds_window(pid: u32, xid: u64, window_scoped: bool, trusted: bool) -> bool {
+    native::snapshot_binds_window_for(pid, xid, window_scoped, trusted)
+}
+
+/// Prove from a fresh walk that `element` still belongs to window `xid`
+/// before acting for that window. See [`native::require_window_element`].
+pub fn require_window_element(pid: u32, xid: u64, element: WindowElement) -> Result<WindowProof> {
+    native::require_window_element(pid, xid, element)
+}
+
+/// The element an element token names, carried from token resolution to the
+/// action. Every action addresses `observed`, the object the token's own
+/// snapshot saw, never the index in another snapshot of the process.
+#[derive(Clone, Debug)]
+pub struct TokenElement {
+    /// Position in the token's snapshot, for messages and re-resolution.
+    pub index: usize,
+    pub observed: cache::CachedElement,
+    /// Where no window proof applies (X11, Hyprland, compositors without a
+    /// GNOME Shell), an action whose observed object fails re-resolves
+    /// `index` in a fresh application walk, as before. After a window proof
+    /// it never does, so a gone object is a stale token.
+    pub may_reresolve: bool,
+}
+
+impl TokenElement {
+    pub fn new(index: usize, observed: cache::CachedElement, proof: WindowProof) -> Self {
+        Self {
+            index,
+            observed,
+            may_reresolve: proof == WindowProof::NotRequired,
+        }
+    }
+
+    /// The D-Bus object every token action addresses first.
+    pub fn object(&self) -> Result<&native::ObjectRef> {
+        self.observed.object_ref.as_ref().ok_or_else(|| {
+            native::CachedElementGone("observed element has no D-Bus address".into()).into()
+        })
+    }
+
+    /// Act on the observed object. When that fails, re-resolve the index with
+    /// `by_index` only if `may_reresolve` allows it.
+    fn act<T>(
+        &self,
+        on_object: impl FnOnce(&native::ObjectRef) -> Result<T>,
+        by_index: impl FnOnce(usize) -> Result<T>,
+    ) -> Result<T> {
+        let error = match self.object().and_then(on_object) {
+            Ok(done) => return Ok(done),
+            Err(error) => error,
+        };
+        if !self.may_reresolve {
+            return Err(error);
+        }
+        tracing::debug!(
+            "observed element {} action failed, re-resolving: {error:#}",
+            self.index
+        );
+        by_index(self.index)
+    }
+}
+
+/// Give the token's element keyboard focus without activating its window.
+pub fn focus_token(pid: u32, token: &TokenElement) -> Result<bool> {
+    token.act(native::focus_element_ref, |idx| {
+        native::focus_element(pid, idx)
+    })
+}
+
+/// Type into the token's editable.
+pub fn type_into_token(pid: u32, token: &TokenElement, text: &str) -> Result<()> {
+    token.act(
+        |object| native::type_into_editable_ref(object, text),
+        |idx| native::type_into_editable_at(pid, idx, text),
+    )
+}
+
+/// [`set_value`] on the token's element. `Err` messages starting with
+/// [`native::NO_VALUE_ROUTE`] mean the element has no accessibility write
+/// route at all.
+pub fn set_value_token(pid: u32, token: &TokenElement, value: &str) -> Result<()> {
+    token
+        .act(
+            |object| match native::set_value_ref(object, value) {
+                // A missing value route is the element's own answer, not a
+                // failure to reach it, so it is never re-resolved.
+                Err(error) if native::is_no_value_route(&error) => {
+                    Ok(select_option(object, value).unwrap_or(Err(error)))
+                }
+                done => done.map(Ok),
+            },
+            |idx| Ok(native::set_value(pid, idx, value)),
+        )
+        .and_then(|done| done)
+}
+
+/// The open popup of the token's combo box: activate the option `value`
+/// names. `Ok(None)` when the popup lists no options yet.
+pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<Option<String>> {
+    match native::activate_option_ref(token.object()?, value)? {
+        native::OptionPick::Picked { name } => Ok(Some(name)),
+        native::OptionPick::NoMatch { options } => Err(no_such_option(value, &options)),
+        native::OptionPick::Unavailable => Ok(None),
+    }
+}
+
+/// Whether the popup of the token's combo box is open.
+pub fn options_showing_token(token: &TokenElement) -> bool {
+    token.object().is_ok_and(native::options_showing_ref)
+}
+
+/// Read the token element's current value/text (for the read-back after a
+/// write). `None` when its object is gone or exposes neither `Value` nor
+/// `Text`.
+pub fn read_value_token(token: &TokenElement) -> Option<String> {
+    native::read_value_ref(token.object().ok()?).ok().flatten()
+}
+
+/// Screen bounds of the token's element: the frame its snapshot recorded, or
+/// one `GetExtents` on the observed object.
+pub fn token_bounds(
+    pid: u32,
+    xid: Option<u64>,
+    token: &TokenElement,
+) -> Result<(i32, i32, u32, u32)> {
+    if let Some(bounds) = token.observed.bounds {
+        return Ok(bounds);
+    }
+    token.act(
+        |object| {
+            native::element_bounds_ref(object, pid, xid.unwrap_or(0), token.observed.in_web_content)
+        },
+        |idx| match xid {
+            Some(xid) => native::get_element_bounds_for_window(pid, xid, idx),
+            None => native::get_element_bounds(pid, idx),
+        },
+    )
+}
+
+/// Scroll the token's element. A fresh walk finds it by its observed
+/// identity; only where `may_reresolve` allows it does a gone identity fall
+/// back to the index.
+pub fn scroll_token(
+    pid: u32,
+    token: &TokenElement,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    let observed = WindowElement::Identity(token.observed.identity.clone());
+    match native::scroll_element(pid, &observed, direction, amount, by) {
+        Err(error) if token.may_reresolve && error.is::<native::CachedElementGone>() => {
+            let index = WindowElement::Index(token.index);
+            native::scroll_element(pid, &index, direction, amount, by)
+        }
+        result => result,
     }
 }
 
@@ -827,5 +977,108 @@ mod budget_tests {
         assert!(!result.truncated);
         assert_eq!(result.nodes_visited, 0);
         assert!(result.bounds_complete);
+    }
+}
+
+#[cfg(test)]
+mod token_dispatch_tests {
+    use super::*;
+
+    fn token(proof: WindowProof) -> TokenElement {
+        let path = "/window_b/text";
+        TokenElement::new(
+            3,
+            cache::CachedElement {
+                key: 0,
+                identity: AtspiIdentity {
+                    bus_name: ":1.42".into(),
+                    path: path.into(),
+                    frame_bus_name: ":1.42".into(),
+                    frame_path: "/frame".into(),
+                },
+                object_ref: Some(native::ObjectRef {
+                    bus: ":1.42".into(),
+                    path: path.into(),
+                }),
+                role: "text".into(),
+                in_web_content: false,
+                bounds: None,
+            },
+            proof,
+        )
+    }
+
+    fn gone(_: &native::ObjectRef) -> Result<String> {
+        Err(native::CachedElementGone("cached element is gone".into()).into())
+    }
+
+    #[test]
+    fn a_proven_token_never_re_resolves_its_index() {
+        let error = token(WindowProof::Proven)
+            .act(gone, |_| {
+                panic!("re-resolved the index after a window proof")
+            })
+            .unwrap_err();
+        assert!(error.is::<native::CachedElementGone>());
+    }
+
+    #[test]
+    fn a_walked_action_addresses_the_node_it_walked_not_another_window_at_its_index() {
+        // Window A's snapshot is retained with an element at the same index
+        // as the consent control a walk of window B found.
+        let pid = 515_252;
+        let node = |path: &str| AtspiNode {
+            element_index: Some(3),
+            role: "push button".into(),
+            name: Some("Cancel".into()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions: vec!["click".into()],
+            element_key: 0,
+            identity: Some(AtspiIdentity {
+                bus_name: ":1.42".into(),
+                path: path.into(),
+                frame_bus_name: ":1.42".into(),
+                frame_path: "/frame".into(),
+            }),
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+            object_ref: Some(native::ObjectRef {
+                bus: ":1.42".into(),
+                path: path.into(),
+            }),
+        };
+        cache::update_snapshot(pid, 1, &[node("/window_a/button")], &[]);
+        let walked = node("/window_b/button");
+        let (identity, object) = walked_object(&walked).expect("walked node is addressable");
+        assert_eq!(identity.path, "/window_b/button");
+        assert_eq!(object.path, "/window_b/button");
+        // The PID-only lookup the earlier dispatch used names window A's node.
+        let pid_only = cache::cached_element(pid, None, 3).and_then(|element| element.object_ref);
+        assert_eq!(
+            pid_only.map(|object| object.path).as_deref(),
+            Some("/window_a/button")
+        );
+        cache::forget_window(pid, 1);
+
+        let mut unproven = node("/window_b/button");
+        unproven.identity = None;
+        assert!(walked_object(&unproven).is_err());
+    }
+
+    #[test]
+    fn an_unproven_session_re_resolves_only_after_the_observed_object_fails() {
+        let unproven = token(WindowProof::NotRequired);
+        let reresolved = unproven.act(gone, |idx| Ok(format!("index {idx}")));
+        assert_eq!(reresolved.unwrap(), "index 3");
+        let observed = unproven.act(
+            |object| Ok(object.path.clone()),
+            |_| panic!("re-resolved after the observed object answered"),
+        );
+        assert_eq!(observed.unwrap(), "/window_b/text");
     }
 }

@@ -70,6 +70,9 @@ pub fn install_pointer_shape_backend() -> bool {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+mod process_selection;
+
 #[cfg(target_os = "windows")]
 pub mod win32;
 
@@ -83,6 +86,12 @@ pub mod browser_platform;
 // tests run on any host.
 #[cfg(any(target_os = "windows", test))]
 mod browser_isolated_selection;
+
+// Pure path normalization and reparse-point resolution for the isolated
+// browser installation check; cfg-independent so its unit tests run on any
+// host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_installation_path;
 
 // Pure launch-token decision and command-line quoting for isolated browsers;
 // cfg-independent so its unit tests run on any host.

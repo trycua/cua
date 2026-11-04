@@ -354,16 +354,7 @@ fn append_platform_probes(report: &mut Report) {
     };
 
     // COM / UI Automation availability.
-    match diag::ui_automation_available() {
-        Ok(()) => report.push(Probe::ok(
-            "UI Automation",
-            "CoCreateInstance(CUIAutomation) succeeded",
-        )),
-        Err(e) => report.push(Probe::err(
-            "UI Automation",
-            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
-        )),
-    }
+    report.push(ui_automation_probe());
 
     // EnumWindows count — cross-check the session probe. When Session 0
     // is in play, this almost always reports zero visible windows, which
@@ -381,6 +372,31 @@ fn append_platform_probes(report: &mut Report) {
         probe
     };
     report.push(probe);
+}
+
+#[cfg(target_os = "windows")]
+fn ui_automation_probe() -> Probe {
+    use platform_windows::diagnostics as diag;
+
+    match diag::ui_automation_available() {
+        Ok(()) => ui_automation_probe_from(Ok(()), false),
+        Err(e) => {
+            let degraded = diag::is_degraded_ui_automation_error(&e);
+            ui_automation_probe_from(Err(e), degraded)
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn ui_automation_probe_from(result: Result<(), String>, degraded: bool) -> Probe {
+    match result {
+        Ok(()) => Probe::ok("UI Automation", "CoCreateInstance(CUIAutomation) succeeded"),
+        Err(e) if degraded => Probe::warn("UI Automation", e),
+        Err(e) => Probe::err(
+            "UI Automation",
+            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
+        ),
+    }
 }
 
 /// Run `gdbus introspect` against the AT-SPI accessibility bus and report
@@ -612,13 +628,65 @@ fn append_platform_probes(report: &mut Report) {
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-/// Run every probe and return the aggregated report.
-pub fn run() -> Report {
-    assemble(
+/// Run every probe and return the aggregated report. `fix` also repairs what
+/// can be repaired safely: on macOS it makes LaunchServices forget every other
+/// copy of the app (no files are deleted).
+pub fn run(fix: bool) -> Report {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut report = assemble(
         home_dir().as_deref(),
         &crate::telemetry::status(),
         append_platform_probes,
-    )
+    );
+    #[cfg(target_os = "macos")]
+    append_install_hygiene_probes(&mut report, fix);
+    #[cfg(not(target_os = "macos"))]
+    let _ = fix;
+    report
+}
+
+/// macOS: other copies of the app that macOS can launch instead of the
+/// installed one, and permission rows tied to another path or version.
+#[cfg(target_os = "macos")]
+fn append_install_hygiene_probes(report: &mut Report, fix: bool) {
+    use crate::duplicate_copies as copies;
+
+    let active = PathBuf::from(crate::bundle::app_bundle_path());
+    let bundle_id = crate::bundle::bundle_id();
+    let (registered, indexed_only): (Vec<_>, Vec<_>) =
+        copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .partition(|copy| copy.registered);
+    let fixed = if fix && !registered.is_empty() {
+        let outcomes = copies::unregister(&registered, &copies::run_program);
+        // What LaunchServices still has registered after the fix.
+        let remaining: Vec<_> = copies::discover(&active, bundle_id, &copies::run_program)
+            .into_iter()
+            .filter(|copy| copy.registered)
+            .collect();
+        Some((outcomes, remaining))
+    } else {
+        None
+    };
+    report.push(copies::duplicate_probe(
+        &active,
+        crate::bundle::app_name(),
+        &registered,
+        &indexed_only,
+        fixed
+            .as_ref()
+            .map(|(outcomes, remaining)| (outcomes.as_slice(), remaining.as_slice())),
+    ));
+
+    let executable = active
+        .join("Contents/MacOS")
+        .join(crate::bundle::cli_name());
+    let rows = home_dir()
+        .ok_or_else(|| "HOME is not set".to_owned())
+        .and_then(|home| copies::read_tcc_rows(&home, &copies::run_program));
+    report.push(copies::permission_row_probe(&executable, rows, |bundle| {
+        copies::bundle_version_of(bundle, &copies::run_program)
+    }));
 }
 
 /// The cross-platform probes over explicit host inputs, then `platform`'s.
@@ -759,5 +827,33 @@ mod tests {
         );
         assert_eq!(report.probes[0].message, "not present");
         assert!(report.probes[1].message.starts_with("removed stale "));
+    }
+
+    #[test]
+    fn degraded_ui_automation_does_not_fail_doctor() {
+        let mut report = Report::default();
+        for error in [
+            "UI Automation desktop enumeration exceeded 4000ms; a UIA provider may be hung.",
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration.",
+        ] {
+            let probe = ui_automation_probe_from(Err(error.to_owned()), true);
+            assert_eq!(probe.status, Status::Warn);
+            assert_eq!(probe.message, error);
+            report.push(probe);
+        }
+        assert!(!report.has_errors());
+        assert_eq!(report.to_json()["ok"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn genuine_ui_automation_failures_still_fail_doctor() {
+        let probe = ui_automation_probe_from(
+            Err("CoCreateInstance(CUIAutomation) failed".to_owned()),
+            false,
+        );
+        assert_eq!(probe.status, Status::Err);
+        assert!(probe
+            .message
+            .contains("CoCreateInstance(CUIAutomation) failed"));
     }
 }

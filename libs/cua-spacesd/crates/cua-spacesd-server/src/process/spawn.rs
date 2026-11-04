@@ -199,8 +199,16 @@ fn base_command(spec: &SpawnSpec) -> Command {
         .args(&spec.args)
         .env_clear()
         .envs(&spec.env)
-        .current_dir(&spec.cwd)
         .kill_on_drop(false);
+    // For another user the directory is entered after the identity switch
+    // (`install_user_switch`): std changes directory first, as the agent,
+    // which without root cannot enter a 0750 home of the user.
+    #[cfg(unix)]
+    if spec.switch_user.is_none() {
+        command.current_dir(&spec.cwd);
+    }
+    #[cfg(not(unix))]
+    command.current_dir(&spec.cwd);
     command
 }
 
@@ -219,7 +227,18 @@ pub fn spawn_pipes(spec: &SpawnSpec) -> io::Result<Spawned> {
     #[cfg(unix)]
     {
         command.process_group(0);
-        install_user_switch(&mut command, spec.switch_user.clone(), false);
+        install_user_switch(
+            &mut command,
+            spec.switch_user.clone(),
+            Some(&spec.cwd),
+            false,
+        );
+    }
+    #[cfg(windows)]
+    {
+        // Pipes already carry all shell I/O. A background host must not
+        // allocate a visible console for each ProcessService command.
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
     let mut child = command.spawn()?;
     let pid = child.id().unwrap_or(0);
@@ -250,8 +269,17 @@ pub fn spawn_pipes(spec: &SpawnSpec) -> io::Result<Spawned> {
 /// Runs in the forked child before `exec`: new session, controlling
 /// terminal, then the user switch.
 #[cfg(unix)]
-fn install_user_switch(command: &mut Command, user: Option<UserInfo>, pty: bool) {
+pub fn install_user_switch(
+    command: &mut Command,
+    user: Option<UserInfo>,
+    cwd: Option<&std::path::Path>,
+    pty: bool,
+) {
     use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    let cwd = cwd
+        .filter(|_| user.is_some())
+        .and_then(|p| CString::new(p.as_os_str().as_bytes()).ok());
     let groups_name = user
         .as_ref()
         .and_then(|u| CString::new(u.name.clone()).ok());
@@ -277,6 +305,15 @@ fn install_user_switch(command: &mut Command, user: Option<UserInfo>, pty: bool)
                 }
                 if libc::setuid(user.uid) < 0 {
                     return Err(io::Error::last_os_error());
+                }
+                // An agent that switches users by capability must not
+                // hand them to the command (they would survive a switch
+                // between ordinary users; `exec` clears them too).
+                crate::privilege::drop_in_child();
+                if let Some(cwd) = &cwd {
+                    if libc::chdir(cwd.as_ptr()) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
                 }
             }
             Ok(())
@@ -323,7 +360,12 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<Spawned> {
         .stdin(Stdio::from(slave.try_clone()?))
         .stdout(Stdio::from(slave.try_clone()?))
         .stderr(Stdio::from(slave));
-    install_user_switch(&mut command, spec.switch_user.clone(), true);
+    install_user_switch(
+        &mut command,
+        spec.switch_user.clone(),
+        Some(&spec.cwd),
+        true,
+    );
     let child = command.spawn()?;
     // `command` still holds the slave descriptors; drop it so only the child
     // keeps the terminal open and the master sees EOF when the child exits.
@@ -585,5 +627,63 @@ pub fn contract_signal(native: libc::c_int) -> cua_proto::env::v1::Signal {
         libc::SIGTSTP => S::Tstp,
         libc::SIGWINCH => S::Winch,
         _ => S::Unspecified,
+    }
+}
+
+/// Conventional name (no `SIG` prefix, upper case) of a native signal number
+/// on this OS, `None` for numbers without one (real-time signals).
+#[cfg(unix)]
+pub fn signal_name(native: libc::c_int) -> Option<&'static str> {
+    macro_rules! names {
+        ($($sig:ident => $name:literal),* $(,)?) => {
+            $(if native == libc::$sig { return Some($name); })*
+        };
+    }
+    names!(
+        SIGHUP => "HUP", SIGINT => "INT", SIGQUIT => "QUIT", SIGILL => "ILL",
+        SIGTRAP => "TRAP", SIGABRT => "ABRT", SIGBUS => "BUS", SIGFPE => "FPE",
+        SIGKILL => "KILL", SIGUSR1 => "USR1", SIGSEGV => "SEGV", SIGUSR2 => "USR2",
+        SIGPIPE => "PIPE", SIGALRM => "ALRM", SIGTERM => "TERM", SIGCHLD => "CHLD",
+        SIGCONT => "CONT", SIGSTOP => "STOP", SIGTSTP => "TSTP", SIGTTIN => "TTIN",
+        SIGTTOU => "TTOU", SIGURG => "URG", SIGXCPU => "XCPU", SIGXFSZ => "XFSZ",
+        SIGVTALRM => "VTALRM", SIGPROF => "PROF", SIGWINCH => "WINCH", SIGIO => "IO",
+        SIGSYS => "SYS",
+    );
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    names!(SIGSTKFLT => "STKFLT", SIGPWR => "PWR");
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    names!(SIGEMT => "EMT", SIGINFO => "INFO");
+    None
+}
+
+#[cfg(all(test, unix))]
+mod signal_tests {
+    use super::*;
+
+    #[test]
+    fn names_cover_signals_the_contract_enum_cannot_carry() {
+        assert_eq!(signal_name(libc::SIGSEGV), Some("SEGV"));
+        assert_eq!(signal_name(libc::SIGABRT), Some("ABRT"));
+        assert_eq!(signal_name(libc::SIGPIPE), Some("PIPE"));
+        assert_eq!(signal_name(libc::SIGKILL), Some("KILL"));
+        assert_eq!(signal_name(libc::SIGBUS), Some("BUS"));
+        assert_eq!(signal_name(libc::SIGFPE), Some("FPE"));
+        assert_eq!(signal_name(libc::SIGILL), Some("ILL"));
+        // The enum still cannot name them; the raw number and name do.
+        assert_eq!(
+            contract_signal(libc::SIGSEGV),
+            cua_proto::env::v1::Signal::Unspecified
+        );
+        assert_eq!(signal_name(0), None);
+        assert_eq!(signal_name(9999), None);
+    }
+
+    #[test]
+    fn every_contract_signal_has_a_name() {
+        for native in 1..32 {
+            if contract_signal(native) != cua_proto::env::v1::Signal::Unspecified {
+                assert!(signal_name(native).is_some(), "signal {native}");
+            }
+        }
     }
 }

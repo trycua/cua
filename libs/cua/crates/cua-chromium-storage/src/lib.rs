@@ -26,6 +26,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod dpapi;
+
 use base64::Engine as _;
 use rusty_leveldb::{DB, LdbIterator, Options};
 

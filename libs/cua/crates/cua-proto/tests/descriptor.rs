@@ -42,7 +42,10 @@ const ENV_SERVICES: &[&str] = &[
     "cua.env.v1.TeleportService",
     "cua.env.v1.TunnelService",
     "cua.env.v1.HostSpacesService",
+    "cua.env.v1.HostJobsService",
     "cua.env.v1.VolumeService",
+    "cua.env.v1.HostSnapshotsService",
+    "cua.env.v1.HostThreadService",
 ];
 
 const DAEMON_SERVICES: &[&str] = &[
@@ -50,6 +53,9 @@ const DAEMON_SERVICES: &[&str] = &[
     "cua.daemon.v1.SpaceService",
     "cua.daemon.v1.RuntimeService",
     "cua.daemon.v1.DaemonService",
+    "cua.daemon.v1.PoolService",
+    "cua.daemon.v1.ForkBatchService",
+    "cua.daemon.v1.ShareService",
 ];
 
 #[test]
@@ -93,11 +99,17 @@ fn generated_servers_carry_the_contract_names() {
         e::teleport_service_server::SERVICE_NAME,
         e::tunnel_service_server::SERVICE_NAME,
         e::host_spaces_service_server::SERVICE_NAME,
+        e::host_jobs_service_server::SERVICE_NAME,
         e::volume_service_server::SERVICE_NAME,
+        e::host_snapshots_service_server::SERVICE_NAME,
+        e::host_thread_service_server::SERVICE_NAME,
         d::sandbox_service_server::SERVICE_NAME,
         d::space_service_server::SERVICE_NAME,
         d::runtime_service_server::SERVICE_NAME,
         d::daemon_service_server::SERVICE_NAME,
+        d::pool_service_server::SERVICE_NAME,
+        d::fork_batch_service_server::SERVICE_NAME,
+        d::share_service_server::SERVICE_NAME,
     ];
     let expected: Vec<&str> = ENV_SERVICES
         .iter()
@@ -200,7 +212,7 @@ fn every_client_stream_has_a_unary_fallback() {
 
 #[test]
 fn no_bidirectional_streams() {
-    // Bidi streams cannot cross gRPC-Web or the Fleet gateway at all.
+    // Bidi streams cannot cross gRPC-Web or a gateway at all.
     let bidi: Vec<String> = methods(&descriptor_set())
         .into_iter()
         .filter(|(_, (c, s))| *c && *s)

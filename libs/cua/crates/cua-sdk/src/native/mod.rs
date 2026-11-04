@@ -3,11 +3,13 @@
 mod agent_setup;
 mod agents;
 mod auth;
+mod bake;
 #[cfg(feature = "spaces")]
 mod cloud;
 mod config;
 mod cua;
-mod fleet;
+#[cfg(feature = "spaces")]
+mod elastic;
 #[cfg(feature = "host")]
 mod host;
 mod image;
@@ -20,6 +22,7 @@ mod overlay;
 #[cfg(feature = "spaces")]
 mod persistent;
 mod sandbox;
+mod share;
 #[cfg(feature = "spaces")]
 mod spaces;
 mod spacesd;
@@ -30,11 +33,13 @@ mod teleport_types;
 pub use agent_setup::*;
 pub use agents::*;
 pub use auth::*;
+pub use bake::*;
 #[cfg(feature = "spaces")]
 pub use cloud::*;
 pub use config::*;
 pub use cua::*;
-pub use fleet::*;
+#[cfg(feature = "spaces")]
+pub use elastic::*;
 #[cfg(feature = "host")]
 pub use host::*;
 pub use image::*;
@@ -47,6 +52,7 @@ pub use overlay::*;
 #[cfg(feature = "spaces")]
 pub use persistent::*;
 pub use sandbox::*;
+pub use share::*;
 pub use spaces::*;
 pub use spacesd::*;
 pub use telemetry::*;
@@ -62,6 +68,10 @@ use std::{future::Future, sync::OnceLock};
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
+        // A trainer holds a connection (or more) per sandbox: at macOS's
+        // default soft limit of 256 its opens fail past ~250 sandboxes
+        // ("Too many open files").
+        let _ = raise_open_file_limit();
         let workers = std::thread::available_parallelism()
             .map(|n| n.get().clamp(2, 4))
             .unwrap_or(2);
@@ -86,6 +96,16 @@ where
         .map_err(|e| CuaError::Internal(format!("SDK task failed: {e}")))?
 }
 
+/// A not-found message as [`CuaError::NotFound`] carries it: its display
+/// says "not found: …" already, so a cua-spaces message that ends with "not
+/// found" ("{what} not found") loses that ending instead of saying it twice.
+pub(crate) fn not_found_message(message: String) -> String {
+    match message.strip_suffix(" not found") {
+        Some(what) if !what.trim().is_empty() => what.to_string(),
+        _ => message,
+    }
+}
+
 impl From<cua_daemon::Error> for CuaError {
     fn from(e: cua_daemon::Error) -> Self {
         use cua_daemon::Error as E;
@@ -93,28 +113,25 @@ impl From<cua_daemon::Error> for CuaError {
         match e {
             E::InvalidArgument(_) => CuaError::InvalidArgument(m),
             E::InvalidPlacement { .. } => CuaError::InvalidPlacement(m),
-            E::NotFound(_) => CuaError::NotFound(m),
+            E::NotFound(_) => CuaError::NotFound(not_found_message(m)),
             E::AmbiguousSandbox { .. } => CuaError::AmbiguousSandbox(m),
             E::ProviderNotConfigured(_) => CuaError::ProviderNotConfigured(m),
             E::Unsupported(_) => CuaError::Unsupported(m),
             E::SpacesdNotAvailable(_) => CuaError::SpacesdNotAvailable(m),
             E::Timeout(_) => CuaError::Timeout(m),
-            E::Fleet(_) => CuaError::Fleet(m),
-            E::FleetAdmissionDenied(_) => CuaError::FleetAdmissionDenied(m),
-            E::CloudCreditExhausted(_) => CuaError::CloudCreditExhausted(m),
             E::Cloud(c) => CuaError::Cloud(c),
             E::Runtime(_) => CuaError::Runtime(m),
             E::Env(_) => CuaError::Env(m),
             E::Http(_) => CuaError::Http(m),
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
+            E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::Transport(_) => CuaError::Transport(m),
             E::DaemonNotRunning(_) => CuaError::DaemonNotRunning(m),
             E::CapabilityMissing(_) => CuaError::CapabilityMissing(m),
             E::HostCapabilityMissing(_) => CuaError::HostCapabilityMissing(m),
             E::TeleportRefused(_) => CuaError::TeleportRefused(m),
-            E::PoolSpecMismatch(_) => CuaError::PoolSpecMismatch(m),
-            E::ClaimSecretsNotDelivered(_) => CuaError::ClaimSecretsNotDelivered(m),
             E::InsufficientDisk(_) => CuaError::InsufficientDisk(m),
+            E::HostCapacity(_) => CuaError::HostCapacity(m),
             E::Cancelled(_) => CuaError::Cancelled(m),
             E::Internal(_) => CuaError::Internal(m),
         }
@@ -139,12 +156,6 @@ impl From<cua_spacesd_client::Error> for CuaError {
             E::Io(_) => CuaError::Internal(m),
             _ => CuaError::Env(m),
         }
-    }
-}
-
-impl From<cua_fleet::Error> for CuaError {
-    fn from(e: cua_fleet::Error) -> Self {
-        cua_daemon::Error::from(e).into()
     }
 }
 
@@ -235,5 +246,48 @@ pub(crate) mod test_env {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+mod not_found_tests {
+    use super::*;
+
+    /// "Run on" a device that is no host: the create's error says "not
+    /// found" once, whether it came from the embedded runtime or the daemon.
+    #[test]
+    fn a_missing_machine_says_not_found_once() {
+        let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
+        let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
+        assert_eq!(embedded.to_string(), format!("not found: {what}"));
+        let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();
+        assert_eq!(daemon.to_string(), format!("not found: {what}"));
+        // A message that is only the word stays as it is.
+        assert_eq!(not_found_message(" not found".into()), " not found");
+        assert_eq!(not_found_message("local:box".into()), "local:box");
+    }
+}
+
+/// Raises this process's soft open-file limit toward 65,536, within the
+/// hard limit ([`cua_daemon::fd_guard::raise_open_file_limit`]). Returns the
+/// soft limit before and after, or `None` when nothing changed.
+pub fn raise_open_file_limit() -> Option<(u64, u64)> {
+    cua_daemon::fd_guard::raise_open_file_limit()
+}
+
+#[cfg(all(test, unix))]
+mod fd_limit_tests {
+    #[test]
+    fn the_sdk_runtime_raises_the_open_file_limit() {
+        let _ = super::runtime();
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: getrlimit fills the struct it is given.
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
+        assert!(lim.rlim_cur >= lim.rlim_max.min(1024), "{}", lim.rlim_cur);
+        // Raising again is a no-op.
+        assert_eq!(super::raise_open_file_limit(), None);
     }
 }

@@ -8,6 +8,7 @@ import { cleanup } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach } from "vitest";
 
+import "../i18n";
 import { initCoreSync } from "../core";
 
 // The app core (wasm), loaded once before any test imports a model.

@@ -42,6 +42,12 @@ public struct LiveStreamView: NSViewRepresentable {
         view.showsCursorOverlay = showsCursorOverlay
         view.surfaceSize = session.surfaceSize
         view.present(session.frame)
+        // The keyboard comes back with the stream after a reconnect.
+        if session.isReconnecting {
+            view.streamDropped()
+        } else if session.frame != nil {
+            view.streamBack()
+        }
         session.presentation.viewDidPresent(pixels: view.layerHasPixels,
                                             contentSize: view.geometry.contentRect.size,
                                             interactive: isInteractive)
@@ -65,6 +71,11 @@ public final class LiveStreamInputView: NSView {
     /// falls back to zero (§18).
     public var onDetach: (() -> Void)?
     public var isInteractive = true
+    /// Whether to take the keyboard back after a reconnect.
+    public let keyboardReturn = KeyboardReturn()
+    /// Where keys go while no viewer has them (a web page's view), so the
+    /// keyboard being there still counts as free; nil: only the window.
+    public weak var keyboardHome: NSResponder?
     public var showsCursorOverlay = true {
         didSet { cursorLayer.isHidden = !showsCursorOverlay || cursorPoint == nil }
     }
@@ -86,6 +97,10 @@ public final class LiveStreamInputView: NSView {
     /// button-up still lands somewhere the user pointed at — and never at a
     /// sentinel.
     private var lastInFramePoint: CGPoint?
+    /// Claims Command chords for the Space before the app's menus see them
+    /// (``KeyCapture``); installed while the view is in a window.
+    private var keyMonitor: Any?
+    private var keyCapture = KeyCapture()
 
     /// The single source of the view↔surface mapping.
     public var geometry: StreamGeometry {
@@ -295,6 +310,71 @@ public final class LiveStreamInputView: NSView {
 
     // MARK: - Keyboard
 
+    /// Nobody has taken the keyboard: the window, its home, or this view.
+    public var keyboardIsFree: Bool {
+        guard let window else { return false }
+        let responder = window.firstResponder
+        return responder == nil || responder === window || responder === self
+            || (keyboardHome != nil && responder === keyboardHome)
+    }
+
+    /// The stream dropped: remember whether this view had the keyboard.
+    public func streamDropped() {
+        keyboardReturn.dropped(hadKeyboard: window?.firstResponder === self)
+    }
+
+    /// The stream is back: take the keyboard again if it was ours and is
+    /// free. True when it did.
+    @discardableResult
+    public func streamBack() -> Bool {
+        guard keyboardReturn.back(keyboardIsFree: keyboardIsFree), isInteractive, !isHiddenOrHasHiddenAncestor,
+              let window else { return false }
+        return window.firstResponder === self || window.makeFirstResponder(self)
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+        } else if keyMonitor == nil {
+            // A local monitor runs before AppKit dispatches the event, so it
+            // wins over the main menu and SwiftUI shortcuts, in a
+            // non-activating panel too.
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+                MainActor.assumeIsolated { self?.capture(event) ?? false } ? nil : event
+            }
+        }
+    }
+
+    /// Whether the event was claimed for the Space (``KeyCapture``); the
+    /// view's key monitor asks for every key-down and modifier change.
+    public func capture(_ event: NSEvent) -> Bool {
+        // A key for another window is not ours; one with no window counts as
+        // this window's, as in the web host's key monitor.
+        let focused = isInteractive && window != nil && (event.window.map { $0 === window } ?? true)
+            && window?.firstResponder === self
+        switch keyCapture.route(event.type, flags: event.modifierFlags, focused: focused) {
+        case .app:
+            return false
+        case .guest:
+            sendChord(event)
+            return true
+        case .release:
+            // Back to where keys go while no viewer has them (the page's
+            // view in the web UI), else the window.
+            window?.makeFirstResponder(keyboardHome)
+            return false
+        }
+    }
+
+    /// AppKit does not reliably send the key-up of a Command chord to the
+    /// view, and a press with no release is a stuck key on the Space: send
+    /// the chord whole. A late real key-up is a harmless repeat.
+    private func sendChord(_ event: NSEvent) {
+        onInput?(encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false))
+    }
+
     public override func keyDown(with event: NSEvent) {
         guard isInteractive else { return super.keyDown(with: event) }
         onInput?(encoder.keyEvents(for: event, down: true))
@@ -306,13 +386,11 @@ public final class LiveStreamInputView: NSView {
     }
 
     /// Swallow the command chords AppKit would otherwise eat, so ⌘C in the
-    /// stream reaches the Space rather than the host app.
+    /// stream reaches the Space rather than the host app (the key monitor
+    /// usually claims them first).
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard isInteractive, window?.firstResponder === self else { return false }
-        // AppKit does not reliably send the key-up of a Command chord to the
-        // view, and a press with no release is a stuck key on the Space:
-        // send the chord whole. A late real key-up is a harmless repeat.
-        onInput?(encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false))
+        sendChord(event)
         return true
     }
 }

@@ -214,6 +214,9 @@ pub struct ChromeCookies {
     /// [`chromium_crypto::macos_safe_storage_service`].
     browser_id: String,
     profile_dir: Option<PathBuf>,
+    local_state: Option<PathBuf>,
+    service: Option<&'static str>,
+    dpapi: Option<std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>>,
     profile: Option<String>,
 }
 
@@ -225,6 +228,9 @@ impl ChromeCookies {
             platform: Platform::current(),
             browser_id: "chrome".to_string(),
             profile_dir: None,
+            local_state: None,
+            service: None,
+            dpapi: None,
             profile: None,
         }
     }
@@ -244,6 +250,43 @@ impl ChromeCookies {
     }
 
     /// Read this exact profile directory.
+    /// The `Local State` holding the Windows key (default: next to the
+    /// profile; see [`crate::safe_storage::default_local_state`]).
+    pub fn with_local_state(mut self, path: impl Into<PathBuf>) -> Self {
+        self.local_state = Some(path.into());
+        self
+    }
+
+    /// The macOS Keychain service holding this app's Safe Storage key, for an
+    /// app that is not a catalog browser (an Electron app: `"Slack Safe
+    /// Storage"`).
+    pub fn with_safe_storage_service(mut self, service: &'static str) -> Self {
+        self.service = Some(service);
+        self
+    }
+
+    /// DPAPI for the Windows key (the system's by default).
+    pub fn with_dpapi(
+        mut self,
+        dpapi: std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>,
+    ) -> Self {
+        self.dpapi = Some(dpapi);
+        self
+    }
+
+    fn keys<'a>(&'a self, dir: &std::path::Path, service: &'static str) -> SafeStorageKeys<'a> {
+        let mut k = SafeStorageKeys::new(self.host.as_ref(), self.platform, service)
+            .with_local_state(
+                self.local_state
+                    .clone()
+                    .or_else(|| crate::safe_storage::default_local_state(dir)),
+            );
+        if let Some(d) = &self.dpapi {
+            k = k.with_dpapi(d.clone());
+        }
+        k
+    }
+
     pub fn with_profile_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.profile_dir = Some(dir.into());
         self
@@ -273,6 +316,49 @@ impl ChromeCookies {
         })
     }
 
+    /// The profile names present next to this reader's profile (a directory
+    /// holding `Preferences`), `Default` first.
+    pub fn available_profiles(&self) -> Vec<String> {
+        let Some(root) = self
+            .profile_dir()
+            .ok()
+            .and_then(|d| d.parent().map(Path::to_path_buf))
+        else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().join("Preferences").is_file())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort_by_key(|n| (n != "Default", n.clone()));
+        names
+    }
+
+    /// The error for a profile with no Cookies database: it names the profile
+    /// and the profiles that do exist, so a wrong `--profile` (or a Default
+    /// that is not the one signed in) is not mistaken for "no cookies".
+    fn missing_store(&self, dir: &Path) -> TeleportError {
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dir.display().to_string());
+        let available = self.available_profiles();
+        let others = if available.is_empty() {
+            "no browser profiles were found there".to_string()
+        } else {
+            format!("profiles found: {}", available.join(", "))
+        };
+        TeleportError::Provider(format!(
+            "the browser profile {name:?} has no Cookies database ({}); {others}. \
+             Pick one with --profile",
+            dir.display()
+        ))
+    }
+
     /// Every cookie, decrypted, optionally restricted to the registrable
     /// domains in `sites` (empty reads every cookie). A row that fails to
     /// decrypt fails the whole read: a partial import would silently drop a
@@ -288,12 +374,10 @@ impl ChromeCookies {
         // `Default/Cookies` or `Default/Network/Cookies`, whichever is newer.
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
-            return Err(TeleportError::Provider(format!(
-                "no cookies: {} has no Cookies database",
-                dir.display()
-            )));
+            return Err(self.missing_store(&dir));
         }
         let service = match self.platform {
+            Platform::MacOS if self.service.is_some() => self.service.unwrap_or_default(),
             Platform::MacOS => chromium_crypto::macos_safe_storage_service(&self.browser_id)
                 .ok_or_else(|| {
                     TeleportError::Provider(format!(
@@ -306,12 +390,12 @@ impl ChromeCookies {
             // libsecret application); Windows is refused before it matters.
             Platform::Linux | Platform::Windows => "",
         };
-        let rows = read_rows(&db)?;
+        let rows = read_rows(&db).map_err(plain)?;
         let wanted: Vec<String> = sites
             .iter()
             .map(|s| s.trim().to_ascii_lowercase())
             .collect();
-        let mut keys = SafeStorageKeys::new(self.host.as_ref(), self.platform, service);
+        let mut keys = self.keys(&dir, service);
         let mut out = CookieRead::default();
         for r in rows {
             let site = crate::passwords::site_for_host(&r.host_key);
@@ -374,12 +458,10 @@ impl ChromeCookies {
         let dir = self.profile_dir()?;
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
-            return Err(TeleportError::Provider(format!(
-                "no cookies: {} has no Cookies database",
-                dir.display()
-            )));
+            return Err(self.missing_store(&dir));
         }
-        Ok(read_rows(&db)?
+        Ok(read_rows(&db)
+            .map_err(plain)?
             .into_iter()
             .map(|r| CookieHostRow {
                 host_key: r.host_key,
@@ -537,6 +619,18 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         TeleportError::Provider(format!("copying Cookies failed: {e}"))
     })?;
     Ok(TempCopy(dst))
+}
+
+/// A macOS privacy refusal in `e` said in plain words (what to turn on and
+/// that the daemon must restart); any other error as it was.
+fn plain(e: TeleportError) -> TeleportError {
+    match &e {
+        TeleportError::Provider(m) => match crate::privacy::plain_words(m) {
+            Some(say) => TeleportError::Provider(say),
+            None => e,
+        },
+        _ => e,
+    }
 }
 
 /// One row for [`write_cookies_db_for_tests`] (tests and e2e fixtures).
@@ -884,6 +978,42 @@ mod tests {
         assert_eq!(rows.iter().filter(|r| r.app_bound).count(), 1);
     }
 
+    /// A Windows source: `v10` AES-256-GCM cookies under the DPAPI-wrapped
+    /// Local State key (with the Chrome 130 host digest), the app-bound `v20`
+    /// one reported, nothing read from this machine's Keychain.
+    #[test]
+    fn windows_v10_cookies_decrypt_through_local_state_and_v20_is_reported() {
+        use cua_chromium_storage::dpapi::{FakeDpapi, ensure_local_state_key};
+        use sha2::{Digest, Sha256};
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("Default");
+        let (key, _) =
+            ensure_local_state_key(&root.path().join("Local State"), &FakeDpapi, [6u8; 32])
+                .unwrap();
+        let mut plain = Sha256::digest(b".example.com").to_vec();
+        plain.extend_from_slice(b"win-session");
+        let enc = chromium_crypto::gcm::encrypt(&key, &[2u8; 12], &plain);
+        let mut v20 = b"v20".to_vec();
+        v20.extend_from_slice(&[9u8; 40]);
+        write_modern_cookies_db_for_tests(
+            &profile,
+            &[
+                modern_row(".example.com", "sid", enc, CookieExtras::default()),
+                modern_row(".bank.test", "bound", v20, CookieExtras::default()),
+            ],
+        )
+        .unwrap();
+        let read = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Windows)
+            .with_profile_dir(&profile)
+            .with_dpapi(Arc::new(FakeDpapi))
+            .read_report(&[])
+            .unwrap();
+        assert_eq!(read.cookies.len(), 1);
+        assert_eq!(read.cookies[0].value.as_str(), "win-session");
+        assert_eq!(read.unavailable.len(), 1);
+    }
+
     /// Modern Chrome (96+): only `Network/Cookies` exists.
     #[test]
     fn reads_a_modern_network_cookies_only_profile() {
@@ -1125,5 +1255,27 @@ mod tests {
             err.contains("did not decrypt") || err.contains("padding"),
             "{err}"
         );
+    }
+
+    /// A profile with no Cookies database is named, with the profiles that do
+    /// exist, instead of reading like an account with no cookies.
+    #[test]
+    fn a_profile_without_cookies_names_itself_and_the_profiles_that_exist() {
+        let root = tempfile::tempdir().unwrap();
+        for p in ["Default", "Profile 1"] {
+            std::fs::create_dir_all(root.path().join(p)).unwrap();
+            std::fs::write(root.path().join(p).join("Preferences"), "{}").unwrap();
+        }
+        let reader = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Linux)
+            .with_profile_dir(root.path().join("Profile 2"));
+        for err in [
+            reader.read(&[]).unwrap_err().to_string(),
+            reader.host_rows().unwrap_err().to_string(),
+        ] {
+            assert!(err.contains("Profile 2"), "{err}");
+            assert!(err.contains("profiles found: Default, Profile 1"), "{err}");
+            assert!(err.contains("--profile"), "{err}");
+        }
     }
 }

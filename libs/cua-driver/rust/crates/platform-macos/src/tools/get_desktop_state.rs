@@ -37,8 +37,9 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_desktop_state".into(),
-        description: "Capture the full display in true screen pixels, full size unless \
-            `max_image_dimension` caps it. Use its PNG as the coordinate source for actions \
+        description: "Capture the full display. The long edge is capped at \
+            `max_image_dimension` (the configured default unless given); pixels of the \
+            returned image map back to the screen through its capture. Use its PNG as the coordinate source for actions \
             whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true \
             screen size and backing scale factor. Vision-only: no AX tree walk."
             .into(),
@@ -70,7 +71,18 @@ impl Tool for GetDesktopStateTool {
             Ok(input) => input,
             Err(result) => return result,
         };
-        let max_image_dimension = input.max_image_dimension.filter(|cap| *cap > 0);
+        // Call arg > session override > global config, as get_window_state.
+        let max_image_dimension = input.max_image_dimension.or_else(|| {
+            use cua_driver_core::tool_args::ArgsExt;
+            let session_id = capture_args.opt_str("_session_id");
+            let cfg = self.state.config.read().unwrap();
+            Some(
+                self.state
+                    .session_config
+                    .effective_max_image_dimension(session_id.as_deref(), &cfg),
+            )
+        });
+        let max_image_dimension = max_image_dimension.filter(|cap| *cap > 0);
         let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
             if let Some(relative) = s.strip_prefix("~/") {
@@ -104,8 +116,8 @@ impl Tool for GetDesktopStateTool {
                 let (png, overlay_capture) =
                     crate::capture::screenshot_display_bytes_excluding_overlay()?;
                 let full = crate::capture::png_dimensions(&png)?;
-                // Opt-in cap; later desktop-scope pixels from the capped
-                // image are mapped back at dispatch and by its capture_id.
+                // Capped image: later desktop-scope pixels from it are
+                // mapped back at dispatch and by its capture_id.
                 let png = match max_image_dimension {
                     Some(cap) if full.0.max(full.1) > cap => {
                         crate::capture::resize_png_if_needed(&png, cap)?

@@ -21,6 +21,8 @@ struct DesktopCoverView: View {
     var progress: UInt32?
     /// Under the line while it downloads.
     var progressText: String?
+    /// The action above a greyed-out Connect ("Enroll This Mac…").
+    var onAction: () -> Void = {}
     var onButton: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
 
@@ -28,7 +30,15 @@ struct DesktopCoverView: View {
     /// and colors only, no text).
     static let blurShare: CGFloat = 0.035
     static let dim = 0.28
-    private static let blurs = NSCache<NSImage, NSImage>()
+    /// Blurred images by source image. Bounded: the key retains its source
+    /// image, so an unbounded cache kept every thumbnail ever shown (one
+    /// per Space every 90 s) alive with its blur until memory pressure.
+    static let blurs: NSCache<NSImage, NSImage> = {
+        let cache = NSCache<NSImage, NSImage>()
+        cache.countLimit = 16
+        cache.totalCostLimit = 32 << 20
+        return cache
+    }()
     private static let context = CIContext()
 
     /// The image blurred once (Core Image, edges clamped so they stay
@@ -43,7 +53,7 @@ struct DesktopCoverView: View {
             .cropped(to: input.extent) as CIImage?,
             let out = context.createCGImage(output, from: input.extent) else { return image }
         let result = NSImage(cgImage: out, size: image.size)
-        blurs.setObject(result, forKey: image)
+        blurs.setObject(result, forKey: image, cost: out.width * out.height * 4)
         return result
     }
 
@@ -103,10 +113,17 @@ struct DesktopCoverView: View {
                     .lineLimit(1)
                     .accessibilityIdentifier("space-progress-text")
             }
+            // This Mac is not enrolled: the one action, under its line.
+            if let action = cover.action {
+                Button(action, action: onAction)
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("space-access-action")
+            }
             if let button = cover.button {
                 Button(button, action: onButton)
                     .buttonStyle(.borderedProminent)
                     .controlSize(cover.kind == .connect ? .large : .regular)
+                    .disabled(cover.buttonDisabled)
                     .help(cover.buttonHelp ?? "")
                     .accessibilityIdentifier(cover.kind == .connect ? "space-connect" : "space-retry")
             }
@@ -125,11 +142,14 @@ struct StreamPhaseReader<Content: View>: View {
         if let session { Observed(session: session, content: content) } else { content(.noSession) }
     }
 
-    static func phase(_ status: LiveStreamSession.Status, hasFrame: Bool) -> AppStreamPhase {
+    /// `reconnecting`: the stream dropped and opens again by itself
+    /// ("Reconnecting…" until its first frame).
+    static func phase(_ status: LiveStreamSession.Status, hasFrame: Bool,
+                      reconnecting: Bool = false) -> AppStreamPhase {
         switch status {
         case .idle: return .idle
-        case .connecting: return .connecting
-        case .streaming: return hasFrame ? .streaming : .connecting
+        case .connecting: return reconnecting ? .reconnecting : .connecting
+        case .streaming: return hasFrame ? .streaming : reconnecting ? .reconnecting : .connecting
         case .suspended: return .suspended
         case .failed: return .failed
         }
@@ -139,7 +159,8 @@ struct StreamPhaseReader<Content: View>: View {
         @ObservedObject var session: LiveStreamSession
         let content: (AppStreamPhase) -> Content
         var body: some View {
-            content(StreamPhaseReader.phase(session.status, hasFrame: session.frame != nil))
+            content(StreamPhaseReader.phase(session.status, hasFrame: session.frame != nil,
+                                            reconnecting: session.isReconnecting))
         }
     }
 }

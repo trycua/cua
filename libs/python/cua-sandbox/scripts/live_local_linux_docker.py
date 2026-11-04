@@ -5,10 +5,6 @@
 #
 # [tool.uv.sources]
 # cua-sandbox = { path = "..", editable = true }
-#
-# [[tool.uv.index]]
-# name = "cua-wheels"
-# url = "https://wheels.cua.ai/simple"
 # ///
 """Exercise the local Linux Docker sandbox on a real host."""
 

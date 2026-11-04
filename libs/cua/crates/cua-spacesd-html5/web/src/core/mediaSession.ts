@@ -36,6 +36,7 @@ import {
   normalizePoint,
   parseBinary,
   pointerButton,
+  surfaceContentRect,
   ticketValid,
   type InteractiveInputEvent,
   type VideoDescriptor,
@@ -92,6 +93,33 @@ export interface MediaSessionOptions {
   onServerError?: (payload: Record<string, unknown>) => void;
   /** A frame was drawn (after decode). */
   onFrame?: (width: number, height: number) => void;
+  /** When each drawn frame arrived and when it was drawn (`performance.now()` ms): the video bench. */
+  onFrameTiming?: (timing: FrameTiming) => void;
+  /** The WebCodecs decoder's preference (default `no-preference`). With
+   * `prefer-hardware`, a decoder that fails before its first frame is
+   * rebuilt in software from the next keyframe. */
+  hardwareAcceleration?: HardwareAcceleration;
+  /** Send the host's ⌘ as Control (a Mac viewing a Linux or Windows guest,
+   * where ⌘ would arrive as Super: ⌘C would type "c"). */
+  metaAsControl?: boolean;
+  /** Send a ⌘ chord's press and release together (a Mac host): Chromium
+   * does not fire the key-up of a key pressed with ⌘ held, and a press with
+   * no release is a stuck key on the Space. A late real key-up is a
+   * harmless repeat (the SwiftUI app's `sendChord`). */
+  wholeCommandChords?: boolean;
+  /** Scrolls go to the Space only while the canvas has the keyboard; until
+   * then they scroll the page (the embedded viewer). */
+  scrollNeedsFocus?: boolean;
+  /** An input acknowledgement (`delivered`, `error`, `through_sequence`). */
+  onInputAck?: (payload: Record<string, unknown>) => void;
+}
+
+/** One drawn frame's times, `performance.now()` ms. */
+export interface FrameTiming {
+  /** Its packet arrived on the socket. */
+  receivedAt: number;
+  /** It was decoded and drawn onto the canvas. */
+  drawnAt: number;
 }
 
 /** Counters for the stats overlay and tests. */
@@ -148,6 +176,10 @@ export class MediaSession {
     codec: "",
   };
   private readonly decodeStartedAt = new Map<number, number>();
+  /** The hardware decoder failed before its first frame: decode in software from now on. */
+  private hardwareRejected = false;
+  /** The current decoder drew a frame. */
+  private decoderOutput = false;
 
   // input
   private readonly sequencer = new InputSequencer();
@@ -403,6 +435,11 @@ export class MediaSession {
           height_points: Number(p.height_points ?? 0),
         });
         break;
+      case "interactive_input_acknowledgement":
+      case "interactive_input_ack":
+      case "input_ack":
+        this.options.onInputAck?.(p);
+        break;
       case "error":
         if (p.code === "input_sequence_gap") {
           this.sequencer.resync(Number(p.expected_sequence));
@@ -474,6 +511,7 @@ export class MediaSession {
   }
 
   private drawBgra(d: VideoDescriptor, payload: Uint8Array): void {
+    const receivedAt = performance.now();
     const ctx = this.context;
     if (!ctx) return;
     if (payload.byteLength !== d.width_px * d.height_px * 4) return;
@@ -493,17 +531,20 @@ export class MediaSession {
     }
     ctx.putImageData(this.imageData, 0, 0);
     this.framesDecoded += 1;
-    this.frameDrawn(d.width_px, d.height_px);
+    this.frameDrawn(d.width_px, d.height_px, receivedAt);
   }
 
-  private frameDrawn(width: number, height: number): void {
-    this.counters.lastFrameAt = performance.now();
+  private frameDrawn(width: number, height: number, receivedAt: number): void {
+    const now = performance.now();
+    this.counters.lastFrameAt = now;
     this.options.onFrame?.(width, height);
+    this.options.onFrameTiming?.({ receivedAt, drawnAt: now });
   }
 
   private drawPng(d: VideoDescriptor, payload: Uint8Array): void {
     const ctx = this.context;
     if (!ctx || typeof createImageBitmap === "undefined") return;
+    const receivedAt = performance.now();
     const blob = new Blob([payload.slice()], { type: "image/png" });
     void createImageBitmap(blob).then((bitmap) => {
       const canvas = this.options.canvas;
@@ -512,7 +553,7 @@ export class MediaSession {
       ctx.drawImage(bitmap, 0, 0);
       bitmap.close();
       this.framesDecoded += 1;
-      this.frameDrawn(d.width_px, d.height_px);
+      this.frameDrawn(d.width_px, d.height_px, receivedAt);
     });
   }
 
@@ -568,6 +609,7 @@ export class MediaSession {
     this.discardDecoder();
     const codec = avcCodecFromAnnexB(keyframe) ?? "avc1.42E01F";
     const ctx = this.context;
+    const hardware = this.options.hardwareAcceleration === "prefer-hardware" && !this.hardwareRejected;
     try {
       const decoder = new VideoDecoder({
         output: (frame) => {
@@ -577,13 +619,15 @@ export class MediaSession {
             if (canvas.height !== frame.displayHeight) canvas.height = frame.displayHeight;
             ctx?.drawImage(frame, 0, 0);
             this.framesDecoded += 1;
+            this.decoderOutput = true;
             const started = this.decodeStartedAt.get(frame.timestamp);
+            const now = performance.now();
             if (started !== undefined) {
               this.decodeStartedAt.delete(frame.timestamp);
-              const ms = performance.now() - started;
+              const ms = now - started;
               this.counters.decodeMs = this.counters.decodeMs === 0 ? ms : this.counters.decodeMs * 0.9 + ms * 0.1;
             }
-            this.frameDrawn(frame.displayWidth, frame.displayHeight);
+            this.frameDrawn(frame.displayWidth, frame.displayHeight, started ?? now);
             const sequence = this.sequenceByTimestamp.get(frame.timestamp);
             if (sequence !== undefined) {
               this.sequenceByTimestamp.delete(frame.timestamp);
@@ -598,6 +642,9 @@ export class MediaSession {
           }
         },
         error: () => {
+          // A hardware decoder that failed before its first frame can't take
+          // this stream here: decode in software from now on.
+          if (hardware && !this.decoderOutput) this.hardwareRejected = true;
           // A WebCodecs decoder that errored is closed for good: rebuild from
           // the next keyframe.
           this.discardDecoder();
@@ -605,7 +652,8 @@ export class MediaSession {
         },
       });
       // Annex B: SPS/PPS are in-band, so no `description`.
-      decoder.configure({ codec, optimizeForLatency: true });
+      decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: hardware ? "prefer-hardware" : "no-preference" });
+      this.decoderOutput = false;
       this.decoder = decoder;
       this.decoderEpoch = epoch;
       this.awaitingKeyframe = true;
@@ -665,7 +713,8 @@ export class MediaSession {
       canvas.addEventListener(type, handler as EventListener, options);
       this.detachInput.push(() => canvas.removeEventListener(type, handler as EventListener, options));
     };
-    const point = (event: MouseEvent) => normalizePoint(event.clientX, event.clientY, canvas.getBoundingClientRect());
+    // Over the video itself, not the canvas box: `object-fit: contain` letterboxes it.
+    const point = (event: MouseEvent) => normalizePoint(event.clientX, event.clientY, surfaceContentRect(canvas));
     on("pointermove", (event) => {
       const now = performance.now();
       if (now - this.lastMove < POINTER_MOVE_INTERVAL_MS) return;
@@ -696,6 +745,7 @@ export class MediaSession {
     on(
       "wheel",
       (event) => {
+        if (this.options.scrollNeedsFocus && document.activeElement !== canvas) return;
         event.preventDefault();
         this.queueInput({
           kind: "scroll",
@@ -709,17 +759,33 @@ export class MediaSession {
       },
       { passive: false },
     );
+    const send = (input: InteractiveInputEvent | null) => {
+      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+    };
     on("keydown", (event) => {
       event.preventDefault();
-      const input = keyEventToInput(event, "down");
-      if (input) this.queueInput(input);
+      send(keyEventToInput(event, "down"));
+      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"));
     });
     on("keyup", (event) => {
       event.preventDefault();
       const input = keyEventToInput(event, "up");
-      if (input) this.queueInput(input);
+      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
     });
   }
+}
+
+/** Keys that only change the modifiers. */
+const MODIFIER_KEYS = new Set(["Meta", "OS", "Shift", "Alt", "Control"]);
+
+/** A key as a Linux or Windows guest takes it from a Mac: ⌘ as Control. */
+export function commandAsControl(input: InteractiveInputEvent): InteractiveInputEvent {
+  if (input.kind !== "key") return input;
+  return {
+    ...input,
+    key: input.key === "meta" ? "control" : input.key,
+    modifiers: [...new Set(input.modifiers.map((m) => (m === "command" ? "control" : m)))],
+  };
 }
 
 function safeContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {

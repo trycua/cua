@@ -28,6 +28,8 @@ pub struct DaemonLaunchState {
     pub capability_manifest: Option<String>,
     pub approve_capability_manifest: bool,
     pub no_permissions_gate: bool,
+    #[serde(default)]
+    pub no_automation_prompts: bool,
     pub claude_code_compat: bool,
     pub grants: Vec<String>,
 }
@@ -47,6 +49,7 @@ pub fn configure_daemon_launch_state(
     capability_manifest: Option<&str>,
     approve_capability_manifest: bool,
     no_permissions_gate: bool,
+    no_automation_prompts: bool,
     claude_code_compat: bool,
     grants: &[String],
 ) {
@@ -57,6 +60,7 @@ pub fn configure_daemon_launch_state(
         capability_manifest: capability_manifest.map(str::to_owned),
         approve_capability_manifest,
         no_permissions_gate,
+        no_automation_prompts,
         claude_code_compat,
         grants: grants.to_vec(),
     };
@@ -422,6 +426,13 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
+    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(home).join("computer-history");
+    }
+    default_history_root()
+}
+
+fn default_history_root() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME")
@@ -501,7 +512,7 @@ mod tests {
 
     #[test]
     fn default_root_is_namespace_specific() {
-        let root = history_root();
+        let root = default_history_root();
         assert!(root.ends_with(format!(
             "{}/computer-history",
             crate::bundle::state_namespace()

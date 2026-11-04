@@ -79,3 +79,48 @@ pub fn dir_len(dir: &Path) -> u64 {
 pub fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
+
+/// `Local Storage/` as items: the LevelDB is read from a private copy and its
+/// values travel in the reserved `localstorage.json` entry, which the receiver
+/// writes into the destination browser's own store (a raw copy of LevelDB
+/// files would replace whatever the destination holds, and tear if the source
+/// is running). Anything else under `Local Storage/` stays a file. When the
+/// LevelDB cannot be read, the whole directory is copied as before.
+pub fn add_local_storage<W: std::io::Write>(
+    writer: &mut cua_teleport_bundle::bundle::BundleWriter<W>,
+    profile_dir: &Path,
+    disk: &Path,
+    rel: &str,
+) -> Result<()> {
+    match cua_chromium_storage::read(&cua_chromium_storage::store_dir(profile_dir)) {
+        Ok(items) => {
+            if !items.is_empty() {
+                writer.add_bytes(
+                    cua_chromium_storage::LOCAL_STORAGE_ENTRY,
+                    0o600,
+                    &cua_teleport_bundle::local_storage::serialize(&items),
+                )?;
+            }
+            if let Ok(entries) = std::fs::read_dir(disk) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name == "leveldb" {
+                        continue;
+                    }
+                    let child = format!("{rel}/{name}");
+                    match std::fs::symlink_metadata(&path) {
+                        Ok(m) if m.is_file() => add_file_best_effort(writer, &path, &child)?,
+                        Ok(m) if m.is_dir() => add_dir_recursive(writer, &path, &child)?,
+                        _ => {}
+                    }
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "localStorage could not be read as items; copying its files");
+            add_dir_recursive(writer, disk, rel)
+        }
+    }
+}

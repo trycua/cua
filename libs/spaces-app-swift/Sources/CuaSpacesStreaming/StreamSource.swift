@@ -84,9 +84,17 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
 
     /// Joins the Space's presence as `name`.
     func joinPresence(name: String, color: String?) async throws -> SpacePresence
+
+    /// Whether ⌘ chords go to the Space with Control instead of Command: a
+    /// Linux or Windows guest, where Command arrives as Super (⌘C would be
+    /// Super+C, which types "c"). Known once a session opened.
+    var commandAsControl: Bool { get }
 }
 
 extension SpaceStreamSourceProviding {
+    /// Providers that don't know the guest send ⌘ as it is.
+    public var commandAsControl: Bool { false }
+
     /// Providers that choose their own policy ignore the requested one.
     public func openSession(_ source: StreamSource, policy: String, frames: FrameSink,
                             audio: AudioSink?) async throws -> SpaceStreamSession {

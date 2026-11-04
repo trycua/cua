@@ -5,8 +5,8 @@
 //! registry, including the typed-envelope extension). [`SpacesdClient::http`]
 //! sends one request there through the same endpoint, path prefix and
 //! authentication the gRPC channel uses: the env token as `authorization`
-//! (or, through the Fleet gateway, the Fleet bearer plus `X-Cua-Fleet-Claim`
-//! with the env token moved to `x-cua-env-authorization`). Callers cannot
+//! (or, through a gateway, the gateway bearer with the env token moved to
+//! `x-cua-env-authorization`). Callers cannot
 //! set or override those headers.
 
 use std::time::Duration;
@@ -14,15 +14,13 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Request, header};
 use http_body_util::{BodyExt, Full, Limited};
-use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
-    rt::TokioExecutor,
-};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 
 use crate::{
     SpacesdClient,
+    connector::ProxyConnector,
     error::{Error, Result},
-    transport::{ENV_TOKEN_HEADER, FLEET_CLAIM_HEADER, HeaderInjector, ensure_crypto_provider},
+    transport::{ENV_TOKEN_HEADER, HeaderInjector, ensure_crypto_provider},
 };
 
 /// Default cap on a response body.
@@ -40,11 +38,10 @@ const RESERVED: &[&str] = &[
     "transfer-encoding",
     "connection",
     ENV_TOKEN_HEADER,
-    FLEET_CLAIM_HEADER,
     cua_proto::metadata::PRINCIPAL_BIN,
 ];
 
-pub(crate) type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub(crate) type HttpClient = Client<hyper_rustls::HttpsConnector<ProxyConnector>, Full<Bytes>>;
 
 /// One HTTP request to the spacesd.
 #[derive(Clone, Debug, Default)]
@@ -77,13 +74,9 @@ pub struct HttpReply {
 
 pub(crate) fn build_client(connect_timeout: Duration) -> Result<HttpClient> {
     ensure_crypto_provider();
-    let mut http = HttpConnector::new();
-    http.enforce_http(false);
-    http.set_connect_timeout(Some(connect_timeout));
-    http.set_nodelay(true);
+    let http = ProxyConnector::new(connect_timeout, None);
     let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-        .map_err(|e| Error::Transport(e.to_string()))?
+        .with_tls_config(crate::tls::client_config()?)
         .https_or_http()
         .enable_http1()
         .wrap_connector(http);
@@ -222,7 +215,6 @@ mod tests {
         for name in [
             "Authorization",
             "x-cua-env-authorization",
-            "X-Cua-Fleet-Claim",
             "x-cua-principal-bin",
             "host",
         ] {

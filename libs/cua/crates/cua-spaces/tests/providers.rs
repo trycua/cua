@@ -1,211 +1,19 @@
-//! Fleet and Local provisioning against fakes: `cua_fleet::testing::FakeFleet`
-//! for the control plane and `cua_spacesd_client::testing::MockServer` as the guest's
-//! spacesd (behind an emulated Fleet gateway for claims).
+//! Local provisioning against fakes: a fake local runtime and
+//! `cua_spacesd_client::testing::MockServer` as the guest's spacesd.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
-use cua_sandbox_core::placement::{On, Runtime};
+use cua_sandbox_core::placement::On;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
     RuntimeError,
 };
-use cua_spaces::contract::inputs::FleetRuntime;
-use cua_spaces::{Provider, SpaceCreate, Spaces};
-use cua_spacesd_client::testing::{MockAuth, MockGateway, MockServer};
+use cua_spaces::{SpaceCreate, Spaces};
+use cua_spacesd_client::testing::{MockAuth, MockServer};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
-
-#[tokio::test]
-async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let probe = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-sp")
-        .build();
-    let pool = probe.fleet_pool_name(FleetRuntime::Kubevirt, IMAGE);
-    let srv = MockServer::start(MockAuth {
-        token: None,
-        gateway: Some(MockGateway {
-            prefix: format!("/api/svc/{pool}/sbx-cua-e2e-claim-env"),
-            bearer: "fake-fleet-token".into(),
-            claim: "cua-e2e-claim".into(),
-        }),
-        prefix: None,
-    })
-    .await;
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client_with_base(&srv.url()))
-        .fleet_namespace("cua-e2e-sp")
-        .build();
-    let info = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            name: Some("cua-e2e-claim".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .ready()
-        .expect("waited");
-    assert_eq!(info.id, "cloud:cua-e2e-claim");
-    assert_eq!(info.provider, Provider::Cloud);
-    assert!(
-        fake.exists("pool", &pool, &pool),
-        "a warm pool per image and runtime"
-    );
-    // The Image row: the claim's template names the image (a tag, so no
-    // digest), recorded with the Space.
-    assert_eq!(
-        (info.image.as_str(), info.image_digest.as_str()),
-        (IMAGE, "")
-    );
-
-    // Commands go through the gateway (gRPC-Web + claim header).
-    let space = spaces.space(&info.id).await.unwrap();
-    assert_eq!(
-        space.spacesd().unwrap().transport(),
-        cua_spacesd_client::Transport::GrpcWeb
-    );
-    let out = space
-        .bash("echo through-the-gateway", Duration::from_secs(10))
-        .await
-        .unwrap();
-    assert_eq!(out.stdout, "through-the-gateway\n");
-    // The token travelled with the claim, in its Secret (the image reads
-    // it from /run/cua/env-token): the template opts in, the claim names
-    // the Secret, and the Space holds the same token.
-    let cred = spaces.registry().credential(&info.id).unwrap().unwrap();
-    let token = cred.token.clone().expect("a cloud Space holds its token");
-    assert_eq!(token.len(), 64);
-    let t = fake.object("template", &pool, &pool).unwrap();
-    assert_eq!(t["spec"]["vmTemplate"]["claimSecrets"], true);
-    let claim = fake.object("claim", &pool, "cua-e2e-claim").unwrap();
-    assert_eq!(
-        claim["spec"]["secretRef"]["name"],
-        "cua-claim-cua-e2e-claim"
-    );
-    let secret = fake
-        .object("secret", &pool, "cua-claim-cua-e2e-claim")
-        .unwrap();
-    let held = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        secret["data"]["env-token"].as_str().unwrap(),
-    )
-    .unwrap();
-    assert_eq!(held, token.as_bytes());
-
-    // `reuse` returns it instead of creating another.
-    let again = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            reuse: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(again.reused());
-    assert_eq!(again.ready().unwrap().id, info.id);
-
-    // A registry written before the unified refs (a `space://fleet/...` id,
-    // no namespace hint) still reaches it: the namespace is looked up by
-    // the claim name. A bare name in two locations is ambiguous (typed).
-    let legacy = tempfile::tempdir().unwrap();
-    std::fs::write(
-        legacy.path().join("spaces.json"),
-        serde_json::to_vec(&serde_json::json!([
-            {"id": format!("space://fleet/{pool}/cua-e2e-claim"), "name": "old"},
-            {"id": "space://local/cua-e2e-claim", "name": "twin"},
-        ]))
-        .unwrap(),
-    )
-    .unwrap();
-    std::fs::write(
-        legacy.path().join("spaces-credentials.json"),
-        serde_json::to_vec(&serde_json::json!({"cloud:cua-e2e-claim": {"token": cred.token}}))
-            .unwrap(),
-    )
-    .unwrap();
-    let old = Spaces::builder()
-        .home(legacy.path())
-        .fleet(fake.client_with_base(&srv.url()))
-        .build();
-    let ids: Vec<String> = old.list().unwrap().into_iter().map(|i| i.id).collect();
-    assert_eq!(ids, ["cloud:cua-e2e-claim", "local:cua-e2e-claim"]);
-    let e = old.resolve("cua-e2e-claim").unwrap_err();
-    assert_eq!(e.tag(), "ambiguous_sandbox", "{e}");
-    assert!(
-        e.to_string()
-            .contains("local:cua-e2e-claim, cloud:cua-e2e-claim"),
-        "{e}"
-    );
-    let reached = old.space("cloud:cua-e2e-claim").await.unwrap();
-    // Reached from another machine's registry: the image comes from the
-    // claim all the same.
-    assert_eq!(reached.image(), Some((IMAGE, "")));
-    assert_eq!(
-        reached
-            .bash("echo legacy", Duration::from_secs(10))
-            .await
-            .unwrap()
-            .stdout,
-        "legacy\n"
-    );
-
-    // Delete deletes the claim (stops metering) and unregisters.
-    spaces.delete(&info.id).await.unwrap();
-    assert!(!fake.exists("claim", &pool, "cua-e2e-claim"));
-    assert!(!fake.exists("secret", &pool, "cua-claim-cua-e2e-claim"));
-    assert!(spaces.list().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn a_runtime_image_mismatch_is_refused_before_any_request() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    // What the image is comes from its manifest (a fixture here).
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::ContainerDisk);
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .build();
-    let e = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            runtime: Runtime::Gvisor,
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(e.tag(), "invalid_argument");
-    assert!(e.to_string().contains("containerDisk"), "{e}");
-    assert!(
-        fake.requests().is_empty(),
-        "nothing claimed, nothing pulled"
-    );
-}
-
-#[tokio::test]
-async fn fleet_tools_without_credentials_name_the_missing_host_capability() {
-    let reg = tempfile::tempdir().unwrap();
-    let spaces = Spaces::builder().home(reg.path()).build();
-    let e = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(e.tag(), "host_capability_missing");
-    assert!(e.to_string().contains("CUA_CLIENT_ID"));
-}
 
 /// A local runtime whose one "instance" is a MockServer on loopback.
 struct FakeRuntime {
@@ -351,6 +159,63 @@ async fn create_locally_starts_with_a_fresh_token_and_delete_deletes() {
     assert!(fresh.list().unwrap().is_empty());
 }
 
+/// A local Space is listed under the name it was created with (or the
+/// generated `space-<hex>`), not the guest's hostname (a container's short
+/// id); `add` without a name still shows the hostname (#4707).
+#[tokio::test]
+async fn a_local_space_is_named_what_it_was_created_as() {
+    let srv = MockServer::start(MockAuth::default()).await;
+    let rt = Arc::new(FakeRuntime {
+        port: srv.addr.port(),
+        started: Mutex::new(vec![]),
+        deleted: Mutex::new(vec![]),
+        running: Mutex::new(BTreeMap::new()),
+    });
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .sandboxes(
+            cua_sandbox_core::Sandboxes::builder()
+                .local(rt.clone())
+                .state_dir(state.path())
+                .build(),
+        )
+        .build();
+    let create = |name: Option<&str>| SpaceCreate {
+        on: Some(On::Local),
+        image: Some("cua-e2e-local/linux:docker-local-arm64".into()),
+        spacesd: Some(true),
+        name: name.map(str::to_string),
+        timeout: Some(Duration::from_secs(20)),
+        ..Default::default()
+    };
+    let named = spaces
+        .create(create(Some("todo7b-probe")))
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert_eq!(named.id, "local:todo7b-probe");
+    assert_eq!(named.name, "todo7b-probe");
+    let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
+    let short = generated.id.strip_prefix("local:").unwrap();
+    assert!(short.starts_with("space-"), "{}", generated.id);
+    assert_eq!(generated.name, short);
+    let listed: BTreeMap<String, String> = spaces
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|i| (i.id, i.name))
+        .collect();
+    assert_eq!(listed[&named.id], "todo7b-probe");
+    assert_eq!(listed[&generated.id], short);
+
+    // Control: a Space added without a name shows the guest's hostname.
+    let added = spaces.add(&srv.url(), None, None).await.unwrap();
+    assert_eq!(added.name, "mock");
+}
+
 /// `cua spaces create linux` (and `macos:26`, `macos:26-slim`) on this
 /// machine: the alias names the canonical image, as it does in the cloud.
 /// The local runtime only knows registry references, so before this it
@@ -413,11 +278,10 @@ async fn a_local_create_resolves_an_image_alias_to_its_canonical_image() {
 
 /// A daemon killed mid-create leaves a started sandbox that no Space
 /// lists. The next daemon's `recover_interrupted_creates` registers it when
-/// its cua-spacesd answers and deletes it when it does not; creates of live
-/// processes and journals with nothing behind them are handled without
-/// touching anything else. A finished create leaves no journal.
+/// its cua-spacesd answers; otherwise its resource and journal remain.
+/// A live owner's journal is untouched. Successful recovery retires its journal.
 #[tokio::test]
-async fn an_interrupted_local_create_is_registered_or_deleted_never_hidden() {
+async fn an_interrupted_local_create_is_registered_or_preserved() {
     use cua_sandbox_core::{CreateOptions, ProviderKind};
     use cua_spaces::RecoveryOutcome;
     let srv = MockServer::start(MockAuth::default()).await;
@@ -518,9 +382,12 @@ async fn an_interrupted_local_create_is_registered_or_deleted_never_hidden() {
         Some(RecoveryOutcome::Registered),
         "{got:?}"
     );
-    assert_eq!(outcome("local:early"), Some(RecoveryOutcome::NothingLeft));
+    assert!(matches!(
+        outcome("local:early"),
+        Some(RecoveryOutcome::Failed(_))
+    ));
     assert!(
-        matches!(outcome("local:cut"), Some(RecoveryOutcome::Deleted(_))),
+        matches!(outcome("local:cut"), Some(RecoveryOutcome::Failed(_))),
         "{got:?}"
     );
     assert_eq!(
@@ -538,10 +405,15 @@ async fn an_interrupted_local_create_is_registered_or_deleted_never_hidden() {
         "back\n"
     );
     assert!(creating.join("busy.json").exists());
-    assert!(!creating.join("half.json").exists() && !creating.join("early.json").exists());
-    assert_eq!(good.deleted.lock().unwrap().as_slice(), ["cut"]);
+    assert!(!creating.join("half.json").exists());
+    for name in ["early", "cut"] {
+        assert!(creating.join(format!("{name}.json")).exists());
+        std::fs::remove_file(creating.join(format!("{name}.json"))).unwrap();
+    }
+    assert_eq!(good.running.lock().unwrap().get("cut"), Some(&true));
+    assert!(good.deleted.lock().unwrap().is_empty());
 
-    // A sandbox whose cua-spacesd never answers is deleted, not left running.
+    // A sandbox whose cua-spacesd never answers retains its resource and journal.
     let spaces2 = spaces_on(&bad, s2.path());
     spaces2
         .sandboxes()
@@ -560,12 +432,13 @@ async fn an_interrupted_local_create_is_registered_or_deleted_never_hidden() {
         .recover_interrupted_creates(Duration::from_secs(2))
         .await;
     assert!(
-        matches!(got.as_slice(), [r] if r.id == "local:mute" && matches!(r.outcome, RecoveryOutcome::Deleted(_))),
+        matches!(got.as_slice(), [r] if r.id == "local:mute" && matches!(r.outcome, RecoveryOutcome::Failed(_))),
         "{got:?}"
     );
-    assert_eq!(bad.deleted.lock().unwrap().as_slice(), ["mute"]);
+    assert!(bad.deleted.lock().unwrap().is_empty());
+    assert_eq!(bad.running.lock().unwrap().get("mute"), Some(&true));
     assert!(!spaces2.list().unwrap().iter().any(|s| s.id == "local:mute"));
-    assert_eq!(std::fs::read_dir(&creating).unwrap().count(), 0);
+    assert!(creating.join("mute.json").exists());
 }
 
 /// A create reports what it is doing, in order, ending with `ready`: the
@@ -694,138 +567,6 @@ async fn a_stopped_local_space_deletes() {
     assert!(left.is_empty(), "{left:?}");
 }
 
-#[tokio::test]
-async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-size")
-        .build();
-    let created = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            name: Some("sized".into()),
-            cpus: Some(4),
-            memory_mb: Some(8192),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(!created.reused());
-    // Its own pool (an unsized Space keeps the image's), whose template
-    // reserves what was asked for: what Fleet meters and bills.
-    let plain = spaces.fleet_pool_name(FleetRuntime::Kubevirt, IMAGE);
-    assert!(!fake.exists("pool", &plain, &plain));
-
-    let templates: Vec<serde_json::Value> = fake
-        .requests()
-        .into_iter()
-        .filter(|r| r.method == "POST" && r.path.ends_with("/osgymsandboxtemplates"))
-        .filter_map(|r| r.body)
-        .collect();
-    assert_eq!(templates.len(), 1, "{templates:?}");
-    let vm = &templates[0]["spec"]["vmTemplate"];
-    assert_eq!(
-        (vm["cpuCores"].as_u64(), vm["memory"].as_str()),
-        (Some(4), Some("8192Mi"))
-    );
-
-    // Nonsense never reaches Fleet (sizes above the everyday range do:
-    // Fleet decides what the account may run).
-    let before = fake.requests().len();
-    for (cpus, memory_mb) in [
-        (Some(65), None),
-        (Some(0), None),
-        (None, Some(256)),
-        (None, Some(1 << 40)),
-    ] {
-        let e = spaces
-            .create(SpaceCreate {
-                on: Some(On::Cloud),
-                image: Some(IMAGE.into()),
-                cpus,
-                memory_mb,
-                wait: Some(false),
-                ..Default::default()
-            })
-            .await
-            .map(|_| ())
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("a Cua Cloud sandbox has"), "{e}");
-    }
-    assert_eq!(fake.requests().len(), before);
-
-    // Above the everyday range: written as asked (an exempt account).
-    let big = || SpaceCreate {
-        on: Some(On::Cloud),
-        image: Some(IMAGE.into()),
-        cpus: Some(16),
-        memory_mb: Some(64 * 1024),
-        wait: Some(false),
-        ..Default::default()
-    };
-    spaces.create(big()).await.unwrap();
-    let last = fake
-        .requests()
-        .into_iter()
-        .rev()
-        .find(|r| r.method == "POST" && r.path.ends_with("/osgymsandboxtemplates"))
-        .and_then(|r| r.body)
-        .unwrap();
-    assert_eq!(last["spec"]["vmTemplate"]["cpuCores"], 16);
-    assert_eq!(last["spec"]["vmTemplate"]["memory"], "65536Mi");
-
-    // An account under Fleet's size cap: Fleet's denial, typed, with its
-    // message.
-    fake.faults.lock().unwrap().size_cap = Some((8, 32 * 1024));
-    let e = spaces
-        .create(SpaceCreate {
-            cpus: Some(12),
-            ..big()
-        })
-        .await
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(e.tag(), "fleet_admission_denied", "{e}");
-    assert!(
-        e.to_string()
-            .contains(cua_fleet::testing::SIZE_LIMIT_MESSAGE),
-        "{e}"
-    );
-}
-
-#[tokio::test]
-async fn a_cloud_space_out_of_credit_fails_typed_and_leaves_local_alone() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    fake.faults.lock().unwrap().credit_exhausted = Some("https://run.cua.ai/billing".into());
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-credit")
-        .build();
-    let e = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(e.tag(), "cloud_credit_exhausted");
-    assert_eq!(
-        e.to_string(),
-        "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"
-    );
-}
-
 /// A local runtime whose start makes the instance, then fails readiness
 /// (what a Lume VM whose guest this process cannot reach does).
 #[derive(Default)]
@@ -874,9 +615,9 @@ impl LocalRuntime for UnreadyRuntime {
 }
 
 /// A Space whose start fails after its instance exists leaves nothing
-/// running that no registry lists: the instance of a generated name is
-/// deleted, and the error says why. A name the caller chose is never
-/// deleted (it may be an instance the caller already had).
+/// running that no registry lists: the instance this create made is
+/// deleted, and the error says why, whoever chose the name. A name that
+/// already had an instance is never deleted (it may be one the caller had).
 #[tokio::test]
 async fn a_space_that_fails_to_start_leaves_no_instance() {
     let rt = Arc::new(UnreadyRuntime::default());
@@ -901,14 +642,25 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let e = spaces.create(create(None)).await.unwrap_err();
     assert!(e.to_string().contains("Local Network access"), "{e}");
     let deleted = rt.deleted.lock().unwrap().clone();
-    assert_eq!(deleted.len(), 1, "{deleted:?}");
-    assert!(deleted[0].starts_with("space-"), "{deleted:?}");
+    assert!(!deleted.is_empty(), "{deleted:?}");
+    assert!(
+        deleted.iter().all(|d| d.starts_with("space-")),
+        "{deleted:?}"
+    );
     assert!(rt.running.lock().unwrap().is_empty());
     assert!(spaces.list().unwrap().is_empty());
 
+    // A name the caller chose is this attempt's too: a failed create must
+    // not leave a VM holding the machine's capacity against the retry.
     spaces.create(create(Some("mine"))).await.unwrap_err();
-    assert_eq!(rt.deleted.lock().unwrap().len(), 1);
-    assert!(rt.running.lock().unwrap().contains_key("mine"));
+    assert!(rt.deleted.lock().unwrap().iter().any(|d| d == "mine"));
+    assert!(rt.running.lock().unwrap().is_empty());
+
+    // But a name that already had an instance is left alone.
+    rt.running.lock().unwrap().insert("theirs".into(), true);
+    spaces.create(create(Some("theirs"))).await.unwrap_err();
+    assert!(!rt.deleted.lock().unwrap().iter().any(|d| d == "theirs"));
+    assert!(rt.running.lock().unwrap().contains_key("theirs"));
 }
 
 /// `cua sb resume` on a local Space returns once its cua-spacesd answers,
@@ -1046,5 +798,158 @@ impl LocalRuntime for SlowBootRuntime {
             ports: [(3211u16, self.port)].into(),
             ..Default::default()
         })
+    }
+}
+
+#[tokio::test]
+async fn recovery_requires_authenticated_evidence_and_preserves_failed_attempts() {
+    use cua_sandbox_core::{CreateOptions, ProviderKind};
+    use cua_spaces::RecoveryOutcome;
+    let srv = MockServer::start(MockAuth {
+        token: Some("recovery-token".into()),
+        ..Default::default()
+    })
+    .await;
+    let unprotected = MockServer::start(MockAuth::default()).await;
+    let dead_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for age in [60, 25 * 3600] {
+        for case in [
+            "good",
+            "missing",
+            "auth",
+            "store",
+            "services",
+            "empty-token",
+            "borrowed",
+            "marked-registered",
+            "registered",
+        ] {
+            let reg = tempfile::tempdir().unwrap();
+            let state = tempfile::tempdir().unwrap();
+            let rt = Arc::new(FakeRuntime {
+                port: if case == "services" {
+                    dead_port
+                } else if case == "empty-token" {
+                    unprotected.addr.port()
+                } else {
+                    srv.addr.port()
+                },
+                started: Mutex::new(vec![]),
+                deleted: Mutex::new(vec![]),
+                running: Mutex::new(BTreeMap::new()),
+            });
+            let spaces = Spaces::builder()
+                .home(reg.path())
+                .sandboxes(
+                    cua_sandbox_core::Sandboxes::builder()
+                        .local(rt.clone())
+                        .state_dir(state.path())
+                        .build(),
+                )
+                .build();
+            let name = "recover-me";
+            spaces
+                .sandboxes()
+                .create(
+                    CreateOptions::new(
+                        ProviderKind::Local,
+                        "cua-e2e-local/linux:docker-local-arm64",
+                    )
+                    .name(name),
+                )
+                .await
+                .unwrap();
+            if case == "missing" {
+                spaces.sandboxes().state().delete(name).unwrap();
+            }
+            if case.ends_with("registered") {
+                spaces
+                    .registry()
+                    .upsert(
+                        cua_proto::daemon::v1::Space {
+                            id: format!("local:{name}"),
+                            ..Default::default()
+                        },
+                        Default::default(),
+                    )
+                    .unwrap();
+            }
+            if case == "store" {
+                std::fs::create_dir(reg.path().join("spaces.json")).unwrap();
+            }
+            let dir = reg.path().join("creating");
+            std::fs::create_dir_all(&dir).unwrap();
+            let journal = dir.join(format!("{name}.json"));
+            let marker = dir.join(format!("{name}.cancel"));
+            let token = match case {
+                "auth" => "wrong",
+                "empty-token" => "",
+                _ => "recovery-token",
+            };
+            std::fs::write(
+                &journal,
+                serde_json::json!({
+                    "kind": "local", "id": format!("local:{name}"), "name": name, "pid": pid,
+                    "token": token, "spacesd": case != "services", "started": now - age,
+                    "made": [{"type": "local_sandbox", "name": name, "fresh": case != "borrowed"}],
+                })
+                .to_string(),
+            )
+            .unwrap();
+            if case == "marked-registered" {
+                std::fs::write(&marker, b"cancel").unwrap();
+            }
+            let got = spaces
+                .recover_interrupted_creates(Duration::from_millis(20))
+                .await;
+            assert_eq!(got.len(), 1, "{case}: {got:?}");
+            match case {
+                "good" => {
+                    assert_eq!(got[0].outcome, RecoveryOutcome::Registered);
+                    assert!(
+                        spaces
+                            .space(&format!("local:{name}"))
+                            .await
+                            .unwrap()
+                            .has_spacesd()
+                    );
+                }
+                "registered" => assert_eq!(got[0].outcome, RecoveryOutcome::AlreadyRegistered),
+                _ => assert!(
+                    matches!(&got[0].outcome, RecoveryOutcome::Failed(message) if message.contains("retained")),
+                    "{case}: {got:?}"
+                ),
+            }
+            assert_eq!(
+                journal.exists(),
+                !matches!(case, "good" | "registered"),
+                "{case}"
+            );
+            assert_eq!(marker.exists(), case == "marked-registered", "{case}");
+            assert_eq!(rt.running.lock().unwrap().get(name), Some(&true), "{case}");
+            assert!(rt.deleted.lock().unwrap().is_empty(), "{case}");
+            if case != "store" {
+                assert_eq!(
+                    spaces
+                        .registry()
+                        .get(&format!("local:{name}"))
+                        .unwrap()
+                        .is_some(),
+                    matches!(case, "good" | "registered" | "marked-registered"),
+                    "{case}"
+                );
+            }
+        }
     }
 }

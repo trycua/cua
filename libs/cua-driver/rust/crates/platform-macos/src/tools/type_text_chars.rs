@@ -91,7 +91,9 @@ impl Tool for TypeTextCharsTool {
                 pid,
                 wid,
                 element_ptr,
-                cua_driver_core::background_input::BackgroundAction::InsertText,
+                super::window_keyboard_action(
+                    cua_driver_core::background_input::BackgroundAction::InsertText,
+                ),
             )
             .await
             {
@@ -100,6 +102,11 @@ impl Tool for TypeTextCharsTool {
             }
         } else {
             None
+        };
+
+        let _key_scope = match super::acquire_key_scope(pid, window_id, false).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
         };
 
         // Pre-focus element if requested.

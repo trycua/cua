@@ -397,10 +397,6 @@ pub enum StorageAction {
 
 const DEFAULT_REGION: &str = "us-east-1";
 
-/// What "Your S3 bucket" offers first: a prompt the user gives their coding
-/// agent, which sets the bucket up and connects it with the CLI. The page
-/// watches `volume_storage` and connects once the bucket shows up.
-pub const S3_AGENT_PROMPT: &str = "Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key.";
 const GIB: u64 = 1024 * 1024 * 1024;
 /// The cache limits offered (the daemon's minimum is 256 MiB).
 pub const CACHE_LIMITS: [u64; 4] = [GIB, 5 * GIB, 10 * GIB, 50 * GIB];
@@ -595,11 +591,7 @@ fn opt(id: &str, label: &str, active: bool) -> SettingsOption {
 }
 
 pub(crate) fn this_machine(os: SpaceOs) -> &'static str {
-    if os == SpaceOs::Macos {
-        "This Mac"
-    } else {
-        "This computer"
-    }
+    os.this_machine()
 }
 
 /// The mount switch's words: a Finder volume on macOS, a mount on Linux.
@@ -613,14 +605,7 @@ pub fn mount_label(os: SpaceOs) -> &'static str {
 
 /// When the mount cannot be used here and the daemon gave no reason.
 pub fn not_available(os: SpaceOs) -> String {
-    format!(
-        "Not available on {} yet",
-        if os == SpaceOs::Macos {
-            "this Mac"
-        } else {
-            "this computer"
-        }
-    )
+    format!("Not available on {} yet", os.this_machine_lower())
 }
 
 /// A test or save's answer in one line.
@@ -685,7 +670,7 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
             let saved = if has_keys && saved_s3 { "Saved" } else { "" };
             if !state.manual {
                 let mut p = row("s3-prompt", Prompt, "Ask your agent to set it up:");
-                p.value = Some(S3_AGENT_PROMPT.into());
+                p.value = Some(crate::agent_prompts::volume_s3_prompt());
                 p.button = Some("Copy".into());
                 rows.push(p);
                 let mut m = row("s3-manual", Link, "Enter details manually");
@@ -991,7 +976,10 @@ mod tests {
         let v = storage_section(&input, &s);
         let prompt = v.rows.iter().find(|r| r.id == "s3-prompt").unwrap();
         assert_eq!(prompt.kind, SettingsRowKind::Prompt);
-        assert_eq!(prompt.value.as_deref(), Some(S3_AGENT_PROMPT));
+        assert_eq!(
+            prompt.value.as_deref(),
+            Some(crate::agent_prompts::volume_s3_prompt().as_str())
+        );
         assert!(v.rows.iter().all(|r| r.id != "s3-secret"));
         s = storage_reduce(&s, &storage_press(&input, "s3-manual").unwrap());
         let v = storage_section(&input, &s);
@@ -1119,6 +1107,72 @@ mod tests {
             ..Default::default()
         });
         assert!(storage_section(&input, &storage_initial()).rows.is_empty());
+    }
+
+    #[test]
+    fn windows_and_linux_name_this_machine_without_finder() {
+        let storage = DriveStorageInput {
+            backend: "fs".into(),
+            fs_path: "/home/ada/.cua/volume/data".into(),
+            ..Default::default()
+        };
+        let texts = |s: &SettingsSection| {
+            s.rows
+                .iter()
+                .flat_map(|r| {
+                    [Some(r.label.clone()), r.value.clone(), r.button.clone()]
+                        .into_iter()
+                        .flatten()
+                        .chain(r.options.iter().map(|o| o.label.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let linux = StorageInput {
+            os: SpaceOs::Linux,
+            home: Some("/home/ada".into()),
+            storage: Some(storage.clone()),
+            mount: Some(DriveMountInput {
+                enabled: true,
+                state: "mounted".into(),
+                method: "fuse".into(),
+                path: Some("/home/ada/Cua Volume".into()),
+                volume_name: "Cua Volume".into(),
+                ..Default::default()
+            }),
+            cache: None,
+        };
+        let v = storage_section(&linux, &storage_initial());
+        assert_eq!(v.rows[0].options[0].label, "This machine");
+        let t = texts(&v);
+        assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
+        assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");
+        assert!(
+            t.iter()
+                .all(|x| !x.contains("Finder") && !x.contains("Mac") && !x.contains("/Volumes")),
+            "{t:?}"
+        );
+        let windows = StorageInput {
+            os: SpaceOs::Windows,
+            storage: Some(storage),
+            mount: Some(DriveMountInput {
+                state: "unsupported".into(),
+                method: "none".into(),
+                ..Default::default()
+            }),
+            ..linux
+        };
+        let v = storage_section(&windows, &storage_initial());
+        assert_eq!(v.rows[0].options[0].label, "This PC");
+        let t = texts(&v);
+        assert!(
+            t.iter()
+                .all(|x| !x.contains("Finder") && !x.contains("Mac") && !x.contains("Mount")),
+            "{t:?}"
+        );
+        assert_eq!(
+            not_available(SpaceOs::Windows),
+            "Not available on this PC yet"
+        );
     }
 
     #[test]

@@ -127,7 +127,7 @@ impl LinuxPointerShape {
 
     fn x11_top_level_at(&self, x: f64, y: f64) -> Option<TopLevel> {
         self.with_x11(|conn, root| {
-            let windows = crate::x11::get_window_list(conn, root).ok()?;
+            let (windows, _) = crate::x11::get_window_list(conn, root).ok()?;
             let atom = |n: &str| crate::x11::get_atom(conn, n).ok();
             let frame_extents = atom("_NET_FRAME_EXTENTS");
             let wm_state = atom("_NET_WM_STATE");

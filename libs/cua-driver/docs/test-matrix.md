@@ -168,21 +168,29 @@ Windows native harnesses are repo-local applications built from source:
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
-| WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
+| WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows; foreground single-line and multiline text integrity |
+| WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup; foreground single-line and multiline text integrity |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
 | Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
-Native controls use AX/UIA state as their oracle. Pointer actions also use PX
-where the tool contract requires coordinates. Current `set_value` rows declare
+Native controls use AX/UIA state as their oracle. The foreground typing rows
+also compare each fixture's real `TextBox.Text` values from an isolated,
+atomically replaced state file, including the target and leakage sentinels.
+The single-line row covers CJK, digits, and emoji; the multiline sample covers
+LF, CR, CRLF, repeated empty lines, and leading/trailing breaks. The oracle
+normalizes line endings only and preserves all other characters and blank
+lines. Foreground delivery keeps the target in front until its thread has
+read every inserted event (a sentinel-key drain), so text after line breaks is
+not handed to the previously active window. Pointer actions also use PX where
+the tool contract requires coordinates. Current `set_value` rows declare
 background delivery and attach desktop-side-effect oracles.
 
 ## Harness E2E: macOS
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
+| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and slider drag in both background and foreground |
 | SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
 | WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
 | Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
@@ -208,8 +216,8 @@ transient-panel AX discovery gap.
 
 | Harness | Source test | Window system | Coverage |
 | --- | --- | --- | --- |
-| Electron | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
-| Tauri | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
+| Electron | `cross_platform_behavior_test.rs` | X11, hosted Sway, and nested niri | Shared web action matrix |
+| Tauri | `cross_platform_behavior_test.rs` | X11, hosted Sway, and nested niri | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
 | Desktop target | `desktop_scope_linux_test.rs` | X11/Wayland | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
 
@@ -255,6 +263,7 @@ allowed, and the desktop-side-effect oracles pass.
 | Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` |
 | Linux X11 Harness E2E | Nix X11 session | `scripts/ci/linux/run-rust-e2e.sh` |
 | Linux Sway Harness E2E | Controlled wlroots session | `scripts/ci/linux/run-rust-e2e-wayland.sh` |
+| Linux niri Harness E2E | Nested niri in a headless cage | `CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh` |
 | Linux nested-compositor E2E | Controlled experimental session | `scripts/ci/linux/run-rust-e2e-inject.sh` |
 | Linux representative desktop E2E | Existing GNOME, KDE, or Xorg login | `scripts/ci/linux/run-rust-e2e-desktop.sh <desktop>` |
 | macOS Harness E2E | Maintainer Lume SIP-off worker with a logged-in session and inherited grants, or a disposable worker prepared with the checked-in macOS consent seed helper | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` |

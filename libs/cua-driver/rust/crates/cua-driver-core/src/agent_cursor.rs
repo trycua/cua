@@ -222,10 +222,6 @@ impl AgentCursorVisibility {
         }
     }
 
-    pub fn is_ended(&self) -> bool {
-        self.ended
-    }
-
     /// Current opacity multiplier, 0 to 1.
     pub fn alpha(&self, idle_hide_ms: f64) -> f64 {
         if self.ended {

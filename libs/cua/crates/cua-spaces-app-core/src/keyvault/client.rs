@@ -27,7 +27,9 @@ use cua_keyvault::model::Grant;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::wire::{KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem};
+use super::wire::{
+    KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem, KvReadiness,
+};
 
 /// How many audit entries the page reads.
 pub const AUDIT_TAIL: usize = 200;
@@ -110,7 +112,7 @@ impl SocketTransport {
 #[async_trait::async_trait]
 impl KvTransport for SocketTransport {
     async fn call(&self, req: Request) -> Result<Value, KvFailure> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use cua_keyvault::client::{ConnectError, KeyvaultClient, ServerCheck};
             let mut client = KeyvaultClient::connect(&self.path, ServerCheck::default_for_build())
@@ -140,7 +142,7 @@ impl KvTransport for SocketTransport {
                 .await
                 .map_err(|e| KvFailure::from_error(&e))
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = req;
             Err(KvFailure {
@@ -154,14 +156,14 @@ impl KvTransport for SocketTransport {
     }
 
     fn server_verified(&self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             matches!(
                 cua_keyvault::client::ServerCheck::default_for_build(),
                 cua_keyvault::client::ServerCheck::Require(_)
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }
@@ -297,18 +299,28 @@ impl KeyvaultCommands {
                 return out;
             }
         };
-        let unavailable = if !status.initialized {
-            Some((
-                "no_vault",
-                "It keeps the sessions teleport moves, encrypted on this computer.".to_string(),
-            ))
-        } else if !status.caller_first_party {
+        // An app not signed by Cua is told so before anything else: it can
+        // neither see items nor create the Keyvault (the broker refuses its
+        // setup), so it never offers "Set up Keyvault".
+        let unavailable = if !status.caller_first_party {
             Some((
                 "not_first_party",
-                format!(
-                    "The Keyvault only shows items to apps signed by Cua. It sees this app as {}.",
-                    status.caller_display
-                ),
+                if status.initialized {
+                    format!(
+                        "The Keyvault only shows items to apps signed by Cua. It sees this app as {}.",
+                        status.caller_display
+                    )
+                } else {
+                    format!(
+                        "Only the Cua Spaces app and the cua it ships can set up the Keyvault. It sees this app as {}.",
+                        status.caller_display
+                    )
+                },
+            ))
+        } else if !status.initialized {
+            Some((
+                "no_vault",
+                "It keeps the sessions teleport moves, encrypted on this machine.".to_string(),
             ))
         } else if !status.unlocked {
             Some(("locked", "Unlock it to see and approve items.".to_string()))
@@ -562,6 +574,27 @@ impl KeyvaultCommands {
         mirror(&inv)
     }
 
+    /// Whether a teleport of `app` can work now: the Keyvault's state, what
+    /// the OS allows the daemon to read and the profiles to choose from. The
+    /// daemon reads no value and asks for no presence.
+    pub async fn readiness(
+        &self,
+        app: &str,
+        profile: Option<String>,
+    ) -> Result<KvReadiness, KvFailure> {
+        let status: Status = self.typed(Request::Status).await?;
+        let ready: cua_keyvault::broker::Readiness = self
+            .typed(Request::Readiness {
+                app: app.into(),
+                profile,
+            })
+            .await?;
+        let mut out: KvReadiness = mirror(&ready)?;
+        out.keyvault_initialized = status.initialized;
+        out.keyvault_unlocked = status.unlocked;
+        Ok(out)
+    }
+
     /// Imports a browser's saved passwords (`browser`: `chrome`), one item
     /// per site, `sites` empty for every saved site. The daemon asks for
     /// presence; the passwords stay sealed and are used only to sign in.
@@ -636,7 +669,11 @@ impl KeyvaultCommands {
         Ok(match command {
             KvCommand::Setup => KvOutcome::RecoveryKey {
                 key: self
-                    .setup(cfg!(any(target_os = "macos", target_os = "windows")))
+                    .setup(cfg!(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))
                     .await?,
             },
             KvCommand::Unlock => {

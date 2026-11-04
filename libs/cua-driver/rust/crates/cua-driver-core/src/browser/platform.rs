@@ -156,6 +156,11 @@ pub struct PrepareRequest {
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
     pub allow_launch: bool,
+    /// `delivery_mode:"foreground"`: the caller accepts that existing-profile
+    /// attachment may bring the browser to the front. Without it, a platform
+    /// that cannot attach in the background refuses with
+    /// `background_unavailable` before any visible effect.
+    pub foreground: bool,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -205,8 +210,23 @@ pub enum PrepareAttachmentKind {
     ExistingProfile,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BrowserConsentAction(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl BrowserConsentAction {
+    pub fn perform<T>(&self, action: impl FnOnce() -> T) -> T {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+        action()
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BrowserConsentRequest {
+    pub action: BrowserConsentAction,
     pub pid: i64,
     pub window_id: u64,
     pub attempt: u8,
@@ -300,6 +320,9 @@ pub struct PrepareSideEffects {
     pub focused_setup_address_field: bool,
     pub foregrounded_window: bool,
     pub injected_global_input: bool,
+    /// A foreground attachment left the browser in front, and the app that
+    /// was in front before the call was brought back.
+    pub restored_frontmost_app: bool,
 }
 
 /// OS-identity services a platform crate provides to the browser-tool
@@ -350,6 +373,45 @@ pub trait BrowserPlatform: Send + Sync {
     /// routes are independently proven and do not consult this capability.
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Explain why attaching to an existing browser profile cannot keep the
+    /// browser in the background on this platform, for example because the
+    /// browser brings itself to the front to show its own remote-debugging
+    /// consent prompt. `None` (the default) means attachment needs no
+    /// background check. When this returns `Some` and the browser is not the
+    /// frontmost app, a background `browser_prepare` refuses with
+    /// `background_unavailable` before discovery, setup or connection.
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Guard a background existing-profile attachment that
+    /// [`Self::existing_profile_attach_background_limitation`] would refuse,
+    /// when the platform can keep it out of the user's way: while the returned
+    /// value is alive, every self-activation of `browser_pid` is reverted
+    /// within milliseconds. `None` (the default) keeps the refusal. macOS
+    /// returns a guard only when `window_id` is on another Space than the
+    /// user's active one, where the browser's consent window stays out of
+    /// sight.
+    fn guard_background_attach(
+        &self,
+        _browser_pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
+    /// Pid of the app the user has in front, when the platform can tell.
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        None
+    }
+
+    /// After a foreground attachment, bring `previous_pid` back to the front
+    /// if `browser_pid` is still in front. Returns true when it did so.
+    /// Implementations must not act when another app took the front since.
+    fn restore_frontmost_app(&self, _previous_pid: i64, _browser_pid: i64) -> bool {
+        false
     }
 
     /// Best-effort, visual-only feedback for an authorized browser action.
@@ -506,6 +568,26 @@ pub trait BrowserPlatform: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn consent_action_boundary_precedes_success_and_failure_and_never_resets() {
+        for succeeds in [true, false] {
+            let action = super::BrowserConsentAction::default();
+            let observer = action.clone();
+            assert!(!observer.started());
+            let result = action.perform(|| {
+                assert!(observer.started());
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err("native action failed")
+                }
+            });
+            assert_eq!(result.is_ok(), succeeds);
+            assert!(observer.started());
+            assert!(!super::BrowserConsentAction::default().started());
+        }
+    }
+
     use super::select_isolated_browser_executable;
 
     #[test]

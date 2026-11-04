@@ -1,12 +1,13 @@
 {
-  "version": "0.1.0",
+  "version": "0.5.2",
   "protocolVersion": 1,
-  "protocolRevision": 3,
+  "protocolRevision": 8,
   "os": {
     "family": "OS_FAMILY_LINUX",
     "name": "Ubuntu",
     "version": "22.04",
-    "kernel": "6.5.0-15-generic"
+    "kernel": "6.5.0-15-generic",
+    "prettyName": "Ubuntu 22.04.3 LTS"
   },
   "runtime": "RUNTIME_QEMU",
   "runtimeDetail": "Standard PC (Q35 + ICH9, 2009)",
@@ -60,6 +61,10 @@
       "supported": true
     },
     {
+      "name": "clipboard.image",
+      "supported": true
+    },
+    {
       "name": "clipboard.text",
       "supported": true
     },
@@ -96,6 +101,15 @@
       "supported": true
     },
     {
+      "name": "presence.cursor_shape",
+      "supported": true,
+      "attributes": {
+        "system": "xfixes",
+        "probe": "xtest",
+        "hit_test": "atspi"
+      }
+    },
+    {
       "name": "pty",
       "supported": true
     },
@@ -105,6 +119,10 @@
       "attributes": {
         "port": "3212"
       }
+    },
+    {
+      "name": "relay_attach",
+      "supported": true
     },
     {
       "name": "teleport.chrome",
@@ -123,6 +141,10 @@
       "supported": true
     },
     {
+      "name": "teleport.notion",
+      "supported": true
+    },
+    {
       "name": "teleport.slack",
       "supported": true
     },
@@ -135,12 +157,27 @@
       "supported": true
     },
     {
+      "name": "teleport.vscode",
+      "supported": true
+    },
+    {
       "name": "teleport.whatsapp",
+      "supported": true
+    },
+    {
+      "name": "teleport.wipe",
       "supported": true
     },
     {
       "name": "tunnel.forward",
       "supported": true
+    },
+    {
+      "name": "volume.mount",
+      "supported": true,
+      "attributes": {
+        "backend": "fs"
+      }
     },
     {
       "name": "window_stream",
@@ -155,7 +192,7 @@
     }
   ],
   "hostname": "user-virtual-machine",
-  "bootTime": "2026-09-24T08:22:27+00:00",
+  "bootTime": "2026-10-03T22:20:03+00:00",
   "sideChannels": {
     "mediaWsPath": "/media",
     "mediaQuicPort": 3212,
@@ -168,5 +205,6 @@
     "maxMessageBytes": 8388608,
     "preferredChunkBytes": 1048576,
     "defaultScrollbackBytes": "8388608"
-  }
+  },
+  "machineSealPublicKey": "HGkDTTKlSkF5Nb9CdPoMvdsGzz1MERv+iayBA/Hn2yk="
 }

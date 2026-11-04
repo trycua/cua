@@ -11,11 +11,8 @@ This package is for client applications importing Cua Driver as an SDK:
 from cua_driver import CuaDriver
 ```
 
-It does not contain a Python MCP protocol implementation. The optional
-`cua_driver.fleet` module forwards service bytes to the shared Rust typed-MCP
-client. See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
-for prerequisites, ownership, and release limits. Agents already have runtime-neutral
-MCP clients and should configure the bundled server directly:
+It does not contain a Python MCP protocol implementation. Agents already have
+runtime-neutral MCP clients and should configure the bundled server directly:
 
 ```text
 cua-driver mcp
@@ -177,6 +174,15 @@ clients and MCP proxies before stopping or restarting, then reconnect from the
 new connection. `wait_for_exit(connection.generation)` observes unexpected
 termination. Dropping the host closes its parent-liveness pipe and kills the
 child as a fallback, but orderly applications should still await `stop()`.
+
+For startup troubleshooting, construct the host with
+`EmbeddedCuaDriverHost.with_options()` and set `capture_stderr=True`. After a
+failed start, `last_diagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inherit_stderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
 
 ## Binary wrapper
 

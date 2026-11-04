@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 # `cua_host::testing::FakeRelay` and the `cua-fake-relay` binary (tests of the
@@ -28,6 +27,7 @@ cua-auth.workspace = true
 cua-home.workspace = true
 flate2 = "1"
 hex.workspace = true
+httpdate = "1"
 rand.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 # Client device key (P-256, the curve the Secure Enclave uses) and its
@@ -45,6 +45,10 @@ url.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
 [dev-dependencies]
 axum = { workspace = true, features = ["json"] }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

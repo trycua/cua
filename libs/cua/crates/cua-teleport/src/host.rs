@@ -160,10 +160,41 @@ pub fn default_host() -> Arc<dyn HostEffects> {
 /// Whether [`RealHost`] must refuse to act: always in this crate's unit tests,
 /// and whenever [`TEST_SANDBOX_ENV`] is `1`.
 pub fn host_effects_forbidden() -> bool {
-    cfg!(test)
-        || std::env::var(TEST_SANDBOX_ENV)
-            .map(|value| value == "1")
-            .unwrap_or(false)
+    cfg!(test) || test_sandbox_on()
+}
+
+/// `CUA_NO_UI` on (any value but empty or `0`): nothing may put a window, a
+/// dialog or a notification on this computer's screen.
+pub fn no_ui() -> bool {
+    no_ui_says(std::env::var("CUA_NO_UI").ok().as_deref())
+}
+
+/// What a `CUA_NO_UI` value means.
+pub fn no_ui_says(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Whether `kind` shows something to the person at this computer.
+pub fn is_ui(kind: EffectKind) -> bool {
+    matches!(
+        kind,
+        EffectKind::AppleScript | EffectKind::UserAuthorization
+    )
+}
+
+fn test_sandbox_on() -> bool {
+    std::env::var(TEST_SANDBOX_ENV)
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
+fn refused_no_ui(kind: EffectKind) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "host effect {kind:?} refused: CUA_NO_UI is set, nothing may show on this computer's screen"
+        ),
+    )
 }
 
 fn refused(kind: EffectKind) -> io::Error {
@@ -184,6 +215,9 @@ impl HostEffects for RealHost {
     fn run(&self, command: &HostCommand) -> io::Result<HostOutput> {
         if host_effects_forbidden() {
             return Err(refused(command.kind));
+        }
+        if no_ui() && is_ui(command.kind) {
+            return Err(refused_no_ui(command.kind));
         }
         real::run(command)
     }
@@ -364,6 +398,20 @@ impl HostEffects for FakeHost {
     }
 }
 
+/// Runs `command` for its exit code and its (short) stderr, with no input:
+/// the system prompt [`crate::biometric`] raises on Linux (polkit's
+/// `pkcheck`), which answers in its exit code and says why on stderr. The
+/// code is `None` when a signal ended it. Past `command.timeout` the child is
+/// killed and the call fails with [`io::ErrorKind::TimedOut`]. Refused under
+/// a test sandbox, like [`RealHost`].
+#[cfg(target_os = "linux")]
+pub(crate) fn run_for_status(command: &HostCommand) -> io::Result<(Option<i32>, String)> {
+    if host_effects_forbidden() {
+        return Err(refused(command.kind));
+    }
+    real::run_for_status(command)
+}
+
 /// The only code in this crate that spawns processes, opens sockets or
 /// probes the host's installed apps.
 mod real {
@@ -438,6 +486,39 @@ mod real {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    pub(super) fn run_for_status(spec: &HostCommand) -> io::Result<(Option<i32>, String)> {
+        let mut child = command(spec)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                // A line at most, long written by now.
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                return Ok((status.code(), stderr));
+            }
+            if spec.timeout.is_some_and(|budget| start.elapsed() >= budget) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "{} did not finish within {} ms",
+                        spec.program,
+                        spec.timeout.unwrap_or_default().as_millis()
+                    ),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     pub(super) fn is_installed(probe: &super::InstallProbe) -> bool {
         if probe.on_path {
             let Some(path) = std::env::var_os("PATH") else {
@@ -487,6 +568,18 @@ mod real {
 
 #[cfg(test)]
 mod tests {
+    /// `CUA_NO_UI` makes the real host refuse what shows on the screen (and only that).
+    #[test]
+    fn no_ui_refuses_what_shows_on_the_screen() {
+        assert!(is_ui(EffectKind::AppleScript) && is_ui(EffectKind::UserAuthorization));
+        assert!(!is_ui(EffectKind::ProcessLookup) && !is_ui(EffectKind::KeychainRead));
+        assert!(no_ui_says(Some("1")) && no_ui_says(Some("yes")));
+        assert!(!no_ui_says(Some("0")) && !no_ui_says(Some("")) && !no_ui_says(None));
+        let e = refused_no_ui(EffectKind::AppleScript);
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert!(e.to_string().contains("CUA_NO_UI"));
+    }
+
     use super::*;
 
     /// The crate's own tests must never get a real host by default.

@@ -71,6 +71,17 @@ cargo test -p cua-driver-e2e --test harness_wpf_test -- --ignored --nocapture
 See `crates/cua-driver-e2e/tests/README.md` for the desktop E2E suites and
 `crates/cua-driver/tests/README.md` for the hermetic driver tests.
 
+Testkit-owned daemons use a temporary `CUA_DRIVER_RS_HOME` on every platform.
+A nonempty override also places Computer History data and its `admission.json`
+under `<CUA_DRIVER_RS_HOME>/computer-history`. Without an override (or with an
+empty value), History keeps its platform-specific default location. Existing
+data is not migrated, and installed-product admission checks still apply.
+On Windows this isolates driver state without redirecting `LOCALAPPDATA`,
+`APPDATA`, or `USERPROFILE`, which Windows app discovery needs. Explicit caller
+environment values take precedence; `SHARE_HOST_STATE` opts a testkit spawn out
+of isolation. Use separate roots for independent driver instances. This isolates
+files, not the operating system's credential store.
+
 ## Generated Outputs
 
 - `target/`: Cargo output, ignored.

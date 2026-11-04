@@ -219,6 +219,96 @@ def test_golden_image_preflight_requires_python3(tmp_path: Path) -> None:
     assert completed.stderr == "Missing golden-image dependency: python3\n"
 
 
+def _fake_keychain_list(tmp_path: Path, *keychains: str) -> Path:
+    fake_bin = tmp_path / "bin"
+    listed = "".join(f'    \\"{keychain}\\"\\n' for keychain in keychains)
+    _write_executable(
+        fake_bin / "security",
+        f'[ "$1 $2 $3" = "list-keychains -d user" ] || exit 9\nprintf "{listed}"\n',
+    )
+    return fake_bin
+
+
+def test_login_keychain_must_stay_in_the_user_search_list(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 2
+    assert "missing from the user Keychain search list" in completed.stderr
+    assert f'"{login}"' in completed.stderr
+
+
+def test_searchable_login_keychain_passes_the_history_preflight(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing, login)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+
+
+def test_seed_guide_keeps_the_login_keychain_searchable() -> None:
+    text = RUNNER_GUIDE.read_text(encoding="utf-8")
+    assert 'security list-keychains -d user -s "$SIGNING_KEYCHAIN"\n' not in text
+    assert '"$HOME/Library/Keychains/login.keychain-db"' in text
+
+
+def _fake_python_with_tk(tmp_path: Path, patchlevel: str | None) -> Path:
+    fake_bin = tmp_path / "bin"
+    real = shutil.which("python3")
+    if patchlevel is None:
+        body = 'case "$*" in *tkinter*) exit 1 ;; esac\nexec "$TEST_REAL_PYTHON" "$@"\n'
+    else:
+        body = (
+            f'case "$*" in *tkinter*) echo {patchlevel}; exit 0 ;; esac\n'
+            'exec "$TEST_REAL_PYTHON" "$@"\n'
+        )
+    _write_executable(fake_bin / "python3", body)
+    assert real is not None
+    return fake_bin
+
+
+@pytest.mark.parametrize(
+    ("patchlevel", "message"),
+    [(None, "no usable tkinter"), ("8.5.9", "uses Tk 8.5.9")],
+)
+def test_lume_runner_refuses_missing_or_legacy_tk(
+    tmp_path: Path, patchlevel: str | None, message: str
+) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
+@pytest.mark.parametrize("patchlevel", ["8.6.16", "9.1.0"])
+def test_lume_runner_accepts_modern_tk(tmp_path: Path, patchlevel: str) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 @pytest.mark.parametrize("script", [RUN_ALL, RUN_RUST_E2E], ids=lambda path: path.name)
 def test_no_permission_mode_check_pipes_into_grep(script: Path) -> None:
     text = script.read_text(encoding="utf-8")
@@ -254,6 +344,37 @@ def _guest_seed_assignment(name: str) -> str:
     match = re.search(rf'^{name}="(?P<body>.*?)"', text, re.DOTALL | re.MULTILINE)
     assert match is not None
     return match.group("body")
+
+
+def test_tcc_guest_seed_waits_for_tccd_lock() -> None:
+    text = SEED_TCC_GUEST.read_text(encoding="utf-8")
+    assert re.search(r'^TCC_SQLITE=\(/usr/bin/sqlite3 -cmd "\.timeout \d+"\)$', text, re.MULTILINE)
+    # Every TCC.db access goes through the busy-timeout invocation.
+    assert re.search(r'sqlite3 "\$\{TCC_DB\}"', text) is None
+    assert _guest_seed_assignment("SQL").lstrip().startswith("BEGIN IMMEDIATE;")
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="needs the sqlite3 CLI")
+def test_tcc_guest_seed_sqlite_invocation_outlasts_a_held_write_lock(tmp_path: Path) -> None:
+    db = tmp_path / "TCC.db"
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("CREATE TABLE access(service TEXT)")
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO access VALUES ('held')")
+    seed = subprocess.Popen(
+        ["sqlite3", "-cmd", ".timeout 30000", str(db), "BEGIN IMMEDIATE; INSERT INTO access VALUES ('seeded'); COMMIT;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(1.0)
+    assert seed.poll() is None, "the seed gave up while the lock was held"
+    holder.execute("COMMIT")
+    holder.close()
+    _, stderr = seed.communicate(timeout=30)
+    assert seed.returncode == 0, stderr
+    with sqlite3.connect(db) as conn:
+        assert {row[0] for row in conn.execute("SELECT service FROM access")} == {"held", "seeded"}
 
 
 def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -> None:
@@ -1015,6 +1136,9 @@ def test_required_keychains_unlock_login_without_retaining_password(
     _write_executable(
         fake_security,
         """printf '%s\\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 """,
     )
     completed = _run(
@@ -1034,6 +1158,7 @@ def test_required_keychains_unlock_login_without_retaining_password(
     assert log.read_text(encoding="utf-8").splitlines() == [
         f"unlock-keychain -p fixture-password {signing_keychain}",
         f"unlock-keychain -p fixture-password {login_keychain}",
+        "list-keychains -d user",
     ]
 
 
@@ -1051,6 +1176,9 @@ def test_required_keychains_accept_already_unlocked_noninteractive_keychains(
     _write_executable(
         fake_security,
         """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 command="$1"
 shift
 if [ "$command" = find-generic-password ]; then
@@ -1092,7 +1220,7 @@ fi
     probe_binary = codesign_calls[0].rsplit(" ", 1)[1]
     assert codesign_calls[1] == f"--verify --strict {probe_binary}"
     security_calls = security_log.read_text(encoding="utf-8").splitlines()
-    assert len(security_calls) == 3
+    assert len(security_calls) == 4
     assert security_calls[0].startswith("add-generic-password -a cua-driver-keychain-probe -s ")
     service = security_calls[0].split(" -s ", 1)[1].split(" -w ", 1)[0]
     assert security_calls[0].endswith(f" -w {service} {login_keychain}")
@@ -1104,6 +1232,7 @@ fi
         f"delete-generic-password -a cua-driver-keychain-probe -s {service} "
         f"{login_keychain}"
     )
+    assert security_calls[3] == "list-keychains -d user"
 
 
 def test_required_keychains_fail_when_noninteractive_keychain_is_locked(

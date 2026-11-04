@@ -63,10 +63,12 @@ export interface CloudTargetWire {
   region?: string;
   project?: string;
   environment?: string;
+  /** Hetzner only: the project API token, for this one call. Secret. */
+  token?: string;
 }
 
 /**
- * The user's own clouds (AWS, Google Cloud, Modal) through the app's
+ * The user's own clouds (AWS, Google Cloud, Hetzner, Modal) through the app's
  * daemon: status, a test that creates nothing, and connect.
  */
 export interface CloudBridge {

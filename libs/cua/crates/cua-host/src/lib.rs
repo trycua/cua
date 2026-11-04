@@ -15,7 +15,9 @@
 //!
 //! A host has two independent settings ([`HostSpacesSettings`]): share its
 //! own desktop, and provide Spaces to the owner's enrolled devices
-//! ([`HostProfile::Spare`] turns the first off and the second on).
+//! ([`HostProfile::Spare`] turns the first off and the second on). A new
+//! relay setup provides Spaces unless asked not to; a machine already set
+//! up keeps what it has ([`default_provide_spaces`]).
 //! [`provided`] keeps the Spaces a host provides, their hash-chained audit,
 //! and [`match_machine`], which resolves "spare mac mini" to a machine.
 //! A host in direct mode provides Spaces without the relay ([`direct`]).
@@ -35,42 +37,102 @@ pub mod access;
 pub mod device;
 pub mod direct;
 pub mod driver;
+pub mod helper_migration;
+#[cfg(test)]
+mod helper_migration_tests;
 mod host;
 pub mod machine;
+pub mod pairing;
+pub mod ports;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
 pub mod service;
+#[cfg(test)]
+mod setup_tests;
+pub mod spaces_api;
+mod sysinfo_gb;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
 mod tests;
+pub mod uv;
 
-pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot};
+pub use device::{
+    DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode, token_subject,
+};
+pub use helper_migration::{ServiceMigration, VerifyTiming};
+pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
+    HostStatus, META_ARCH, META_CLOUD, META_OS, META_PHONE_FEED, META_PROVIDES_SPACES,
+    PermissionHint, RELAY_HICCUP_GRACE, SetupOptions, ShareEdgeJoin, SpacesDaemon, StaticRelay,
+    default_provide_spaces, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
+pub use pairing::{
+    PairingCode, PairingCodeRequest, PairingCodeToken, add_machine_url, display_pairing_code,
+    install_command, normalize_pairing_code, pairing_link_relay,
+};
 pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };
 pub use relay::{
     AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, StaticToken,
-    relay_url_from_env,
+    DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch, NoAccount, RelayClient,
+    RelayUsage, RelayUsageTeam, StaticToken, TcpShareRequest, TcpShareView, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 
-/// The default display name of this device (its host name).
+/// The default display name of this device: the macOS Computer Name, else
+/// the host name without a `.local` / `.localdomain` suffix.
 pub fn device_name() -> String {
-    host::hostname()
+    host::friendly_name()
+}
+
+/// The relay this machine talks to: `flag` (e.g. `--relay`), else
+/// `CUA_RELAY_URL`, else the relay this machine is set up with
+/// (`<home>/host/config.json`), else the default relay. The CLI and the
+/// app resolve it the same way, so both enroll and approve devices on one
+/// relay.
+pub fn relay_url_for(flag: Option<&str>, home: &std::path::Path) -> String {
+    flag.map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("CUA_RELAY_URL")
+                .ok()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+        })
+        .or_else(|| {
+            Host::new(home)
+                .config()
+                .ok()
+                .flatten()?
+                .relay_url
+                .filter(|u| !u.trim().is_empty())
+        })
+        .unwrap_or_else(relay_url_from_env)
+}
+
+/// Where this device remembers the one-time code it last showed (see
+/// [`device::PendingCode`]).
+pub fn device_pending_file(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("device-pending.json")
 }
 
 /// The operating system a device reports when it registers (`macos`,
 /// `windows`, `linux`, ...).
 pub fn device_platform() -> &'static str {
     std::env::consts::OS
+}
+
+/// The command a message tells the user to run: `cua`, or `cua-local` in a
+/// Local build ("Cua Spaces Local", CUA-1776), so a pasted hint never runs the
+/// Stable CLI. Messages write it as `` `{cli} host setup` ``.
+pub(crate) fn cli() -> &'static str {
+    cua_home::channel::CuaChannel::current().cli_name()
 }
 
 /// Errors.
@@ -94,6 +156,19 @@ pub enum Error {
     /// Relay unreachable or failed.
     #[error("relay: {0}")]
     Relay(String),
+    /// The relay refused a new live session over the plan's cap (HTTP 429,
+    /// `x-cua-relay-error: plan_limit_*`). The text is the plain sentence
+    /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
+    #[error("{0}")]
+    PlanLimit(String),
+    /// The proxy in front of the relay throttled this client (HTTP 429, bare
+    /// `Too Many Requests`) and kept doing so through every retry. The
+    /// request never reached the relay.
+    #[error("Too many attempts right now. Wait {retry_after_secs} seconds, then try again.")]
+    Throttled {
+        /// How long the proxy asked to wait (`Retry-After`), at least 1.
+        retry_after_secs: u64,
+    },
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -106,6 +181,49 @@ pub enum Error {
     /// Anything else.
     #[error("{0}")]
     Internal(String),
+}
+
+impl Error {
+    /// The HTTP status the relay or the download server answered with,
+    /// when one did. None: the server was not reached (offline, DNS, TLS,
+    /// timeout) or the error is not about HTTP at all.
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            // `relay::http_error` maps these statuses to these variants.
+            Error::Unauthenticated(m) if m.starts_with("relay: ") => Some(401),
+            Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
+            Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
+            Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::PlanLimit(_) | Error::Throttled { .. } => Some(429),
+            Error::Relay(m) | Error::Download(m) => status_in(m),
+            _ => None,
+        }
+    }
+
+    /// A relay failure that may pass on its own: the relay (or the proxy in
+    /// front of it, which answers 503 "no available server" while the
+    /// relay's one pod is replaced) answered 429, 502, 503 or 504, or it
+    /// was not reached at all (offline, DNS, a timeout). Not a refusal, a
+    /// missing machine or an answer that could not be read.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Throttled { .. } => true,
+            Error::Relay(m) => match status_in(m) {
+                Some(code) => matches!(code, 429 | 502 | 503 | 504),
+                None => !m.starts_with("bad relay response"),
+            },
+            _ => false,
+        }
+    }
+}
+
+/// The status in an "HTTP 503: ..." / "<url>: HTTP 404 Not Found" message.
+fn status_in(message: &str) -> Option<u16> {
+    message.match_indices("HTTP ").find_map(|(i, _)| {
+        let digits = message.get(i + 5..i + 8)?;
+        let code: u16 = digits.parse().ok()?;
+        (100..600).contains(&code).then_some(code)
+    })
 }
 
 /// Result alias.

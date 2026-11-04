@@ -79,6 +79,7 @@ futures-util = "0.3"
 [dev-dependencies]
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 tempfile = "3"
+cua-cursor-motion = { path = "../cua-cursor-motion" }
 
 [[test]]
 name = "embedded_menu_restore"

@@ -18,7 +18,12 @@ Prepare two distinct native Inkscape processes for `purpose: "apps"`, and
 three for `purpose: "capacity"`. This runner consumes prelaunched targets.
 Verify the installed application's supported independent-process launch method;
 do not assume a `--new-instance` flag. The single-app smoke already launches a
-positional document and independently verifies that its process is new.
+positional document with a run-specific `--app-id-tag` and independently
+verifies that its process is new and carries the exact tag and document.
+The smoke requests a complete accessibility walk with a 15-second budget.
+When the Objects panel is closed, it opens the uniquely identified button
+through a background accessibility action, then verifies the fixture row
+before sending raw keys. This preparation is not plugin input evidence.
 The profile checks the canonical executable `/usr/bin/inkscape`, exact ALPM
 ownership/version, GTK3 mappings, one native Wayland client per PID, exact
 Hyprland address, document title, and the absolute document argument in the
@@ -153,7 +158,11 @@ record, changed file, stalled event loop, unknown wire record, or exceeded limit
 fails qualification. Raw begin/end journal and wire evidence are retained.
 
 Baseline wire evidence must show one primary pointer and keyboard on the same
-surface, a held left button, and no held keyboard keys/modifiers. During the
+surface, a held left button, no held keyboard keys, no depressed or latched
+modifiers, and layout group zero. A stable locked-modifier mask is retained as
+baseline state without interpreting its keymap-defined bits. Every keyboard
+event during the interval, including a lock change and return, still fails.
+During the
 parked interval, an exact same-position `wl_pointer.motion` notification on the
 same primary object may pass only with unchanged focus, held input, and
 foreground interaction. Retain and count these duplicates; they do not certify

@@ -52,14 +52,15 @@ PROBE_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "GITHUB_ACTIONS must be true"),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "runner must be GitHub-hosted"),
     ({"CI": ""}, "CI must be true"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate"),
+    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main"),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
-        "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate",
+        "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main",
     ),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
-        "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate",
+        "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main",
     ),
     ({"CUA_E2E_SOURCE_SHA": "main"}, "source SHA must contain 40 hexadecimal characters"),
     (
@@ -104,8 +105,9 @@ def test_hosted_macos_probe_refuses_outside_a_dispatched_hosted_run(
     [
         {"GITHUB_EVENT_NAME": "workflow_dispatch"},
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/cua-driver-rs-v0.29.0"},
+        {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"},
     ],
-    ids=["workflow_dispatch", "stable-tag-push"],
+    ids=["workflow_dispatch", "stable-tag-push", "nightly-schedule-on-main"],
 )
 def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
     tmp_path: Path, event: dict[str, str]
@@ -120,14 +122,15 @@ def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
 
 HOSTED_RUNNER_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "requires GitHub Actions"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate"),
+    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
-        "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate",
+        "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main",
     ),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
-        "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate",
+        "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main",
     ),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "requires a GitHub-hosted runner"),
     ({"RUNNER_OS": "Linux"}, "requires RUNNER_OS=macOS"),

@@ -28,15 +28,16 @@ import { hostOs } from "../model/host";
 import type { DriveMountInput } from "../model/persistent";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { DefaultLocation, SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import { storageSignals } from "../model/telemetry";
 import { telemetryBridge, type TelemetryBridge, type TelemetryView } from "../native/telemetry";
 import { createLoginItemBridge, type LoginItemBridge } from "../native/loginItem";
 import { writeLaunchChoice, type LoginItemStatus } from "../model/loginItem";
-import type { Location } from "../model/types";
 import { settingsPage, type SettingsRow, type SettingsSection, type SignInPhase } from "../model/window";
 import { experimentsPage, settingsWithStorage } from "../model/experiments";
 import { chooseExperimentRow, useExperiments } from "../state/experiments";
+import { AVAILABLE_LOCALES, t, useT } from "../i18n";
+import { LOCALE_ENDONYMS, savedLocaleChoice, setLocaleChoice } from "../i18n/preference";
 import { MiddleText } from "./MiddleText";
 import { SfIcon } from "./SfIcon";
 
@@ -89,25 +90,14 @@ interface SettingsPanelProps {
   /** Switch the switcher entry point between the notch tab and a macOS
    * menu-bar status item. */
   onMenuBarMode: (enabled: boolean) => void;
-  /** True when Cua Cloud credentials work (client credentials count). */
-  fleetLive: boolean;
-  /** OAuth client id, shown muted for client credentials; absent when unknown. */
-  clientId?: string;
   /** Signed-in user identity (email/subject) from a device sign-in, if any. */
   signedInIdentity?: string;
   /** Native device-flow sign-in hooks; when absent the button opens the site. */
   auth?: AccountAuth;
   /** Open a URL in the user's default browser (native bridge / no-op). */
   onOpenExternal: (url: string) => void;
-  /** Where new Spaces go by default, and where that came from. */
-  defaultLocation?: DefaultLocation;
-  /** Store a new default location (`$CUA_HOME/config.toml`). */
-  onDefaultLocation?: (on: Location) => Promise<unknown>;
   /** "Show again": first run from the start. */
   onShowWelcome?: () => void;
-  /** Cua Cloud billing (the Billing row): the account's status. "Manage
-   * billing" opens the website's billing page with `onOpenExternal`. */
-  billingStatus?: () => Promise<import("../native/fleet").BillingStatus | null>;
   /** Usage telemetry (the shell's; a fallback outside it). */
   telemetry?: TelemetryBridge;
   /** The Cua Volume's storage, mount and cache (the daemon's `drive_*` tools). */
@@ -133,15 +123,10 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   menuBar,
   onMenuBarMode,
-  fleetLive,
-  clientId,
   signedInIdentity,
   auth,
   onOpenExternal,
-  defaultLocation,
-  onDefaultLocation,
   onShowWelcome,
-  billingStatus: readBilling,
   telemetry: telemetryProp,
   drive: driveProp,
   os,
@@ -150,24 +135,13 @@ export function SettingsPanel({
   onClose,
 }: SettingsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Re-renders the panel when the language changes (the core's rows are words too).
+  const tl = useT("settings");
+  const [localeChoice, setLocaleChoiceState] = useState(savedLocaleChoice);
   const telemetry = useMemo(() => telemetryProp ?? telemetryBridge(), [telemetryProp]);
   const experiments = useExperiments();
   const drive = useMemo(() => driveProp ?? createDriveBridge(), [driveProp]);
   const storage = useStorage(drive, os ?? hostOs());
-
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [locationBusy, setLocationBusy] = useState(false);
-  const chooseLocation = useCallback(
-    (on: Location) => {
-      if (!onDefaultLocation || locationBusy || defaultLocation?.value === on) return;
-      setLocationBusy(true);
-      setLocationError(null);
-      void Promise.resolve(onDefaultLocation(on))
-        .catch((error: unknown) => setLocationError(error instanceof Error ? error.message : String(error)))
-        .finally(() => setLocationBusy(false));
-    },
-    [onDefaultLocation, locationBusy, defaultLocation?.value],
-  );
 
   // Privacy: the usage-telemetry switch (the same setting as `cua telemetry
   // off`). Opening Settings also counts as seeing the first-run notice.
@@ -342,26 +316,10 @@ export function SettingsPanel({
     } catch (error) {
       setPhase({
         kind: "failed",
-        message: error instanceof Error ? error.message : "Could not start sign-in",
+        message: error instanceof Error ? error.message : t("errors:errors.settings.sign_in_start_failed"),
       });
     }
   }, [auth, onOpenExternal]);
-
-  // Billing (signed in): the credit left; "Manage billing" is the website.
-  const [billingStatus, setBillingStatus] = useState<import("../native/fleet").BillingStatus | null>(null);
-  useEffect(() => {
-    if (!identity || !readBilling) {
-      setBillingStatus(null);
-      return;
-    }
-    let cancelled = false;
-    void readBilling()
-      .then((s) => !cancelled && setBillingStatus(s))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [readBilling, identity]);
 
   const signOut = useCallback(() => {
     setIdentity(undefined);
@@ -375,17 +333,12 @@ export function SettingsPanel({
     panelRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // The Account section reflects the USER session (a device sign-in). Env
-  // client-credentials keep Cua Cloud working, but they're a machine key, not
-  // a sign-in: they show as "Signed in via API key" beside "Sign in to Cua".
+  // The Account section reflects the USER session (a device sign-in).
   const page = settingsPage({
     identity: identity ?? null,
-    apiKeyClient: !identity && fleetLive ? (clientId ?? null) : null,
     signIn: phase,
     canSignOut: Boolean(auth) && Boolean(identity),
     menuBar,
-    defaultLocation: defaultLocation?.value === "cloud" ? "cloud" : "local",
-    locationLockedBy: defaultLocation?.source === "env" ? (defaultLocation.env ?? "CUA_DEFAULT_ON") : null,
     telemetry: telemetryView
       ? {
           enabled: telemetryView.enabled,
@@ -396,7 +349,6 @@ export function SettingsPanel({
     agents: agentRows,
     agentsBusy,
     agentsPending: agentPending,
-    billing: billingStatus,
     loginItem: loginStatus
       ? {
           status: loginStatus,
@@ -424,8 +376,9 @@ export function SettingsPanel({
       case "welcome":
         onShowWelcome?.();
         return;
-      case "billing":
       case "teams":
+      case "teams-manage":
+      case "teams-billing":
         if (row.linkUrl) onOpenExternal(row.linkUrl);
         return;
     }
@@ -436,7 +389,6 @@ export function SettingsPanel({
   const choose = (row: SettingsRow, id: string) => {
     if (row.id.startsWith("experiment:")) chooseExperimentRow(row.id, id, telemetry);
     else if (row.id === "notch") onMenuBarMode(id === "hide");
-    else if (row.id === "default-location") chooseLocation(id as Location);
     else if (row.id === "telemetry") setTelemetry(id === "on");
     else if (row.id === "launch-at-login") setLaunchAtLogin(id === "on");
   };
@@ -450,7 +402,7 @@ export function SettingsPanel({
   ];
 
   const sectionError = (id: string) =>
-    id === "general" ? locationError : id === "privacy" ? telemetryError : id === "agents" ? agentsError : null;
+    id === "privacy" ? telemetryError : id === "agents" ? agentsError : null;
 
   return (
     <div
@@ -513,6 +465,35 @@ export function SettingsPanel({
           </section>
         );
       })}
+      <section className="st-group" aria-label={tl("settings.language.label")}>
+        <div className="st-head">
+          <h3 className="st-title">{tl("settings.language.label")}</h3>
+        </div>
+        <div className="st-rows">
+          <div className="st-row">
+            <label className="st-label" htmlFor="st-ui-language">
+              {tl("settings.language.label")}
+            </label>
+            <select
+              id="st-ui-language"
+              className="dw-input st-field"
+              data-owns-enter
+              value={localeChoice}
+              onChange={(event) => {
+                setLocaleChoiceState(event.target.value);
+                void setLocaleChoice(event.target.value);
+              }}
+            >
+              <option value="system">{tl("settings.language.system_default")}</option>
+              {AVAILABLE_LOCALES.map((code) => (
+                <option key={code} value={code} lang={code}>
+                  {LOCALE_ENDONYMS[code]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

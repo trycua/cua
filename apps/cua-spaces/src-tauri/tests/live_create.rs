@@ -93,11 +93,8 @@ async fn wizard_plan_creates_a_real_local_space() {
 /// with `docker rm -f cua-e2e-wizard-keep`.
 ///
 /// Optional: `CUA_SPACES_APP_E2E_KEEP_IMAGE` replaces the wizard's image (a
-/// local candidate build, say); `CUA_SPACES_APP_E2E_KEEP_ON=cloud` sends the
-/// wizard's Cua Cloud plan instead (Fleet credentials from the environment,
-/// namespace `cua-e2e-app`, so launch the app with
-/// `CUA_SPACES_NAMESPACE=cua-e2e-app`); `CUA_SPACES_APP_E2E_KEEP_NAME` must
-/// start with `cua-e2e-`.
+/// local candidate build, say); `CUA_SPACES_APP_E2E_KEEP_NAME` must start
+/// with `cua-e2e-`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wizard_plan_creates_a_space_kept_for_capture() {
     let Some(dir) = std::env::var("CUA_SPACES_APP_E2E_KEEP_HOME")
@@ -113,7 +110,6 @@ async fn wizard_plan_creates_a_space_kept_for_capture() {
         name.starts_with("cua-e2e-"),
         "capture Spaces are named cua-e2e-*"
     );
-    let cloud = env("CUA_SPACES_APP_E2E_KEEP_ON").as_deref() == Some("cloud");
     let home = std::path::PathBuf::from(dir);
     let mut cfg = CoreConfig::hermetic(&home);
     cfg.state_dir = None;
@@ -121,16 +117,7 @@ async fn wizard_plan_creates_a_space_kept_for_capture() {
     if let Some(image) = env("CUA_SPACES_APP_E2E_KEEP_IMAGE") {
         plan.image = Some(image);
     }
-    if cloud {
-        // What the wizard sends for Cua Cloud: no cores or memory.
-        cfg.fleet = cua_fleet::FleetConfig::from_env();
-        assert!(cfg.fleet.has_auth(), "Cua Cloud needs Fleet credentials");
-        plan.on = Some("cloud".into());
-        plan.cpus = None;
-        plan.memory_mb = None;
-    } else {
-        cfg.local_runtime = Some(Arc::new(cua_daemon::local::VmmLocal::default()));
-    }
+    cfg.local_runtime = Some(Arc::new(cua_daemon::local::VmmLocal::default()));
     let core = AppCore::new(cfg);
     let row = tokio::time::timeout(Duration::from_secs(900), core.create_space(plan))
         .await

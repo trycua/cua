@@ -17,6 +17,17 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::host::{EffectKind, HostCommand, HostEffects};
 use crate::{Platform, TeleportError};
 
+/// The `Local State` file next to a profile: inside it (an Electron app's
+/// userData) or in its parent (a browser's `User Data` above `Default`).
+pub fn default_local_state(profile_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let inside = profile_dir.join("Local State");
+    if inside.is_file() {
+        return Some(inside);
+    }
+    let above = profile_dir.parent()?.join("Local State");
+    above.is_file().then_some(above)
+}
+
 /// Lazily resolves and caches a Chromium-family browser's Safe Storage
 /// key(s) on this host. One instance per (browser, profile) read.
 pub struct SafeStorageKeys<'a> {
@@ -28,6 +39,11 @@ pub struct SafeStorageKeys<'a> {
     macos_service: &'static str,
     v10: Option<Zeroizing<[u8; 16]>>,
     v11: Option<Zeroizing<[u8; 16]>>,
+    /// Windows: the browser's `Local State` and the DPAPI that unwraps its
+    /// key (`v10` is AES-256-GCM under it).
+    local_state: Option<std::path::PathBuf>,
+    dpapi: std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>,
+    windows_key: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl<'a> SafeStorageKeys<'a> {
@@ -40,7 +56,42 @@ impl<'a> SafeStorageKeys<'a> {
             macos_service,
             v10: None,
             v11: None,
+            local_state: None,
+            dpapi: std::sync::Arc::new(cua_chromium_storage::dpapi::SystemDpapi),
+            windows_key: None,
         }
+    }
+
+    /// The `Local State` file whose `os_crypt.encrypted_key` holds this
+    /// browser's Windows key.
+    pub fn with_local_state(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.local_state = path;
+        self
+    }
+
+    /// DPAPI to unwrap the Windows key with (the system's by default).
+    pub fn with_dpapi(
+        mut self,
+        dpapi: std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>,
+    ) -> Self {
+        self.dpapi = dpapi;
+        self
+    }
+
+    /// The Windows AES-256-GCM key (read once from `Local State`).
+    fn windows_key(&mut self) -> Result<&[u8; 32], TeleportError> {
+        if self.windows_key.is_none() {
+            let path = self.local_state.clone().ok_or_else(|| {
+                TeleportError::Provider(
+                    "this browser's Local State was not found, so its Windows key cannot be read"
+                        .into(),
+                )
+            })?;
+            let key = cua_chromium_storage::dpapi::local_state_key(&path, self.dpapi.as_ref())
+                .map_err(|e| TeleportError::Provider(format!("Windows browser key: {e}")))?;
+            self.windows_key = Some(key);
+        }
+        Ok(self.windows_key.as_deref().expect("set above"))
     }
 
     /// The `v10` key: the macOS Keychain secret (prompting for
@@ -68,7 +119,11 @@ impl<'a> SafeStorageKeys<'a> {
                     secret.zeroize();
                     key
                 }
-                Platform::Windows => return Err(windows_unsupported()),
+                Platform::Windows => {
+                    return Err(TeleportError::Provider(
+                        "Windows browsers use AES-GCM, not a v10 CBC key".into(),
+                    ));
+                }
             };
             self.v10 = Some(key);
         }
@@ -116,6 +171,15 @@ impl<'a> SafeStorageKeys<'a> {
     /// `password_value` or `Cookies`' `encrypted_value`), resolving whichever
     /// key its prefix names.
     pub fn decrypt(&mut self, value: &[u8]) -> Result<Zeroizing<Vec<u8>>, TeleportError> {
+        if self.platform == Platform::Windows {
+            // `v10` is AES-256-GCM under the DPAPI-wrapped Local State key.
+            // `v20` (app-bound) is refused by callers before they get here.
+            if value.starts_with(b"v20") {
+                return Err(app_bound_unsupported());
+            }
+            let key = *self.windows_key()?;
+            return chromium_crypto::gcm::decrypt(&key, value);
+        }
         match value.get(..3) {
             Some(b"v10") => {
                 let key = *self.v10()?;
@@ -126,7 +190,6 @@ impl<'a> SafeStorageKeys<'a> {
                 chromium_crypto::decrypt(&key, &value[3..])
             }
             Some(b"v20") => Err(app_bound_unsupported()),
-            _ if self.platform == Platform::Windows => Err(windows_unsupported()),
             _ => Err(TeleportError::Provider(
                 "a Safe-Storage-encrypted value uses an encryption version this build does not \
                  know"
@@ -144,14 +207,6 @@ fn app_bound_unsupported() -> TeleportError {
         "these cookies are protected by Chrome's App-Bound Encryption (v20, Windows Chrome \
          127+), which only Chrome itself can decrypt, so they cannot be teleported. Sign in \
          again in the destination browser instead."
-            .into(),
-    )
-}
-
-fn windows_unsupported() -> TeleportError {
-    TeleportError::Provider(
-        "decrypting Chromium's Safe-Storage-encrypted values on Windows (DPAPI) is not \
-         supported yet"
             .into(),
     )
 }
@@ -223,10 +278,34 @@ mod tests {
     }
 
     #[test]
-    fn windows_is_refused_for_every_key() {
+    fn windows_has_no_cbc_keys_and_decrypts_v10_gcm_through_local_state() {
+        use cua_chromium_storage::dpapi::{Dpapi, FakeDpapi, ensure_local_state_key};
         let host = FakeHost::new();
         let mut keys = SafeStorageKeys::new(&host, Platform::Windows, "Chrome Safe Storage");
         assert!(keys.v10().unwrap_err().to_string().contains("Windows"));
         assert!(keys.v11().is_err());
+        // Without a Local State there is nothing to decrypt with.
+        assert!(
+            keys.decrypt(b"v10-anything-long-enough-for-a-nonce-and-tag")
+                .is_err()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let ls = dir.path().join("Local State");
+        let (key, _) = ensure_local_state_key(&ls, &FakeDpapi, [5u8; 32]).unwrap();
+        let enc = chromium_crypto::gcm::encrypt(&key, &[1u8; 12], b"win-cookie");
+        let dpapi: std::sync::Arc<dyn Dpapi> = std::sync::Arc::new(FakeDpapi);
+        let mut keys = SafeStorageKeys::new(&host, Platform::Windows, "Chrome Safe Storage")
+            .with_local_state(Some(ls))
+            .with_dpapi(dpapi);
+        assert_eq!(&*keys.decrypt(&enc).unwrap(), b"win-cookie");
+        // App-bound values are never attempted.
+        let mut v20 = b"v20".to_vec();
+        v20.extend_from_slice(&[0u8; 40]);
+        assert!(
+            keys.decrypt(&v20)
+                .unwrap_err()
+                .to_string()
+                .contains("App-Bound")
+        );
     }
 }

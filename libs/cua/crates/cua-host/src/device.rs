@@ -5,7 +5,8 @@
 //! file; see [`KeySlot`]) and is enrolled once with a second factor:
 //!
 //! - a fresh interactive sign-in enrolls it right away (`cua auth login` or
-//!   the app's sign-in re-registers a device that already has a key);
+//!   the app's sign-in registers this device, creating its key on first
+//!   use);
 //! - otherwise it shows a one-time code that an enrolled device confirms
 //!   (`cua devices approve <code>`, or the Cua Spaces app). Relays that
 //!   predate sign-in enrollment for every device enroll only an account's
@@ -58,6 +59,37 @@ pub fn register_message(device: &str, ts: u64) -> String {
 /// `session_message`).
 pub fn session_message(device: &str, ts: u64) -> String {
     format!("cua-device-session/v1\n{device}\n{ts}")
+}
+
+/// What a device signs to prove a Space member key is used from the device
+/// it was bound to (`cua join`): the membership and the time (ms).
+pub fn member_message(member_id: &str, ts_ms: u64) -> String {
+    format!("cua-space-member/v1\n{member_id}\n{ts_ms}")
+}
+
+/// The device id (`dev_…`) of a device public key (uncompressed point,
+/// base64url), as [`DeviceKey::id`] derives it; `None` when it isn't one.
+pub fn device_id_of(public_key: &str) -> Option<String> {
+    let raw = b64().decode(public_key.trim()).ok()?;
+    if raw.len() != 65 || raw[0] != 4 {
+        return None;
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, &raw);
+    Some(format!("dev_{}", &hex::encode(digest.as_ref())[..24]))
+}
+
+/// Whether `signature` (base64url, fixed size) is `public_key`'s signature
+/// of `message` (see [`DeviceKey::sign`]).
+pub fn verify_device_signature(public_key: &str, message: &str, signature: &str) -> bool {
+    let (Ok(key), Ok(sig)) = (
+        b64().decode(public_key.trim()),
+        b64().decode(signature.trim()),
+    ) else {
+        return false;
+    };
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, key)
+        .verify(message.as_bytes(), &sig)
+        .is_ok()
 }
 
 /// Where the device key (PKCS#8) is kept.
@@ -235,6 +267,85 @@ pub struct DeviceAuth {
     name: String,
     machine_id: std::sync::OnceLock<Option<String>>,
     session: tokio::sync::Mutex<Option<(String, u64)>>,
+    /// A hash of the key the cached session was opened with (0: none), when
+    /// the slot was last looked at again (unix milliseconds) and how often
+    /// to (milliseconds); see [`DeviceAuth::key_changed`]. Flat atomics:
+    /// this struct sits inside the SDK's deep futures, whose layout check
+    /// has a fixed depth budget.
+    session_key: std::sync::atomic::AtomicU64,
+    key_checked_ms: std::sync::atomic::AtomicU64,
+    key_recheck_ms: u64,
+    pending_file: Option<PathBuf>,
+}
+
+/// How often a long-lived [`DeviceAuth`] (the daemon's) looks at its key
+/// slot again while it holds a session.
+const KEY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// A nonzero hash of a key id, to tell one key from another in this
+/// process.
+fn key_hash(id: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish() | 1
+}
+
+/// The one-time code this device last showed, remembered (in
+/// `~/.cua/device-pending.json`) so `cua devices status` can show it again
+/// and `cua devices enroll` reuses it instead of re-registering: a new
+/// registration replaces the code and silently invalidates the one the user
+/// may be typing on the other device.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingCode {
+    /// Relay base URL.
+    pub relay: String,
+    /// `dev_…`.
+    pub device_id: String,
+    /// The one-time code.
+    pub code: String,
+    /// Unix seconds the code expires at.
+    pub expires_at: u64,
+}
+
+/// A pending code's lifetime when the relay does not say.
+const DEFAULT_CODE_TTL_SECS: u64 = 600;
+/// Do not reuse a code that expires sooner than this.
+const CODE_REUSE_MARGIN_SECS: u64 = 60;
+/// A sign-in at most this old may still enroll by registering again (the
+/// relay's default bootstrap window).
+const FRESH_SIGN_IN_SECS: u64 = 600;
+
+/// The unverified claims of a JWT access token (display and local
+/// decisions only; the relay verifies).
+fn token_claims(token: &str) -> Option<serde_json::Value> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = b64().decode(payload.trim_end_matches('=')).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The unverified `auth_time` claim of a JWT access token.
+fn token_auth_time(token: &str) -> Option<u64> {
+    token_claims(token)?.get("auth_time")?.as_u64()
+}
+
+/// The unverified `sub` claim of a JWT access token: which account it is
+/// for. A long-running process compares it to the account it started
+/// state for (a mesh node, a pool agent) to notice a sign-in as another
+/// account; the relay still verifies every token.
+pub fn token_subject(token: &str) -> Option<String> {
+    token_claims(token)?
+        .get("sub")?
+        .as_str()
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 impl std::fmt::Debug for DeviceAuth {
@@ -264,7 +375,93 @@ impl DeviceAuth {
             name: name.into(),
             machine_id: std::sync::OnceLock::new(),
             session: tokio::sync::Mutex::new(None),
+            session_key: std::sync::atomic::AtomicU64::new(0),
+            key_checked_ms: std::sync::atomic::AtomicU64::new(0),
+            key_recheck_ms: KEY_RECHECK.as_millis() as u64,
+            pending_file: None,
         })
+    }
+
+    /// Looks at the key slot again at most every `every` while a session
+    /// is held (default a few seconds).
+    pub fn with_key_recheck(mut self, every: std::time::Duration) -> Self {
+        self.key_recheck_ms = every.as_millis() as u64;
+        self
+    }
+
+    /// Whether the key in the slot is no longer the one the cached session
+    /// was opened with: another process (the app, the CLI) enrolled this
+    /// device again, for instance after a sign-in as another account. The
+    /// relay refuses the old key's session, so the cached one must not be
+    /// used. Looked at most every `key_recheck`.
+    fn key_changed(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let known = self.session_key.load(Relaxed);
+        if known == 0 {
+            return false;
+        }
+        let now = now_ms();
+        if now.saturating_sub(self.key_checked_ms.load(Relaxed)) < self.key_recheck_ms {
+            return false;
+        }
+        self.key_checked_ms.store(now, Relaxed);
+        match self.key() {
+            Ok(Some(k)) => key_hash(&k.id()) != known,
+            Ok(None) => true,
+            // Unreadable now (a locked vault): keep what works.
+            Err(_) => false,
+        }
+    }
+
+    /// Remembers this device's pending code in `path` (see
+    /// [`PendingCode`]).
+    pub fn with_pending_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.pending_file = Some(path.into());
+        self
+    }
+
+    /// The unexpired pending code this device last showed on this relay.
+    pub fn pending_code(&self) -> Option<PendingCode> {
+        let path = self.pending_file.as_ref()?;
+        let p: PendingCode = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        let id = self.device_id().ok()??;
+        (p.relay == self.relay.base()
+            && p.device_id == id
+            && p.expires_at > now_secs() + CODE_REUSE_MARGIN_SECS)
+            .then_some(p)
+    }
+
+    fn remember_pending(&self, enrollment: &Enrollment) {
+        let Some(path) = &self.pending_file else {
+            return;
+        };
+        // A test never writes the user's real ~/.cua.
+        if cua_home::guard_write(path).is_err() {
+            return;
+        }
+        let result = match (&enrollment.device.state, &enrollment.code) {
+            (DeviceState::Pending, Some(code)) => {
+                let p = PendingCode {
+                    relay: self.relay.base().to_string(),
+                    device_id: enrollment.device.id.clone(),
+                    code: code.clone(),
+                    expires_at: enrollment
+                        .device
+                        .code_expires
+                        .unwrap_or_else(|| now_secs() + DEFAULT_CODE_TTL_SECS),
+                };
+                serde_json::to_vec_pretty(&p)
+                    .map_err(std::io::Error::other)
+                    .and_then(|bytes| cua_home::write_private(path, &bytes))
+            }
+            _ => match std::fs::remove_file(path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            },
+        };
+        if let Err(e) = result {
+            tracing::debug!(error = %e, "could not remember the pending device code");
+        }
     }
 
     /// Reports `machine_id` instead of this machine's
@@ -322,20 +519,50 @@ impl DeviceAuth {
     /// relay already enrolled wins and the other is retired, so the machine
     /// stays one device. A key the relay revoked (or replaced) can never
     /// enroll again, so it is replaced by a new one.
+    ///
+    /// While this device still waits with an unexpired code it remembers
+    /// (see [`DeviceAuth::with_pending_file`]) and the sign-in is not fresh
+    /// enough to enroll by itself, the code is shown again instead of
+    /// registering anew (which would replace it).
     pub async fn enroll(&self) -> Result<Enrollment> {
+        if let Some(p) = self.pending_code() {
+            let token = self.tokens.access_token().await?;
+            let fresh = token_auth_time(&token)
+                .is_some_and(|t| now_secs().saturating_sub(t) <= FRESH_SIGN_IN_SECS);
+            if !fresh
+                && let Err(e) = self.session().await
+                && refused_state(&e) == Some(DeviceState::Pending)
+            {
+                return Ok(Enrollment {
+                    device: DeviceView {
+                        id: p.device_id,
+                        name: self.name.clone(),
+                        state: DeviceState::Pending,
+                        code_expires: Some(p.expires_at),
+                        current: true,
+                        ..Default::default()
+                    },
+                    code: Some(p.code),
+                    ..Default::default()
+                });
+            }
+        }
         self.register_this(&self.name).await
     }
 
-    /// After an interactive sign-in: re-registers this device when it
-    /// already has a key, so a fresh sign-in enrolls (or re-verifies) it
-    /// without an approval. Keeps the name the relay knows. `None` when
-    /// this device never enrolled (no key): signing in alone creates no
-    /// device.
-    pub async fn enroll_after_sign_in(&self) -> Result<Option<Enrollment>> {
-        if self.key()?.is_none() && self.alternate_key()?.is_none() {
-            return Ok(None);
-        }
-        self.register_this("").await.map(Some)
+    /// After an interactive sign-in: registers this device so the fresh
+    /// sign-in enrolls (or re-verifies) it without an approval. A device
+    /// with a key keeps the name the relay knows; a new one gets its key
+    /// now and registers under this device's name, so signing in on a new
+    /// computer is enough to use it (a relay that does not take the
+    /// sign-in as a second factor leaves it pending with a code).
+    pub async fn enroll_after_sign_in(&self) -> Result<Enrollment> {
+        let name = if self.key()?.is_none() && self.alternate_key()?.is_none() {
+            self.name.clone()
+        } else {
+            String::new()
+        };
+        self.register_this(&name).await
     }
 
     async fn register_this(&self, name: &str) -> Result<Enrollment> {
@@ -363,6 +590,15 @@ impl DeviceAuth {
         }
         let key = self.key_or_create()?;
         let enrollment = match self.register_key(&token, &key, name).await {
+            // A key the relay holds for another account (a different
+            // sign-in on this computer) can never enroll here either.
+            Err(Error::Conflict(m)) if m.contains("another account") => {
+                let (key, pkcs8) = DeviceKey::generate()?;
+                self.slot.save(&pkcs8)?;
+                // The new key has no record to keep a name from.
+                let name = if name.is_empty() { &self.name } else { name };
+                self.register_key(&token, &key, name).await?
+            }
             Err(Error::PermissionDenied(m))
                 if m.contains("revoked") || m.contains("replaced by") =>
             {
@@ -373,6 +609,7 @@ impl DeviceAuth {
             other => other?,
         };
         *self.session.lock().await = None;
+        self.remember_pending(&enrollment);
         if enrollment.device.state == DeviceState::Enrolled
             && let Some(other) =
                 other.filter(|o| o != &enrollment.device.id && !enrollment.superseded.contains(o))
@@ -423,17 +660,22 @@ impl DeviceAuth {
         let mut cached = self.session.lock().await;
         if let Some((token, expires)) = cached.as_ref()
             && *expires > now_secs() + SESSION_MARGIN_SECS
+            && !self.key_changed()
         {
             return Ok(token.clone());
         }
         let key = self.key()?.ok_or_else(|| {
-            Error::PermissionDenied(
-                "this device is not enrolled for your cua.ai account (run `cua devices enroll`)"
-                    .into(),
-            )
+            Error::PermissionDenied(format!(
+                "this device is not enrolled for your cua.ai account (run `{} devices enroll`)",
+                crate::cli()
+            ))
         })?;
         let token = self.tokens.access_token().await?;
         let session = self.open_session(&token, &key).await?;
+        self.session_key
+            .store(key_hash(&key.id()), std::sync::atomic::Ordering::Relaxed);
+        self.key_checked_ms
+            .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
         *cached = Some(session.clone());
         Ok(session.0)
     }
@@ -477,7 +719,7 @@ impl DeviceAuth {
     /// identically on the retry (its session fails for the same reason
     /// again), so this never masks a real enrollment problem: it only
     /// costs one extra round trip, and only right after a restart.
-    async fn with_session_retry<T, Fut>(
+    pub(crate) async fn with_session_retry<T, Fut>(
         &self,
         call: impl Fn(RelayClient, String) -> Fut,
     ) -> Result<T>
@@ -508,22 +750,21 @@ impl DeviceAuth {
     /// never when there was none to begin with.
     async fn with_optional_session_retry<T, Fut>(
         &self,
+        relay: &RelayClient,
+        token: &str,
         call: impl Fn(RelayClient, String) -> Fut,
     ) -> Result<T>
     where
         Fut: std::future::Future<Output = Result<T>>,
     {
-        let token = self.tokens.access_token().await?;
+        let token = token.to_owned();
         let session = self.try_session().await;
         let had_session = session.is_some();
-        let relay = self.relay.clone().with_device_session(session);
-        match call(relay, token.clone()).await {
+        let client = relay.clone().with_device_session(session);
+        match call(client, token.clone()).await {
             Err(e) if had_session && is_session_rejection(&e) => {
                 self.reset_session().await;
-                let relay = self
-                    .relay
-                    .clone()
-                    .with_device_session(self.try_session().await);
+                let relay = relay.clone().with_device_session(self.try_session().await);
                 call(relay, token).await
             }
             other => other,
@@ -555,8 +796,22 @@ impl DeviceAuth {
     /// The account's devices (this one marked `current`) and the end of the
     /// relay's grace period.
     pub async fn listing(&self) -> Result<DeviceListing> {
-        self.with_optional_session_retry(|relay, token| async move {
+        let token = self.tokens.access_token().await?;
+        self.with_optional_session_retry(&self.relay, &token, |relay, token| async move {
             relay.device_listing(&token).await
+        })
+        .await
+    }
+
+    /// Lists machines for the caller's relay and account, carrying this device's
+    /// session and renewing it once if the relay no longer recognizes it.
+    pub async fn machines_for(
+        &self,
+        relay: &RelayClient,
+        token: &str,
+    ) -> Result<Vec<crate::Machine>> {
+        self.with_optional_session_retry(relay, token, |relay, token| async move {
+            relay.machines(&token).await
         })
         .await
     }
@@ -593,10 +848,29 @@ impl DeviceAuth {
 
     /// The account's audit log, newest last.
     pub async fn audit(&self, limit: usize) -> Result<Vec<AuditEvent>> {
-        self.with_optional_session_retry(move |relay, token| async move {
+        let token = self.tokens.access_token().await?;
+        self.with_optional_session_retry(&self.relay, &token, move |relay, token| async move {
             relay.audit(&token, limit).await
         })
         .await
+    }
+}
+
+/// The state a relay's refusal to open a device session reports: pending
+/// (waiting for approval), re-verification due, or revoked. `None` for any
+/// other error (an unknown device is `Error::NotFound`).
+pub fn refused_state(e: &Error) -> Option<DeviceState> {
+    let Error::PermissionDenied(m) = e else {
+        return None;
+    };
+    if m.contains("revoked") {
+        Some(DeviceState::Revoked)
+    } else if m.contains("waiting for approval") || m.contains("not enrolled yet") {
+        Some(DeviceState::Pending)
+    } else if m.contains("re-verif") || m.contains("enrollment expired") {
+        Some(DeviceState::Expired)
+    } else {
+        None
     }
 }
 
@@ -613,4 +887,65 @@ impl DeviceAuth {
 fn is_session_rejection(e: &Error) -> bool {
     matches!(e, Error::PermissionDenied(msg)
         if msg.contains("not enrolled") || msg.contains("from an enrolled device"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn member_signatures_verify_only_for_their_key_and_message() {
+        let (key, _) = DeviceKey::generate().unwrap();
+        let (other, _) = DeviceKey::generate().unwrap();
+        let msg = member_message("mem_1", 42);
+        let sig = key.sign(&msg).unwrap();
+        assert_eq!(device_id_of(&key.public_key()), Some(key.id()));
+        assert!(verify_device_signature(&key.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(&other.public_key(), &msg, &sig));
+        assert!(!verify_device_signature(
+            &key.public_key(),
+            &member_message("mem_1", 43),
+            &sig
+        ));
+        assert!(!verify_device_signature("not base64!", &msg, &sig));
+        assert_eq!(device_id_of("AAAA"), None);
+    }
+
+    #[test]
+    fn refused_state_reads_the_relays_messages() {
+        let denied = |m: &str| Error::PermissionDenied(m.into());
+        for (m, want) in [
+            (
+                "this device is waiting for approval from an enrolled device",
+                DeviceState::Pending,
+            ),
+            (
+                "this device is not enrolled yet: sign in again (`cua auth login`) to enroll it",
+                DeviceState::Pending,
+            ),
+            (
+                "this device needs re-verification: approve it from an enrolled device",
+                DeviceState::Expired,
+            ),
+            (
+                "this device's enrollment expired after a period without use: sign in again",
+                DeviceState::Expired,
+            ),
+            ("this device was revoked", DeviceState::Revoked),
+        ] {
+            assert_eq!(refused_state(&denied(m)), Some(want), "{m}");
+        }
+        assert_eq!(refused_state(&Error::NotFound("relay: gone".into())), None);
+        assert_eq!(refused_state(&denied("forbidden")), None);
+    }
+
+    #[test]
+    fn token_auth_time_reads_the_unverified_claim() {
+        let claims = b64().encode(br#"{"sub":"u","auth_time":1700000000}"#);
+        assert_eq!(
+            token_auth_time(&format!("h.{claims}.s")),
+            Some(1_700_000_000)
+        );
+        assert_eq!(token_auth_time("opaque-token"), None);
+    }
 }

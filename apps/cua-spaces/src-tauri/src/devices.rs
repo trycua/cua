@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cua_host::{AccountTokens, DeviceAuth, DeviceState, RelayClient};
+use cua_host::{AccountTokens, DeviceAuth, DeviceState, PairingCodeRequest, RelayClient};
 use cua_spaces_app_core::devices::{AuditInput, DeviceInput, DevicesInput, MachineInput};
 use serde::Serialize;
 
@@ -33,6 +33,53 @@ pub trait PresenceGate: Send + Sync {
     /// Confirms `reason`; `passphrase` is what the person typed, if the
     /// gate needs one.
     async fn confirm(&self, reason: &str, passphrase: Option<String>) -> Result<(), String>;
+}
+
+/// A one-time code that adds a machine to the account ("Add a machine" by
+/// link or QR code), as the page reads it (the cua SDK's `PairingCode`).
+/// `code`, `url` and the install commands are only there when just made.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingCodeView {
+    pub id: String,
+    pub code: Option<String>,
+    pub url: Option<String>,
+    pub install_sh: Option<String>,
+    pub install_powershell: Option<String>,
+    /// `active`, `used`, `revoked` or `expired`.
+    pub state: String,
+    pub team: Option<String>,
+    /// Unix seconds.
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub used_at: Option<u64>,
+    /// The relay machine id it added.
+    pub machine: Option<String>,
+}
+
+impl PairingCodeView {
+    /// The relay's code, with the link and commands for `relay`.
+    pub fn new(p: cua_host::PairingCode, relay: &str) -> Self {
+        let made = |os: Option<&str>| {
+            p.code.as_deref().map(|c| match os {
+                None => cua_host::add_machine_url(c, relay),
+                Some(os) => cua_host::install_command(c, relay, os),
+            })
+        };
+        Self {
+            url: made(None),
+            install_sh: made(Some("linux")),
+            install_powershell: made(Some("windows")),
+            id: p.id,
+            code: p.code,
+            state: p.state,
+            team: p.team,
+            created_at: p.created_at,
+            expires_at: p.expires_at,
+            used_at: p.used_at,
+            machine: p.machine,
+        }
+    }
 }
 
 /// `devices_enroll`'s result.
@@ -198,6 +245,86 @@ impl DevicesService {
             .map(|_| ())
             .map_err(err)
     }
+
+    /// The relay, as this device and the account (the pairing-code calls).
+    async fn account_relay(&self) -> Result<(RelayClient, String), String> {
+        let session = self.auth.session().await.map_err(err)?;
+        let token = self.tokens.access_token().await.map_err(err)?;
+        let relay = RelayClient::new(self.auth.relay_url())
+            .map_err(err)?
+            .with_device_session(Some(session));
+        Ok((relay, token))
+    }
+
+    /// Makes a one-time code (link, QR code, install commands) that adds
+    /// another computer to the account, from this enrolled device. It
+    /// expires after 30 minutes. With `team` (an organization id) the code
+    /// is the same: the relay's own teams are retired, and the machine
+    /// becomes a team machine once it joined (the web UI shares it with
+    /// `team:<id>`, through the Spaces API).
+    pub async fn create_pairing_code(
+        &self,
+        team: Option<String>,
+    ) -> Result<PairingCodeView, String> {
+        let (relay, token) = self.account_relay().await?;
+        let req = PairingCodeRequest {
+            name: None,
+            team: None,
+            ttl_secs: None,
+        };
+        let mut code = relay.create_pairing_code(&token, &req).await.map_err(err)?;
+        code.team = team.filter(|t| !t.trim().is_empty());
+        Ok(PairingCodeView::new(code, self.auth.relay_url()))
+    }
+
+    /// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+    /// API), for "Add a machine" and "Share". This app keeps no current
+    /// team, so none is chosen.
+    pub async fn teams(&self) -> Result<TeamsListView, String> {
+        let token = self.tokens.access_token().await.map_err(err)?;
+        let me = cua_host::spaces_api::SpacesApiClient::current()
+            .map_err(err)?
+            .me(&token)
+            .await
+            .map_err(err)?;
+        Ok(TeamsListView {
+            teams: me
+                .orgs
+                .into_iter()
+                .map(|o| TeamChoiceView {
+                    // Team machines decide what can be offered: the API's
+                    // features when it lists them, else the plan.
+                    plan: if o.has("team_machines") {
+                        "teams".into()
+                    } else {
+                        o.plan
+                    },
+                    id: o.id,
+                    alias: o.alias,
+                    name: o.name,
+                    role: o.role,
+                })
+                .collect(),
+            current_team_id: None,
+        })
+    }
+
+    /// The account's pairing codes, newest first (without the codes).
+    pub async fn pairing_codes(&self) -> Result<Vec<PairingCodeView>, String> {
+        let (relay, token) = self.account_relay().await?;
+        let codes = relay.pairing_codes(&token).await.map_err(err)?;
+        let url = self.auth.relay_url();
+        Ok(codes
+            .into_iter()
+            .map(|c| PairingCodeView::new(c, url))
+            .collect())
+    }
+
+    /// Revokes an unused pairing code (`pc_…`).
+    pub async fn revoke_pairing_code(&self, id: &str) -> Result<(), String> {
+        let (relay, token) = self.account_relay().await?;
+        relay.revoke_pairing_code(&token, id).await.map_err(err)
+    }
 }
 
 /// The app's presence gate: the biometric prompt on macOS, else the
@@ -232,4 +359,23 @@ impl PresenceGate for OsPresence<'_> {
 /// Whether presence on this system is a passphrase the page must ask for.
 pub fn presence_needs_passphrase() -> bool {
     !cfg!(target_os = "macos")
+}
+
+/// One of the account's Teams (`teams.list`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamChoiceView {
+    pub id: String,
+    pub alias: String,
+    pub name: String,
+    pub role: String,
+    pub plan: String,
+}
+
+/// `teams.list`: the account's Teams and the current one.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamsListView {
+    pub teams: Vec<TeamChoiceView>,
+    pub current_team_id: Option<String>,
 }

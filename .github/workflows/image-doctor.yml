@@ -35,8 +35,8 @@ name: "Image doctor"
 # vars.CUA_ARM64_KVM_RUNNER (a self-hosted Graviton metal label).
 #
 # Tiers: callers gate each tier on its own by calling this once per tier
-# (cd-image-linux.yml doctor-post: name linux-slim-post / linux-full-post;
-# nightly-image-doctor.yml runs 24.04 and 24.04-slim). The doctor enforces
+# (cd-image-linux.yml doctor-post: name linux-slim-post / linux-full-post).
+# The doctor enforces
 # each tier's own claims (/etc/cua-image/manifest.json `tier`, `apps`,
 # `tools`).
 #
@@ -120,6 +120,9 @@ permissions:
   packages: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -357,12 +360,12 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
           echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - name: Fetch the rootfs artifact
         if: inputs.rootfs_artifact != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -428,7 +431,7 @@ jobs:
           if crane manifest "${{ inputs.windows_ref }}" | jq -e '.annotations["ai.cua.spacesd"] == "true"' >/dev/null; then
             echo "the image runs cua-spacesd; no shim needed"; exit 0
           fi
-          cargo build --release --locked -p cua-cli
+          cargo build --release --locked -p cua-cli --features byoc
       - name: Boot the Windows disk and run the doctor
         run: |
           cua=(); [ -x libs/cua/target/release/cua ] && cua=(--cua libs/cua/target/release/cua)
@@ -452,7 +455,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - name: Clone, boot and doctor the macOS image under Lume
         run: |
           scripts/images/image-doctor-lume.sh --image "${{ inputs.macos_ref }}" \

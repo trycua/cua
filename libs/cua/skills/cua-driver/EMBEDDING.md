@@ -257,13 +257,39 @@ Measured on macOS with Calculator in the background and Terminal frontmost, a
 background AX click took 1153 ms with the default, 325 ms with `200`, and 78 ms
 with `0`.
 
+## Pacing synthesized keystrokes (macOS)
+
+The macOS keyboard adapter waits a fixed gap between each key down and up and
+between consecutive keys. For `type_text`, `press_key`, and `hotkey`, that gap
+is most of the call's latency. A host whose targets accept faster input can
+shorten it at trusted launch with one variable, in the same environment as the
+window-observation variables above. `EmbeddedCuaDriverHost` admits it too:
+
+| Variable                | Meaning                                         | Default | Accepted range                                        |
+| ----------------------- | ----------------------------------------------- | ------- | ----------------------------------------------------- |
+| `CUA_DRIVER_KEY_GAP_MS` | Gap between synthesized key events, per event.  | 8       | 2 to 100; smaller values are raised, larger clamped   |
+
+Unset, empty, or unparsable values keep the default. No tool argument can
+change the gap. An explicit `type_text` `delay_ms` still applies on top of it.
+
+- **macOS only.** Linux keeps its fixed 10 ms key delay and Windows its own
+  pacing; neither reads this variable.
+- **What a shorter gap costs.** Some targets coalesce or drop key events that
+  arrive back to back, most often remote-input forwarders and apps under heavy
+  load. Read the field back after typing before relying on a low value for a
+  new target. The 2 ms floor exists because `0` posts events with no gap at all.
+
+Measured on macOS 27 with TextEdit in the background, typing a 185-character
+ASCII sentence through the PID-routed key path took about 3650 ms at the default
+and about 980 ms at `2`. All ten read-backs (five per value) matched exactly.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                               | Standalone                    | Embedded (`CUA_DRIVER_EMBEDDED=1`)     |
 | --------------------------------------------- | ----------------------------- | -------------------------------------- |
 | Responsibility disclaim re-exec               | ON (owns its TCC identity)    | OFF (stays in the host's chain)        |
 | Tool execution process                        | `serve` daemon                | host-spawned `serve --embedded` daemon |
-| Daemon auto-relaunch via `open -a CuaDriver`  | Yes, when installed           | Never (would leave the host's chain)   |
+| Daemon auto-relaunch of the installed app     | Yes, when installed           | Never (would leave the host's chain)   |
 | TCC identity                                  | `com.trycua.driver`           | the host app                           |
 | Permission prompts / startup gate             | May prompt once               | **Never prompts**                      |
 | Settings → Privacy & Security entries         | CuaDriver                     | your app only                          |
@@ -284,7 +310,7 @@ would treat it as its own responsible process: your user would get a _second_ pr
 attributed to the driver binary, a second Settings entry, and capture/AX
 would fail until that second grant. That is the exact experience embedding exists
 to eliminate. Embedded mode short-circuits the disclaim re-exec
-(`responsibility.rs`) and the `open -a CuaDriver` daemon relaunch. MCP is
+(`responsibility.rs`) and the installed-app daemon relaunch. MCP is
 always a proxy, so the embedded daemon remains the single process that checks
 TCC and executes tools.
 

@@ -48,8 +48,16 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_MINIMIZE};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetWindowLongPtrW, GetWindowRect, IsIconic, SetCursorPos, SetWindowPos,
+    ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE,
+    WS_EX_TOPMOST,
+};
+
+#[path = "support/foreground_text_oracle.rs"]
+mod foreground_text_oracle;
+use foreground_text_oracle::{ascii_escape, normalize_line_endings, stable_text};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
 
@@ -335,7 +343,81 @@ fn harness_wpf_query_projects_structured_elements() {
                 returned < total,
                 "query did not compact {returned}/{total} elements"
             );
+            assert_eq!(
+                response.structured()["elements_complete"].as_bool(),
+                Some(true),
+                "query projection must preserve the complete underlying UIA snapshot"
+            );
             let _ = element_token_by_id(&response, "btn-increment");
+
+            let bounded = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_elements": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !bounded.is_error(),
+                "bounded snapshot failed: {}",
+                bounded.text()
+            );
+            assert_eq!(
+                bounded.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a bound that skips the WPF root's descendants must report an incomplete snapshot"
+            );
+
+            let shallow = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_depth": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !shallow.is_error(),
+                "depth-bounded snapshot failed: {}",
+                shallow.text()
+            );
+            assert_eq!(
+                shallow.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a depth bound that skips WPF descendants must report an incomplete snapshot"
+            );
+
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [{"element": {
+                        "selector": {"label_contains": "__cua_missing_completeness_probe__"},
+                        "exists": true
+                    }}],
+                    "timeout_ms": 0,
+                    "stable_samples": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "verification failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "unknown",
+                "a structured projection that omits display-only nodes cannot prove absence"
+            );
+            assert_eq!(
+                verified.structured()["predicates"][0]["unknown_reason"],
+                "observation_unavailable"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
@@ -849,6 +931,151 @@ fn harness_wpf_type_text() {
 
 #[test]
 #[ignore]
+fn harness_wpf_type_text_foreground_single_line_application_state() {
+    const TEXT: &str = "FOREGROUND-SINGLE-19 \u{4e2d}\u{6587} 12345 \u{1f642}";
+
+    let mut case = native_foreground_case(
+        "wpf",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-single-line-state");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WPF state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("WPF main window not found");
+        assert_eq!(stable_text(&state_path, "txt-input"), "");
+
+        let snap = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.tree_text(), "txt-input")
+            .expect("txt-input not in WPF snapshot");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "foreground type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["route"], "global_input");
+        assert_eq!(stable_text(&state_path, "txt-input"), TEXT);
+        assert_eq!(stable_text(&state_path, "txt-deferred-input"), "");
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_type_text_multiline_application_state() {
+    const TEXT: &str = concat!(
+        "\n",
+        "CUA-MULTILINE-START\n",
+        "ASCII-LF-A-31\nASCII-LF-B-47\n",
+        "ASCII-CRLF-A-52\r\nASCII-CRLF-B-68\n",
+        "ASCII-CR-A-13\rASCII-CR-B-24\n",
+        "\u{8f66}\u{6b21} G7391\r\n",
+        "\u{4e2d}\u{6587} 12345\n",
+        "EMPTY-A-17\n\n\nEMPTY-B-29\n",
+        "EMOJI-A \u{1f642} 123\r\n",
+        "EMOJI-B \u{1f680} 456\n",
+        "CUA-MULTILINE-END\n"
+    );
+
+    let mut case = native_foreground_case(
+        "wpf",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-multiline");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WPF state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("WPF main window not found");
+        assert_eq!(
+            stable_text(&state_path, "txt-multiline-input"),
+            "",
+            "multiline fixture must start blank"
+        );
+
+        let snap = snapshot(&mut driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.tree_text(), "txt-multiline-input")
+            .expect("txt-multiline-input not in WPF snapshot");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "WPF foreground multiline type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["route"],
+            "global_input",
+            "foreground multiline input must use SendInput: {}",
+            response.structured()
+        );
+
+        let actual = stable_text(&state_path, "txt-multiline-input");
+        assert_eq!(
+            normalize_line_endings(&actual),
+            normalize_line_endings(TEXT),
+            "WPF app-owned multiline state differs; actual={} expected={}",
+            ascii_escape(&actual),
+            ascii_escape(TEXT)
+        );
+        assert_eq!(
+            stable_text(&state_path, "txt-deferred-input"),
+            "",
+            "foreground multiline input leaked to the startup-focused decoy"
+        );
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_set_value() {
     execute_case(
         background_case("set_value", DriverRoute::UiaValue),
@@ -967,18 +1194,49 @@ fn harness_wpf_right_click() {
         Vec::new(),
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
-            let snap = snapshot(driver, pid, wid);
+            let snap = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid, "window_id": wid, "full_output": true}),
+            );
             let idx = ax::element_index_by_id(snap.text(), "border-click-target")
                 .expect("border-click-target not in snapshot");
+            let frame = &snap.structured()["elements"]
+                .as_array()
+                .expect("structured elements")
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(idx))
+                .expect("right-click target frame")["frame"];
+            let click_x = frame["x"].as_f64().unwrap() + frame["w"].as_f64().unwrap() / 2.0;
+            let click_y = frame["y"].as_f64().unwrap() + frame["h"].as_f64().unwrap() / 2.0;
+            let mut window_rect = RECT::default();
+            unsafe {
+                GetWindowRect(HWND(wid as *mut _), &mut window_rect).expect("read harness bounds");
+                SetCursorPos(window_rect.left + 10, window_rect.top + 10)
+                    .expect("place cursor away from right-click target");
+            }
             // Same delivery_mode:foreground rationale as type_text — PostMessage
             // WM_RBUTTONDOWN doesn't always reach WPF's MouseRightButtonDown
             // routed-event chain (intermittent in batch runs).
+            let mut cursor_before = POINT::default();
+            unsafe { GetCursorPos(&mut cursor_before) }.expect("read cursor before click");
+            assert!(
+                (cursor_before.x as f64 - click_x).abs() > 2.0
+                    || (cursor_before.y as f64 - click_y).abs() > 2.0,
+                "cursor must start away from the injected point"
+            );
             let resp = driver.call(
                 "right_click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "delivery_mode": "foreground"
                 }),
+            );
+            let mut cursor_after = POINT::default();
+            unsafe { GetCursorPos(&mut cursor_after) }.expect("read cursor after click");
+            assert_eq!(
+                (cursor_after.x, cursor_after.y),
+                (cursor_before.x, cursor_before.y),
+                "foreground right click left the real cursor at the target"
             );
             println!("right_click: {}", resp.text());
             std::thread::sleep(Duration::from_millis(400));
@@ -1513,6 +1771,93 @@ fn harness_wpf_slider_drag() {
 
 #[test]
 #[ignore]
+fn harness_wpf_slider_drag_holds_modifier() {
+    // A foreground drag holds `modifier` keys through SendInput from press to
+    // release. The fixture records WPF's Keyboard.Modifiers (live GetKeyState)
+    // on each thumb move, and a plain F5 afterwards still matches its
+    // unmodified binding, so Ctrl was released rather than latched. The drag
+    // grabs the thumb itself, which at value 0 spans from the slider's left
+    // edge to the IncreaseLarge track button; a press on the track would only
+    // step the value.
+    run_foreground_case(
+        "slider_drag_modifier",
+        Targeting::Px,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let pre = snapshot(driver, pid, wid);
+            assert!(
+                pre.text().contains("slider_value=0") && pre.text().contains("accel_fired=0"),
+                "fixture did not start at slider_value=0 and accel_fired=0"
+            );
+            let bounds = window_bounds(driver, pid, wid);
+            let (x, y, width, height) = pixel_frame(&pre, "sld-value", bounds);
+            let (track_x, ..) = pixel_frame(&pre, "IncreaseLarge", bounds);
+
+            let drag = driver.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "from_x": (x + track_x) / 2.0, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.75, "to_y": y + height / 2.0,
+                    "duration_ms": 700, "steps": 40,
+                    "modifier": ["ctrl"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !drag.is_error(),
+                "modified foreground drag failed: {}",
+                drag.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let post = snapshot(driver, pid, wid);
+                let line = fixture_state_line(post.text(), "slider_value=");
+                // The suffix appears only once the thumb moves; a value past
+                // the first steps shows the thumb followed the pointer.
+                let value = line
+                    .split("slider_value=")
+                    .nth(1)
+                    .and_then(|rest| rest.split(' ').next())
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(0);
+                if value >= 50 && line.contains("modifiers=Control") {
+                    println!("drag with ctrl observed: {}", line.trim());
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "WPF did not observe a thumb drag with Ctrl: {line}; tool said: {}",
+                    drag.text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+
+            let key = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "key": "f5",
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(!key.is_error(), "post-drag plain F5 failed: {}", key.text());
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("accel_fired=1"),
+                "plain F5 did not match after the modified drag; Ctrl may be latched: {}",
+                snapshot_lines_containing(post.text(), &["accel_fired"])
+            );
+            println!("✅ harness_wpf_slider_drag_holds_modifier: Ctrl held, then released");
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_slider_drag_background_refusal() {
     let case = native_background_case(
         "wpf",
@@ -1557,6 +1902,121 @@ fn harness_wpf_slider_drag_background_refusal() {
         passed.push(OracleKind::FixtureState);
         Observation::refused(
             RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_slider_drag_foreground_under_topmost_cover_refuses_without_leak() {
+    // A foreground drag is coordinate-routed SendInput, so Windows delivers it
+    // to whatever window owns the start point. Cover the harness with an
+    // always-on-top sentinel: activating the harness cannot bring it above
+    // that cover, so the drag must refuse with foreground_unavailable before
+    // the button goes down. Previously the z-order-only raise could fail and
+    // the whole stroke landed in the cover while the tool reported "Sent drag".
+    let mut case = native_foreground_case(
+        "wpf",
+        "slider_drag_topmost_cover",
+        Targeting::Px,
+        DriverRoute::WindowsSendInput,
+    )
+    .expecting_refusal(vec![RefusalCode::ForegroundUnavailable]);
+    case.oracles.push(OracleKind::NoLeakedInput);
+    case.oracles.sort();
+    case.oracles.dedup();
+    run_case(case, |pid, wid, driver| {
+        let before = snapshot(driver, pid, wid);
+        let before_value = fixture_state_line(before.text(), "slider_value=").to_owned();
+        let (x, y, width, height) =
+            pixel_frame(&before, "sld-value", window_bounds(driver, pid, wid));
+
+        let sentinel = ForegroundSentinel::launch(driver);
+        // The sentinel's setup goes through bring_to_front, which leaves it
+        // non-topmost. Pin it above every normal window so activation of the
+        // harness cannot uncover the slider, and prove the pin took effect.
+        let cover = HWND(sentinel.target().native_id as usize as *mut _);
+        unsafe {
+            SetWindowPos(
+                cover,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+            .expect("pin the sentinel above normal windows");
+            assert_ne!(
+                GetWindowLongPtrW(cover, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0,
+                0,
+                "the sentinel did not become topmost"
+            );
+        }
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("the sentinel must cover the harness before the drag");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "drag",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid,
+                "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                "to_x": x + width * 0.90, "to_y": y + height / 2.0,
+                "duration_ms": 700, "steps": 40,
+                "delivery_mode": "foreground"
+            }),
+        );
+        // Activating the harness may take focus from the sentinel; that is part
+        // of a foreground attempt, so only the leaked-input oracle applies. A
+        // silent journal proves nothing unless the sentinel was still alive.
+        let (sentinel_passed, violations) = sentinel.observe();
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("heartbeat stopped")),
+            "the sentinel stopped journaling, so its leak oracle is void: {violations:?}"
+        );
+        let leaked = violations
+            .iter()
+            .filter(|violation| violation.contains("received input events"))
+            .collect::<Vec<_>>();
+        assert!(
+            leaked.is_empty(),
+            "foreground drag leaked into the covering window: {leaked:?}; tool said: {}",
+            response.text()
+        );
+        assert!(
+            response.is_error(),
+            "foreground drag under a topmost cover reported delivery: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("foreground_unavailable"),
+            "foreground drag under a topmost cover returned the wrong refusal: {}",
+            response.text()
+        );
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot(driver, pid, wid);
+        assert_eq!(
+            fixture_state_line(after.text(), "slider_value="),
+            before_value,
+            "refused foreground drag changed the slider value"
+        );
+        let mut passed = vec![OracleKind::FixtureState];
+        if sentinel_passed.contains(&OracleKind::NoLeakedInput) {
+            passed.push(OracleKind::NoLeakedInput);
+        }
+        Observation::refused(
+            RefusalCode::ForegroundUnavailable,
             passed,
             response.text(),
             Evidence::default(),

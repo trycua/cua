@@ -7,7 +7,6 @@
 //! (or one after a daemon restart) is harmless.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::placement::On;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
@@ -211,6 +210,16 @@ async fn a_cancelled_local_create_removes_what_it_made_once() {
 async fn a_cancel_never_removes_what_existed_and_a_drop_cleans_up() {
     let e = env();
     e.rt.running.lock().unwrap().insert("theirs".into(), true);
+    e.spaces
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: "local:theirs".into(),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
     let spaces = e.spaces.clone();
     let create = tokio::spawn(async move { spaces.create(local(Some("theirs"), "p2")).await });
     until("the create runs", || e.rt.specs.lock().unwrap().len() == 1).await;
@@ -219,6 +228,8 @@ async fn a_cancel_never_removes_what_existed_and_a_drop_cleans_up() {
     assert!(o.message.contains("existed before"), "{}", o.message);
     assert!(create.await.unwrap().is_err());
     assert!(e.rt.running.lock().unwrap().contains_key("theirs"));
+    assert!(e.spaces.registry().get("local:theirs").unwrap().is_some());
+
     assert!(e.rt.deleted.lock().unwrap().is_empty());
 
     // Dropped: the future goes away without a cancel.
@@ -268,7 +279,7 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
     assert!(!e.rt.running.lock().unwrap().contains_key("orphan"));
     assert!(!dir.join("orphan.json").exists());
     // A cancel marker left for a process that then died: the recovery
-    // removes instead of registering; a name that was in use stays.
+    // preserves both resources and evidence instead of replaying cancellation.
     journal("marked", true);
     std::fs::write(dir.join("marked.cancel"), b"cancel\n").unwrap();
     journal("borrowed", false);
@@ -278,51 +289,17 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
         .recover_interrupted_creates(Duration::from_secs(1))
         .await;
     assert_eq!(got.len(), 2, "{got:?}");
-    assert!(!e.rt.running.lock().unwrap().contains_key("marked"));
+    assert!(e.rt.running.lock().unwrap().contains_key("marked"));
     assert!(e.rt.running.lock().unwrap().contains_key("borrowed"));
-    assert_eq!(journals(&e.spaces), 0);
-}
-
-/// A cloud create cancelled while its claim waits to bind releases the
-/// claim it made.
-#[tokio::test]
-async fn a_cancelled_cloud_create_releases_its_claim() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-cx")
-        .build();
-    let pool = spaces.fleet_pool_name(
-        cua_spaces::contract::inputs::FleetRuntime::Kubevirt,
-        "ghcr.io/trycua/linux:24.04-disk",
-    );
-    // No replica ever becomes ready: the claim waits to bind.
-    let s = spaces.clone();
-    let create = tokio::spawn(async move {
-        s.create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some("ghcr.io/trycua/linux:24.04-disk".into()),
-            name: Some("cua-e2e-cancel".into()),
-            ..Default::default()
-        })
-        .await
-    });
-    until("the claim exists", || {
-        fake.exists("claim", &pool, "cua-e2e-cancel")
-    })
-    .await;
-    let o = spaces.cancel_create("cloud:cua-e2e-cancel").await.unwrap();
-    assert_eq!(o.state, CancelState::Cancelled, "{o:?}");
     assert!(
-        o.message.contains("released its cloud sandbox"),
-        "{}",
-        o.message
+        got.iter()
+            .all(|r| matches!(r.outcome, cua_spaces::RecoveryOutcome::Failed(_)))
     );
-    assert_eq!(create.await.unwrap().unwrap_err().tag(), "cancelled");
-    assert!(!fake.exists("claim", &pool, "cua-e2e-cancel"), "released");
-    assert!(spaces.list().unwrap().is_empty());
+    for name in ["marked", "borrowed"] {
+        assert!(dir.join(format!("{name}.json")).exists());
+        assert!(dir.join(format!("{name}.cancel")).exists());
+    }
+    assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
 }
 
 /// Cancelled after the instance is up, while the create waits for its
@@ -364,4 +341,53 @@ async fn a_cancel_while_connecting_removes_the_running_instance() {
     assert!(create.await.unwrap().is_err());
     assert!(!e.rt.running.lock().unwrap().contains_key("connecting"));
     assert_eq!(journals(&e.spaces), 0);
+}
+
+/// A create given the name of a Space that already runs (its cua-spacesd
+/// answers another token, so readiness and the handshake fail) never
+/// deletes it: only what a create made is its to remove.
+#[tokio::test]
+async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
+    let e = env();
+    e.rt.boots.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    e.rt.port.store(
+        mute.local_addr().unwrap().port(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = mute.accept().await {
+            held.push(sock);
+        }
+    });
+    let name = "space-0123456789";
+    e.rt.running.lock().unwrap().insert(name.into(), true);
+    e.spaces
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: format!("local:{name}"),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    let mut opts = local(Some(name), "p5");
+    opts.timeout = Some(Duration::from_secs(3));
+    let err = e.spaces.create(opts).await.unwrap_err();
+    assert_eq!(err.tag(), "timeout", "{err}");
+    assert!(
+        e.spaces
+            .registry()
+            .get(&format!("local:{name}"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(e.rt.running.lock().unwrap().contains_key(name));
+    assert!(
+        e.rt.deleted.lock().unwrap().is_empty(),
+        "{:?}",
+        e.rt.deleted.lock().unwrap()
+    );
 }

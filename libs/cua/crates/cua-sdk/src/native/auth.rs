@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// this before reading the session; an explicit read of a session stored
 /// before markers existed writes the marker.
 #[uniffi::export]
-pub fn may_have_fleet_session() -> bool {
+pub fn may_have_session() -> bool {
     cua_auth::may_have_session()
 }
 
@@ -118,10 +118,11 @@ impl LoginAttempt {
     /// Waits for the user, stores the session and returns who signed in.
     /// Only the first call waits; later calls fail.
     ///
-    /// A device that already enrolled (it has a device key) then
-    /// re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-    /// the fresh sign-in enrolls or re-verifies it without an approval.
-    /// That step is best effort and never fails the sign-in.
+    /// This device then registers with the relay (the one `cua` uses:
+    /// `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+    /// creating its device key on first use, so the fresh sign-in enrolls
+    /// or re-verifies it without an approval. That step is best effort and
+    /// never fails the sign-in.
     pub async fn wait(self: Arc<Self>) -> Result<AuthIdentity> {
         run(async move {
             let pending = self
@@ -133,24 +134,28 @@ impl LoginAttempt {
             let creds = pending.complete().await?;
             let who = self.session.install(creds).await?;
             enroll_after_sign_in(&self.session).await;
+            #[cfg(feature = "host")]
+            super::telemetry::sync_account(&self.session).await;
             Ok(who.into())
         })
         .await
     }
 }
 
-/// Re-registers this device after an interactive sign-in (see
+/// Registers this device after an interactive sign-in (see
 /// [`LoginAttempt::wait`]).
 #[cfg(feature = "host")]
 async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
+    let home = cua_daemon::cua_home();
     let Ok(auth) = cua_host::DeviceAuth::new(
-        &cua_host::relay_url_from_env(),
+        &cua_host::relay_url_for(None, &home),
         Arc::new(super::host::SessionTokens(session.clone())),
         Arc::new(session.store().clone()),
         cua_host::device_name(),
     ) else {
         return;
     };
+    let auth = auth.with_pending_file(cua_host::device_pending_file(&home));
     let r = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         auth.enroll_after_sign_in(),
@@ -161,18 +166,14 @@ async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
 
 /// `cua_device_enroll` for a sign-in that enrolled this device: `rekey`
 /// when it replaced this machine's other key, `sign_in` otherwise. A
-/// device that never enrolled (no key) or still waits for an approval
-/// records nothing.
+/// device that still waits for an approval records nothing.
 #[cfg(feature = "host")]
 pub(crate) fn record_sign_in_enrollment<E>(
-    r: &std::result::Result<
-        std::result::Result<Option<cua_host::relay::Enrollment>, cua_host::Error>,
-        E,
-    >,
+    r: &std::result::Result<std::result::Result<cua_host::relay::Enrollment, cua_host::Error>, E>,
 ) {
     use cua_telemetry::Outcome;
     let (method, outcome) = match r {
-        Ok(Ok(Some(e))) if e.device.state == cua_host::relay::DeviceState::Enrolled => (
+        Ok(Ok(e)) if e.device.state == cua_host::relay::DeviceState::Enrolled => (
             if e.superseded.is_empty() {
                 "sign_in"
             } else {
@@ -202,12 +203,14 @@ impl Auth {
     /// On an explicit session (Rust hosts and tests: a file store in a
     /// temporary directory and a fake issuer).
     pub fn with_session(session: cua_auth::Session) -> Arc<Self> {
-        Arc::new(Auth {
-            session: Arc::new(session),
-        })
+        let session = Arc::new(session);
+        // Refresh ahead of expiry in long-lived hosts (the app, the daemon)
+        // instead of only when a call finds the token expired.
+        session.spawn_keep_alive();
+        Arc::new(Auth { session })
     }
 
-    /// The underlying session (Rust hosts: a Fleet token provider).
+    /// The underlying session (Rust hosts).
     pub fn session(&self) -> Arc<cua_auth::Session> {
         self.session.clone()
     }
@@ -264,11 +267,63 @@ impl Auth {
         run(async move { Ok(session.access_token(force).await?) }).await
     }
 
-    /// Revokes (best effort) and removes the session. Returns whether one
-    /// existed.
+    /// Revokes (best effort) and removes the session, and unlinks usage
+    /// data from the account. Returns whether one existed.
     pub async fn logout(&self) -> Result<bool> {
+        // The agents this computer connected to Spaces stop at once.
+        run(async move {
+            revoke_connected_agents(this_device_ids()).await;
+            Ok(())
+        })
+        .await?;
         let session = self.session.clone();
-        run(async move { Ok(session.logout().await?.0) }).await
+        let existed = run(async move { Ok(session.logout().await?.0) }).await?;
+        // Signed out: usage data goes back to a new anonymous install id.
+        let _ = cua_telemetry::global().forget_account();
+        Ok(existed)
+    }
+}
+
+/// The ids this computer joins Spaces under (`cua join`): its device key's,
+/// and the one from its machine when it has no device key.
+pub(crate) fn this_device_ids() -> Vec<String> {
+    #[cfg(feature = "host")]
+    {
+        let mut ids = vec![];
+        if let Some(k) = cua_auth::Store::from_env()
+            .load_secret(cua_host::device::DEVICE_KEY_SECRET)
+            .ok()
+            .flatten()
+            .and_then(|p| cua_host::device::DeviceKey::from_pkcs8(&p).ok())
+        {
+            ids.push(k.id());
+        }
+        if let Some(m) = cua_host::machine::machine_id() {
+            ids.push(format!("host_{}", &m[..m.len().min(24)]));
+        }
+        ids
+    }
+    #[cfg(not(feature = "host"))]
+    {
+        vec![]
+    }
+}
+
+/// Removes the Space members connected from `devices` on this computer's
+/// daemon (when one runs): their member keys stop at once.
+pub(crate) async fn revoke_connected_agents(devices: Vec<String>) {
+    if devices.is_empty() {
+        return;
+    }
+    let Ok(d) = cua_daemon::client::existing_daemon().await else {
+        return;
+    };
+    for device in devices {
+        let req = cua_proto::daemon::v1::CallSpaceToolRequest {
+            name: "thread_device_revoke".into(),
+            arguments_json: serde_json::json!({"device": device}).to_string(),
+        };
+        let _ = d.spaces().call_space_tool(req).await;
     }
 }
 

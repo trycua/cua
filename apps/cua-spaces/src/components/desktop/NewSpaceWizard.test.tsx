@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => vi.restoreAllMocks());
 
 import list from "../../../../../libs/images/sandbox-images.json";
 import {
@@ -16,7 +18,6 @@ import {
 
 function renderWizard(overrides: Partial<NewSpaceWizardProps> = {}) {
   const props: NewSpaceWizardProps = {
-    cloudAvailable: true,
     localAvailable: true,
     onCreate: vi.fn(),
     onAddByAddress: vi.fn(async () => {}),
@@ -51,6 +52,7 @@ const entries = () =>
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
 const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
+const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -64,7 +66,7 @@ describe("the image field", () => {
   const offeredGroups = new Set(list.groups.filter((g) => !("picker" in g) || g.picker !== false).map((g) => g.id));
   const offered = list.images.filter((image) => image.published && offeredGroups.has(image.group));
   const pressedOs = () =>
-    ["Linux", "Windows", "macOS"].filter(
+    ["Linux", "macOS", "Windows"].filter(
       (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) }).getAttribute("aria-pressed") === "true",
     );
 
@@ -156,7 +158,7 @@ describe("the image field", () => {
 
 describe("New Space wizard", () => {
   it("walks System, Resources, Options, Summary and creates a local VM with its resources", () => {
-    const { onCreate } = renderWizard();
+    const { onCreate } = renderWizard({ localBackends: ["docker", "lume", "qemu"] });
     expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(
       "1System2Resources3Options4Summary",
     );
@@ -166,7 +168,7 @@ describe("New Space wizard", () => {
     fireEvent.change(screen.getByRole("slider", { name: "CPU cores" }), { target: { value: "3" } });
     fireEvent.change(screen.getByRole("slider", { name: "Memory" }), { target: { value: "6" } });
     next();
-    fireEvent.change(screen.getByPlaceholderText("Optional"), {
+    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), {
       target: { value: "cua-e2e-vm" },
     });
     next();
@@ -187,17 +189,18 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud only with Your cloud", () => {
+  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)"]);
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
     expect(runOnMenu()).toHaveValue("local");
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
+    expect(screen.queryByText(/Add your cloud account/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     cleanup();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2"]);
-    fireEvent.click(screen.getByRole("button", { name: /Connect a cloud/ }));
+    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
+    runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
 
@@ -243,7 +246,9 @@ describe("New Space wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(screen.getByRole("button", { name: /Connect by address/ }));
+    // The address form is New Space's arrow, not a Run on entry.
+    cleanup();
+    renderWizard({ startActions: [{ type: "show-address" }] });
     expect(screen.queryByLabelText("Cost")).toBeNull();
     expect(screen.queryByText(/Free/)).toBeNull();
   });
@@ -258,7 +263,15 @@ describe("New Space wizard", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
+  it("shows Windows as coming soon on a Mac and cannot pick it", () => {
+    renderWizard();
+    const tile = screen.getByRole("button", { name: /^Windows/ });
+    expect(tile).toHaveTextContent("coming soon");
+    expect(tile).toBeDisabled();
+  });
+
   it("the OS tiles pick that system's first image", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
     renderWizard();
     fireEvent.click(screen.getByRole("button", { name: /^Windows/ }));
     expect(imageField()).toHaveValue("ghcr.io/trycua/windows:2022");
@@ -268,7 +281,7 @@ describe("New Space wizard", () => {
     renderWizard();
     next();
     next();
-    fireEvent.change(screen.getByPlaceholderText("Optional"), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), { target: { value: "Bad Name" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
@@ -308,9 +321,31 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.disk)} (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("includes the first Linux runtime in the Summary footprint", () => {
+    renderWizard({
+      hostArch: "arm64",
+      storage: { ...storage(), linuxRuntimeDownloadBytes: 455 * 1024 * 1024 },
+    });
+    runOn("local");
+    next();
+    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
+    next();
+    next();
+    // The Summary shows one short value; the breakdown is the info icon's tooltip.
+    expect(screen.queryByText(/includes 455 MB one-time Linux runtime download/)).toBeNull();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
+    expect(screen.getAllByText("Disk")).toHaveLength(1);
+    expect(screen.getByText(/^About \d+(–\d+)? GB/)).toBeInTheDocument();
+    const info = screen.getByRole("button", { name: "Disk details" });
+    expect(info).toHaveAttribute("title", expect.stringContaining("includes 455 MB one-time Linux runtime download"));
+    fireEvent.click(info);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/includes 455 MB one-time Linux runtime download/);
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {
@@ -322,7 +357,7 @@ describe("the Resources step", () => {
   });
 
   it("grows a Linux VM's disk with a slider and creates with it", () => {
-    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage() });
+    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -352,7 +387,7 @@ describe("the Resources step", () => {
   });
 
   it("warns that an image without a build for this Mac runs emulated, locally only", () => {
-    renderWizard({ hostArch: "arm64", storage: storage() });
+    renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/omarchy:edge" } });
     runOn("local");
     next();
@@ -365,8 +400,7 @@ describe("the Resources step", () => {
 describe("Connect by address", () => {
   it("adds host:port with a token and dismisses on success", async () => {
     const onAddByAddress = vi.fn(async () => {});
-    const { onCancel } = renderWizard({ onAddByAddress });
-    fireEvent.click(screen.getByRole("button", { name: "Connect by address…" }));
+    const { onCancel } = renderWizard({ onAddByAddress, startActions: [{ type: "show-address" }] });
     expect(screen.getByRole("button", { name: "Add Space" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:3211" },
@@ -383,8 +417,7 @@ describe("Connect by address", () => {
     const onAddByAddress = vi.fn(async () => {
       throw new Error("cua-spacesd is not available at 127.0.0.1:1");
     });
-    const { onCancel } = renderWizard({ onAddByAddress });
-    fireEvent.click(screen.getByRole("button", { name: "Connect by address…" }));
+    const { onCancel } = renderWizard({ onAddByAddress, startActions: [{ type: "show-address" }] });
     fireEvent.change(screen.getByPlaceholderText("10.0.0.5:3211"), {
       target: { value: "127.0.0.1:1" },
     });
@@ -424,10 +457,48 @@ describe("local runtime readiness", () => {
   });
 });
 
+describe("QEMU VMs", () => {
+  const continueButton = () => screen.getByRole("button", { name: "Continue" });
+  const pick = (ref: string) => fireEvent.change(imageField(), { target: { value: ref } });
+
+  it("are not offered while the runtimes are unknown; containers and Lume still are", () => {
+    renderWizard();
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    pick("ghcr.io/trycua/linux:24.04-disk");
+    expect(continueButton()).toBeDisabled();
+    pick("ghcr.io/trycua/linux:24.04");
+    expect(continueButton()).toBeEnabled();
+    pick("ghcr.io/trycua/macos:26");
+    expect(continueButton()).toBeEnabled();
+  });
+
+  it("need QEMU among the ready runtimes", () => {
+    renderWizard({ localBackends: ["docker", "lume"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    pick("ghcr.io/trycua/macos:26");
+    expect(continueButton()).toBeEnabled();
+    pick("ghcr.io/trycua/linux:24.04");
+    expect(continueButton()).toBeEnabled();
+  });
+
+  it("are offered once QEMU is ready", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    renderWizard({ localBackends: ["docker", "qemu"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeEnabled();
+  });
+});
+
 describe("default placement", () => {
   it("starts on This Mac when not signed in but a local runtime is ready, even if that is known late", () => {
     const props: NewSpaceWizardProps = {
-      cloudAvailable: false,
       localAvailable: false,
       onCreate: vi.fn(),
       onAddByAddress: vi.fn(async () => {}),

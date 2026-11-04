@@ -7,9 +7,12 @@ import CuaSpacesFFI
 import Foundation
 import Testing
 
-/// One first run to a first ready Space through the app's own models and
-/// the live telemetry path (`LiveTelemetry`, the FFI, the SDK's client and
-/// its HTTP sender), sent to a loopback capture endpoint.
+/// One first run to a first ready Space through the app's own models, the
+/// bridge calls the web onboarding makes (`telemetry.track`,
+/// `settings.choose`, `onboarding.complete`) and the live telemetry path
+/// (`LiveTelemetry`, the FFI, the SDK's client and its HTTP sender), sent to
+/// a loopback capture endpoint. The page's events are the core's, derived
+/// here from the parity flow the way the page derives them.
 ///
 /// `CUA_TELEMETRY_CAPTURE_SHARE=off` turns Welcome's usage-data switch off
 /// first: then nothing at all may reach the endpoint.
@@ -35,38 +38,52 @@ struct TelemetryCaptureTests {
         try #require(endpoint.hasPrefix("http://127.0.0.1:"))
 
         // What the app does at launch (before the notice: `app_launched` waits).
-        #expect(appTelemetryStart(version: "0.2.0") == false)
+        #expect(appTelemetryStart(version: "0.2.0", onboardingEligible: true) == false)
         let telemetry = LiveTelemetry()
         let share = env["CUA_TELEMETRY_CAPTURE_SHARE"] != "off"
         let onboarding = OnboardingModel(statePath: nil)
-        onboarding.onWelcomeLeft = { on in try? appTelemetryWelcomeLeft(on: on) }
         let settings = URL(fileURLWithPath: home).appendingPathComponent("settings.json").path
         let backend = FixtureSpacesBackend()
         let model = AppModel(backend: backend, keyvault: KeyvaultModel(client: nil), onboarding: onboarding,
                              settingsPath: settings, telemetry: telemetry)
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+
+        /// The page's `telemetry.track`.
+        func track(_ signals: [AppTelemetrySignal]) async throws {
+            guard !signals.isEmpty else { return }
+            _ = try await bridge.handle("telemetry.track", ["signals": signals.map(ParityTests.signalFrame)])
+        }
 
         // The first run, page by page (the parity flow's run).
         let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: ParityTests.dir
             .appendingPathComponent("telemetry-funnel.json"))) as! [String: Any]
-        onboarding.shown()
+        let status = telemetry.status()
         if let forced = env["CUA_TELEMETRY"] {
             // The environment decides: the switch is locked and says why.
-            #expect(onboarding.view.usage?.enabled == false)
-            #expect(onboarding.view.usage?.help == "Set by env CUA_TELEMETRY", "CUA_TELEMETRY=\(forced)")
+            #expect(status.enabled == false)
+            #expect(status.lockedBy?.contains("CUA_TELEMETRY") == true, "CUA_TELEMETRY=\(forced)")
             try #require(share, "the off case must run without CUA_TELEMETRY (it overrides the setting)")
         } else {
-            #expect(onboarding.view.usage?.enabled == true)
+            #expect(status.enabled == true, "on by default")
         }
-        #expect(onboarding.view.usage?.on == true, "on by default")
-        if !share { onboarding.setShareUsage(false) }
+        var state = appOnboardingInitial(installerMode: nil, identity: nil)
+        func step(_ action: AppOnboardingAction) async throws {
+            try await track(appTelemetryOnboarding(state: state, action: action))
+            state = appOnboardingReduce(state: state, action: action)
+        }
+        try await step(.welcomeShown)
+        // Welcome's usage-data switch (the page's `settings.choose`).
+        if !share { _ = try await bridge.handle("settings.choose", ["row": "telemetry", "option": "off"]) }
         // Nothing is queued while Welcome shows.
         #expect((try? JSONSerialization.jsonObject(with: Data(telemetryShowLast(limit: 100).utf8)) as? [Any])?.isEmpty ?? true)
         // The run's pages (the setting was read above, from this machine).
         for a in flow["onboarding"] as! [[String: Any]] where a["type"] as? String != "telemetry-loaded" {
             let data = try JSONSerialization.data(withJSONObject: a)
-            onboarding.send(try appOnboardingActionFromJson(json: String(decoding: data, as: UTF8.self)))
+            try await step(try appOnboardingActionFromJson(json: String(decoding: data, as: UTF8.self)))
         }
-        onboarding.finish()
+        try await track(appTelemetryOnboardingFinished(state: state))
+        _ = try await bridge.handle("onboarding.complete", ["mode": "client"])
+        #expect(onboarding.completed)
 
         // New Space: open the panel, create the default Linux Space, wait
         // until it is ready.

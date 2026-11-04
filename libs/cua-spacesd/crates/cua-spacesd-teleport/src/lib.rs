@@ -26,6 +26,7 @@
 //! `CUA_ENV_TEST_SANDBOX=1`; tests inject [`FakeHost`]).
 
 pub mod cookies;
+pub mod firefox_items;
 pub mod host;
 pub mod importers;
 pub mod keychain;
@@ -116,6 +117,8 @@ impl ImportRegistry {
         registry.register(Box::new(
             ElectronImporter::discord().with_host(host.clone()),
         ));
+        registry.register(Box::new(ElectronImporter::vscode().with_host(host.clone())));
+        registry.register(Box::new(ElectronImporter::notion().with_host(host.clone())));
         registry.register(Box::new(ElectronImporter::unity_hub().with_host(host)));
         registry.register(Box::new(SteamImporter::new()));
         registry.register(Box::new(WhatsAppImporter::new()));

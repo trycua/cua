@@ -24,6 +24,7 @@ sha2.workspace = true
 # cookies (`cookies.rs`): never the source's key, always a fresh one this
 # guest generates for itself.
 rand.workspace = true
+zeroize = "1"
 # Writing the destination's real `Cookies` database (`cookies.rs`).
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 

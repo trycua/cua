@@ -156,3 +156,71 @@ async fn viewers_get_a_viewer_assertion_and_revocation_is_immediate() {
     assert_eq!(role_of(seen.lock().unwrap().last().unwrap()), "owner");
     stop.cancel();
 }
+
+/// Only a machine's owner can remove it from the directory (#4486): an
+/// editor or a viewer it is shared with is refused, an account it is not
+/// shared with does not even see it, and the record stays until its owner
+/// removes it.
+#[tokio::test]
+async fn only_the_owner_removes_a_machine() {
+    let issuer = FakeIssuer::new(ISSUER);
+    let relay = Relay::new(RelayConfig {
+        oidc: Some(Arc::new(OidcValidator::with_jwks(
+            OidcConfig::new(ISSUER),
+            issuer.jwks(),
+        ))),
+        device_enrollment: false,
+        ..RelayConfig::default()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let serving = relay.clone();
+    tokio::spawn(async move {
+        let _ = serving.serve(listener, std::future::pending()).await;
+    });
+    let http = reqwest::Client::new();
+    let ada = issuer.token("ada", Some("ada@example.com"), "cua-relay", 600);
+    let bob = issuer.token("bob", Some("bob@example.com"), "cua-relay", 600);
+    let eve = issuer.token("eve", Some("eve@example.com"), "cua-relay", 600);
+    let id = format!("space-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    let r = http
+        .post(format!("{base}/v1/machines"))
+        .bearer_auth(&ada)
+        .json(&serde_json::json!({"id": id, "name": "gone space"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let url = format!("{base}/v1/machines/{id}");
+    let delete = |token: String| {
+        let (http, url) = (http.clone(), url.clone());
+        async move {
+            http.delete(url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    for share in [
+        serde_json::json!({"allow": ["bob@example.com"]}),
+        serde_json::json!({"allow": [], "viewers": ["bob@example.com"]}),
+    ] {
+        let r = http
+            .patch(&url)
+            .bearer_auth(&ada)
+            .json(&share)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.status());
+        assert_eq!(delete(bob.clone()).await, reqwest::StatusCode::FORBIDDEN);
+    }
+    assert_eq!(delete(eve.clone()).await, reqwest::StatusCode::NOT_FOUND);
+    let still = http.get(&url).bearer_auth(&ada).send().await.unwrap();
+    assert_eq!(still.status(), reqwest::StatusCode::OK, "the record stays");
+    assert_eq!(delete(ada.clone()).await, reqwest::StatusCode::NO_CONTENT);
+    let gone = http.get(&url).bearer_auth(&ada).send().await.unwrap();
+    assert_eq!(gone.status(), reqwest::StatusCode::NOT_FOUND);
+}

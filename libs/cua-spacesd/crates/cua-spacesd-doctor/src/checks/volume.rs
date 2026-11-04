@@ -25,6 +25,17 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
     if !rec.wants_group("volume") {
         return;
     }
+    if ctx.manifest.manifest.not_applicable("volume.mount") {
+        rec.skip(
+            "volume.mount",
+            &[VOLUME],
+            "not_applicable",
+            "the image lists volume.mount as not applicable (claims.features_not_applicable)"
+                .into(),
+        )
+        .await;
+        return;
+    }
     if !ctx.supports("volume.mount") {
         let message = format!(
             "volume.mount unsupported: {}",
@@ -142,6 +153,7 @@ async fn round_trip(
         .attach_volume(pb::AttachVolumeRequest {
             mount_path: mount.to_string_lossy().into_owned(),
             ticket_ttl: None,
+            binds: Vec::new(),
         })
         .await
         .map_err(|s| format!("AttachVolume: {}", s.message()))?

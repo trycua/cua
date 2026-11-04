@@ -33,7 +33,7 @@
         "= Settings",
         "# Storage (storage) [Save] (disabled)",
         "- backend choice: Store files on {This Mac|*S3-compatible}",
-        "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+        "- s3-prompt prompt: Ask your agent to set it up: = Set up S3 storage for my Cua Volume: https://cua.ai/docs/agents/volume-s3 [Copy]",
         "- s3-manual link: Enter details manually",
         "- mount choice: Add Cua Volume to Finder {On|*Off}",
         "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
@@ -526,7 +526,7 @@
       "section": [
         "= Settings",
         "# Storage (storage)",
-        "- backend choice: Store files on {This computer|*S3-compatible}",
+        "- backend choice: Store files on {This machine|*S3-compatible}",
         "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
         "- s3-bucket field: Bucket = cua-volume",
         "- s3-region field: Region = us-east-1 ~us-east-1",
@@ -547,7 +547,7 @@
       "section": [
         "= Settings",
         "# Storage (storage)",
-        "- backend choice: Store files on {This computer|*S3-compatible}",
+        "- backend choice: Store files on {This PC|*S3-compatible}",
         "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
         "- s3-bucket field: Bucket = cua-volume",
         "- s3-region field: Region = us-east-1 ~us-east-1",

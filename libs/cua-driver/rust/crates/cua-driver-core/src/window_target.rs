@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::element_token::TokenOwner;
 use crate::protocol::ToolResult;
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 
@@ -69,6 +70,11 @@ pub type PidFallbackWindowResolver = Arc<dyn Fn(i64) -> Option<u64> + Send + Syn
 /// `(pid, snapshot handle)` -> the window that snapshot was taken of.
 pub type SnapshotWindowResolver = Arc<dyn Fn(i64, &str) -> Option<u64> + Send + Sync + 'static>;
 
+/// Call arguments -> who their `element_token` belonged to, and that process's
+/// current snapshots (see `SnapshotStore::token_owner`), so a stale refusal can
+/// name what is current instead of only saying the token is stale.
+pub type TokenPidResolver = Arc<dyn Fn(&Value) -> TokenOwner + Send + Sync + 'static>;
+
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
     let frame_is_desktop = args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
@@ -90,6 +96,7 @@ pub struct PidOnlyWindowTargetGuard {
     point_resolver: Option<DesktopPointWindowResolver>,
     fallback_resolver: Option<PidFallbackWindowResolver>,
     snapshot_resolver: Option<SnapshotWindowResolver>,
+    token_pid_resolver: Option<TokenPidResolver>,
 }
 
 impl PidOnlyWindowTargetGuard {
@@ -100,7 +107,16 @@ impl PidOnlyWindowTargetGuard {
             point_resolver: None,
             fallback_resolver: None,
             snapshot_resolver: None,
+            token_pid_resolver: None,
         }
+    }
+
+    /// Take a missing `pid` from the call's `element_token`, so a token-only
+    /// call reaches the tool with the pid its snapshot was taken of. A stale
+    /// or unknown token is refused as `stale_element_token`.
+    pub fn with_token_pid_resolver(mut self, resolver: TokenPidResolver) -> Self {
+        self.token_pid_resolver = Some(resolver);
+        self
     }
 
     /// Resolve an otherwise ambiguous pid-only call that carries no point
@@ -147,7 +163,7 @@ impl Tool for PidOnlyWindowTargetGuard {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         self.inner.protected_resource_scope(adapter_id, args).await
     }
 
@@ -156,13 +172,20 @@ impl Tool for PidOnlyWindowTargetGuard {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::tool::ProtectedResourceScopeError> {
         self.inner
             .validate_protected_resource_scope(adapter_id, args, approved_scope)
             .await
     }
 
     async fn invoke(&self, mut args: Value) -> ToolResult {
+        if let Some(resolver) = &self.token_pid_resolver {
+            if let Err(refusal) =
+                crate::element_token::fill_pid_from_token(&mut args, |args| resolver(args))
+            {
+                return refusal;
+            }
+        }
         // A windowless desktop-scope action needs no pid window. A desktop-
         // scope action that names a pid still resolves that pid's window (the
         // coordinates are desktop-frame, the target is the window).
@@ -530,6 +553,45 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(result.structured_content.unwrap(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn a_token_only_call_takes_its_pid_from_the_token() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| panic!("a token target must not enumerate windows")),
+        )
+        .with_token_pid_resolver(Arc::new(|args| {
+            let live = args["element_token"] == "s00000001:2";
+            TokenOwner {
+                pid: live.then_some(42),
+                current: Vec::new(),
+                live,
+            }
+        }));
+
+        let result = guard
+            .invoke(serde_json::json!({"element_token": "s00000001:2"}))
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.structured_content.unwrap()["pid"], 42);
+
+        let stale = guard
+            .invoke(serde_json::json!({"element_token": "s000000ff:0"}))
+            .await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a stale token never reaches the tool"
+        );
+        assert_eq!(stale.is_error, Some(true));
+        assert_eq!(
+            stale.structured_content.unwrap()["refusal"]["code"],
+            "stale_element_token"
+        );
     }
 
     #[tokio::test]

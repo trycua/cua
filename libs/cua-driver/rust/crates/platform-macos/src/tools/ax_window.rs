@@ -129,7 +129,7 @@ unsafe fn with_window<T>(
     }
     AXUIElementSetMessagingTimeout(app, 2.0);
     let app = CFType::wrap_under_create_rule(app.cast());
-    let windows = copy_ax_windows(app.as_CFTypeRef() as AXUIElementRef)
+    let windows = copy_ax_windows_including(app.as_CFTypeRef() as AXUIElementRef, pid, window_id)
         .into_iter()
         .map(|window| CFType::wrap_under_create_rule(window.cast()))
         .collect::<Vec<_>>();

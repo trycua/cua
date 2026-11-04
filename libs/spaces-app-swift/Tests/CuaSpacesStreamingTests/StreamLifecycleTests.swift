@@ -70,7 +70,17 @@ private final class GatedProvider: SpaceStreamSourceProviding, @unchecked Sendab
         if !gated { Task { [gate] in await gate.release() } }
     }
 
+    private var down = false
+    private var refused = 0
+
     var opened: [FakeMedia] { lock.lock(); defer { lock.unlock() }; return medias }
+    /// Opens refused so far (while `isDown`).
+    var refusedCount: Int { lock.lock(); defer { lock.unlock() }; return refused }
+    /// While set, every open fails as a dead daemon's would.
+    var isDown: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return down }
+        set { lock.lock(); down = newValue; lock.unlock() }
+    }
     var frameSinks: [FrameSink] { lock.lock(); defer { lock.unlock() }; return sinks }
 
     func availableWindows() async throws -> [StreamWindow] { [] }
@@ -80,6 +90,11 @@ private final class GatedProvider: SpaceStreamSourceProviding, @unchecked Sendab
         await gate.pass()
         for _ in 0..<yields { await Task.yield() }
         lock.lock()
+        if down {
+            refused += 1
+            lock.unlock()
+            throw StreamError.noStream("connection refused")
+        }
         let media = FakeMedia(id: "media-\(medias.count)")
         medias.append(media)
         sinks.append(frames)
@@ -186,6 +201,53 @@ private func eventually(_ what: String, _ cond: @MainActor () async -> Bool) asy
         #expect(!opened.isEmpty)
         #expect(opened.allSatisfy { $0.closeCount == 1 },
                 "every transport closed once: \(opened.map(\.closeCount))")
+    }
+
+    /// The daemon (or the Space) went away under a live stream: it opens
+    /// again by itself, saying so until its first frame, and the dropped
+    /// transport is closed.
+    @Test func aDroppedStreamReconnectsByItself() async throws {
+        let provider = GatedProvider(gated: false)
+        let session = LiveStreamSession(provider: provider)
+        session.reconnectDelays = [.milliseconds(1), .milliseconds(20), .milliseconds(20)]
+        await session.start()
+        #expect(session.status == .streaming && !session.isReconnecting)
+        // Down for the first try, back for the second.
+        provider.isDown = true
+        let sink = try #require(provider.frameSinks.first)
+        sink.onEvent(event: MediaEvent(kind: "closed", json: #"{"code":1006,"reason":"reset"}"#))
+        await eventually("reconnecting") { session.isReconnecting }
+        await eventually("a refused try") { provider.refusedCount >= 1 }
+        #expect(session.status == .connecting, "never failed between tries: \(session.status)")
+        provider.isDown = false
+        await eventually("the reopen") { provider.opened.count == 2 && session.status == .streaming }
+        #expect(session.isReconnecting, "until its first frame")
+        #expect(provider.opened.map(\.closeCount) == [1, 0])
+        await session.stop()
+        #expect(!session.isReconnecting && session.status == .idle)
+    }
+
+    /// Every try failed: the stream fails, with Try again, and Try again
+    /// (stop, start) opens it once the daemon is back.
+    @Test func aStreamThatCannotComeBackFailsAndTryAgainWorks() async throws {
+        let provider = GatedProvider(gated: false)
+        let session = LiveStreamSession(provider: provider)
+        session.reconnectDelays = [.milliseconds(1), .milliseconds(1)]
+        await session.start()
+        provider.isDown = true
+        let sink = try #require(provider.frameSinks.first)
+        sink.onEvent(event: MediaEvent(kind: "closed", json: #"{"code":1006,"reason":"reset"}"#))
+        await eventually("the failure") {
+            if case .failed = session.status { return true } else { return false }
+        }
+        #expect(provider.refusedCount == 2 && !session.isReconnecting)
+        guard case let .failed(why) = session.status else { return }
+        #expect(why.contains("connection refused"), "\(why)")
+        provider.isDown = false
+        await session.stop()
+        await session.start()
+        #expect(session.status == .streaming && provider.opened.count == 2)
+        await session.stop()
     }
 
     /// A Space still being created is not dialled: the stream fails with

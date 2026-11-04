@@ -8,68 +8,40 @@ import pytest
 from cua_sandbox.interfaces._driver_mcp import shared_channel
 from cua_sandbox.interfaces.driver import DriverConnectionError
 
-from .test_driver_mcp import McpTransport, sandbox
-from .test_typed_driver import native as _native_fixture
+from ._driver_env_support import EnvHttp, env_sandbox
+from ._driver_env_support import native as _native_fixture
+from ._driver_env_support import records as _records_fixture
+from ._driver_env_support import shared as _shared_fixture
 
 native = _native_fixture
+records = _records_fixture
+shared = _shared_fixture
 
 
-@pytest.fixture
-def shared(native):
-    channels = []
-
-    class Channel:
-        def __init__(self, transport, principal):
-            self.transport, self.principal = transport, principal
-            self.opened, self.closes = False, 0
-            self.canonical = native.CuaDriver(self)
-            channels.append(self)
-
-        async def open(self):
-            self.opened = True
-
-        def driver(self):
-            assert self.opened
-            return self.canonical
-
-        def public_session(self):
-            return "host-selected"
-
-        async def close(self):
-            self.closes += 1
-
-    native.DriverServiceTransport = object
-    native.DriverServiceHeader = SimpleNamespace
-    native.DriverServiceResponse = SimpleNamespace
-    native.DriverServiceTransportError = SimpleNamespace(Failed=RuntimeError)
-    native.open_mcp_driver_channel = Channel
-    return native, channels
-
-
-async def test_shared_channel_is_canonical_and_closes_before_fleet(shared):
+async def test_shared_channel_is_canonical_and_closes_before_the_transport(shared, records):
     sdk, channels = shared
-    transport = McpTransport()
-    sb = await sandbox(transport)
-    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+    env = EnvHttp()
+    sb = await env_sandbox(env)
+    async with sb.driver.connect() as driver:
         assert driver is channels[0].canonical
         assert sb.driver.session_name(driver) == "host-selected"
         assert channels[0].principal == sb.driver._principal
         await sb.disconnect()
         assert channels[0].closes >= 1
-        assert not transport._connected
+        assert not sb._transport._connected
         with pytest.raises(DriverConnectionError, match="inactive"):
             sb.driver.session_name(driver)
     assert driver.shutdowns == 0
-    assert not transport.sessions
+    assert not env.requests
 
 
-async def test_missing_shared_api_never_falls_back_to_envelope(native):
-    transport = McpTransport()
-    sb = await sandbox(transport)
+async def test_missing_shared_api_never_falls_back_to_envelope(native, records):
+    env = EnvHttp()
+    sb = await env_sandbox(env)
     with pytest.raises(DriverConnectionError, match="open_mcp_driver_channel"):
-        async with sb.driver.connect(service="mcp", transport="mcp"):
+        async with sb.driver.connect():
             pytest.fail("old SDK must not silently fall back")
-    assert not transport.events
+    assert not env.requests
     await sb.disconnect()
 
 

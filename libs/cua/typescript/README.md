@@ -1,10 +1,10 @@
 # @trycua/cua
 
 The cua SDK for Node (and, via `@trycua/cua/browser`, the browser): a thin,
-generated binding over the Rust `cua-sdk` crate. Sandboxes (Fleet, local,
+generated binding over the Rust `cua-sdk` crate. Sandboxes (local,
 direct), cua-spacesd (typed calls plus `callJson` for every
 `cua.env.v1` RPC), media sessions with `FrameSink`/`AudioSink` callbacks,
-Fleet pools/claims/images, and local runtimes, embedded or through a
+and local runtimes, embedded or through a
 `cua daemon`.
 
 Native payloads ship as optional per-platform packages
@@ -24,7 +24,7 @@ cd typescript && npm ci && npm run stage:uniffi && npm test
 import { embedded, http, CloudOptions, HttpHeader, SandboxCreateOptions } from "@trycua/cua"
 
 const sb = await embedded().sandboxes().create(SandboxCreateOptions.create({
-  on: "local",                                   // or "cloud": same options
+  on: "local",                                   // or "aws": same options
   image: "python:3.12-slim",
   command: ["python", "-m", "my_mcp", "--port", "8765"],
   env: new Map([["FOO", "bar"]]),

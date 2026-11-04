@@ -42,7 +42,8 @@ async fn the_catalog_classifies_fixture_apps_and_dropped_bundles() {
         rows,
         [
             ("firefox", "full"),
-            ("vscode", "install_only"),
+            // VS Code is Chromium underneath, so its signed-in state teleports too.
+            ("vscode", "full"),
             ("com.example.paint", "unsupported")
         ]
     );

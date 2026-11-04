@@ -3931,4 +3931,14 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         clicks, 1,
         "no second click may be sent into a blocked frame"
     );
+
+    // The trusted coordinate route is refused the same way.
+    let trusted = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    let t = structured(&trusted);
+    assert_eq!(t["refusal"]["code"], "browser_action_unavailable", "{t}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 }

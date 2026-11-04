@@ -1283,7 +1283,7 @@ impl BrowserEngine {
     /// for the life of the connection. A renderer already blocked by a dialog
     /// nobody has seen cannot answer `Page.enable`, hence the short deadline:
     /// the subscription is best effort and `browser_dialog` retries it.
-    pub(crate) async fn subscribe_dialog_events(
+    async fn subscribe_dialog_events(
         &self,
         conn: &CdpConnection,
         cdp_session: &str,

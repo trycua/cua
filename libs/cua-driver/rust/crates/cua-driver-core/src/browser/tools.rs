@@ -1157,7 +1157,8 @@ impl BrowserClickTool {
                 controls may ignore synthetic events. If the handler opens a \
                 page-owned JavaScript dialog, the call returns at once with a \
                 dialog block (present, kind, dialog_id) to pass to browser_dialog. \
-                Refused for heuristic bindings."
+                Refused while a page-owned dialog is open on the tab, and for \
+                heuristic bindings."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1365,12 +1366,6 @@ impl Tool for BrowserClickTool {
         if route == "dom_event" {
             let backend = backend_node_id.expect("checked above");
             let cdp_target_id = validated.tab.cdp_target_id.as_str();
-            // A handler that opens a page-owned dialog blocks the frame, and
-            // with it the reply to the click. Retry the attach-time dialog
-            // subscription so the click can return as soon as one opens.
-            self.engine
-                .subscribe_dialog_events(conn, validated.cdp_session.as_str(), cdp_target_id)
-                .await;
             let resolved = match conn
                 .call(
                     Some(cdp),

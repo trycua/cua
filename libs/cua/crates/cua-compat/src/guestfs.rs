@@ -158,6 +158,8 @@ impl<'a> Writer<'a> {
             create_parents: true,
             expected_size: 0,
             expected_sha256: String::new(),
+            // An agent that switches users itself may not be root: name it.
+            run_as: if staged { String::new() } else { "root".into() },
             ..Default::default()
         };
         let sink = if c.transport() == Transport::Native {

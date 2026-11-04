@@ -20,7 +20,8 @@ impl Drivers {
         }
         // An agent that switches users itself (`process.run_as` mode `root`
         // or `capabilities`, which also covers gVisor where `sudo` cannot
-        // work) is as good as root: no `sudo` anywhere.
+        // work) needs no `sudo`, but it may not be root itself: every
+        // switch, to root too, names the user (see [`as_user`]).
         if native_run_as(c).await {
             self.0.lock().await.insert(id.to_string(), "root".into());
             return "root".into();
@@ -67,11 +68,16 @@ pub fn as_user(
     command: String,
     args: Vec<String>,
 ) -> (String, Vec<String>, String) {
-    if user.is_empty() || user == driver {
+    if user.is_empty() {
         return (command, args, String::new());
     }
+    // "root" is an agent that switches users itself, which in the Linux
+    // images is `cua` holding CAP_SETUID: an unnamed user would be `cua`.
     if driver == "root" {
         return (command, args, user.to_string());
+    }
+    if user == driver {
+        return (command, args, String::new());
     }
     let mut a = vec![
         "-n".to_string(),
@@ -255,6 +261,10 @@ mod tests {
         assert_eq!(u, "");
         let (c, _, u) = as_user("root", "user", "/bin/bash".into(), vec![]);
         assert_eq!((c.as_str(), u.as_str()), ("/bin/bash", "user"));
+        // A driver that switches by capability is not root itself: root is
+        // named, or the command runs as the agent's own user.
+        let (c, _, u) = as_user("root", "root", "/bin/sh".into(), vec![]);
+        assert_eq!((c.as_str(), u.as_str()), ("/bin/sh", "root"));
         let (c, _, u) = as_user("cua", "cua", "/bin/bash".into(), vec![]);
         assert_eq!((c.as_str(), u.as_str()), ("/bin/bash", ""));
         // The directory is entered after the switch.

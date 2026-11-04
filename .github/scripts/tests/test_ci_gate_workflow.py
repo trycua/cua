@@ -36,9 +36,8 @@ def test_gate_wiring():
         'edited', 'labeled', 'unlabeled',
     ]
     assert 'concurrency' not in GATE
-    # A wedged gate must not hold a required check for six hours. Over 98 gate runs
-    # the longest was 127.8 min, so 180 keeps ~40% headroom over the worst observed
-    # run while capping a hang at three hours.
+    # A wedged gate must not hold a required check for six hours. Three hours
+    # still leaves headroom over the longest gate run observed on main.
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
     assert '(.event == \\"pull_request\\" or .event == \\"pull_request_target\\")' in SCRIPT

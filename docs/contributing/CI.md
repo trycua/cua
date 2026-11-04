@@ -24,9 +24,24 @@ bin/ci                 # the checks your change affects (compares with the merge
 bin/ci --quick         # only checks that build nothing: seconds
 bin/ci --fix           # apply the safe fixers (formatters, lockfiles, generators), then check again
 bin/ci --full          # every check, whatever you changed
+bin/ci --keep-target   # keep the cargo target dir (.bin-ci-target) between runs
 bin/ci --list          # show the plan and the exact commands
 bin/ci --only rust-fmt,lockfiles
 ```
+
+### Disk safety
+
+Heavy checks (cargo test, clippy, build, cross-target) run one at a time, one crate per cargo call, with
+`CARGO_INCREMENTAL=0`, no debuginfo and sccache when installed, in a per-run target dir that is deleted on exit.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `CUA_CI_MIN_FREE_GB` | 40 | below this much free disk, heavy checks are skipped ("CI will run these") and the cheap checks still run |
+| `CUA_CI_MAX_TARGET_GB` | 15 | a background check every 15 s stops cargo if the target dir grows past this |
+| `CUA_CI_MIN_FREE_FLOOR_GB` | 25 | the same check stops cargo if free disk falls under this |
+
+When the watcher stops cargo, `bin/ci` exits 3 with a "rerun in CI" hint. On shared hosts use `bin/ci --quick`
+and leave heavy checks to CI or a VM.
 
 The commands are the ones the workflows run. Each check names the workflow text it mirrors, and
 `bin/ci --verify-sync` (run by **CI: Test Scripts**) fails when a workflow stops running it. When you change

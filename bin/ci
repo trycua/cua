@@ -9,6 +9,7 @@ workflow stops running one of them, so the two cannot drift apart unseen.
 
   bin/ci                 checks for the files you changed (default)
   bin/ci --quick         seconds: formatting, lockfiles, headers, lint; no builds
+                         (use this on shared hosts; heavy checks go to CI or a VM)
   bin/ci --full          every check, whatever you changed
   bin/ci --fix           apply the safe fixers (formatters, lockfiles,
                          generators), then check again
@@ -17,18 +18,29 @@ workflow stops running one of them, so the two cannot drift apart unseen.
   bin/ci --signoff       after a green run, set the `local-ci` commit status
   bin/ci --install-hook  run bin/ci before every git push (opt-in)
 
+Disk safety: heavy checks (cargo test/clippy/build, cross-target checks) run one
+at a time, lean (no incremental, no debuginfo, sccache if installed) in a
+per-run target dir that is deleted on exit (--keep-target keeps it). They are
+skipped when free disk is below CUA_CI_MIN_FREE_GB (default 40), and stopped
+when the target dir passes CUA_CI_MAX_TARGET_GB (default 15) or free disk drops
+below CUA_CI_MIN_FREE_FLOOR_GB (default 25). Exit code 3 means a guard stopped
+the run: rerun in CI.
+
 Run `bin/ci --help` for every option. Docs: docs/contributing/CI.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
+import contextlib
 import concurrent.futures
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -77,6 +89,182 @@ class Result:
     seconds: float = 0.0
     log: Optional[Path] = None
     detail: str = ""
+
+
+
+# ---------------------------------------------------------------- disk guard
+
+GUARD_EXIT = 3
+GUARD_WATCH_SECS = 15.0
+
+
+def env_gb(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def min_free_gb() -> float:
+    return env_gb("CUA_CI_MIN_FREE_GB", 40.0)
+
+
+def floor_free_gb() -> float:
+    return env_gb("CUA_CI_MIN_FREE_FLOOR_GB", 25.0)
+
+
+def max_target_gb() -> float:
+    return env_gb("CUA_CI_MAX_TARGET_GB", 15.0)
+
+
+def is_heavy(c: "Check") -> bool:
+    """Checks that build something large: the ones the disk guard watches."""
+    return c.heavy or c.tier == "build"
+
+
+def disk_free_gb(path: Path) -> float:
+    """Free GB on the volume holding `path` (its nearest existing parent).
+
+    CUA_CI_FAKE_FREE_GB overrides it, for tests of the guard.
+    """
+    fake = os.environ.get("CUA_CI_FAKE_FREE_GB")
+    if fake:
+        try:
+            return float(fake)
+        except ValueError:
+            pass
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return shutil.disk_usage(p).free / 1e9
+
+
+def dir_size_gb(path: Path) -> float:
+    if not Path(path).exists():
+        return 0.0
+    out = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True)
+    try:
+        return int(out.stdout.split()[0]) * 1024 / 1e9
+    except (IndexError, ValueError):
+        total = 0
+        for dp, _, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.lstat(os.path.join(dp, f)).st_size
+                except OSError:
+                    pass
+        return total / 1e9
+
+
+def preflight_reason(free_gb: float, min_free: float) -> Optional[str]:
+    """Why heavy checks must not start, or None."""
+    if free_gb < min_free:
+        return f"skipped: low disk ({free_gb:.0f} GB free, need {min_free:.0f} GB); CI will run these"
+    return None
+
+
+def watch_reason(free_gb: float, target_gb: float, floor: float, cap: float) -> Optional[str]:
+    """Why a running heavy check must be stopped, or None."""
+    if target_gb > cap:
+        return f"target dir is {target_gb:.1f} GB, over the {cap:.0f} GB cap (CUA_CI_MAX_TARGET_GB)"
+    if free_gb < floor:
+        return f"free disk is {free_gb:.0f} GB, under the {floor:.0f} GB floor (CUA_CI_MIN_FREE_FLOOR_GB)"
+    return None
+
+
+class DiskGuard:
+    """Watches the target dir and free disk while cargo runs; stops it when over budget."""
+
+    def __init__(self, target: Path, interval: Optional[float] = None) -> None:
+        self.target = Path(target)
+        self.interval = interval if interval is not None else env_gb("CUA_CI_WATCH_SECS", GUARD_WATCH_SECS)
+        self.tripped: Optional[str] = None
+        self.procs: Dict[int, subprocess.Popen] = {}
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop.set()
+
+    def register(self, proc: subprocess.Popen) -> None:
+        with self.lock:
+            self.procs[proc.pid] = proc
+
+    def unregister(self, proc: subprocess.Popen) -> None:
+        with self.lock:
+            self.procs.pop(proc.pid, None)
+
+    def check_once(self) -> Optional[str]:
+        reason = watch_reason(disk_free_gb(self.target), dir_size_gb(self.target), floor_free_gb(), max_target_gb())
+        if reason and not self.tripped:
+            self.tripped = reason
+            self.kill_all()
+        return reason
+
+    def kill_all(self) -> None:
+        with self.lock:
+            procs = list(self.procs.values())
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for p in procs:
+                try:
+                    os.killpg(p.pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            if sig == signal.SIGTERM:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and any(p.poll() is None for p in procs):
+                    time.sleep(0.1)
+
+    def _loop(self) -> None:
+        while not self.stop.wait(self.interval):
+            if self.check_once():
+                return
+
+
+def lean_env() -> Dict[str, str]:
+    """Defaults that keep cargo's disk use small; anything already in the environment wins."""
+    env = {"CARGO_INCREMENTAL": "0", "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_PROFILE_TEST_DEBUG": "0"}
+    if have("sccache"):
+        env["RUSTC_WRAPPER"] = "sccache"
+    return {k: v for k, v in env.items() if k not in os.environ}
+
+
+def run_target_dir(keep: bool) -> Tuple[Path, bool]:
+    """(target dir, delete it on exit). A CARGO_TARGET_DIR you set is never deleted."""
+    if os.environ.get("CARGO_TARGET_DIR"):
+        return Path(os.environ["CARGO_TARGET_DIR"]).resolve(), False
+    if keep:
+        return ROOT / ".bin-ci-target", False
+    return ROOT / f".bin-ci-target-{os.getpid()}", True
+
+
+def sweep_stale_targets() -> None:
+    """Delete per-run target dirs left by runs that were killed."""
+    for d in ROOT.glob(".bin-ci-target-*"):
+        m = re.fullmatch(r"\.bin-ci-target-(\d+)", d.name)
+        if not m:
+            continue
+        try:
+            os.kill(int(m.group(1)), 0)
+        except ProcessLookupError:
+            shutil.rmtree(d, ignore_errors=True)
+        except PermissionError:
+            pass
+
+
+def per_crate(template: str, names: Sequence[str], tail: str = "") -> str:
+    """One cargo invocation per crate (smaller builds), failing if any failed.
+
+    template has a `{p}` placeholder, e.g. "cargo clippy --locked {p} --all-targets".
+    """
+    if len(names) <= 1:
+        return template.format(p=" ".join(f"-p {n}" for n in names)) + tail
+    steps = "; ".join(f"{template.format(p='-p ' + n)}{tail} || rc=1" for n in names)
+    return f"rc=0; {steps}; exit $rc"
 
 
 # ---------------------------------------------------------------- shell helpers
@@ -640,8 +828,10 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
             lint = names + direct
         lflags = "--workspace" if changes.full else " ".join(f"-p {n}" for n in sorted(set(lint)))
         llabel = f"{root}: {len(set(lint))} crates" if len(set(lint)) > 4 else label
+        clippy_cmd = (f"cargo clippy --locked {lflags} --all-targets -- -D warnings" if changes.full
+                      else per_crate("cargo clippy --locked {p} --all-targets", sorted(set(lint)), " -- -D warnings"))
         out.append(Check(f"rust-clippy:{root}", f"clippy -D warnings ({llabel})",
-                         f"cargo clippy --locked {lflags} --all-targets -- -D warnings", cwd=root,
+                         clippy_cmd, cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
         lane = windows_lane(root)
@@ -669,8 +859,10 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
                                      hint="these lines use Unix-only APIs outside #[cfg(unix)]; for a real Windows compile: "
                                           "cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"))
         tflags = "--workspace" if changes.full else plist
+        test_cmd = (f"cargo test --locked --no-fail-fast {tflags} -- --test-threads=4" if changes.full
+                    else per_crate("cargo test --locked --no-fail-fast {p}", names, " -- --test-threads=4"))
         out.append(Check(f"rust-test:{root}", f"unit tests ({label})",
-                         f"cargo test --locked --no-fail-fast {tflags} -- --test-threads=4", cwd=root,
+                         test_cmd, cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          env={"CUA_ENV_TEST_SANDBOX": "1", "RUST_MIN_STACK": "8388608"}, isolate_home=True))
     return out
@@ -688,9 +880,18 @@ class Context:
             ["cargo", "xwin", "--version"], capture_output=True, env={**os.environ, **self.rust_env}
         ).returncode == 0
         self.docs_ready = (ROOT / DOCS_DEPS[0]).exists()
+        self.target, self.delete_target = run_target_dir(getattr(args, "keep_target", False))
+        self.lean = lean_env()
+        self.guard: Optional[DiskGuard] = None
 
     def env(self) -> Dict[str, str]:
-        return {**os.environ, **self.rust_env, "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1"}
+        return {**self.lean, **os.environ, **self.rust_env, "CARGO_TARGET_DIR": str(self.target), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1"}
+
+    def cleanup_target(self) -> None:
+        if self.guard:
+            self.guard.close()
+        if self.delete_target and self.target.exists():
+            shutil.rmtree(self.target, ignore_errors=True)
 
     def ensure_docs_deps(self) -> bool:
         if self.docs_ready:
@@ -778,6 +979,7 @@ class Runner:
         self.locks: Dict[str, threading.Lock] = {}
         self.print_lock = threading.Lock()
         self.installs: Dict[str, threading.Lock] = {}
+        self.heavy_lock = threading.Lock()  # heavy checks run one at a time
 
     def _lock(self, name: Optional[str], table: Dict[str, threading.Lock]) -> threading.Lock:
         with self.print_lock:
@@ -802,8 +1004,16 @@ class Runner:
             return Result(c, "skip", detail=c.skip_reason)
         logfile = self.logdir / (re.sub(r"[^A-Za-z0-9._-]+", "_", c.id) + ".log")
         start = time.monotonic()
-        with self._lock(c.group, self.locks):
+        heavy = is_heavy(c)
+        with self._lock(c.group, self.locks), (self.heavy_lock if heavy else contextlib.nullcontext()):
             with open(logfile, "wb") as log:
+                if heavy:
+                    guard = self.ctx.guard
+                    if guard and guard.tripped:
+                        return Result(c, "skip", time.monotonic() - start, logfile, f"stopped earlier: {guard.tripped}; rerun in CI")
+                    why = preflight_reason(disk_free_gb(self.ctx.target), min_free_gb())
+                    if why:
+                        return Result(c, "skip", time.monotonic() - start, logfile, why)
                 problem = self._prepare(c, log)
                 if problem:
                     return Result(c, "skip", time.monotonic() - start, logfile, problem)
@@ -819,14 +1029,25 @@ class Runner:
                     env.setdefault("RUSTUP_HOME", str(real / ".rustup"))
                     home = tempfile.mkdtemp(prefix="bin-ci-home-")
                     env["HOME"] = home
+                proc = subprocess.Popen(["bash", "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                guard = self.ctx.guard if heavy else None
+                if guard:
+                    guard.register(proc)
                 try:
-                    rc = subprocess.run(["bash", "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
-                                        stdin=subprocess.DEVNULL, env=env).returncode
+                    rc = proc.wait()
                 finally:
+                    if guard:
+                        guard.unregister(proc)
                     if home:
                         shutil.rmtree(home, ignore_errors=True)
         status = "pass" if rc == 0 else ("warn" if c.advisory else "FAIL")
         detail = ""
+        if heavy and self.ctx.guard and self.ctx.guard.tripped and rc != 0:
+            res = Result(c, "FAIL", time.monotonic() - start, logfile, f"stopped by the disk guard: {self.ctx.guard.tripped}")
+            if not self.quiet:
+                self.report(res)
+            return res
         if c.classify:
             status, detail = c.classify(logfile.read_text(errors="replace"), rc)
         res = Result(c, status, time.monotonic() - start, logfile, detail)
@@ -864,6 +1085,10 @@ def print_result(r: Result) -> None:
     print(f"  {tag}  {r.check.title}  {color(secs, '2')}".rstrip(), flush=True)
     if r.status == "skip":
         print(f"        {r.detail}")
+    if r.status == "FAIL" and r.detail.startswith("stopped by the disk guard"):
+        print(f"        {r.detail}")
+        print("        rerun in CI: push the branch and let CI run this check, or run it on a VM")
+        return
     if r.status == "warn" and r.detail:
         print(f"        {r.detail}")
     elif r.status in ("FAIL", "warn") and r.log:
@@ -1096,6 +1321,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog="\n\n".join(__doc__.split("\n\n")[1:]))
     p.add_argument("--full", action="store_true", help="run every check, not only the affected ones")
     p.add_argument("--quick", action="store_true", help="only checks that build nothing (seconds)")
+    p.add_argument("--keep-target", action="store_true", help="keep the cargo target dir (.bin-ci-target) between runs instead of deleting a per-run one")
     p.add_argument("--fix", action="store_true", help="apply the safe fixers for failed checks, then re-check")
     p.add_argument("--list", action="store_true", help="print the plan and exit")
     p.add_argument("--only", metavar="IDS", help="comma-separated check ids or prefixes (see --list)")
@@ -1160,7 +1386,18 @@ def main(argv: Sequence[str]) -> int:
     logdir = state_dir() / "logs"
     for old in logdir.glob("*.log"):
         old.unlink()
-    results = run_plan(plan, ctx, logdir)
+    sweep_stale_targets()
+    atexit.register(ctx.cleanup_target)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    if any(is_heavy(c) and not c.skip_reason for c in plan):
+        ctx.guard = DiskGuard(ctx.target)
+        ctx.guard.start()
+        print(f"bin/ci: disk guard on: heavy checks need {min_free_gb():.0f} GB free, stop at a {max_target_gb():.0f} GB target dir or {floor_free_gb():.0f} GB free; "
+              f"target dir {ctx.target.name}{'' if not ctx.delete_target else ' (deleted on exit)'}")
+    try:
+        results = run_plan(plan, ctx, logdir)
+    finally:
+        ctx.cleanup_target()
     if args.fix and any(r.status == "FAIL" for r in results):
         results = apply_fixes(results, ctx, logdir)
     elapsed = time.monotonic() - started
@@ -1171,6 +1408,9 @@ def main(argv: Sequence[str]) -> int:
     summary = ", ".join(f"{n} {label}" for label, n in (("passed", counts["pass"]), ("fixed", counts["fixed"]), ("failed", counts["FAIL"]),
                                                           ("skipped", counts["skip"]), ("warnings", counts["warn"])) if n)
     print(f"bin/ci: {summary} in {fmt_secs(elapsed)}")
+    if ctx.guard and ctx.guard.tripped:
+        print(f"bin/ci: STOPPED by the disk guard: {ctx.guard.tripped}. Rerun in CI (push the branch) or on a VM; `bin/ci --quick` runs only the cheap checks.")
+        return GUARD_EXIT
     if failed:
         safe = [r for r in failed if r.check.safe_fix and fix_commands(r)]
         if safe and not args.fix:

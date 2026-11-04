@@ -72,7 +72,15 @@ it can repair (formatting, lockfiles, generated bindings and reference docs).
 It runs the CI checks your diff against `origin/main` affects, in a few
 minutes, and prints the exact fix command for each failure. A green `bin/ci`
 does not replace CI: the end-to-end, image and native Windows lanes still run
-there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
+there.
+
+**Agents on shared hosts (the dev host that runs live VMs) use `bin/ci --quick`.**
+It runs only the cheap checks (formatting, lockfiles, headers, lint) and builds
+nothing. Heavy checks (cargo test, clippy, build, cross-target) go to CI or a
+VM. A full `bin/ci` is disk-guarded: it skips heavy steps below
+`CUA_CI_MIN_FREE_GB` (40) free, and stops cargo and exits 3 if the target dir
+passes `CUA_CI_MAX_TARGET_GB` (15) or free disk falls under 25 GB. The target
+dir is per run and deleted on exit unless you pass `--keep-target`. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
 
 ## Cross-platform Cua Driver behavior
 

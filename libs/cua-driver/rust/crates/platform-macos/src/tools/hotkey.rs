@@ -46,8 +46,10 @@ fn def() -> &'static ToolDef {
                Save is saved through the app's scripting interface using Apple Events \
                and verified on disk; this requires per-app Automation consent and \
                may show macOS’s first-use consent prompt; denied permission refuses the save); \
-               other disabled menu items are refused \
-               with `background_unavailable`, and no keys are sent.\n\
+               a menu item macOS keeps disabled in the background is refused \
+               with `background_unavailable`. With serve --no-automation-prompts, \
+               scripting without granted consent refuses with `automation_consent_required`, \
+               without keyboard fallback.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
@@ -647,7 +649,8 @@ mod tests {
             "per-app Automation consent",
             "may show macOS’s first-use consent prompt",
             "denied permission refuses the save",
-            "other disabled menu items",
+            "a menu item macOS keeps disabled in the background",
+            "automation_consent_required",
         ] {
             assert!(description.contains(phrase), "missing disclosure: {phrase}");
         }
@@ -655,7 +658,11 @@ mod tests {
 
     #[test]
     fn menu_safety_refusals_do_not_fall_back_to_keys() {
-        for code in ["window_not_key", "background_unavailable"] {
+        for code in [
+            "window_not_key",
+            "background_unavailable",
+            "automation_consent_required",
+        ] {
             let result =
                 ToolResult::error("refused").with_structured(serde_json::json!({ "code": code }));
             assert_eq!(

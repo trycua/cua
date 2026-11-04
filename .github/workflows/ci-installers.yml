@@ -99,7 +99,7 @@ jobs:
   installer-smoke-macos:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: install.sh test suite (includes the .dmg mount into --prefix)

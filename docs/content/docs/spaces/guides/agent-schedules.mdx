@@ -1,0 +1,64 @@
+---
+title: Schedules
+description: 'Give a named agent recurring work: every few minutes, every day or every week, fired by the Cua daemon whether or not an app is open.'
+---
+
+A schedule is a recurring turn of a named agent. The Cua daemon fires it
+whether or not the Cua app is open, as a message to the agent:
+`[routine] <title>: <prompt>`.
+
+```bash test="cli-shape" id="schedules-add"
+cua agent schedule add ada --title "Morning" --prompt "Plan the day" --daily 08:00
+cua agent schedule add ada --title "Inbox sweep" --prompt "Triage new issues" --every 60
+cua agent schedule add ada --title "Weekly report" --prompt "Summarize the week" --weekly "fri 17:00"
+```
+
+Give exactly one of `--every MINUTES`, `--daily HH:MM` or `--weekly "DAY HH:MM"`.
+To add an agent and its first schedule in one command, pass the schedule and
+the prompt to `cua agent add`:
+
+```bash test="cli-shape" id="schedules-agent-add"
+cua agent add scout --harness claude-code --in local:scout --daily 09:00 "Check the build and tell me what broke"
+```
+
+## Manage schedules
+
+```bash test="cli-shape" id="schedules-manage"
+cua agent schedule ls ada
+cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B
+```
+
+`cua agent schedule ls` lists each schedule with its next firing and what the
+last one did. Without a name it lists every agent's.
+
+## When a schedule fires
+
+- A schedule never interrupts a turn. If the agent is busy or paused, that slot
+  is skipped.
+- If the daemon was asleep (your computer was off), a missed schedule fires
+  once when it wakes, not once per missed slot.
+- Each firing is a turn like any other: the agent's memory is restored first,
+  its home is saved after, and you get a notification when it ends.
+- Removing the agent (`cua agent rm`) removes its schedules.
+
+Schedules belong to named agents. A one-off task or a durable session has no
+schedule.
+
+## Over MCP and from the SDK
+
+| CLI | MCP | SDK (`Spaces`) |
+|---|---|---|
+| `cua agent schedule add` | `agent_schedule_add` | `routine_add` |
+| `cua agent schedule ls` | `agent_schedule_list` | `routines` |
+| `cua agent schedule enable`, `disable` | `agent_schedule_set_enabled` | `routine_set_enabled` |
+| `cua agent schedule rm` | `agent_schedule_remove` | `routine_remove` |
+
+`agent_schedule_add` takes `agent`, `title`, `prompt` and one of
+`every_minutes`, `daily_at` or `weekly_on`. An agent you already use can set up
+a schedule for you ("check the build every morning at 9 and tell me what
+broke"). See [Persistent agents](/spaces/reference/agents#persistent-agents) in
+the Spaces reference and the SDK's
+[`Spaces`](/cua-sdk/reference/spaces/persistent-agents) methods. The Cua app
+lists schedules on each agent's Routines tab.

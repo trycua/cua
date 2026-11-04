@@ -6,6 +6,7 @@ import { useState } from "react";
 import { storageChoose, storageEdit, useBridge, useSession, type DriveCard, type SettingsRow, type StorageAction, type StorageChoice } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { GroupedSection } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
@@ -74,11 +75,11 @@ export function DriveCardView({ card, act, fixedMs }: { card: DriveCard; act: Dr
         </p>
       ) : null}
       {card.storageRows.length > 0 ? (
-        <div className="divide-y rounded-lg border" aria-label={card.storageTitle ?? undefined}>
+        <GroupedSection aria-label={card.storageTitle ?? undefined}>
           {card.storageRows.map((row) => (
             <StorageRow key={row.id} row={row} onEdit={edit} onChoose={choose} onPress={press} onOpen={(url) => void openExternal(url)} />
           ))}
-        </div>
+        </GroupedSection>
       ) : null}
       {card.storageNote ? (
         <p className="text-xs text-muted-foreground" data-drive-storage-note="">
@@ -107,7 +108,7 @@ export function DriveCardView({ card, act, fixedMs }: { card: DriveCard; act: Dr
       ) : null}
       {card.settingsUrl && card.settingsLabel ? (
         <div>
-          <Button variant="outline" size="sm" data-drive-settings="" onClick={() => void openExternal(card.settingsUrl!)}>
+          <Button variant="secondary" size="sm" data-drive-settings="" onClick={() => void openExternal(card.settingsUrl!)}>
             {card.settingsLabel}
           </Button>
         </div>
@@ -187,7 +188,7 @@ function StorageRow({
             </span>
             {row.button ? (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 onClick={() => {
                   void navigator.clipboard?.writeText(row.value ?? "").then(() => setCopied(true), () => {});
@@ -197,7 +198,9 @@ function StorageRow({
               </Button>
             ) : null}
           </div>
-          <p className="max-h-24 overflow-y-auto rounded-md bg-muted px-2.5 py-2 font-mono text-xs leading-relaxed text-muted-foreground select-text">{row.value}</p>
+          <p className="max-h-24 overflow-y-auto rounded-lg bg-muted px-2.5 py-2 font-mono text-xs leading-relaxed text-muted-foreground select-text">
+            {row.value}
+          </p>
         </div>
       );
     case "link":
@@ -240,7 +243,7 @@ function StorageRow({
             {row.value ? <p className="truncate text-xs text-muted-foreground">{row.value}</p> : null}
           </div>
           {row.button ? (
-            <Button variant="outline" size="sm" disabled={!row.enabled} onClick={() => onPress(row.id)}>
+            <Button variant="secondary" size="sm" disabled={!row.enabled} onClick={() => onPress(row.id)}>
               {row.button}
             </Button>
           ) : null}

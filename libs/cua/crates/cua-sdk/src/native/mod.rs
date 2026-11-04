@@ -3,10 +3,13 @@
 mod agent_setup;
 mod agents;
 mod auth;
+mod bake;
 #[cfg(feature = "spaces")]
 mod cloud;
 mod config;
 mod cua;
+#[cfg(feature = "spaces")]
+mod elastic;
 #[cfg(feature = "host")]
 mod host;
 mod image;
@@ -19,6 +22,7 @@ mod overlay;
 #[cfg(feature = "spaces")]
 mod persistent;
 mod sandbox;
+mod share;
 #[cfg(feature = "spaces")]
 mod spaces;
 mod spacesd;
@@ -29,10 +33,13 @@ mod teleport_types;
 pub use agent_setup::*;
 pub use agents::*;
 pub use auth::*;
+pub use bake::*;
 #[cfg(feature = "spaces")]
 pub use cloud::*;
 pub use config::*;
 pub use cua::*;
+#[cfg(feature = "spaces")]
+pub use elastic::*;
 #[cfg(feature = "host")]
 pub use host::*;
 pub use image::*;
@@ -45,6 +52,7 @@ pub use overlay::*;
 #[cfg(feature = "spaces")]
 pub use persistent::*;
 pub use sandbox::*;
+pub use share::*;
 pub use spaces::*;
 pub use spacesd::*;
 pub use telemetry::*;
@@ -60,6 +68,10 @@ use std::{future::Future, sync::OnceLock};
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
+        // A trainer holds a connection (or more) per sandbox: at macOS's
+        // default soft limit of 256 its opens fail past ~250 sandboxes
+        // ("Too many open files").
+        let _ = raise_open_file_limit();
         let workers = std::thread::available_parallelism()
             .map(|n| n.get().clamp(2, 4))
             .unwrap_or(2);
@@ -112,12 +124,14 @@ impl From<cua_daemon::Error> for CuaError {
             E::Env(_) => CuaError::Env(m),
             E::Http(_) => CuaError::Http(m),
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
+            E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::Transport(_) => CuaError::Transport(m),
             E::DaemonNotRunning(_) => CuaError::DaemonNotRunning(m),
             E::CapabilityMissing(_) => CuaError::CapabilityMissing(m),
             E::HostCapabilityMissing(_) => CuaError::HostCapabilityMissing(m),
             E::TeleportRefused(_) => CuaError::TeleportRefused(m),
             E::InsufficientDisk(_) => CuaError::InsufficientDisk(m),
+            E::HostCapacity(_) => CuaError::HostCapacity(m),
             E::Cancelled(_) => CuaError::Cancelled(m),
             E::Internal(_) => CuaError::Internal(m),
         }
@@ -251,5 +265,29 @@ mod not_found_tests {
         // A message that is only the word stays as it is.
         assert_eq!(not_found_message(" not found".into()), " not found");
         assert_eq!(not_found_message("local:box".into()), "local:box");
+    }
+}
+
+/// Raises this process's soft open-file limit toward 65,536, within the
+/// hard limit ([`cua_daemon::fd_guard::raise_open_file_limit`]). Returns the
+/// soft limit before and after, or `None` when nothing changed.
+pub fn raise_open_file_limit() -> Option<(u64, u64)> {
+    cua_daemon::fd_guard::raise_open_file_limit()
+}
+
+#[cfg(all(test, unix))]
+mod fd_limit_tests {
+    #[test]
+    fn the_sdk_runtime_raises_the_open_file_limit() {
+        let _ = super::runtime();
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: getrlimit fills the struct it is given.
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
+        assert!(lim.rlim_cur >= lim.rlim_max.min(1024), "{}", lim.rlim_cur);
+        // Raising again is a no-op.
+        assert_eq!(super::raise_open_file_limit(), None);
     }
 }

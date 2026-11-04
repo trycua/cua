@@ -153,9 +153,6 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     public var onChange: (() -> Void)?
     /// `downloaded` when the update is ready to install.
     public var onEvent: ((String) -> Void)?
-    /// Shows an error to the person who started the check.
-    var presentError: (String) -> Void = UpdateUserDriver.alertError
-
     /// Sparkle's held "ready to install" reply.
     private var heldReply: ((SPUUserUpdateChoice) -> Void)?
     /// The silent path's immediate install (`willInstallUpdateOnQuit`).
@@ -263,12 +260,11 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
         acknowledgement()
     }
 
-    /// A background error is logged only; the check's user sees an alert.
+    /// An error is logged and kept in the state: the menus and Settings show
+    /// a plain line for it (no dialog, so nothing loops).
     func handleError(_ message: String) {
-        let shown = flow.userCheck
         NSLog("Cua Spaces: the updater failed: %@", message)
         changed { $0.failed(message) }
-        if shown { presentError(message) }
     }
 
     public func showDownloadInitiated(cancellation: @escaping () -> Void) { changed { $0.downloadStarted() } }
@@ -302,14 +298,5 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
         immediateInstall = nil
         told = false
         changed { $0.dismissed() }
-    }
-
-    private static func alertError(_ message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Update Error!"
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        NSApp.activate()
-        alert.runModal()
     }
 }

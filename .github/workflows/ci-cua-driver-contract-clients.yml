@@ -30,6 +30,7 @@ on:
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   push:
     branches: [main]
     paths:
@@ -60,6 +61,7 @@ on:
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   workflow_dispatch:
 
 permissions:
@@ -86,9 +88,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
+      checks: read
     outputs:
       run: ${{ steps.scope.outputs.run }}
       matrix: ${{ steps.scope.outputs.matrix }}
+      reused: ${{ steps.reuse.outputs.reused || '[]' }}
+      legs_discovery: ${{ steps.legs_discovery.outputs.legs || steps.scope.outputs.matrix }}
+      legs_parity: ${{ steps.legs_parity.outputs.legs || steps.scope.outputs.matrix }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -110,21 +117,50 @@ jobs:
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
           fi
           python3 .github/scripts/ci_component_scope.py contract-clients <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Reuse results by tree: a squash-merge push whose exact tree a green pull
+      # request run of this workflow already tested skips the lanes that run
+      # did. Lanes the pull request never ran (other OSes) still run. Any doubt
+      # means "run everything": see .github/scripts/ci_reuse_pr_result.py.
+      # Rollback: set the repository variable CI_REUSE_PR_RESULTS to "off".
+      # A step that cannot finish in a minute is killed and the suites run in
+      # full: the lookup never eats the job's 5 minutes.
+      - id: reuse
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
+        # Floating inputs the jobs install: setup-node "22" and setup-python "3.12".
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "contract clients / changes" --float node-22 --float python-3.12
+      - id: legs_discovery
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          LEGS: ${{ steps.scope.outputs.matrix }}
+        run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "MCP discovery in pinned clients ({os})" --output legs
+      - id: legs_parity
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          LEGS: ${{ steps.scope.outputs.matrix }}
+        run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "Portable contract parity ({os})" --output legs
 
   mcp-client-discovery:
     name: MCP discovery in pinned clients (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_discovery != '[]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
+        os: ${{ fromJSON(needs.changes.outputs.legs_discovery) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -175,17 +211,17 @@ jobs:
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_parity != '[]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
+        os: ${{ fromJSON(needs.changes.outputs.legs_parity) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -257,7 +293,7 @@ jobs:
   verify:
     name: Generated contract and SDK bindings
     needs: changes
-    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
+    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'Generated contract and SDK bindings')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -267,7 +303,7 @@ jobs:
         with:
           install-deps: "false"
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}

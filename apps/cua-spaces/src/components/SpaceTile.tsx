@@ -7,7 +7,7 @@ import { SPACES_CONFIG } from "../model/spaces";
 import { getScreenshot, rememberScreenshot } from "../model/screenshotCache";
 import type { Space } from "../model/types";
 import { powerButton } from "../model/window";
-import { useFleet } from "../state/cloud";
+import { useSpaces } from "../state/cloud";
 import { HotspotGlyph } from "./HotspotGlyph";
 import { OsIcon } from "./OsIcon";
 import { SfIcon } from "./SfIcon";
@@ -52,7 +52,7 @@ const HOVER_PRELOAD_DEBOUNCE_MS = 1500;
  * not live) never poll and their preload is a no-op.
  */
 function useLiveThumbnail(space: Space): { shot: string | null; preload: () => void } {
-  const { live, bridge } = useFleet();
+  const { live, bridge } = useSpaces();
   // Seed from the shared cache so an established Space shows its last frame
   // immediately (no "connecting" flash) instead of the synthetic scene.
   const [shot, setShot] = useState<string | null>(() => getScreenshot(space.id)?.dataUrl ?? null);

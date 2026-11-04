@@ -29,12 +29,20 @@ pub(super) fn contrib_of(s: &SandboxState) -> Option<(&str, &str)> {
 }
 
 /// Refuses what `caps` cannot run, before any API call.
-fn check_request(word: &str, caps: &ProviderCapabilities, o: &CreateOptions) -> Result<()> {
+fn check_request(
+    word: &str,
+    caps: &ProviderCapabilities,
+    takes_network_rules: bool,
+    o: &CreateOptions,
+) -> Result<()> {
     let unsupported = |op: String| crate::provider::unsupported(word, op);
-    if o.network == NetworkMode::None {
+    if o.network == NetworkMode::None && !takes_network_rules {
         return Err(unsupported(
             "network=\"none\" (only local QEMU VMs run without outbound network)".into(),
         ));
+    }
+    if !o.egress.is_empty() && !takes_network_rules {
+        return Err(unsupported(crate::sandbox::EGRESS_LOCAL_ONLY.into()));
     }
     if !o.sidecars.is_empty() {
         return Err(unsupported("sidecars".into()));
@@ -243,7 +251,7 @@ impl Sandboxes {
             })?;
         let provider = self.contrib_provider(word)?.clone();
         let caps = provider.capabilities();
-        check_request(word, &caps, o)?;
+        check_request(word, &caps, provider.takes_network_rules(), o)?;
         provider.check_configured()?;
         let (image, image_info) = resolve_image(word, &caps, o).await?;
         let mut services = o.all_services();
@@ -264,6 +272,12 @@ impl Sandboxes {
             .clone()
             .or_else(|| o.ephemeral_name.clone())
             .unwrap_or_else(|| format!("cua-eph-{:08x}", rand_u32()));
+        if !o.mounts.is_empty() {
+            return Err(Error::Unsupported {
+                provider: ProviderKind::Contrib,
+                op: "host directories mounted into the guest (local Spaces only)".into(),
+            });
+        }
         // A GPU type the provider offers (refused before any API call).
         let gpu = match o.gpu.as_deref() {
             None => None,
@@ -310,6 +324,9 @@ impl Sandboxes {
             timeout: o.ready_timeout,
             runtime: o.runtime.clone(),
             gpu,
+            egress: o.egress.clone(),
+            no_network: o.network == NetworkMode::None,
+            protect: cua_vmm::network::protects(o.network_settings.as_ref()),
         };
         let instance = provider.create(&spec).await?;
         let sandbox = Sandbox {

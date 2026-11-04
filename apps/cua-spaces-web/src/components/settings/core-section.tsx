@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { useSession, type SettingsRow, type SettingsSection } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { GroupedRow, GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
@@ -43,22 +44,26 @@ export function CoreSettingsSection({
     }
   }
   return (
-    <section className="mb-7" data-settings-section={section.id}>
-      <div className="mb-2 flex min-h-6 items-center justify-between gap-2 px-1">
-        <h2 className="text-xs font-semibold text-muted-foreground">{title ?? section.title}</h2>
-        {section.button ? (
-          <Button size="sm" variant="outline" disabled={!section.buttonEnabled} title={section.buttonHelp ?? undefined} onClick={onHeaderButton} data-section-button>
-            {section.button}
-          </Button>
-        ) : null}
-      </div>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
+    <section className="mb-8" data-settings-section={section.id}>
+      <SectionHeading
+        className="mt-0"
+        action={
+          section.button ? (
+            <Button size="sm" variant="outline" disabled={!section.buttonEnabled} title={section.buttonHelp ?? undefined} onClick={onHeaderButton} data-section-button>
+              {section.button}
+            </Button>
+          ) : null
+        }
+      >
+        {title ?? section.title}
+      </SectionHeading>
+      <GroupedSection>
         {section.rows
           .filter((r) => !folded.has(r.id))
           .map((r) => (
             <CoreSettingsRow key={r.id} row={r} description={notes.get(r.id)} {...handlers} />
           ))}
-      </div>
+      </GroupedSection>
     </section>
   );
 }
@@ -66,7 +71,14 @@ export function CoreSettingsSection({
 const optionOf = (row: SettingsRow) => row.options.find((o) => o.active)?.id ?? "";
 
 /** One core row. Every row carries `data-setting-row` (its id) for tests and the parity harness. */
-export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }: CoreRowHandlers & { row: SettingsRow; description?: string }) {
+export function CoreSettingsRow({
+  row,
+  description,
+  asSelect,
+  onPress,
+  onChoose,
+  onEdit,
+}: CoreRowHandlers & { row: SettingsRow; description?: string; /** Draw a choice as a drop-down, however few options it has. */ asSelect?: boolean }) {
   const { openExternal } = useSession();
   const attrs = { "data-setting-row": row.id, "data-kind": row.kind, "data-enabled": String(row.enabled) };
   const id = `setting-${row.id.replace(/[^a-z0-9-]/gi, "-")}`;
@@ -86,7 +98,7 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
       return (
         <Line {...attrs} title={row.help ?? undefined}>
           <Label label={row.label} description={description} />
-          {options.length > 3 ? (
+          {asSelect || options.length > 3 ? (
             <Select aria-label={row.label} value={optionOf(row)} options={options} disabled={!row.enabled} onValueChange={(v) => onChoose?.(row, v)} />
           ) : (
             <Segmented aria-label={row.label} value={optionOf(row)} options={options} disabled={!row.enabled} onValueChange={(v) => onChoose?.(row, v)} />
@@ -123,7 +135,7 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
       );
     case "link":
       return (
-        <div {...attrs} className="px-4 py-2">
+        <GroupedRow {...attrs}>
           <button
             type="button"
             disabled={!row.enabled}
@@ -132,7 +144,7 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
           >
             {row.label}
           </button>
-        </div>
+        </GroupedRow>
       );
     case "note":
       return (
@@ -155,7 +167,7 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
     default:
       return (
         <Line {...attrs} title={row.help ?? undefined} className={cn(!row.enabled && !row.button && "opacity-50")}>
-          <Label label={row.label} />
+          <Label label={row.label} description={description} />
           <div className="flex min-w-0 items-center gap-2">
             {row.value ? (
               <span data-row-value className="truncate text-[13px] text-muted-foreground">
@@ -175,9 +187,9 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
 
 function Line({ children, className, ...rest }: React.HTMLAttributes<HTMLDivElement> & Record<`data-${string}`, string>) {
   return (
-    <div className={cn("flex min-h-12 items-center justify-between gap-6 px-4 py-2.5", className)} {...rest}>
+    <GroupedRow className={cn("justify-between gap-6", className)} {...rest}>
       {children}
-    </div>
+    </GroupedRow>
   );
 }
 
@@ -199,7 +211,7 @@ function Label({ label, description, htmlFor }: { label: string; description?: s
 function PromptBox({ text, copyLabel }: { text: string; copyLabel: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/50 p-2.5">
+    <div className="mt-2 flex items-start gap-2 rounded-lg bg-muted p-2.5">
       <p data-row-value className="min-w-0 flex-1 font-mono text-xs leading-relaxed select-text">
         {text}
       </p>

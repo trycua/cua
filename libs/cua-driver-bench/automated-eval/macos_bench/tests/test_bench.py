@@ -30,6 +30,64 @@ TASKS = [f"MB-{i:02d}" for i in range(1, 13)]
 ARMS = ["cc-cua-driver", "cc-codex-cu"]
 
 
+class ToolSetupTest(unittest.TestCase):
+    def test_only_errored_tools_report_setup_failures(self) -> None:
+        errors = {
+            "screencapture": "could not create image from window",
+            "permissions_pending": "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
+            "screen_recording": "screen_recording_permission_denied",
+            "accessibility": "Accessibility permission denied",
+            "tcc": "tcc_permission_denied",
+            "daemon_not_running": "Cua Driver daemon is not running",
+            "helper_exited": "helper exited during probe",
+        }
+        for pattern, text in errors.items():
+            for is_error in (True, False):
+                with self.subTest(pattern=pattern, is_error=is_error):
+                    events = [
+                        {"type": "system", "subtype": "init"},
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "is_error": is_error,
+                                        "content": [
+                                            {"type": "image", "data": "SECRET"},
+                                            {"type": "text", "text": "x" * 310 + " " + text},
+                                        ],
+                                    }
+                                ]
+                            },
+                        },
+                    ]
+                    summary = ce.summarize(events)
+                    failure = ce.classify_failure(summary)
+                    self.assertEqual(failure["kind"], "tool_setup" if is_error else None)
+                    if is_error:
+                        self.assertEqual(failure["pattern"], pattern)
+                        self.assertLessEqual(len(failure["message"]), 300)
+                        self.assertNotIn("SECRET", json.dumps(summary))
+            summary = ce.summarize(
+                [{"type": "system", "subtype": "init"}, {"type": "result", "result": text}]
+            )
+            self.assertIsNone(ce.classify_failure(summary)["kind"])
+        for text in ("background_unavailable", "permission_denied"):
+            summary = ce.summarize(
+                [
+                    {"type": "system", "subtype": "init"},
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [{"type": "tool_result", "is_error": True, "content": text}]
+                        },
+                    },
+                ]
+            )
+            self.assertIsNone(ce.classify_failure(summary)["kind"])
+
+
 class ScheduleTest(unittest.TestCase):
     def test_priority_order_mb_first_then_others(self) -> None:
         ids = ["CDB-S01", "MB-10", "MB-02", "MB-13", "MB-01"]

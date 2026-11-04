@@ -588,11 +588,17 @@ fn deliver(
         for step in steps {
             let emitted = {
                 let mut device = device.lock().unwrap();
-                device.emit(&[InputEvent::new(
+                let event = [InputEvent::new(
                     EventType::KEY,
                     step.evdev_code,
                     if step.press { 1 } else { 0 },
-                )])
+                )];
+                if step.press {
+                    super::action::admit(|| device.emit(&event))
+                        .and_then(|emitted| emitted.map_err(Into::into))
+                } else {
+                    device.emit(&event).map_err(Into::into)
+                }
             };
             if let Err(error) = emitted {
                 // Never abort with keys down: a held modifier would chord
@@ -601,7 +607,7 @@ fn deliver(
                 for code in held.iter().rev() {
                     let _ = device.emit(&[InputEvent::new(EventType::KEY, *code, 0)]);
                 }
-                return Err(error.into());
+                return Err(error);
             }
             if step.press {
                 held.push(step.evdev_code);
@@ -877,7 +883,7 @@ mod tests {
             .keysyms
             .iter_mut()
             .filter(|sym| **sym == 0)
-            .skip(2)
+            .skip(4)
             .for_each(|sym| *sym = 1);
         let restored = std::cell::Cell::new(0);
         let error = plan_text_with_fallback(&keymap, Some(50), "aé€a", |ch, mapping| {

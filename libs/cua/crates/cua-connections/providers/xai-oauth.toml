@@ -1,0 +1,23 @@
+id = "xai-oauth"
+name = "SuperGrok sign-in"
+icon = "xai"
+tier = "more"
+rank = 370
+kind = "hosted"
+hidden = true
+hidden_reason = "Subscription login: Cua has not reviewed xAI's terms for use in a third-party app yet."
+terms = "review"
+aliases = ["supergrok", "grok subscription"]
+wire = "openai-responses"
+base_url = "https://api.x.ai/v1"
+default_model = "grok-4.6"
+hermes_id = "xai-oauth"
+key_help = "Sign in with your SuperGrok or X Premium+ account."
+
+[[method]]
+id = "supergrok"
+kind = "subscription_login"
+scope = "hermes"
+terms = "review"
+label = "Sign in with SuperGrok"
+help = "Shows a code to enter on x.ai. Only Hermes uses this sign-in."

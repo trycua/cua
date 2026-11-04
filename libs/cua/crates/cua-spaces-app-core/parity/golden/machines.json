@@ -46,7 +46,7 @@
     {
       "page": "a spare Mac with one Space, a machine that stopped sharing and devices only in the device list",
       "rows": [
-        "This Mac [this-mac] local macos online (this machine) + dev_me desktop this-mac \"Online\" \"1 Space\"",
+        "This Mac [this-mac] local macos online (this machine) + dev_me desktop this-mac \"Online\" \"Desktop and 1 Space\"",
         "studio-2.local [b6953d14ff94b10fcbb38bdd13c47824] relay macos online + dev_s desktop relay:b6953d14ff94b10fcbb38bdd13c47824 (stopped sharing) \"Not sharing\" \"No Spaces\"",
         "BYOC tests [dev_byoc] relay macos offline (a device) \"Offline\"",
         "Ana's MacBook Pro [dev_l1] relay macos online (a device) \"Online\"",
@@ -56,9 +56,18 @@
     {
       "page": "a machine that provides Spaces and one sharing its desktop, signed out",
       "rows": [
-        "This computer [this-mac] local linux online (this machine) \"Online\" \"No Spaces\"",
-        "Spare Mac mini [m-mini] relay macos online desktop relay:m-mini \"Online\" \"No Spaces\"",
+        "This machine [this-mac] local linux online (this machine) \"Online\" \"No Spaces\"",
+        "Spare Mac mini [m-mini] relay macos online desktop relay:m-mini \"Online\" \"Desktop shared\"",
         "Build box [m-box] relay ? online \"Online\" \"2 Spaces\""
+      ]
+    },
+    {
+      "page": "a machine sharing only its desktop, one sharing its desktop and Spaces, one providing Spaces only",
+      "rows": [
+        "This machine [this-mac] local linux online (this machine) \"Online\" \"No Spaces\"",
+        "solo [solo] relay macos online desktop relay:solo \"Online\" \"Desktop shared\"",
+        "both [both] relay macos online desktop relay:both \"Online\" \"Desktop and 2 Spaces\"",
+        "spaces [spaces] relay macos online desktop relay:spaces \"Online\" \"1 Space\""
       ]
     },
     {
@@ -66,31 +75,30 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — 1 Space running",
-            "● cua's Mac Studio — 1 Space running · Provides Spaces",
-            "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "○ Adas-MacBook-Pro-2.local — Not sharing · No Spaces",
-            "● Ana's laptop — Online"
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces",
+            "● cua's Mac Studio — Desktop and 1 Space",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
           "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ mac-mini-staging — Offline · last seen 41 days ago"
+            "○ mac-mini-staging — Offline"
           ]
         },
         {
           "group": "Team machines",
           "rows": [
-            "● build-mini-01 — Ready for Spaces"
+            "● build-mini-01 — Desktop shared"
           ]
         }
       ],
       "pages": [
         [
           "Ada's MacBook Pro — Online (rename: host)",
-          "Provide Spaces: off (runs: provide-spaces)",
-          "Share this desktop: on (runs: hide-desktop)",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
           "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
           "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
@@ -100,8 +108,8 @@
         ],
         [
           "cua's Mac Studio — Online (rename: machine)",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "note: Change this on that Mac.",
           "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
@@ -110,48 +118,44 @@
           "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Cua BYOC tests — Offline · last seen 9 days ago (rename: machine)",
+          "Cua BYOC tests — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:byoc (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> byoc + dev_byoc"
         ],
         [
           "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
           "notice: Sharing is off on that Mac. Turn it on there to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t provide Spaces. Turn on Provide Spaces on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
-          "mac-mini-staging — Offline · last seen 41 days ago (rename: machine)",
+          "mac-mini-staging — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:old1 (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> old1 + dev_old1"
         ],
         [
           "build-mini-01 — Online · Shared by your team",
-          "Provide Spaces: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
           "note: Its owner changes this on that Mac.",
           "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
           "spaces: No other Spaces yet.",
@@ -167,23 +171,22 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — 1 Space running",
-            "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "● Ana's laptop — Online"
+            "○ Ada's MacBook Pro [This Mac] — Not sharing",
+            "○ Cua BYOC tests — Signed in, not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
           "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ mac-mini-staging — Offline · last seen 41 days ago"
+            "○ mac-mini-staging — Signed in, not sharing"
           ]
         }
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
-          "Provide Spaces: off (runs: hide-desktop, resume-sharing)",
-          "Share this desktop: off (runs: stop-providing-spaces, resume-sharing)",
+          "Ada's MacBook Pro — Not sharing (rename: host)",
+          "Let other machines control this desktop: off (runs: resume-sharing)",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
           "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
           "New Space here on local",
@@ -191,37 +194,25 @@
           "Remove from account -> host setup"
         ],
         [
-          "Cua BYOC tests — Offline · last seen 9 days ago (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_byoc (disabled: It’s offline.)",
-          "details: OS: macOS",
-          "Remove from account -> dev_byoc"
+          "Cua BYOC tests — Signed in, not sharing (rename: device)",
+          " on host:dev_byoc (disabled: It is signed in, but it does not share this machine.)",
+          "details: Last seen: 9 days ago; OS: macOS",
+          "Revoke -> dev_byoc"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t provide Spaces. Turn on Provide Spaces on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
-          "mac-mini-staging — Offline · last seen 41 days ago (rename: device)",
-          "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "spaces: No Spaces. The machine is offline.",
-          "New Space here on host:dev_old1 (disabled: It’s offline.)",
-          "details: OS: macOS",
-          "Remove from account -> dev_old1"
+          "mac-mini-staging — Signed in, not sharing (rename: device)",
+          " on host:dev_old1 (disabled: It is signed in, but it does not share this machine.)",
+          "details: Last seen: 41 days ago; OS: macOS",
+          "Revoke -> dev_old1"
         ]
       ],
-      "summary": "4 machines, 2 online",
+      "summary": "4 machines, 1 online",
       "view": "This Mac stopped sharing: both switches off, turning one on resumes"
     },
     {
@@ -236,8 +227,7 @@
       "pages": [
         [
           "Ada's MacBook Pro — Online",
-          "Provide Spaces: off (sets up: spare)",
-          "Share this desktop: off (sets up: desktop)",
+          "Let other machines control this desktop: off (sets up: desktop)",
           "spaces: No Spaces yet.",
           "New Space here on local",
           "details: OS: macOS 26.5.2; App: 0.9.1; Connection: Not shared"
@@ -251,23 +241,23 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — 1 Space running [fail]",
-            "● cua's Mac Studio — 1 Space running · Provides Spaces [warn]",
-            "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "○ Adas-MacBook-Pro-2.local — Not sharing · No Spaces",
-            "● Ana's laptop — Online"
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● cua's Mac Studio — Desktop and 1 Space [warn]",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
           "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ mac-mini-staging — Offline · last seen 41 days ago"
+            "○ mac-mini-staging — Offline"
           ]
         },
         {
           "group": "Team machines",
           "rows": [
-            "● build-mini-01 — Ready for Spaces"
+            "● build-mini-01 — Desktop shared"
           ]
         }
       ],
@@ -276,8 +266,7 @@
           "Ada's MacBook Pro — Online (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
-          "Provide Spaces: off (runs: provide-spaces)",
-          "Share this desktop: on (runs: hide-desktop)",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
           "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
           "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
@@ -289,8 +278,8 @@
           "cua's Mac Studio — Online (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues warn: It runs Cua 0.3.9, older than this Mac’s 0.4.1. Update Cua on it.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "note: Change this on that Mac.",
           "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
@@ -299,48 +288,44 @@
           "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Cua BYOC tests — Offline · last seen 9 days ago (rename: machine)",
+          "Cua BYOC tests — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:byoc (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> byoc + dev_byoc"
         ],
         [
           "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
           "notice: Sharing is off on that Mac. Turn it on there to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t provide Spaces. Turn on Provide Spaces on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
-          "mac-mini-staging — Offline · last seen 41 days ago (rename: machine)",
+          "mac-mini-staging — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:old1 (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> old1 + dev_old1"
         ],
         [
           "build-mini-01 — Online · Shared by your team",
-          "Provide Spaces: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
           "note: Its owner changes this on that Mac.",
           "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
           "spaces: No other Spaces yet.",
@@ -356,23 +341,23 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — 1 Space running [fail]",
-            "● cua's Mac Studio — 1 Space running · Provides Spaces [warn]",
-            "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "○ Adas-MacBook-Pro-2.local — Not sharing · No Spaces",
-            "● Ana's laptop — Online"
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● cua's Mac Studio — Desktop and 1 Space [warn]",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
           "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ mac-mini-staging — Offline · last seen 41 days ago"
+            "○ mac-mini-staging — Offline"
           ]
         },
         {
           "group": "Team machines",
           "rows": [
-            "● build-mini-01 — Ready for Spaces"
+            "● build-mini-01 — Desktop shared"
           ]
         }
       ],
@@ -381,8 +366,7 @@
           "Ada's MacBook Pro — Online (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
-          "Provide Spaces: off (runs: provide-spaces)",
-          "Share this desktop: on (runs: hide-desktop)",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
           "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
           "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
@@ -394,8 +378,8 @@
           "cua's Mac Studio — Online (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues warn: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces 0.12.2 is ready to install. [Restart to update]",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "note: Change this on that Mac.",
           "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
@@ -404,48 +388,44 @@
           "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Cua BYOC tests — Offline · last seen 9 days ago (rename: machine)",
+          "Cua BYOC tests — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:byoc (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> byoc + dev_byoc"
         ],
         [
           "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
           "notice: Sharing is off on that Mac. Turn it on there to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t provide Spaces. Turn on Provide Spaces on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
-          "mac-mini-staging — Offline · last seen 41 days ago (rename: machine)",
+          "mac-mini-staging — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:old1 (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> old1 + dev_old1"
         ],
         [
           "build-mini-01 — Online · Shared by your team",
-          "Provide Spaces: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
           "note: Its owner changes this on that Mac.",
           "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
           "spaces: No other Spaces yet.",
@@ -461,23 +441,23 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — 1 Space running [fail]",
-            "● cua's Mac Studio — 1 Space running · Provides Spaces [warn]",
-            "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "○ Adas-MacBook-Pro-2.local — Not sharing · No Spaces",
-            "● Ana's laptop — Online"
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● cua's Mac Studio — Desktop and 1 Space [warn]",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
           ]
         },
         {
           "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
           "rows": [
-            "○ mac-mini-staging — Offline · last seen 41 days ago"
+            "○ mac-mini-staging — Offline"
           ]
         },
         {
           "group": "Team machines",
           "rows": [
-            "● build-mini-01 — Ready for Spaces"
+            "● build-mini-01 — Desktop shared"
           ]
         }
       ],
@@ -486,8 +466,7 @@
           "Ada's MacBook Pro — Online (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
-          "Provide Spaces: off (runs: provide-spaces)",
-          "Share this desktop: on (runs: hide-desktop)",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
           "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
           "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
@@ -499,8 +478,8 @@
           "cua's Mac Studio — Online (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "note: Change this on that Mac.",
           "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
@@ -509,48 +488,44 @@
           "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Cua BYOC tests — Offline · last seen 9 days ago (rename: machine)",
+          "Cua BYOC tests — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: on (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:byoc (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> byoc + dev_byoc"
         ],
         [
           "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
           "notice: Sharing is off on that Mac. Turn it on there to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
           "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
         ],
         [
-          "Ana's laptop — Online (rename: device)",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: off (read-only)",
-          "note: Change this on that PC.",
-          "spaces: No Spaces yet.",
-          "New Space here on host:dev_lap (disabled: It doesn’t provide Spaces. Turn on Provide Spaces on that PC.)",
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
           "details: OS: Windows",
-          "Remove from account -> dev_lap"
+          "Revoke -> dev_lap"
         ],
         [
-          "mac-mini-staging — Offline · last seen 41 days ago (rename: machine)",
+          "mac-mini-staging — Offline (rename: machine)",
           "notice: This machine is offline. Open Cua Spaces on it to use it.",
-          "Provide Spaces: off (read-only)",
-          "Share this desktop: on (read-only)",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
           "spaces: No Spaces. The machine is offline.",
           "New Space here on host:old1 (disabled: It’s offline.)",
-          "details: OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
           "Remove from account -> old1 + dev_old1"
         ],
         [
           "build-mini-01 — Online · Shared by your team",
-          "Provide Spaces: on (read-only)",
+          "Let other machines create Spaces here: on (read-only)",
           "note: Its owner changes this on that Mac.",
           "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
           "spaces: No other Spaces yet.",
@@ -560,6 +535,356 @@
       ],
       "summary": "7 machines, 4 online",
       "view": "the Mac Studio runs a newer Cua and this app is the newest release"
+    },
+    {
+      "clouds": {
+        "connect": "Connect a cloud",
+        "order": [
+          "clouds",
+          "yours",
+          "old",
+          "team"
+        ],
+        "pages": [
+          [
+            "AWS — Connected",
+            "spend $42.18 of $200 budget this month (Resets Nov 1) About $55.64 by Oct 31 at this pace. An estimate from list prices.",
+            "Running in AWS: rl-env-0412 agent eval-runner $0.08; build-cache ada on Mac mini $0.05",
+            "Region: us-west-2 (Oregon)",
+            "Monthly budget: $200",
+            "Largest machine: 4 vCPU, 16 GB",
+            "Access: ",
+            "Disconnect AWS… -> Delete 2 and disconnect"
+          ],
+          [
+            "Hetzner — Token refused",
+            "issue fail: The API token was revoked or deleted in Hetzner. Cua can't create, stop or delete servers. [Paste a new token…]",
+            "issue warn: 1 server Cua created keeps running and billing. Stop it in Hetzner, or paste a new token and Cua stops it at its time limit. [Open Hetzner Console]",
+            "Last seen running: rl-box",
+            "token: Refused by Hetzner; Can open it This Mac and Mac mini",
+            "Location: fsn1 (Falkenstein)",
+            "Monthly budget: $50",
+            "Largest machine: 4 vCPU, 8 GB",
+            "Disconnect Hetzner… -> Delete 1 and disconnect"
+          ],
+          [
+            "Modal — Waiting for approval",
+            "issue warn: Your agent set up Modal. It waits for your approval. [Review…]",
+            "Environment: main",
+            "Monthly budget: $50",
+            "approval: Approve Modal for your agent? Claude Code on This Mac set up Modal. Cua checked it; nothing runs until you approve. (Monthly budget $50; Access Only machines Cua tags) [Approve / Deny]",
+            "Disconnect Modal… -> Disconnect"
+          ]
+        ],
+        "rows": [
+          "● AWS — 2 running (aws)",
+          "○ Hetzner — Token refused (hetzner)",
+          "◐ Modal — Waiting for approval (modal)"
+        ],
+        "title": "Clouds"
+      },
+      "groups": [
+        {
+          "group": "Your machines",
+          "rows": [
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● cua's Mac Studio — Desktop and 1 Space [warn]",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
+          ]
+        },
+        {
+          "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
+          "rows": [
+            "○ mac-mini-staging — Offline"
+          ]
+        },
+        {
+          "group": "Team machines",
+          "rows": [
+            "● build-mini-01 — Desktop shared"
+          ]
+        }
+      ],
+      "pages": [
+        [
+          "Ada's MacBook Pro — Online (rename: host)",
+          "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
+          "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
+          "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
+          "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
+          "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
+          "New Space here on local",
+          "details: OS: macOS 26.5.2; App: 0.9.1; Connection: via Cua relay; Service: Running",
+          "Remove from account -> host setup"
+        ],
+        [
+          "cua's Mac Studio — Online (rename: machine)",
+          "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
+          "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "note: Change this on that Mac.",
+          "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
+          "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
+          "New Space here on host:studio",
+          "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
+          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "Cua BYOC tests — Offline (rename: machine)",
+          "notice: This machine is offline. Open Cua Spaces on it to use it.",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces. The machine is offline.",
+          "New Space here on host:byoc (disabled: It’s offline.)",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "Remove from account -> byoc + dev_byoc"
+        ],
+        [
+          "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
+          "notice: Sharing is off on that Mac. Turn it on there to use it.",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces yet.",
+          "New Space here on host:b695 (disabled: It isn’t sharing.)",
+          "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
+          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          "details: OS: Windows",
+          "Revoke -> dev_lap"
+        ],
+        [
+          "mac-mini-staging — Offline (rename: machine)",
+          "notice: This machine is offline. Open Cua Spaces on it to use it.",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces. The machine is offline.",
+          "New Space here on host:old1 (disabled: It’s offline.)",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "Remove from account -> old1 + dev_old1"
+        ],
+        [
+          "build-mini-01 — Online · Shared by your team",
+          "Let other machines create Spaces here: on (read-only)",
+          "note: Its owner changes this on that Mac.",
+          "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
+          "spaces: No other Spaces yet.",
+          "New Space here on host:team",
+          "details: OS: macOS; Connection: via Cua relay; Service: Running"
+        ]
+      ],
+      "summary": "7 machines, 4 online",
+      "view": "the clouds: AWS connected, Hetzner with a refused token, Modal waiting for approval; Google Cloud not connected is not listed"
+    },
+    {
+      "clouds": {
+        "connect": "Connect a cloud",
+        "order": [
+          "clouds",
+          "yours",
+          "old",
+          "team"
+        ],
+        "pages": [
+          [
+            "AWS — Connected",
+            "spend $42.18 of $200 budget this month (Resets Nov 1) About $55.64 by Oct 31 at this pace. An estimate from list prices.",
+            "Running in AWS: rl-env-0412 agent eval-runner $0.08; build-cache ada on Mac mini $0.05",
+            "Region: us-west-2 (Oregon)",
+            "Monthly budget: $200",
+            "Largest machine: 4 vCPU, 16 GB",
+            "Access: ",
+            "[Switch to OIDC]",
+            "Disconnect AWS… -> Delete 2 and disconnect"
+          ],
+          [
+            "Hetzner — Disconnected",
+            "issue fail: Hetzner was disconnected on another device, and 1 server this computer made may still run there. Reconnect, then delete it. [Reconnect…]",
+            "Last seen running: rl-box",
+            "token: Sealed to your machines; Can open it This Mac and Mac mini",
+            "Location: fsn1 (Falkenstein)",
+            "Monthly budget: $50",
+            "Largest machine: 4 vCPU, 8 GB",
+            "Disconnect Hetzner… -> Delete 1 and disconnect"
+          ],
+          [
+            "Modal — Connected",
+            "issue warn: eval-runner asked to raise the limits on Modal. They stay as they are until you approve. [Review…]",
+            "spend $0 of $50 budget this month (Resets Nov 1) An estimate from list prices.",
+            "Environment: main",
+            "Monthly budget: $50",
+            "approval: Approve new Modal limits? eval-runner asked to raise the limits on Modal. They stay as they are until you approve. (Monthly budget $200; Largest machine 8 vCPU, 32 GB; Access Only machines Cua tags) [Approve / Deny]",
+            "Disconnect Modal… -> Disconnect"
+          ]
+        ],
+        "rows": [
+          "● AWS — 2 running (aws)",
+          "○ Hetzner — Disconnected (hetzner)",
+          "● Modal — Nothing running (modal)"
+        ],
+        "title": "Clouds"
+      },
+      "groups": [
+        {
+          "group": "Your machines",
+          "rows": [
+            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● cua's Mac Studio — Desktop and 1 Space [warn]",
+            "○ Cua BYOC tests — Offline",
+            "○ Adas-MacBook-Pro-2.local — Not sharing",
+            "● Ana's laptop — Signed in, not sharing"
+          ]
+        },
+        {
+          "group": "Offline for 30+ days (1) (collapsed) · Remove old machines",
+          "rows": [
+            "○ mac-mini-staging — Offline"
+          ]
+        },
+        {
+          "group": "Team machines",
+          "rows": [
+            "● build-mini-01 — Desktop shared"
+          ]
+        }
+      ],
+      "pages": [
+        [
+          "Ada's MacBook Pro — Online (rename: host)",
+          "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
+          "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
+          "Let other machines control this desktop: on (runs: hide-desktop)",
+          "desktop This Mac · macOS · This Mac [Desktop] -> this-mac",
+          "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
+          "space space-1cef393ac1 · Linux · Suspended -> local:space-1cef393ac1",
+          "New Space here on local",
+          "details: OS: macOS 26.5.2; App: 0.9.1; Connection: via Cua relay; Service: Running",
+          "Remove from account -> host setup"
+        ],
+        [
+          "cua's Mac Studio — Online (rename: machine)",
+          "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
+          "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "note: Change this on that Mac.",
+          "desktop cua's Mac Studio · macOS 26.5.2 · Running [Desktop] -> relay:studio",
+          "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
+          "New Space here on host:studio",
+          "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
+          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "Cua BYOC tests — Offline (rename: machine)",
+          "notice: This machine is offline. Open Cua Spaces on it to use it.",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces. The machine is offline.",
+          "New Space here on host:byoc (disabled: It’s offline.)",
+          "details: Last seen: 9 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "Remove from account -> byoc + dev_byoc"
+        ],
+        [
+          "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
+          "notice: Sharing is off on that Mac. Turn it on there to use it.",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces yet.",
+          "New Space here on host:b695 (disabled: It isn’t sharing.)",
+          "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
+          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "Ana's laptop — Signed in, not sharing (rename: device)",
+          " on host:dev_lap (disabled: It is signed in, but it does not share this machine.)",
+          "details: OS: Windows",
+          "Revoke -> dev_lap"
+        ],
+        [
+          "mac-mini-staging — Offline (rename: machine)",
+          "notice: This machine is offline. Open Cua Spaces on it to use it.",
+          "Let other machines create Spaces here: off (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "spaces: No Spaces. The machine is offline.",
+          "New Space here on host:old1 (disabled: It’s offline.)",
+          "details: Last seen: 41 days ago; OS: macOS; Connection: via Cua relay; Service: Not reachable",
+          "Remove from account -> old1 + dev_old1"
+        ],
+        [
+          "build-mini-01 — Online · Shared by your team",
+          "Let other machines create Spaces here: on (read-only)",
+          "note: Its owner changes this on that Mac.",
+          "desktop build-mini-01 · macOS · Running [Desktop] -> relay:team",
+          "spaces: No other Spaces yet.",
+          "New Space here on host:team",
+          "details: OS: macOS; Connection: via Cua relay; Service: Running"
+        ]
+      ],
+      "summary": "7 machines, 4 online",
+      "view": "the clouds as the daemon reports them: AWS through the CLI sign-in offering OIDC, Hetzner revoked elsewhere with the daemon's sentence, Modal's raise approvable by this person on a host that can't approve the rest"
+    },
+    {
+      "groups": [
+        {
+          "group": "Your machines",
+          "rows": [
+            "● Ada's MacBook Pro [This machine] — No Spaces",
+            "● solo — Desktop shared",
+            "● both — Desktop and 2 Spaces",
+            "● spaces — 1 Space running"
+          ]
+        }
+      ],
+      "pages": [
+        [
+          "Ada's MacBook Pro — Online",
+          "Let other machines control this desktop: off (disabled)",
+          "spaces: No Spaces yet.",
+          "New Space here on local",
+          "details: OS: macOS 26.5.2; App: 0.9.1"
+        ],
+        [
+          "solo — Online (rename: machine)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "note: Change this on that Mac.",
+          "desktop solo · macOS · Running [Desktop] -> relay:solo",
+          "spaces: No other Spaces yet.",
+          "New Space here on host:solo",
+          "details: OS: macOS; Connection: via Cua relay; Service: Running",
+          "Remove from account -> solo (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "both — Online (rename: machine)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: on (read-only)",
+          "note: Change this on that Mac.",
+          "desktop both · macOS · Running [Desktop] -> relay:both",
+          "space one · Linux · Running -> relay:both/space-1",
+          "space two · Linux · Suspended -> relay:both/space-2",
+          "New Space here on host:both",
+          "details: OS: macOS; Connection: via Cua relay; Service: Running",
+          "Remove from account -> both (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ],
+        [
+          "spaces — Online (rename: machine)",
+          "Let other machines create Spaces here: on (read-only)",
+          "Let other machines control this desktop: off (read-only)",
+          "note: Change this on that Mac.",
+          "space box · Linux · Running -> relay:spaces/space-1",
+          "New Space here on host:spaces",
+          "details: OS: macOS; Connection: via Cua relay; Service: Running",
+          "Remove from account -> spaces (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+        ]
+      ],
+      "summary": "4 machines, 4 online",
+      "view": "a machine sharing only its desktop, one sharing its desktop and Spaces, one providing Spaces only"
     }
   ]
 }

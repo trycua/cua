@@ -166,7 +166,8 @@ pub struct Usage {
     pub memory_limited: bool,
     /// Home filesystem bytes in use.
     pub disk_used: u64,
-    /// Home filesystem size, bytes.
+    /// Home filesystem size, bytes; 0 when it has no size of its own
+    /// (gVisor's root overlay reports "unlimited"), never a sentinel.
     pub disk_total: u64,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
@@ -181,9 +182,16 @@ impl From<pb::MetricsResponse> for Usage {
             memory_used: m.memory_used_bytes,
             memory_total: m.memory_total_bytes,
             memory_limited: m.memory_limited,
-            disk_used: m.disk_used_bytes,
-            disk_total: m.disk_total_bytes,
-            disk_limited: m.disk_limited,
+            disk_used: if m.disk_total_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+                && m.disk_used_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+            {
+                0
+            } else {
+                m.disk_used_bytes
+            },
+            disk_total: crate::resources::known_size(m.disk_total_bytes).unwrap_or(0),
+            disk_limited: m.disk_limited
+                && crate::resources::known_size(m.disk_total_bytes).is_some(),
         }
     }
 }

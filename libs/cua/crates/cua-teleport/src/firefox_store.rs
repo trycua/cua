@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Firefox's profile data as Keyvault items, from the profile's own files
-//! (formats in `~/projects/.cua-work/keyvault-v2/browser-formats.md`):
+//! Firefox's profile data as Keyvault items, from the profile's own files:
 //!
 //! * profile discovery: `profiles.ini` and `installs.ini`;
 //! * cookies: `cookies.sqlite` (`moz_cookies`, schema 16), plaintext values;

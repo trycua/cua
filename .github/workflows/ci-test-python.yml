@@ -12,6 +12,18 @@ on:
       # cua-test-fixtures links a real driver core.
       - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-test-python.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/python/**"
+      # cua-sandbox is a thin wrapper over the cua SDK: SDK changes can break it.
+      - "libs/cua/crates/**"
+      - "libs/cua/python/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/Cargo.*"
+      # cua-test-fixtures links a real driver core.
+      - "libs/cua-spacesd/tests/spaces-e2e/**"
+      - ".github/workflows/ci-test-python.yml"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -21,10 +33,19 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_TIMEOUT: "120"
   CARGO_HTTP_MULTIPLEXING: "false"
+  # CI checks behavior, not speed: a cheaper release profile compiles about a
+  # quarter faster and the dev profile drops debug info (the line-table
+  # test binaries filled the runner's disk). Release builds in cd-*.yml keep
+  # the shipped profile.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -39,6 +60,7 @@ jobs:
           - core
           - agent
           - som
+          - cua-e2b
 
     steps:
       - name: Checkout code
@@ -117,7 +139,7 @@ jobs:
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sandbox

@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arms
+from desktop_runtime import record_or_reap, record_pid
 from browser_use_cli import Invocation
 
 ARM = "cx-codex-cu"
@@ -335,14 +336,23 @@ class Translator:
                     self.started.add(item_id)
                     out.append(self._use(item_id, name, tool_input))
                 if method == "item/completed":
-                    failed = item.get("status") != "completed" or item.get("error") is not None
-                    failed = failed or bool(invocation and item.get("exitCode") != 0)
+                    from claude_events import _text_of
+
+                    result = item.get("result") or {}
+                    failed = (
+                        item.get("status") != "completed"
+                        or item.get("error") is not None
+                        or bool(result.get("isError"))
+                        or bool(invocation and item.get("exitCode") != 0)
+                    )
                     text = (
                         str(item.get("aggregatedOutput") or "")[:2000]
                         if invocation
-                        else json.dumps(item.get("error"))[:300]
-                        if failed
-                        else ""
+                        else (
+                            (_text_of(result.get("content")) or str(item.get("error") or ""))[:300]
+                            if failed
+                            else ""
+                        )
                     )
                     out.append(
                         {
@@ -425,6 +435,7 @@ def chatgpt_checks(cli: Path, env: dict[str, str], model: str) -> list[tuple[str
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+            record_pid(proc.pid, "chatgpt-check")
             assert proc.stdin is not None and proc.stdout is not None
             selector.register(proc.stdout, selectors.EVENT_READ)
             pending = b""
@@ -535,6 +546,7 @@ def run_codex(
             bufsize=1,
             start_new_session=True,
         )
+        record_or_reap(proc, "codex")
         lock = threading.Lock()
         next_id = [0]
 

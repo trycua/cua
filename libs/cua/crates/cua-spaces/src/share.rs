@@ -162,7 +162,7 @@ struct Attached {
 }
 
 mod publish;
-pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport};
+pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport, breaker_wait, jitter};
 
 /// Normalizes an invitee: an email (lowercased) or an account id. Teams and
 /// organizations are not relay principals, so `team:` / `org:` entries are
@@ -542,6 +542,14 @@ impl Spaces {
     /// Space's driver is attached (registered on first share, re-attached
     /// after the Space restarted).
     async fn ensure_shared_machine(&self, space: &str) -> Result<String> {
+        self.ensure_shared_machine_with(space, true).await
+    }
+
+    /// [`Self::ensure_shared_machine`]; with `wait` false it asks the relay
+    /// for nothing it does not need: no read of the machine first (the caller
+    /// has the directory) and no polling until the driver is online (the
+    /// next pass sees it), so one Space costs the relay one registration.
+    async fn ensure_shared_machine_with(&self, space: &str, wait: bool) -> Result<String> {
         let id = self.resolve(space)?;
         let canonical = id.to_string();
         let relay = self.relay()?;
@@ -563,7 +571,8 @@ impl Spaces {
             Some(a) => a.machine.clone(),
             None => format!("space-{:016x}", rand::random::<u64>()),
         };
-        if let Ok(m) = client.machine(&token, &machine).await
+        if wait
+            && let Ok(m) = client.machine(&token, &machine).await
             && m.online
             && m.role == "owner"
         {
@@ -619,7 +628,7 @@ impl Spaces {
         self.audit_share("attach", &canonical, &format!("machine={machine}"));
         // The driver dials out on its own: wait (bounded) until the relay
         // lists it online.
-        for _ in 0..100 {
+        for _ in 0..if wait { 100 } else { 0 } {
             if client
                 .machine(&token, &machine)
                 .await

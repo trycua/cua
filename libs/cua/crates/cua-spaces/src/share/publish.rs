@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::{Result, SpaceId, Spaces};
@@ -40,15 +40,93 @@ pub static CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// How long a Space that could not be listed is left alone.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
-/// Registrations running at once in one pass.
+/// Calls to the relay in flight at once.
 const AT_ONCE: usize = 4;
+/// Most registrations and removals one pass starts; the rest wait for the
+/// next pass ([`PublishReport::more`]).
+const PER_PASS: usize = 24;
+/// A Space younger than this is not listed yet, so one made and deleted
+/// within moments (a job, a test, a burst of throwaway Spaces) never reaches
+/// the relay.
+const SETTLE: Duration = Duration::from_secs(5);
+/// While Spaces are being made (the newest is younger than this), the pass
+/// leaves the relay alone, so a burst of creates has the machine to itself;
+/// it goes on after this much quiet, or once a Space has waited
+/// [`BUSY_LIMIT`].
+const BUSY: Duration = Duration::from_secs(3);
+/// The longest a Space waits for a burst of creates to end.
+const BUSY_LIMIT: Duration = Duration::from_secs(60);
+/// How long a registered Space is given to dial the relay before it is
+/// registered again.
+const DIAL_GRACE: Duration = Duration::from_secs(90);
+/// When nothing changed here, the relay is asked once in this long (plus up
+/// to a fifth) whether every listed Space is still online.
+const VERIFY_EVERY: Duration = Duration::from_secs(300);
+/// Longest pause after the relay failed.
+const BREAKER_MAX: Duration = Duration::from_secs(300);
 
+/// The relay failed: no calls until `open_until`, longer each time in a row.
 #[derive(Default)]
+struct Breaker {
+    fails: u32,
+    open_until: Option<Instant>,
+}
+
+/// `+-20%` so many computers do not move together.
+pub fn jitter(d: Duration) -> Duration {
+    d.mul_f64(0.8 + rand::random::<f64>() * 0.4)
+}
+
+/// How long to stop calling the relay after its `fails`th failure in a row:
+/// 5 s doubling to 5 min, with jitter, and never less than the relay's own
+/// `Retry-After`.
+pub fn breaker_wait(fails: u32, retry_after: Option<Duration>) -> Duration {
+    let base = Duration::from_secs(5)
+        .saturating_mul(1u32 << fails.saturating_sub(1).min(6))
+        .min(BREAKER_MAX);
+    jitter(base).max(retry_after.unwrap_or_default().min(BREAKER_MAX))
+}
+
+/// The wait the relay asked for in an error, and whether the error is the
+/// relay failing (so calls pause) rather than a Space being refused.
+fn relay_trouble(e: &crate::Error) -> Option<Option<Duration>> {
+    match e {
+        crate::Error::Relay(h) if h.is_transient() => Some(match h {
+            cua_host::Error::Throttled { retry_after_secs } => {
+                Some(Duration::from_secs(*retry_after_secs))
+            }
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 struct Memo {
     /// Spaces not tried again before this time.
     retry_at: BTreeMap<String, Instant>,
     /// Spaces whose driver already left the relay for want of an account.
     left: BTreeSet<String>,
+    /// The Spaces that were to be listed when the last pass finished
+    /// without trouble; `None` while the last pass left work.
+    settled: Option<BTreeSet<String>>,
+    /// Registered Spaces that have until then to dial the relay.
+    dialing: BTreeMap<String, Instant>,
+    /// When the relay is asked next even if nothing changed.
+    verify_at: Instant,
+    breaker: Breaker,
+}
+
+impl Default for Memo {
+    fn default() -> Self {
+        Memo {
+            retry_at: Default::default(),
+            left: Default::default(),
+            settled: None,
+            dialing: Default::default(),
+            verify_at: Instant::now(),
+            breaker: Default::default(),
+        }
+    }
 }
 
 static MEMO: LazyLock<Mutex<BTreeMap<PathBuf, Memo>>> = LazyLock::new(Default::default);
@@ -67,6 +145,9 @@ pub struct PublishReport {
     pub unpublished: Vec<String>,
     /// Spaces that could not be listed now, with why (tried again later).
     pub failed: Vec<(String, String)>,
+    /// More is waiting (the per-pass limit, or Spaces too new to list):
+    /// run the next pass soon, not at the usual interval.
+    pub more: bool,
 }
 
 /// Why nothing is listed now, or `None` when Spaces may be.
@@ -228,8 +309,19 @@ impl Spaces {
     }
 
     /// One pass: lists what should be listed and takes off what should not.
-    /// Idempotent and safe to run often; a Space that fails is left alone
-    /// for a minute.
+    /// Built for a relay that is shared by many computers:
+    ///
+    /// - Nothing that changed here means no call at all (the relay is asked
+    ///   once in five minutes, with jitter, whether the listed Spaces are
+    ///   still online).
+    /// - A pass reads the relay's directory once, then registers or removes
+    ///   at most [`PER_PASS`] Spaces, [`AT_ONCE`] at a time, without waiting
+    ///   for any of them to come online; the rest wait for the next pass.
+    /// - A Space younger than [`SETTLE`] is not listed yet, so one made and
+    ///   deleted within moments never reaches the relay.
+    /// - When the relay fails (429, 5xx, not reached) calls stop for a
+    ///   growing, jittered time that is never shorter than its `Retry-After`;
+    ///   Spaces keep being made here meanwhile.
     pub async fn publish_to_relay(&self) -> Result<PublishReport> {
         let mut report = PublishReport::default();
         let home = self.home_dir().to_path_buf();
@@ -240,25 +332,112 @@ impl Spaces {
             .filter(|(_, a)| a.auto)
             .map(|(s, _)| s.clone())
             .collect();
-        let infos = self.list()?;
-        let meta = self.inner.registry.all_meta();
 
         // Not publishing now: what this pass listed leaves.
         if let Err(off) = gate {
-            for space in auto {
-                if off == Off::SignedOut || off == Off::NoAccount {
-                    // No account to call the relay with: the driver stops
-                    // dialing, and the next sign-in lists the Space again.
+            if auto.is_empty() {
+                return Ok(report);
+            }
+            if off == Off::SignedOut || off == Off::NoAccount {
+                // No account to call the relay with: the driver stops
+                // dialing, and the next sign-in lists the Space again.
+                for space in auto {
                     if memo(&home, |m| m.left.insert(space.clone())) {
                         self.detach_attached_space(&space).await;
                     }
-                } else if self.unpublish(&space).await {
-                    report.unpublished.push(space);
                 }
+                memo(&home, |m| {
+                    m.settled = None;
+                    m.dialing.clear();
+                });
+                return Ok(report);
             }
+            if memo(&home, |m| {
+                m.breaker.open_until.is_some_and(|t| t > Instant::now())
+            }) {
+                return Ok(report);
+            }
+            let rows = self.owner_rows().await;
+            let rows = match rows {
+                Ok(r) => r,
+                Err(e) => {
+                    self.relay_failed(&home, &e);
+                    return Ok(report);
+                }
+            };
+            let removals = self.remove_all(&auto, &rows, &mut report).await;
+            report.more = removals;
+            memo(&home, |m| m.settled = None);
             return Ok(report);
         }
         memo(&home, |m| m.left.clear());
+
+        // The relay failed lately: no calls yet.
+        if memo(&home, |m| {
+            m.breaker.open_until.is_some_and(|t| t > Instant::now())
+        }) {
+            return Ok(report);
+        }
+
+        let infos = self.list()?;
+        let meta = self.inner.registry.all_meta();
+        let provided = self.provided_here();
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut young = false;
+        let want: Vec<&crate::SpaceInfo> = infos
+            .iter()
+            .filter(|i| !provided.contains(&i.id) && self.listable(i, &meta))
+            .filter(|i| {
+                let born = meta.get(&i.id).map_or(0, |m| m.created_at_unix);
+                let settled = born == 0 || now_unix.saturating_sub(born) >= SETTLE.as_secs();
+                young |= !settled;
+                settled
+            })
+            .collect();
+        let wanted: BTreeSet<String> = want.iter().map(|i| i.id.clone()).collect();
+
+        // Spaces are being made right now: listing them waits for a gap (but
+        // not for more than a minute).
+        let newest = meta
+            .iter()
+            .filter(|(id, _)| id.starts_with("local:"))
+            .map(|(_, m)| m.created_at_unix)
+            .max()
+            .unwrap_or(0);
+        let waited_long = want.iter().any(|i| {
+            let born = meta.get(&i.id).map_or(0, |m| m.created_at_unix);
+            !all.contains_key(&i.id)
+                && born != 0
+                && now_unix.saturating_sub(born) >= BUSY_LIMIT.as_secs()
+        });
+        if newest != 0
+            && now_unix.saturating_sub(newest) < BUSY.as_secs()
+            && !waited_long
+            && !wanted.is_empty()
+        {
+            report.more = true;
+            return Ok(report);
+        }
+
+        // Nothing listed and nothing to list: no call.
+        if wanted.is_empty() && auto.is_empty() {
+            memo(&home, |m| {
+                m.settled = (!young).then(|| wanted.clone());
+                m.verify_at = Instant::now() + jitter(VERIFY_EVERY);
+            });
+            report.more = young;
+            return Ok(report);
+        }
+
+        // Nothing changed since a pass that finished: no call.
+        let unchanged = memo(&home, |m| {
+            m.settled.as_ref() == Some(&wanted) && Instant::now() < m.verify_at
+        });
+        if unchanged && !young {
+            return Ok(report);
+        }
 
         // The account may have changed since a Space was listed: its row
         // belongs to the other account, so it is listed again as new.
@@ -271,29 +450,32 @@ impl Spaces {
                 .unwrap_or_default();
             if !subject.is_empty() && !owner.is_empty() && owner != subject {
                 self.detach_attached_space(space).await;
-                let mut now = self.attached();
-                now.remove(space);
-                let _ = self.save_attached(&now);
+                let _ = self.update_attached(|now| {
+                    now.remove(space);
+                });
             }
         }
         let all = self.attached();
 
-        let provided = self.provided_here();
-        let want: Vec<&crate::SpaceInfo> = infos
-            .iter()
-            .filter(|i| !provided.contains(&i.id) && self.listable(i, &meta))
-            .collect();
-        let wanted: BTreeSet<&str> = want.iter().map(|i| i.id.as_str()).collect();
+        // One read of the directory serves the whole pass.
+        let rows = match self.owner_rows().await {
+            Ok(r) => r,
+            Err(e) => {
+                self.relay_failed(&home, &e);
+                report.failed.push((String::new(), e.to_string()));
+                return Ok(report);
+            }
+        };
 
         // Off: automatically listed Spaces that stopped, opted out or went.
+        let mut leaving = Vec::new();
         for space in all.iter().filter(|(_, a)| a.auto).map(|(s, _)| s) {
-            if wanted.contains(space.as_str()) {
+            if wanted.contains(space) {
                 continue;
             }
-            // A Space that is starting or whose state is not known now is
-            // left as it is; one that is gone, stopped or opted out leaves.
-            let still = infos.iter().find(|i| &i.id == space);
-            let gone = match still {
+            // A Space whose state is not known now is left as it is; one
+            // that is gone, stopped or opted out leaves.
+            let gone = match infos.iter().find(|i| &i.id == space) {
                 None => true,
                 Some(i) => {
                     self.is_off(i)
@@ -301,20 +483,13 @@ impl Spaces {
                         || !self.listable_ignoring_state(i, &meta)
                 }
             };
-            if gone && self.unpublish(space).await {
-                report.unpublished.push(space.clone());
+            if gone {
+                leaving.push(space.clone());
             }
         }
 
-        // On: running Spaces that are not listed (or whose driver left).
-        let token = account.tokens.access_token().await?;
-        let rows: BTreeMap<String, crate::relay::RelayMachine> = account
-            .client()
-            .await?
-            .machines(&token)
-            .await
-            .map(|v| v.into_iter().map(|m| (m.id.clone(), m)).collect())
-            .unwrap_or_default();
+        // On: Spaces that are not online and not on their way.
+        let now = Instant::now();
         let due: Vec<String> = want
             .iter()
             .map(|i| i.id.clone())
@@ -323,75 +498,225 @@ impl Spaces {
                     .get(id)
                     .and_then(|a| rows.get(&a.machine))
                     .is_some_and(|m| m.online && m.role == "owner");
-                let waiting = memo(&home, |m| {
-                    m.retry_at.get(id).is_some_and(|t| *t > Instant::now())
+                let (waiting, dialing) = memo(&home, |m| {
+                    (
+                        m.retry_at.get(id).is_some_and(|t| *t > now),
+                        m.dialing.get(id).is_some_and(|t| *t > now),
+                    )
                 });
-                !online && !waiting
+                !online && !waiting && !dialing
             })
             .collect();
+
+        let mut budget = PER_PASS;
+        let leave_now: Vec<String> = leaving.iter().take(budget).cloned().collect();
+        budget -= leave_now.len();
+        let join_now: Vec<String> = due.iter().take(budget).cloned().collect();
+        let over = leaving.len() + due.len() > PER_PASS;
+
+        let tripped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let rows = Arc::new(rows);
         use futures_util::StreamExt as _;
-        let results: Vec<(String, Result<()>)> = futures_util::stream::iter(due)
-            .map(|id| async move {
-                let fresh = !self.attached().contains_key(&id);
-                let r = self.ensure_shared_machine(&id).await.map(|_| ());
-                if r.is_ok() && fresh {
-                    // Listed by this pass, not by hand: this pass also takes
-                    // it off again.
-                    let account = subject_of(&self.relay_account()).await;
-                    let _ = self.update_attached(|now| {
-                        if let Some(a) = now.get_mut(&id) {
-                            a.auto = true;
-                            a.account = account;
-                        }
+        let removed: Vec<(String, bool)> = futures_util::stream::iter(leave_now)
+            .map(|space| {
+                let (rows, tripped, this) = (rows.clone(), tripped.clone(), self.clone());
+                async move {
+                    if tripped.load(std::sync::atomic::Ordering::SeqCst) {
+                        return (space, false);
+                    }
+                    let machine = this.attached().get(&space).map(|a| a.machine.clone());
+                    let shared = machine.as_ref().and_then(|m| rows.get(m)).is_some_and(|m| {
+                        !m.allow.is_empty() || !m.viewers.is_empty() || m.team.is_some()
                     });
-                    self.audit_share("publish", &id, "automatic");
+                    let ok = this.unpublish_with(&space, shared).await;
+                    if !ok {
+                        tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    (space, ok)
                 }
-                (id, r)
             })
             .buffer_unordered(AT_ONCE)
             .collect()
             .await;
+        let mut trouble = false;
+        for (space, ok) in removed {
+            if ok {
+                report.unpublished.push(space);
+            } else {
+                // Shared Spaces stay (not trouble); a failed call is.
+                trouble |= self.attached().get(&space).is_some_and(|a| a.auto);
+            }
+        }
+
+        let results: Vec<(String, Option<Result<()>>)> = futures_util::stream::iter(join_now)
+            .map(|id| {
+                let (tripped, subject, this) = (tripped.clone(), subject.clone(), self.clone());
+                async move {
+                    if trouble || tripped.load(std::sync::atomic::Ordering::SeqCst) {
+                        return (id, None);
+                    }
+                    let fresh = !this.attached().contains_key(&id);
+                    let r = this
+                        .ensure_shared_machine_with(&id, false)
+                        .await
+                        .map(|_| ());
+                    if let Err(e) = &r
+                        && relay_trouble(e).is_some()
+                    {
+                        tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    if r.is_ok() && fresh {
+                        // Listed by this pass, not by hand: this pass also
+                        // takes it off again.
+                        let _ = this.update_attached(|now| {
+                            if let Some(a) = now.get_mut(&id) {
+                                a.auto = true;
+                                a.account = subject.clone();
+                            }
+                        });
+                        this.audit_share("publish", &id, "automatic");
+                    }
+                    (id, Some(r))
+                }
+            })
+            .buffer_unordered(AT_ONCE)
+            .collect()
+            .await;
+        let mut skipped = false;
+        let mut relay_error: Option<(crate::Error, Option<Duration>)> = None;
         for (id, r) in results {
             match r {
-                Ok(()) => {
-                    memo(&home, |m| m.retry_at.remove(&id));
+                None => skipped = true,
+                Some(Ok(())) => {
+                    memo(&home, |m| {
+                        m.retry_at.remove(&id);
+                        m.dialing.insert(id.clone(), Instant::now() + DIAL_GRACE);
+                    });
                     report.published.push(id);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     tracing::debug!(space = %id, error = %e, "not listed on the relay now");
-                    memo(&home, |m| {
-                        m.retry_at.insert(id.clone(), Instant::now() + RETRY_AFTER)
-                    });
-                    report.failed.push((id, e.to_string()));
+                    if let Some(wait) = relay_trouble(&e) {
+                        let msg = e.to_string();
+                        relay_error = Some((e, wait));
+                        report.failed.push((id, msg));
+                    } else {
+                        memo(&home, |m| {
+                            m.retry_at.insert(id.clone(), Instant::now() + RETRY_AFTER)
+                        });
+                        report.failed.push((id, e.to_string()));
+                    }
                 }
+            }
+        }
+        if trouble && relay_error.is_none() {
+            // A removal failed against the relay.
+            relay_error = Some((crate::Error::invalid("removal failed"), None));
+        }
+        match relay_error {
+            Some((e, wait)) => {
+                memo(&home, |m| {
+                    m.breaker.fails = m.breaker.fails.saturating_add(1);
+                    m.breaker.open_until =
+                        Some(Instant::now() + breaker_wait(m.breaker.fails, wait));
+                    m.settled = None;
+                });
+                tracing::warn!(error = %e, "the relay is failing; Spaces are listed again later");
+                report.more = false;
+            }
+            None => {
+                let finished = !over && !skipped && !young && report.failed.is_empty();
+                memo(&home, |m| {
+                    m.breaker = Breaker::default();
+                    m.dialing.retain(|_, t| *t > Instant::now());
+                    if finished {
+                        m.settled = Some(wanted);
+                        m.verify_at = Instant::now() + jitter(VERIFY_EVERY);
+                    } else {
+                        m.settled = None;
+                    }
+                });
+                report.more = over || young;
             }
         }
         Ok(report)
     }
 
+    /// The owner's rows of the relay directory, by machine id: the pass's one
+    /// read.
+    async fn owner_rows(&self) -> Result<BTreeMap<String, crate::relay::RelayMachine>> {
+        let account = self.relay()?;
+        let token = account.tokens.access_token().await?;
+        let rows = account.client().await?.machines(&token).await?;
+        Ok(rows.into_iter().map(|m| (m.id.clone(), m)).collect())
+    }
+
+    /// Notes a failed call to the relay: no more calls for a while.
+    fn relay_failed(&self, home: &std::path::Path, e: &crate::Error) {
+        let wait = relay_trouble(e).flatten();
+        memo(home, |m| {
+            m.breaker.fails = m.breaker.fails.saturating_add(1);
+            m.breaker.open_until = Some(Instant::now() + breaker_wait(m.breaker.fails, wait));
+            m.settled = None;
+        });
+        tracing::warn!(error = %e, "the relay is failing; Spaces are listed again later");
+    }
+
+    /// Takes every Space of `spaces` off (the setting went off, or sharing
+    /// stopped), at most [`PER_PASS`] at a time. True when some are left.
+    async fn remove_all(
+        &self,
+        spaces: &[String],
+        rows: &BTreeMap<String, crate::relay::RelayMachine>,
+        report: &mut PublishReport,
+    ) -> bool {
+        use futures_util::StreamExt as _;
+        let batch: Vec<String> = spaces.iter().take(PER_PASS).cloned().collect();
+        let out: Vec<(String, bool)> = futures_util::stream::iter(batch)
+            .map(|space| {
+                let this = self.clone();
+                let shared = this
+                    .attached()
+                    .get(&space)
+                    .and_then(|a| rows.get(&a.machine))
+                    .is_some_and(|m| {
+                        !m.allow.is_empty() || !m.viewers.is_empty() || m.team.is_some()
+                    });
+                async move {
+                    let ok = this.unpublish_with(&space, shared).await;
+                    (space, ok)
+                }
+            })
+            .buffer_unordered(AT_ONCE)
+            .collect()
+            .await;
+        for (space, ok) in out {
+            if ok {
+                report.unpublished.push(space);
+            }
+        }
+        spaces.len() > PER_PASS
+    }
+
     /// Takes a Space this pass listed off the relay: its driver leaves and
-    /// its row goes. A Space shared with other people stays on the relay as
-    /// shared (the owner decides that), and nothing is changed when the relay
-    /// cannot be reached now (it is tried again). `true` when it left.
-    async fn unpublish(&self, space: &str) -> bool {
+    /// its row goes (one call). A Space shared with other people (`shared`,
+    /// from the directory) stays on the relay as shared: the owner decides
+    /// that. `true` when it left.
+    async fn unpublish_with(&self, space: &str, shared: bool) -> bool {
         let Some(machine) = self.attached().get(space).map(|a| a.machine.clone()) else {
             return false;
         };
-        if let Ok(account) = self.relay()
-            && let Ok(token) = account.tokens.access_token().await
-            && let Ok(client) = account.client().await
-            && let Ok(m) = client.machine(&token, &machine).await
-            && (!m.allow.is_empty() || !m.viewers.is_empty() || m.team.is_some())
-        {
-            let mut now = self.attached();
-            if let Some(a) = now.get_mut(space) {
-                a.auto = false;
-            }
-            let _ = self.save_attached(&now);
+        if shared {
+            let _ = self.update_attached(|now| {
+                if let Some(a) = now.get_mut(space) {
+                    a.auto = false;
+                }
+            });
             return false;
         }
         match self.detach(space, &machine).await {
             Ok(()) => {
+                memo(self.home_dir(), |m| m.dialing.remove(space));
                 self.audit_share("unpublish", space, "automatic");
                 true
             }
@@ -420,6 +745,7 @@ impl Spaces {
         self.inner
             .registry
             .update_meta(&canonical, |m| m.relay = setting)?;
+        memo(self.home_dir(), |m| m.settled = None);
         CHANGED.notify_waiters();
         if !on {
             let _ = self.publish_to_relay().await;
@@ -428,9 +754,47 @@ impl Spaces {
     }
 }
 
-async fn subject_of(account: &Option<crate::relay::RelayAccount>) -> String {
-    match account {
-        Some(a) => a.account_subject().await.unwrap_or_default(),
-        None => String::new(),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_after_a_failure_doubles_honors_retry_after_and_is_capped() {
+        for _ in 0..50 {
+            let w = |n, r| breaker_wait(n, r).as_secs_f64();
+            assert!((4.0..=6.0).contains(&w(1, None)), "{}", w(1, None));
+            assert!((8.0..=12.0).contains(&w(2, None)));
+            assert!((16.0..=24.0).contains(&w(3, None)));
+            assert!(w(30, None) <= 360.0, "capped");
+            assert!(w(30, None) >= 240.0);
+            // The relay's own Retry-After is a floor.
+            assert!(w(1, Some(Duration::from_secs(90))) >= 90.0);
+            // ...but an absurd one does not park the pass for hours.
+            assert!(w(1, Some(Duration::from_secs(86_400))) <= 300.0);
+        }
+    }
+
+    #[test]
+    fn jitter_stays_within_a_fifth() {
+        for _ in 0..200 {
+            let j = jitter(Duration::from_secs(15)).as_secs_f64();
+            assert!((12.0..=18.0).contains(&j), "{j}");
+        }
+    }
+
+    #[test]
+    fn only_a_failing_relay_trips_the_breaker() {
+        let transient = crate::Error::Relay(cua_host::Error::Throttled {
+            retry_after_secs: 7,
+        });
+        assert_eq!(
+            relay_trouble(&transient),
+            Some(Some(Duration::from_secs(7)))
+        );
+        let down = crate::Error::Relay(cua_host::Error::Relay("HTTP 503: gone".into()));
+        assert_eq!(relay_trouble(&down), Some(None));
+        let refused = crate::Error::Relay(cua_host::Error::PermissionDenied("no".into()));
+        assert_eq!(relay_trouble(&refused), None);
+        assert_eq!(relay_trouble(&crate::Error::invalid("x")), None);
     }
 }

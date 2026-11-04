@@ -25,6 +25,8 @@ use std::time::Duration;
 #[derive(Default)]
 struct Runtime {
     spacesd: Mutex<BTreeMap<String, u16>>,
+    /// One cua-spacesd answering for every Space not named above (bursts).
+    shared: Mutex<Option<u16>>,
 }
 
 #[async_trait]
@@ -67,7 +69,13 @@ impl LocalRuntime for Runtime {
 
 impl Runtime {
     fn endpoints_of(&self, name: &str) -> LocalEndpoints {
-        let port = self.spacesd.lock().unwrap().get(name).copied();
+        let port = self
+            .spacesd
+            .lock()
+            .unwrap()
+            .get(name)
+            .copied()
+            .or(*self.shared.lock().unwrap());
         LocalEndpoints {
             host: "127.0.0.1".into(),
             ports: port.map(|p| (3211u16, p)).into_iter().collect(),
@@ -92,7 +100,12 @@ impl AccountTokens for Account {
     }
 }
 
+/// The tests share one process, and one of them counts its open sockets:
+/// they run one at a time.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct World {
+    _serial: tokio::sync::MutexGuard<'static, ()>,
     relay: FakeRelay,
     rt: Arc<Runtime>,
     state: tempfile::TempDir,
@@ -111,6 +124,7 @@ impl Drop for World {
 
 impl World {
     async fn new() -> World {
+        let serial = SERIAL.lock().await;
         let relay = FakeRelay::start().await;
         relay.add_account("ada-token", "ada", Some("ada@example.com"));
         relay.add_account("eve-token", "eve", Some("eve@example.com"));
@@ -129,6 +143,7 @@ impl World {
             .relay(RelayAccount::new(&relay.url, account.clone()))
             .build();
         World {
+            _serial: serial,
             relay,
             rt,
             state,
@@ -193,9 +208,61 @@ impl World {
             .collect()
     }
 
+    /// One cua-spacesd for every Space made from now on.
+    async fn shared_driver(&self) -> MockServer {
+        let d = MockServer::start(MockAuth::default()).await;
+        d.state.advertise(&["relay_attach"]);
+        let port: u16 = d.url().rsplit(':').next().unwrap().parse().unwrap();
+        *self.rt.shared.lock().unwrap() = Some(port);
+        d
+    }
+
+    /// `n` Spaces made 16 at a time; the seconds it took.
+    async fn burst(&self, n: usize, prefix: &str) -> f64 {
+        use futures_util::StreamExt as _;
+        let started = std::time::Instant::now();
+        futures_util::stream::iter(0..n)
+            .map(|i| {
+                let spaces = self.spaces.clone();
+                let name = format!("{prefix}-{i}");
+                async move {
+                    spaces
+                        .create(SpaceCreate {
+                            on: Some(On::Local),
+                            image: Some("linux".into()),
+                            name: Some(name),
+                            timeout: Some(Duration::from_secs(60)),
+                            ..Default::default()
+                        })
+                        .await
+                        .unwrap();
+                }
+            })
+            .buffer_unordered(16)
+            .collect::<Vec<_>>()
+            .await;
+        started.elapsed().as_secs_f64()
+    }
+
+    fn age_all(&self) {
+        for i in self.spaces.list().unwrap() {
+            self.age(&i.id);
+        }
+    }
+
+    /// Makes the Space `id` old enough to be listed (a new one waits a few
+    /// seconds, so one made and deleted at once never reaches the relay).
+    fn age(&self, id: &str) {
+        self.spaces
+            .registry()
+            .update_meta(id, |m| m.created_at_unix = 1)
+            .unwrap();
+    }
+
     async fn create(&self, name: &str, image: &str, kind: Kind) -> String {
         self.driver(name).await;
-        self.spaces
+        let id = self
+            .spaces
             .create(SpaceCreate {
                 on: Some(On::Local),
                 image: Some(image.into()),
@@ -208,7 +275,9 @@ impl World {
             .unwrap()
             .ready()
             .unwrap()
-            .id
+            .id;
+        self.age(&id);
+        id
     }
 
     /// What the recorded state of the Space `name` says (a runtime turning
@@ -332,7 +401,14 @@ async fn spaces_added_by_address_and_opted_out_ones_stay_off() {
             parent: parent.map(str::to_string),
             ..Default::default()
         };
-        async move { spaces.create(opts).await.unwrap().ready().unwrap().id }
+        async move {
+            let id = spaces.create(opts).await.unwrap().ready().unwrap().id;
+            spaces
+                .registry()
+                .update_meta(&id, |m| m.created_at_unix = 1)
+                .unwrap();
+            id
+        }
     };
     let quiet = make("quiet", Some(false), &[], None).await;
     make("labelled", None, &[("cua.relay", "off")], None).await;
@@ -530,4 +606,173 @@ async fn a_space_a_host_provides_is_not_listed_twice() {
     let r = w.spaces.publish_to_relay().await.unwrap();
     assert_eq!(r.published, ["local:mine"], "{r:?}");
     assert_eq!(w.rows().await.len(), 1);
+}
+
+fn open_fds() -> usize {
+    std::fs::read_dir("/dev/fd").map(|d| d.count()).unwrap_or(0)
+}
+
+/// A burst of 200 creates is not slowed by listing Spaces, and costs the
+/// relay a registration each plus a few reads in all, never more than four
+/// calls at once; once everything is listed, idle passes cost nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_200_creates_is_as_fast_and_cheap_for_the_relay() {
+    const N: usize = 200;
+    // Without any listing.
+    let without = {
+        let quiet = World::new().await;
+        let _d = quiet.shared_driver().await;
+        quiet.burst(N, "q").await
+    };
+
+    // With the pass running the way the daemon runs it, on a relay that
+    // takes 20 ms per call.
+    let w = World::new().await;
+    let _d2 = w.shared_driver().await;
+    w.relay.set_latency_ms(20);
+    w.relay.reset_load();
+    let running = Arc::new(AtomicBool::new(true));
+    let passes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let looped = {
+        let (spaces, running, passes) = (w.spaces.clone(), running.clone(), passes.clone());
+        tokio::spawn(async move {
+            while running.load(Ordering::SeqCst) {
+                let _ = spaces.publish_to_relay().await;
+                passes.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        })
+    };
+    let with = w.burst(N, "b").await;
+    running.store(false, Ordering::SeqCst);
+    looped.await.unwrap();
+    eprintln!("200 creates: {without:.2} s without listing, {with:.2} s with it");
+    assert!(
+        with <= without * 1.25 + 0.5,
+        "creating was slowed: {without:.2} s without, {with:.2} s with"
+    );
+
+    // Five seconds later every Space is old enough; the passes finish the job.
+    w.age_all();
+    let mut n_passes = passes.load(Ordering::SeqCst);
+    loop {
+        let r = w.spaces.publish_to_relay().await.unwrap();
+        n_passes += 1;
+        if r.published.is_empty() && !r.more {
+            break;
+        }
+        assert!(n_passes < 60, "never finished");
+    }
+    let requests = w.relay.requests();
+    let peak = w.relay.peak_in_flight();
+    eprintln!("200 Spaces: {requests} relay requests in {n_passes} passes, peak {peak} in flight");
+    assert_eq!(w.rows().await.len(), N);
+    // One registration each; everything else is the directory read of a pass.
+    assert!(
+        requests <= N + 30,
+        "{requests} requests for {N} Spaces in {n_passes} passes"
+    );
+    assert!(peak <= 4, "{peak} calls at once");
+
+    // All listed: more passes ask nothing.
+    w.relay.reset_load();
+    for _ in 0..20 {
+        w.spaces.publish_to_relay().await.unwrap();
+    }
+    assert_eq!(w.relay.requests(), 0, "an idle pass called the relay");
+}
+
+/// A Space made and deleted before it settles never reaches the relay.
+#[tokio::test]
+async fn a_space_made_and_deleted_at_once_never_touches_the_relay() {
+    let w = World::new().await;
+    let _d = w.shared_driver().await;
+    w.relay.reset_load();
+    w.burst(30, "tmp").await;
+    for i in w.spaces.list().unwrap() {
+        w.spaces.delete(&i.id).await.unwrap();
+        w.spaces.publish_to_relay().await.unwrap();
+    }
+    w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(w.relay.requests(), 0);
+    assert_eq!(w.relay.register_calls(), 0);
+}
+
+/// A relay that fails stops the calls (they come back later, after a longer
+/// wait each time), never slows making Spaces, and leaks no sockets.
+#[tokio::test]
+async fn a_relay_outage_pauses_listing_and_leaks_nothing() {
+    let w = World::new().await;
+    let _d = w.shared_driver().await;
+    w.burst(10, "pre").await;
+    w.age_all();
+    w.relay.set_reads_down(true);
+    w.relay.reset_load();
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert!(r.published.is_empty(), "{r:?}");
+    let first = w.relay.requests();
+    assert!(
+        (1..=4).contains(&first),
+        "{first} calls on the first failure"
+    );
+
+    // Creating goes on at full speed while calls are paused.
+    let secs = w.burst(30, "during").await;
+    assert!(secs < 30.0, "creates slowed to {secs:.1} s");
+    w.age_all();
+    // (Each Space keeps its own connections open; the passes add none.)
+    let fds_before = open_fds();
+    for _ in 0..50 {
+        w.spaces.publish_to_relay().await.unwrap();
+    }
+    assert_eq!(w.relay.requests(), first, "calls went on during the pause");
+    assert!(
+        open_fds() <= fds_before + 3,
+        "sockets leaked: {} -> {}",
+        fds_before,
+        open_fds()
+    );
+    let fds_paused = open_fds();
+
+    // The relay is back: after the pause the Spaces are listed.
+    w.relay.set_reads_down(false);
+    let started = std::time::Instant::now();
+    loop {
+        let r = w.spaces.publish_to_relay().await.unwrap();
+        if !r.published.is_empty() {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(20), "never resumed");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    eprintln!(
+        "listing resumed {:.1} s after the relay came back",
+        started.elapsed().as_secs_f64()
+    );
+    for _ in 0..20 {
+        w.spaces.publish_to_relay().await.unwrap();
+    }
+    assert!(
+        open_fds() <= fds_paused + 6,
+        "sockets leaked after resuming"
+    );
+}
+
+/// A throttled read (429) stops the calls for a while instead of being
+/// asked again at once.
+#[tokio::test]
+async fn a_throttled_relay_is_left_alone() {
+    let w = World::new().await;
+    let _d = w.shared_driver().await;
+    w.burst(5, "t").await;
+    w.age_all();
+    w.relay.fail_reads(&[429]);
+    w.relay.reset_load();
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert!(r.published.is_empty(), "{r:?}");
+    assert_eq!(w.relay.requests(), 1);
+    for _ in 0..20 {
+        w.spaces.publish_to_relay().await.unwrap();
+    }
+    assert_eq!(w.relay.requests(), 1, "asked again while paused");
 }

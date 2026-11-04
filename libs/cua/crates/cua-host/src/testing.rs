@@ -235,6 +235,34 @@ pub struct FakeRelay {
     /// `http://127.0.0.1:<port>`.
     pub url: String,
     state: Arc<Mutex<State_>>,
+    load: Arc<Load>,
+}
+
+/// What the fake relay was asked, for tests of how much a client costs it.
+#[derive(Default)]
+struct Load {
+    requests: std::sync::atomic::AtomicUsize,
+    in_flight: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+    delay_ms: std::sync::atomic::AtomicU64,
+}
+
+async fn count_load(
+    State(load): State<Arc<Load>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use std::sync::atomic::Ordering::SeqCst;
+    load.requests.fetch_add(1, SeqCst);
+    let now = load.in_flight.fetch_add(1, SeqCst) + 1;
+    load.peak.fetch_max(now, SeqCst);
+    let delay = load.delay_ms.load(SeqCst);
+    if delay > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+    }
+    let r = next.run(req).await;
+    load.in_flight.fetch_sub(1, SeqCst);
+    r
 }
 
 fn err(status: StatusCode, message: &str) -> Response {
@@ -1211,6 +1239,7 @@ impl FakeRelay {
     /// Starts on loopback `port` (0 = ephemeral).
     pub async fn start_on(port: u16) -> Self {
         let state: S = Arc::default();
+        let load: Arc<Load> = Arc::default();
         let app = Router::new()
             .route(
                 "/v1/info",
@@ -1250,7 +1279,11 @@ impl FakeRelay {
                 axum::routing::delete(pairing_revoke),
             )
             .fallback(proxied)
-            .with_state(state.clone());
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                load.clone(),
+                count_load,
+            ));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
             .expect("bind fake relay");
@@ -1259,7 +1292,32 @@ impl FakeRelay {
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        Self { url, state }
+        Self { url, state, load }
+    }
+
+    /// HTTP requests answered so far.
+    pub fn requests(&self) -> usize {
+        self.load.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The most requests that were in flight at once since the last
+    /// [`Self::reset_load`].
+    pub fn peak_in_flight(&self) -> usize {
+        self.load.peak.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Zeroes [`Self::requests`] and [`Self::peak_in_flight`].
+    pub fn reset_load(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.load.requests.store(0, SeqCst);
+        self.load.peak.store(0, SeqCst);
+    }
+
+    /// Every request takes `ms` more (a slow relay), 0 for none.
+    pub fn set_latency_ms(&self, ms: u64) {
+        self.load
+            .delay_ms
+            .store(ms, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Accepts `token` as the account `id` (with `email`).

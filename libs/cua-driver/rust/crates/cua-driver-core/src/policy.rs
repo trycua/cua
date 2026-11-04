@@ -779,13 +779,13 @@ mod tests {
         let policy = yaml_policy(
             r#"
 allow:
-  tools: [screenshot, wait]
+  tools: [get_window_state, wait]
 deny:
   tools: [shell_execute]
 "#,
         );
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert!(matches!(
@@ -797,7 +797,7 @@ deny:
     #[cfg(feature = "yaml")]
     #[test]
     fn yaml_is_deny_by_default() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\n");
+        let policy = yaml_policy("allow:\n  tools: [get_window_state]\n");
         assert!(matches!(
             policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
             PolicyDecision::Deny(_)
@@ -899,9 +899,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn explicit_deny_overrides_allow() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\ndeny:\n  tools: [screenshot]\n");
+        let policy = yaml_policy(
+            "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
+        );
         assert!(matches!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Deny(_)
         ));
     }
@@ -937,7 +939,7 @@ default allow = false
 
 allow if {
     input.server == "cua-driver"
-    input.tool == "screenshot"
+    input.tool == "get_window_state"
 }
 
 allow if {
@@ -952,7 +954,7 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -979,13 +981,13 @@ allow if {
         )
         .unwrap();
         fs::write(
-            dir.path().join("screenshot.rego"),
-            "package cua.policy\nallow if input.tool == \"screenshot\"\n",
+            dir.path().join("window-state.rego"),
+            "package cua.policy\nallow if input.tool == \"get_window_state\"\n",
         )
         .unwrap();
         let policy = PolicyEngine::load(dir.path()).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
     }

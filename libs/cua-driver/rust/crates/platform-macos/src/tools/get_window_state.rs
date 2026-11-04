@@ -331,7 +331,7 @@ impl Tool for GetWindowStateTool {
                 .and_then(|value| value.as_bool())
                 == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
-        // the AX walker (#22865). minimum:1 keyed in the schema, but defend
+        // the AX walker. minimum:1 is keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
         // walk entirely.
         let max_elements = view.max_elements(
@@ -708,7 +708,7 @@ impl Tool for GetWindowStateTool {
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
-                Issue #22865: use `max_elements` / `max_depth` to bound the \
+                Use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
         if query.is_some() {

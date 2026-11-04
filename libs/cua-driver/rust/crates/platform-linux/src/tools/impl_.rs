@@ -4655,10 +4655,9 @@ pub fn build_registry_with_provider(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),
     );
-    // `screenshot` removed - see the matching comment in
-    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
-    // screenshot path is `get_window_state` (it always returns a screenshot now).
-    let _ = compat;
+    // Standalone screenshot capture is intentionally absent. Use
+    // `get_window_state` for a window or `get_desktop_state` for the display.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool {
         state: state.clone(),

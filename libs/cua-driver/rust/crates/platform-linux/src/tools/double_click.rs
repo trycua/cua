@@ -22,9 +22,9 @@ use super::{
     },
 };
 
-// `ScreenshotTool` and `ScreenshotCompatTool` removed in PR #1692 — see the
-// matching note in platform-windows/src/tools/impl_.rs. `get_window_state` is
-// the canonical screenshot path (it always returns a screenshot now); the
+// The standalone screenshot tools were removed in PR #1692. `get_window_state`
+// is the canonical window-capture path and `get_desktop_state` handles
+// full-display capture; the
 // underlying capture machinery (XGetImage / `import` shell-out / etc.)
 // stays reachable through GetWindowStateTool.
 

@@ -308,15 +308,16 @@ def _build_image_wsl2(
 def apply_windows_accel(cmd: list, environ) -> list:
     """Add the accelerator to a QEMU command for a Windows host and return the new command.
 
-    WHPX hardware acceleration is used by default (a Windows install under software emulation takes
-    many hours). Older QEMU builds had MMIO emulation bugs with OVMF's pflash drives, so
-    CUA_QEMU_ACCEL=tcg forces software emulation if UEFI does not boot. Under WHPX the CPU model is
-    the host's: WHPX cannot run the qemu64 model with the extra feature flags.
+    CUA_QEMU_ACCEL picks it: "whpx,kernel-irqchip=off" for hardware acceleration, or "tcg" for
+    software emulation (the default, because OVMF's pflash drives hang under WHPX on current QEMU:
+    the firmware splash never advances). Software emulation needs a CPU model with the features
+    Windows 11 25H2 and later require (SSE4.2, POPCNT, CMPXCHG16B, LAHF and PrefetchW), which the
+    qemu64 model lacks, so it runs `max`. WHPX runs the host's model.
     """
-    accel = environ.get("CUA_QEMU_ACCEL", "whpx,kernel-irqchip=off")
+    accel = environ.get("CUA_QEMU_ACCEL", "tcg")
     out = list(cmd) + ["-accel", accel]
-    if accel.startswith("whpx") and "-cpu" in out:
-        out[out.index("-cpu") + 1] = "host"
+    if "-cpu" in out:
+        out[out.index("-cpu") + 1] = "host" if accel.startswith("whpx") else "max"
     return out
 
 

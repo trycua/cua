@@ -1,3 +1,4 @@
+import ast
 import re
 from typing import Any, Dict, Union
 
@@ -16,6 +17,18 @@ from cua_bench.types import (
     TypeAction,
     WaitAction,
 )
+
+# Match complete Python string literals, including escaped quotes and backslashes.
+_STRING_LITERAL = r"""(?:'(?:\\.|[^'\\\r\n])*'|"(?:\\.|[^"\\\r\n])*")"""
+_STRING_LIST = rf"\[\s*(?:{_STRING_LITERAL}(?:\s*,\s*{_STRING_LITERAL})*\s*,?)?\s*\]"
+
+
+def _parse_literal(value: str) -> Any:
+    try:
+        return ast.literal_eval(value)
+    except (SyntaxError, ValueError) as error:
+        raise ValueError(f"Invalid action literal: {value}") from error
+
 
 # Patterns for repr format: ClickAction(x=100, y=200)
 _REPR_PATTERNS = {
@@ -50,11 +63,9 @@ _REPR_PATTERNS = {
     r"ScrollAction\(amount=(\d+)\)": lambda m: ScrollAction(amount=int(m[0])),
     r"ScrollAction\(\)": lambda m: ScrollAction(),
     # Keyboard actions
-    r"KeyAction\(key=['\"]([^'\"]+)['\"]\)": lambda m: KeyAction(key=m[0]),
-    r"TypeAction\(text=['\"]([^'\"]*)['\"].*?\)": lambda m: TypeAction(text=m[0]),
-    r"HotkeyAction\(keys=\[([^\]]+)\].*?\)": lambda m: HotkeyAction(
-        keys=[key.strip().strip("'\"") for key in m[0].split(",")]
-    ),
+    rf"KeyAction\(key=({_STRING_LITERAL})\)": lambda m: KeyAction(key=_parse_literal(m[0])),
+    rf"TypeAction\(text=({_STRING_LITERAL})\)": lambda m: TypeAction(text=_parse_literal(m[0])),
+    rf"HotkeyAction\(keys=({_STRING_LIST})\)": lambda m: HotkeyAction(keys=_parse_literal(m[0])),
     # Control actions
     r"WaitAction\(seconds=([0-9.]+)\)": lambda m: WaitAction(seconds=float(m[0])),
     r"WaitAction\(\)": lambda m: WaitAction(),
@@ -94,7 +105,7 @@ _SNAKE_CASE_PATTERNS = {
     r"scroll\s*\(\s*(\w+)\s*\)": lambda m: ScrollAction(direction=m[0]),
     # Keyboard actions
     r"key\s*\(\s*(\w+)\s*\)": lambda m: KeyAction(key=m[0]),
-    r'type\s*\(\s*["\'](.*)["\']\s*\)': lambda m: TypeAction(text=m[0]),
+    rf"type\s*\(\s*({_STRING_LITERAL})\s*\)": lambda m: TypeAction(text=_parse_literal(m[0])),
     r"hotkey\s*\(\s*([\w+]+)\s*\)": lambda m: HotkeyAction(keys=m[0].split("+")),
     # Control actions
     r"wait\s*\(\s*([\d.]+)\s*\)": lambda m: WaitAction(seconds=float(m[0])),
@@ -129,7 +140,7 @@ def repr_to_action(action_repr: str) -> Action:
     action_repr = action_repr.strip()
 
     for pattern, constructor in _REPR_PATTERNS.items():
-        match = re.match(pattern, action_repr)
+        match = re.fullmatch(pattern, action_repr)
         if match:
             return constructor(match.groups())
     raise ValueError(f"Unknown action representation: {action_repr}")
@@ -153,7 +164,7 @@ def snake_case_to_action(action_str: str) -> Action:
     action_str = action_str.strip()
 
     for pattern, constructor in _SNAKE_CASE_PATTERNS.items():
-        match = re.match(pattern, action_str)
+        match = re.fullmatch(pattern, action_str)
         if match:
             return constructor(match.groups())
     raise ValueError(f"Unknown action string: {action_str}")

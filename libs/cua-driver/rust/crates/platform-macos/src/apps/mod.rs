@@ -3,6 +3,7 @@
 
 //! macOS app enumeration via NSWorkspace and NSRunningApplication.
 
+mod names;
 pub mod nsworkspace;
 
 use anyhow::Context;
@@ -15,6 +16,7 @@ use core_foundation::{
     propertylist::{create_with_data, kCFPropertyListImmutable},
     string::CFString,
 };
+use cua_driver_core::app_names::NameMiss;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::c_void,
@@ -397,12 +399,10 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
 /// Launch an app by display name via NSWorkspace. Background-only.
 /// Returns the pid on success.
 ///
-/// Mirror of Swift `AppLauncher.locate(name:)`: scan the standard
-/// roots for `<Name>.app`, then fall back to a LaunchServices lookup
-/// in case the caller passed a bundle identifier in the `name` slot.
+/// The name resolves through [`locate_by_name`].
 pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
-    let located = locate_by_name(name)
-        .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
+    let located =
+        locate_by_name(name).map_err(|miss| anyhow::anyhow!(name_miss_message(name, &miss)))?;
     let (app_ref, bid) = located.app_ref_and_bundle_id();
     let cfg = nsworkspace::OpenConfig {
         apple_event_bundle_id: bid,
@@ -473,8 +473,8 @@ pub fn launch_with_urls_by_name(
     env: &std::collections::HashMap<String, String>,
     creates_new_instance: bool,
 ) -> anyhow::Result<i32> {
-    let located = locate_by_name(name)
-        .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
+    let located =
+        locate_by_name(name).map_err(|miss| anyhow::anyhow!(name_miss_message(name, &miss)))?;
     let (app_ref, bid) = located.app_ref_and_bundle_id();
     if additional_args.is_empty()
         && env.is_empty()
@@ -644,54 +644,81 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
     }
 }
 
-/// Mirror of Swift's `AppLauncher.locate(name:)`.
+/// The folders installed apps live in, system first so /Applications wins
+/// over ~/Applications.
+fn app_roots() -> Vec<std::path::PathBuf> {
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    vec![
+        "/Applications".into(),
+        "/System/Applications".into(),
+        "/System/Applications/Utilities".into(),
+        "/Applications/Utilities".into(),
+        home.join("Applications"),
+        home.join("Applications/Chrome Apps.localized"),
+    ]
+}
+
+/// Mirror of Swift's `AppLauncher.locate(name:)`, then every shown name.
 ///
 /// 0. an absolute path to an existing `.app` bundle (the `launch_path`
 ///    `list_apps` reports) is used as given;
-/// 1. filesystem lookup by bundle filename in the canonical roots
-///    (system first so /Applications wins over ~/Applications);
+/// 1. filesystem lookup by bundle filename in the canonical roots;
 /// 2. LaunchServices bundle-id lookup, in case the caller passed a
 ///    bundle identifier in the `name` slot — preserved as
 ///    `AppLocator::BundleId` so the launch path uses the live NSURL
 ///    (Cryptex-safe — see CodeRabbit #3);
-/// 3. (skipped) full localized-name scan — not yet needed by current
-///    integration tests; can be added if we hit a non-English-name app
-///    in the wild.
-pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
+/// 3. every name the bundles in the roots and one folder down ship (file
+///    name, `CFBundleDisplayName` / `CFBundleName` and their
+///    localizations), in any case, accents and spaces as shipped. A name
+///    that fits several apps equally well is refused with suggestions, not
+///    guessed.
+pub(crate) fn locate_by_name(name: &str) -> Result<AppLocator, NameMiss> {
+    let miss = NameMiss {
+        ambiguous: false,
+        suggestions: Vec::new(),
+    };
     let as_path = std::path::Path::new(name.trim_end_matches('/'));
-    if as_path.is_absolute()
-        && as_path.extension().is_some_and(|ext| ext == "app")
-        && as_path.is_dir()
-    {
-        return Some(AppLocator::Path(as_path.to_string_lossy().into_owned()));
+    if as_path.is_absolute() {
+        return (as_path.extension().is_some_and(|ext| ext == "app") && as_path.is_dir())
+            .then(|| AppLocator::Path(as_path.to_string_lossy().into_owned()))
+            .ok_or(miss);
     }
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {
         format!("{name}.app")
     };
-    let home = std::env::var("HOME").unwrap_or_default();
-    let roots = [
-        "/Applications".to_owned(),
-        "/System/Applications".to_owned(),
-        "/System/Applications/Utilities".to_owned(),
-        "/Applications/Utilities".to_owned(),
-        format!("{home}/Applications"),
-        format!("{home}/Applications/Chrome Apps.localized"),
-    ];
+    let roots = app_roots();
     for root in &roots {
-        let path = format!("{root}/{app_name}");
-        if std::path::Path::new(&path).is_dir() {
-            return Some(AppLocator::Path(path));
+        let path = root.join(&app_name);
+        if path.is_dir() {
+            return Ok(AppLocator::Path(path.to_string_lossy().into_owned()));
         }
     }
     if app_name.eq_ignore_ascii_case("Finder.app") {
-        return resolve_bundle_id_to_locator("com.apple.finder");
+        return resolve_bundle_id_to_locator("com.apple.finder").ok_or(miss);
     }
-    // Fallback: maybe caller passed a bundle id as `name`. Use the
-    // Cryptex-safe locator (carries the bundle id, never the lossy
-    // url.path()).
-    resolve_bundle_id_to_locator(name)
+    // Maybe the caller passed a bundle id as `name`. Use the Cryptex-safe
+    // locator (carries the bundle id, never the lossy url.path()).
+    if let Some(locator) = resolve_bundle_id_to_locator(name) {
+        return Ok(locator);
+    }
+    names::find(name, &roots, &names::preferred_languages())
+        .map(|path| AppLocator::Path(path.to_string_lossy().into_owned()))
+}
+
+/// The refusal text for a name [`locate_by_name`] could not resolve.
+pub(crate) fn name_miss_message(name: &str, miss: &NameMiss) -> String {
+    let listed = miss.suggestions.join(", ");
+    if miss.ambiguous {
+        format!(
+            "The name '{name}' matches several installed macOS apps: {listed}. Pass one of these names or a bundle_id."
+        )
+    } else if listed.is_empty() {
+        format!("No installed macOS app found for name '{name}'.")
+    } else {
+        format!("No installed macOS app found for name '{name}'. Closest names: {listed}.")
+    }
 }
 
 /// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.
@@ -1213,12 +1240,12 @@ mod tests {
         let expected = bundle.to_string_lossy().into_owned();
         assert!(matches!(
             super::locate_by_name(&expected),
-            Some(super::AppLocator::Path(p)) if p == expected
+            Ok(super::AppLocator::Path(p)) if p == expected
         ));
         // A trailing slash (as shells and Finder add) resolves to the same bundle.
         assert!(matches!(
             super::locate_by_name(&format!("{expected}/")),
-            Some(super::AppLocator::Path(p)) if p == expected
+            Ok(super::AppLocator::Path(p)) if p == expected
         ));
         // A missing bundle is still "not installed".
         let missing = dir
@@ -1226,7 +1253,7 @@ mod tests {
             .join("Missing.app")
             .to_string_lossy()
             .into_owned();
-        assert!(super::locate_by_name(&missing).is_none());
+        assert!(super::locate_by_name(&missing).is_err());
     }
 
     #[test]

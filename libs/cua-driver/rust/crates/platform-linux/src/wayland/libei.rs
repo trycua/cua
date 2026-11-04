@@ -1017,8 +1017,33 @@ impl EisState {
                     let serial = self.last_serial;
                     let text_iface =
                         require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
-                    text_iface.utf8(text);
-                    device.frame(serial, event_time_us());
+                    let keyboard = self.device_with_interface("ei_keyboard").and_then(|kbd| {
+                        let kb =
+                            require_device_interface::<reis::ei::Keyboard>(&self.devices, &kbd)
+                                .ok()?;
+                        Some((kbd, kb))
+                    });
+                    if let Some((kbd, kb)) = keyboard {
+                        use reis::ei::keyboard::KeyState;
+                        const KEY_ENTER: u32 = 28;
+                        for part in text_parts(text) {
+                            match part {
+                                TextPart::Text(line) => {
+                                    text_iface.utf8(&line);
+                                    device.frame(serial, event_time_us());
+                                }
+                                TextPart::Enter => {
+                                    kb.key(KEY_ENTER, KeyState::Press);
+                                    kbd.frame(serial, event_time_us());
+                                    kb.key(KEY_ENTER, KeyState::Released);
+                                    kbd.frame(serial, event_time_us());
+                                }
+                            }
+                        }
+                    } else {
+                        text_iface.utf8(text);
+                        device.frame(serial, event_time_us());
+                    }
                 } else {
                     use reis::ei::keyboard::KeyState;
                     let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
@@ -1342,7 +1367,7 @@ fn plan_keycode_typing(
 ) -> anyhow::Result<Vec<TypedKey>> {
     let mut plan = Vec::new();
     let mut missing = String::new();
-    for ch in text.chars() {
+    for ch in text.replace("\r\n", "\n").chars() {
         let key = table.get(&ch).copied().or_else(|| {
             (table.is_empty() || ch.is_control())
                 .then(|| char_to_evdev(ch))
@@ -1365,6 +1390,29 @@ fn plan_keycode_typing(
          Use set_value on the element, or clipboard_write and then hotkey ctrl+v."
     );
     Ok(plan)
+}
+
+/// A piece of text for the `ei_text` route.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TextPart {
+    Text(String),
+    Enter,
+}
+
+/// Cut `text` at its line endings. KWin turns a newline sent as text into the
+/// `Linefeed` key, which X11 apps ignore, so those go as presses of Return.
+fn text_parts(text: &str) -> Vec<TextPart> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut parts = Vec::new();
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            parts.push(TextPart::Enter);
+        }
+        if !line.is_empty() {
+            parts.push(TextPart::Text(line.to_string()));
+        }
+    }
+    parts
 }
 
 #[cfg(test)]
@@ -1792,6 +1840,33 @@ mod keycode_typing_tests {
         assert_eq!(t.get(&'*').copied(), key(9, true, false));
         assert_eq!(t.get(&'+').copied(), key(13, true, false));
         assert_eq!(t.get(&'€').copied(), key(6, false, true));
+    }
+
+    #[test]
+    fn a_windows_line_ending_is_one_return() {
+        let (t, _, level3) = table();
+        let plan = plan_keycode_typing("a\r\nn", &t, level3).expect("typable");
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[1].code, 28);
+    }
+
+    #[test]
+    fn text_is_cut_into_strings_and_returns() {
+        use TextPart::{Enter, Text};
+        assert_eq!(text_parts("añ"), vec![Text("añ".into())]);
+        assert_eq!(
+            text_parts("a\n\nb\r\nc\n"),
+            vec![
+                Text("a".into()),
+                Enter,
+                Enter,
+                Text("b".into()),
+                Enter,
+                Text("c".into()),
+                Enter
+            ]
+        );
+        assert_eq!(text_parts(""), Vec::new());
     }
 
     #[test]

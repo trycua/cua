@@ -55,6 +55,7 @@ struct RegisteredSessionEndHook {
 }
 
 struct SessionCleanupProgress {
+    reason: SessionEndReason,
     hooks: Vec<(u64, RegisteredSessionEndHook)>,
     completed: HashSet<u64>,
     failures: Vec<SessionCleanupFailure>,
@@ -736,7 +737,8 @@ pub fn session_snapshot(
     })
 }
 
-fn session_owner_matches(session_id: &str, owner_transport: &str) -> bool {
+/// Whether `owner_transport` owns the live or ended session `session_id`.
+pub fn session_owner_matches(session_id: &str, owner_transport: &str) -> bool {
     if lifecycle_records()
         .lock()
         .unwrap()
@@ -1245,7 +1247,7 @@ pub fn fire_session_end(session_id: &str) -> bool {
 fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -> bool {
     let first_fire = mark_session_ended(session_id, owner_transport, SessionEndReason::Unknown);
     if first_fire {
-        initialize_session_cleanup(session_id);
+        initialize_session_cleanup(session_id, SessionEndReason::Unknown);
     }
     let _ = retry_session_cleanup(session_id);
     first_fire
@@ -1294,7 +1296,7 @@ fn mark_session_ended(
     }
 }
 
-fn initialize_session_cleanup(session_id: &str) {
+fn initialize_session_cleanup(session_id: &str, reason: SessionEndReason) {
     crate::capture_scope::clear_session(session_id);
     let mut registered = hooks()
         .lock()
@@ -1306,6 +1308,7 @@ fn initialize_session_cleanup(session_id: &str) {
     cleanup_progress().lock().unwrap().insert(
         session_id.to_owned(),
         SessionCleanupProgress {
+            reason,
             hooks: registered,
             completed: HashSet::new(),
             failures: Vec::new(),
@@ -1382,6 +1385,16 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
         in_progress: false,
         failures,
     }
+}
+
+/// Why the session ended, while its cleanup hooks run or have unfinished
+/// work. A hook reads this to keep state that outlives an idle end.
+pub fn session_end_reason(session_id: &str) -> Option<SessionEndReason> {
+    cleanup_progress()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .map(|progress| progress.reason)
 }
 
 /// Inspect cleanup progress without starting another attempt.
@@ -1665,7 +1678,7 @@ fn finish_session_end(session_id: &str, reason: SessionEndReason) {
     });
     let cursor = cursor.or(fallback);
     if first_fire {
-        initialize_session_cleanup(session_id);
+        initialize_session_cleanup(session_id, reason);
     }
     let _ = retry_session_cleanup(session_id);
     if first_fire {

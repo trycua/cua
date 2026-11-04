@@ -505,7 +505,41 @@ export const PAGES: PageSpec[] = [
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
-    items: ['Spaces', 'SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings (experiment)',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      'These calls belong to the Secure Spaces experiment (`cua experiments enable secure-spaces`) and are refused while it is off. `Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
+  },
+  {
+    slug: 'spaces/children',
+    title: 'Child Spaces (experiment)',
+    description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) and are refused while it is off. `set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+    items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
+    members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
+  },
+  {
+    slug: 'spaces/services',
+    title: 'Kept commands (experiment)',
+    description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) for adding a service; listing, stopping and removing work either way. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+    items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
+    members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
   },
   {
     slug: 'spaces/resize',
@@ -903,8 +937,15 @@ export const PAGES: PageSpec[] = [
     slug: 'share',
     title: 'Shares',
     description: 'Links to a port, a file or a folder that open on your other signed-in devices.',
-    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
-    items: ['Share', 'ShareAccess', 'ShareCheck'],
+    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. `share_tcp` makes a public TCP address for a port in a Space (the `tcp-shares` experiment); `approve_share`, `deny_share`, `share_settings`, `set_share_settings` and `remove_share_edge` manage it. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    members: [
+      {
+        object: 'Cua',
+        title: 'Share methods',
+        methods: ['share', 'shares', 'stop_share', 'stop_all_shares', 'check_share', 'share_tcp', 'approve_share', 'deny_share', 'share_settings', 'set_share_settings', 'remove_share_edge'],
+      },
+    ],
+    items: ['Share', 'ShareAccess', 'ShareCheck', 'ShareLanding', 'ShareSettings'],
     modules: ['share'],
   },
   {

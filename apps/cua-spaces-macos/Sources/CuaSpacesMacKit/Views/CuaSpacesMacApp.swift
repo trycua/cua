@@ -390,7 +390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for a start view (`applyStartView` opens its own page). The page
         // draws the launch (`startup.get`) until the live services are in.
         if !Self.launchedAtLogin {
-            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed) {
+            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed,
+                                                    firstLaunch: model.onboarding.firstLaunch) {
+                model.onboarding.markSeen()
                 WebUIWindowController.show(model: model, at: route)
             } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
                 WebUIWindowController.show(model: model)
@@ -401,6 +403,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // Spaces exiting through this machine keep the notch's hotspot
+        // indicator on.
+        _ = model.startExitsPoll()
         // ... and the daemon says when it changed, so a Space starting or
         // stopping on another computer shows within a second or two.
         Task { @MainActor in await model.startListWatch() }

@@ -7,8 +7,10 @@ import { useState } from "react";
 
 import { useAbout, useBridge, useSession, useSettings, type AboutLink, type AboutUpdates } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
+import { forgetWelcome } from "@/bridge/onboarding-reset";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { NoticesDialog } from "@/components/settings/notices-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -29,11 +31,12 @@ const UPDATES_UNAVAILABLE = "Updates aren’t available in this build";
  */
 function AboutPage() {
   const { data, setAbout, checkNow } = useAbout();
-  const { openExternal } = useSession();
+  const { openExternal, resetOnboarding } = useSession();
   const { mode, core } = useBridge();
   const navigate = useNavigate();
   const { chooseSetting } = useSettings();
   const [notices, setNotices] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const view = data?.view;
   if (!view) return null;
   const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
@@ -50,6 +53,15 @@ function AboutPage() {
     if (mode === "webkit") return void chooseSetting("welcome", "show").catch(toastError("Couldn't show the welcome"));
     writeSavedOnboarding(null);
     void navigate({ to: "/onboarding" });
+  };
+  // "Reset & Show": the host forgets the first run, then the page does, and the welcome starts at its first step.
+  const resetAndShow = () => {
+    void resetOnboarding()
+      .then(() => {
+        forgetWelcome(core);
+        return navigate({ to: "/onboarding" });
+      })
+      .catch(toastError("Couldn't reset the welcome"));
   };
   const updates = view.updates ?? (unavailable ? { ...unavailable, checkEnabled: false, lastCheck: UPDATES_UNAVAILABLE } : null);
 
@@ -98,8 +110,30 @@ function AboutPage() {
             />
           </div>
         ) : null}
-        <SettingsRow label="Show the welcome again" control={<Button size="sm" variant="outline" onClick={showWelcome} data-about-welcome="">Show</Button>} />
+        <SettingsRow
+          label="Show the welcome again"
+          control={
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={showWelcome} data-about-welcome="">
+                Show
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)} data-about-welcome-reset="">
+                Reset & Show
+              </Button>
+            </div>
+          }
+        />
       </SettingsGroup>
+      <ConfirmDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Reset the welcome?"
+        description="This clears your welcome choices, like your platform and the coding apps you connected, and starts the welcome from the first step. Your Spaces, computers, Keyvault and sign-in are not affected."
+        confirmLabel="Reset & Show"
+        destructive
+        cancelFirst
+        onConfirm={resetAndShow}
+      />
       <NoticesDialog open={notices} onOpenChange={setNotices} />
     </div>
   );

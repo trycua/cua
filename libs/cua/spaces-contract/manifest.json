@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 114,
+  "tool_count": 119,
   "categories": [
     {
       "id": "lifecycle",
@@ -462,6 +462,13 @@
       ],
       "input_schema": {
         "properties": {
+          "allow": {
+            "description": "Destinations to allow (addresses or CIDRs) on top of `network`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "command": {
             "description": "Entrypoint override (argv), for example\n`[\"python\", \"-m\", \"my_mcp\", \"--port\", \"8765\"]`.",
             "items": {
@@ -474,6 +481,13 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "deny": {
+            "description": "Destinations to block (addresses, CIDRs or `all`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "durable": {
             "description": "Keep it on the user's machines (with `on` `auto`): when its machine\ngoes away it is created again on another one, with the same name\n(its disk starts fresh); `list_spaces` shows it with `durable` (its\nname), and `delete_space` deletes it for good. Default false.",
@@ -530,8 +544,16 @@
             "description": "Name. Default: a generated `space-<hex>`.",
             "type": "string"
           },
+          "network": {
+            "description": "Its network: `internet` (default: the internet and its own tree;\nthis computer, the local network, cloud metadata and other trees are\nblocked), `none`, or `custom` / `custom:none` with `allow` and\n`deny`. Presets that open more (`localhost:<ports>`, `lan`,\n`unprotected`) are the user's to choose: refused here.",
+            "type": "string"
+          },
           "on": {
             "description": "Where it runs: `local` (this computer, free), `auto` (the\nleast-loaded of the user's computers that can take it: this one and\nthe ones signed in to the user's account that provide Spaces, Modal\nonly when connected and no computer has room), `aws`, `gcp` or\n`modal` (your own cloud account, billed there), or `host:<computer>`:\none of the user's own computers that\nprovides Spaces (`cua host setup --share both` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`; never `auto` unless asked. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Create it as a child of this Space (id or name): it joins the\nparent's tree, and its network is no more open than the parent's.",
             "type": "string"
           },
           "region": {
@@ -571,6 +593,184 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      }
+    },
+    {
+      "name": "network_show",
+      "category": "lifecycle",
+      "description": "Show a Space's network: preset, what it opens, where it is enforced, what is always blocked.",
+      "instructions": "Shows a Space's network: its preset (`internet` by default: the internet and its own tree, with this computer, the local network, cloud metadata and other trees blocked), what it opens beyond that, where the rules are enforced (outside the guest), or why it has no network (a runtime that can't protect it yet starts it without network), and what is always blocked. When a connection fails, check here before retrying: a blocked destination stays blocked.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.network(space)",
+      "rust_symbol": "Spaces::network_info",
+      "notes": [],
+      "result": "JSON: `settings` (preset, lists), `summary`, `widenings` (what it opens beyond internet), `enforcement` (`enforced`, `no_network`, `open`, `refused`), `point`, `note`, `parent`, `root`, `always_blocked`, `notice_pending`.",
+      "errors": [
+        "invalid_argument",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "network_log",
+      "category": "lifecycle",
+      "description": "List what a Space tried to reach and its network blocked.",
+      "instructions": "Lists what a Space on this computer tried to reach and its network blocked. When a connection from a Space fails or hangs, call this: if the destination is here, it is blocked on purpose (this computer, the local network, cloud metadata or another tree), and retrying won't help. Tell the user what was blocked in plain words; changing it is theirs to do.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.network_log(space)",
+      "rust_symbol": "Spaces::network_events",
+      "notes": [],
+      "result": "JSON array, most recent first: `reason` (`platform:metadata`, `default:host-loopback`, `default:lan`, `user:deny`, `default:none`, ...), `dst`, `proto`, `count`, `last_unix`.",
+      "errors": [
+        "wrong_provider",
+        "not_found",
+        "sandbox"
+      ],
+      "input_schema": {
+        "properties": {
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "network_set",
+      "category": "lifecycle",
+      "description": "Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.",
+      "instructions": "Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `custom:none` with `allow` and `deny` (addresses or CIDRs). It can only tighten: anything that opens more than the Space has now (this computer's localhost, the local network, No protection, an allow beyond its preset) is refused; the user does that with `cua network set` or the app. A child stays within its parent's. tree=true gives its children the same settings. Applies at once where the runtime can, else at the Space's next start (`applied`).",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.network.write"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.set_network(space, settings, widen, tree)",
+      "rust_symbol": "Spaces::set_network",
+      "notes": [],
+      "result": "JSON: `applied` (`now` or `next_start`) and `network` (as network_show).",
+      "errors": [
+        "invalid_argument",
+        "wrong_provider",
+        "not_found",
+        "sandbox"
+      ],
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "description": "Destinations to allow (addresses or CIDRs).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "deny": {
+            "description": "Destinations to block (addresses, CIDRs or `all`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "network": {
+            "description": "`internet`, `none`, or `custom` / `custom:none` with `allow` and\n`deny`. Opening more than the Space has now is the user's to do\n(`cua network set`, or the app): refused here.",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "tree": {
+            "description": "Its child Spaces take the same settings (each within its parent's).",
+            "type": "boolean"
+          },
+          "via": {
+            "description": "Where its internet traffic leaves: `internet` (its own network) or\n`space:<name>` (a Space of its tree). This computer and a SOCKS5\nproxy are the user's to choose (`cua network set --via`). Unset:\nthe exit it has. A child keeps its parent's.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "network"
+        ],
         "type": "object"
       }
     },
@@ -858,6 +1058,172 @@
         "required": [
           "space",
           "command"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "space_job",
+      "category": "commands-and-files",
+      "description": "Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends.",
+      "instructions": "Use this instead of space_bash for anything that takes more than a minute (builds, test suites, installs, waiting on CI). `start` returns a job id at once and the command keeps running when you stop, disconnect, or the Space's daemon restarts. Read it with `logs` (pass the returned `next_offset` as `offset` to read on; `follow_ms` waits for output) or `status`; stop it with `cancel`; `list` shows the Space's jobs. Pass `notify: true` to be woken: the Space's thread gets one message `JOB <id> <state> exit=<n> ...` with the end of the log, and as an agent member you receive it as your next turn, so you can end your turn instead of polling. `until` makes a job that waits for a file, a port, a command or a pull request's required checks; its end is the condition. Output is stdout and stderr together. Linux and macOS guests.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.exec",
+        "space.exec.shell",
+        "space.exec.jobs"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "Space.job(_:)",
+      "rust_symbol": "Space::job",
+      "notes": [
+        "A job is a command that outlives the call, the connection and a restart of the Space's daemon; its state is files in the Space (`~/.cua/jobs/<id>`). Guests that are not Windows."
+      ],
+      "result": "JSON. `start`: `job`, `state`, `log_command` and a `hint`. `status`, `logs`: `job`, `name`, `state` (`running`, `exited`, `cancelled`, `timed_out` or `lost`), `exit_code`, `signal`, `started_at` and `ended_at` (unix seconds), `elapsed_s`, `size` (log bytes), and for `logs` `offset`, `next_offset`, `text` and `more`. `cancel`: the final status. `list`: `jobs`.",
+      "errors": [
+        "not_found",
+        "wrong_provider"
+      ],
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "`start` (begin a job), `status` (state and the end of its log),\n`logs` (read the log from a byte offset), `cancel` (stop it) or\n`list` (this Space's jobs, newest first).",
+            "type": "string"
+          },
+          "command": {
+            "description": "`start`: the command line, run with `/bin/sh -c` in the background. It\nkeeps running when you or your connection go away. Give this or\n`until`.",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "`start`: the directory to run in. Default: the Space user's home.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "`start`: environment variables for the command.",
+            "type": "object"
+          },
+          "follow_ms": {
+            "description": "`logs`: when there is nothing new after `offset` and the job is\nrunning, wait up to this many milliseconds (at most 25000) for output\nor for the job to end. Default 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "job": {
+            "description": "`status`, `logs`, `cancel`: the job id `start` returned.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "`logs`: most bytes to return (default 16000, at most 262144).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "`start`: a short label for the job (\"unit tests\"), shown in listings\nand in the message that wakes you.",
+            "type": "string"
+          },
+          "notify": {
+            "description": "`start`: wake me when the job ends. The Space's thread gets one\nmessage with the job's result and the end of its log, addressed to\nyou when you are an agent member of the Space (so you can finish your\nturn and sleep), and the person gets a notification. Default false.",
+            "type": "boolean"
+          },
+          "offset": {
+            "description": "`logs`: the byte offset to read from (the `next_offset` of the\nprevious call). Without it: the last `limit` bytes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "`start`: seconds before the job is stopped. Default: none.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "until": {
+            "description": "`start`: wait for a condition instead of running `command`. The job\nends when the condition holds (exit 0), or after `timeout`.",
+            "properties": {
+              "command": {
+                "description": "Wait for this shell command to exit 0.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "file": {
+                "description": "Wait for this path to exist in the Space.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "host": {
+                "description": "With `port`: the host. Default 127.0.0.1.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "interval": {
+                "description": "Seconds between checks (1 to 300). Default 5 (30 for `pr_checks`).",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "port": {
+                "description": "Wait for this TCP port to accept connections (on `host`, default\n127.0.0.1).",
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pr_checks": {
+                "description": "Wait for a GitHub pull request's required checks to finish with `gh`\n(signed in inside the Space): a number, a URL or `owner/repo#123`.\nThe job exits 0 when they pass and 1 when one fails.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "wake": {
+            "description": "`start` with `notify`: the agent member to wake instead of you.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "action"
         ],
         "type": "object"
       }
@@ -1571,6 +1937,95 @@
       }
     },
     {
+      "name": "space_service",
+      "category": "services",
+      "description": "Keep a command running in the Space: restarts, health checks, start on boot, logs.",
+      "instructions": "Keeps a command running in the Space: cua-spacesd starts it at once, starts it again by its `restart` policy when it ends (waiting longer after each quick failure, up to a minute), restarts it when its health check (`http`, `tcp` or `check`, one of them) fails 3 times in a row, starts it when the Space boots unless start_on_boot is false, and keeps its output in a log file in the Space (`logs`). `stop` keeps it stopped, across a reboot too, until `start`. `add` with a name that exists replaces it.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.services.keep"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "space.keepRunning.service(_:)",
+      "rust_symbol": "Space::keep_service",
+      "notes": [],
+      "result": "JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, `state`, `pid`, `restarts`, `last_end`, `probe_error`, `restart`, `start_on_boot`, `log_path`); `list` gives `services`; `logs` gives `logs` (text); `remove` gives `removed`.",
+      "errors": [
+        "capability_missing",
+        "invalid_argument",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "`add` (or replace), `list`, `start`, `stop`, `restart`, `remove` or\n`logs`.",
+            "type": "string"
+          },
+          "check": {
+            "description": "`add`: health check, a shell command that exits 0 when healthy.",
+            "type": "string"
+          },
+          "command": {
+            "description": "`add`: the shell command line to keep running.",
+            "type": "string"
+          },
+          "http": {
+            "description": "`add`: health check, a URL that answers 2xx or 3xx.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Service name (every action but `list`): lowercase letters, digits,\n`-`, `_` and `.`.",
+            "type": "string"
+          },
+          "restart": {
+            "description": "`add`: when to start it again: `always` (default), `on-failure` or\n`never`.",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "start_on_boot": {
+            "description": "`add`: start it when the Space boots (default true).",
+            "type": "boolean"
+          },
+          "tail_bytes": {
+            "description": "`logs`: bytes from the end (default 64 KiB).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tcp": {
+            "description": "`add`: health check, `host:port` that accepts a connection.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "agent_start",
       "category": "agents",
       "description": "Start a coding agent in the Space.",
@@ -1792,6 +2247,10 @@
       ],
       "input_schema": {
         "properties": {
+          "client_id": {
+            "description": "A key of the caller's for this message: sending it again (after a\nlost connection) returns the first answer and delivers nothing twice.",
+            "type": "string"
+          },
           "force": {
             "description": "Interrupt a running turn first instead of queueing. Default false.",
             "type": "boolean"
@@ -2215,6 +2674,10 @@
             "description": "A custom model endpoint base URL.",
             "type": "string"
           },
+          "brief": {
+            "description": "Standing instructions: the first message each run takes carries them\nin front of its text (the thread shows only the message).",
+            "type": "string"
+          },
           "daily_at": {
             "description": "A schedule: every day at `HH:MM` local time (with `prompt`).",
             "type": "string"
@@ -2351,6 +2814,10 @@
           "space": {
             "description": "The Space it works in (id or name).",
             "type": "string"
+          },
+          "standby": {
+            "description": "Keep a run open with its session ready, so a message starts its turn\nat once (the agent is started in the background, and again if it\nends). Default false.",
+            "type": "boolean"
           },
           "title": {
             "description": "The schedule's title. Default: the first words of `prompt`.",
@@ -3321,9 +3788,23 @@
                 "description": "Approve (true) or deny (false).",
                 "type": "boolean"
               },
+              "client_id": {
+                "description": "A key of the caller's for this answer. Sending the same answer\nagain after a lost connection returns the first one\n(`replayed: true`) and never writes a second; a different decision\nfor an approval already answered is refused.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "note": {
                 "default": null,
                 "description": "A note for the agent.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "description": "`once` (default): this approval only. `space`: allow this kind of\nrequest from this agent in this Space from now on; the daemon\nanswers the same request itself, and the grant can be taken back.\nOnly for an approval whose `scope_choices` lists it (an agent's own\nrequest; never a push, a sign-in, a join or an ability request),\nand never with `approve: false`.",
                 "type": [
                   "string",
                   "null"
@@ -3364,6 +3845,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "client_id": {
+            "description": "A key of the caller's for this post: the same key from the same\nauthor again (a retry after a lost connection) returns the first\nentry (`replayed: true`) and writes nothing. Kept on the entry as\n`client_id`.",
+            "type": "string"
           },
           "reply_to": {
             "description": "The `seq` of the entry this answers.",
@@ -4513,7 +4998,7 @@
       "name": "hotspot_start",
       "category": "hotspot",
       "description": "Start sharing this computer's network with a Space.",
-      "instructions": "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.",
+      "instructions": "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. With Secure Spaces on, only after the user says yes: pass confirm=true, and without it the call is refused; the Space's own network rules apply first (the internet only unless they allow more), and its system proxy is left alone unless set_system_proxy is true (apps use the hotspot through the returned socks_address). Runs until hotspot_stop, delete_space, or this server exiting.",
       "platforms": [
         "macos",
         "windows",
@@ -4555,8 +5040,12 @@
             },
             "type": "array"
           },
+          "confirm": {
+            "description": "The user said yes to sharing this computer's network with the Space.\nWith Secure Spaces on, required: without `true` the call is refused.\nAsk the user first; never set it on your own.",
+            "type": "boolean"
+          },
           "set_system_proxy": {
-            "description": "Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)\nat the hotspot. Default true.",
+            "description": "Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)\nat the hotspot. Default true; with Secure Spaces on, false: apps in the\nSpace use the hotspot only when they are told to (SOCKS5 at the\nreturned `socks_address`).",
             "type": "boolean"
           },
           "space": {

@@ -250,4 +250,6 @@ export const AGENT_METHODS = [
   "agents.allowComputer", "agents.revokeComputer",
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
   "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
+  // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
+  "github.status", "github.rescan", "github.use", "github.enable",
 ];

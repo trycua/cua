@@ -131,43 +131,34 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Cua Spaces app library (built once)
     runs-on: macos-26
-    timeout-minutes: 45
+    # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
+    # cancelled steady progress on PRs that miss main's cached library, and 90
+    # cancelled a PR that changes Cargo.lock (it builds every dependency).
+    timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).
       CUA_RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
-      # Restore only: main compiled this exact Rust input tree when it merged
-      # (ci-cua-spaces-rust-slice.yml) unless the pull request changes it.
-      - name: Restore main's compiled library for these Rust inputs
+      # One definition of the build, shared with the producer on main
+      # (ci-cua-spaces-rust-slice.yml). Exact key hit (the pull request leaves
+      # the Rust inputs as they are on main): main's compiled library, seconds.
+      # Miss: the action builds with the same `--target` command and the same
+      # Swatinem cache family main saves, so a pull request compiles only the
+      # workspace crates it changed (minutes) and not the whole dependency tree
+      # (73 minutes cold). The old miss path built `cargo build --release`
+      # without `--target`, into a different target directory and an sccache
+      # family warmed by debug test builds, so it never reused main's work.
+      - name: Restore main's compiled library, or build on top of main's dependency cache
         id: slice
         uses: ./.github/actions/spaces-rust-slice
         with:
           triple: aarch64-apple-darwin
-          build: "false"
-      - name: Use the restored library
-        if: steps.slice.outputs.cache-hit == 'true'
+      - name: Stage the library where the Swift jobs expect it
         run: |
           mkdir -p libs/cua/target/release
           cp libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib libs/cua/target/release/
-      - name: Install Rust (toolchain from rust-toolchain.toml)
-        if: steps.slice.outputs.cache-hit != 'true'
-        working-directory: libs/cua
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Install protoc
-        if: steps.slice.outputs.cache-hit != 'true'
-        uses: ./.github/actions/setup-protoc
-      - uses: ./.github/actions/rust-cache
-        if: steps.slice.outputs.cache-hit != 'true'
-        with:
-          workspaces: libs/cua
-      # The Cua Spaces app export (libcua_spaces_ffi, which carries the cua
-      # SDK too); each Swift job stages it as libs/cua/swift/lib/libcua_sdk.dylib.
-      - name: Build the Cua Spaces app library
-        if: steps.slice.outputs.cache-hit != 'true'
-        working-directory: libs/cua
-        run: cargo build --locked --release -p cua-spaces-ffi
       - name: Upload the library for the Swift jobs
         uses: actions/upload-artifact@v4
         with:
@@ -265,7 +256,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      # Restore only: `ffi` is the job that saves this family on main.
+      # Restore only (main's other macOS jobs save this family).
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua

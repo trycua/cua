@@ -66,6 +66,10 @@ pub struct DurableSpec {
     /// No desktop (`SpaceCreate::headless`): kept by every copy.
     #[serde(default)]
     pub headless: bool,
+    /// CPU architecture every copy must run on (`amd64`, `arm64`); empty:
+    /// any (the default: a durable Space may move between architectures).
+    #[serde(default)]
+    pub arch: String,
 }
 
 /// What a Space's `.cua/setup` did.
@@ -535,6 +539,8 @@ impl Coordinator {
             cpus: row.spec.cpus,
             memory_mb: row.spec.memory_mb,
             headless: row.spec.headless,
+            durable: true,
+            arch: row.spec.arch.clone(),
         };
         match self.place_space_excluding(req, &exclude).await {
             Ok(p) => {

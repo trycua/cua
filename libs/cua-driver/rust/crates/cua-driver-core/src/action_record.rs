@@ -460,6 +460,7 @@ impl ActionExecutionRecord {
             // The dispatch seam adds these after the record is projected.
             hint: None,
             next_call: None,
+            fast_path: None,
         })
     }
 

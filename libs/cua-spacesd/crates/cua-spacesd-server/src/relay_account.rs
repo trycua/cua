@@ -256,6 +256,11 @@ pub struct RelayAssertionAuth {
     link: Arc<AccountLink>,
     policy_file: Option<PathBuf>,
     cache: Mutex<CachedPolicy>,
+    /// The phones kill switch and the log of what phones did. `None`: this
+    /// machine does not answer phones at all.
+    phone: Option<Arc<crate::phone_control::PhoneControl>>,
+    /// The mobile experiment as last read, and when.
+    mobile: Mutex<(std::time::Instant, bool)>,
 }
 
 impl RelayAssertionAuth {
@@ -269,6 +274,68 @@ impl RelayAssertionAuth {
                 raw: None,
                 policy: HostPolicy::default(),
             }),
+            phone: None,
+            mobile: Mutex::new((std::time::Instant::now(), false)),
+        }
+    }
+
+    /// Lets this machine answer phones, with the kill switch and the log kept
+    /// in `phone`. Still off until the `mobile` experiment is on.
+    pub fn with_phone(mut self, phone: Arc<crate::phone_control::PhoneControl>) -> Self {
+        self.phone = Some(phone);
+        // The first call reads the switch.
+        self.mobile = Mutex::new((
+            std::time::Instant::now() - std::time::Duration::from_secs(60),
+            false,
+        ));
+        self
+    }
+
+    /// Whether the mobile experiment is on, read at most once a second.
+    fn mobile_on(&self, policy: &HostPolicy) -> bool {
+        let mut m = self.mobile.lock().expect("mobile switch");
+        if m.0.elapsed() >= std::time::Duration::from_secs(1) {
+            let home = policy
+                .spaces_daemon
+                .as_ref()
+                .filter(|d| !d.cua_home.is_empty())
+                .map(|d| std::path::PathBuf::from(&d.cua_home));
+            *m = (
+                std::time::Instant::now(),
+                crate::phone_control::mobile_enabled(home.as_deref()),
+            );
+        }
+        m.1
+    }
+
+    /// What a verified assertion says about a phone: `Ok(None)` for a
+    /// computer, the phone, or the reason this machine does not answer it.
+    fn phone_of(
+        &self,
+        claims: &AssertionClaims,
+        policy: &HostPolicy,
+    ) -> Result<Option<crate::auth::PhoneCaller>, String> {
+        match claims.dcls.as_deref() {
+            None => Ok(None),
+            Some(cua_relay::phone::CLASS_MOBILE) => {
+                let Some(store) = &self.phone else {
+                    return Err("this computer does not answer phones".into());
+                };
+                if !self.mobile_on(policy) {
+                    return Err("this computer does not answer phones: the mobile experiment is off (`cua experiments enable mobile`)".into());
+                }
+                if store.phones_off() {
+                    return Err("phones are turned off on this computer".into());
+                }
+                let device = claims
+                    .dev
+                    .clone()
+                    .filter(|d| !d.is_empty())
+                    .ok_or("a phone's call does not say which phone it is")?;
+                Ok(Some(crate::auth::PhoneCaller { device }))
+            }
+            // A kind this machine does not know is a kind it does not serve.
+            Some(_) => Err("this computer does not know this kind of phone".into()),
         }
     }
 
@@ -307,6 +374,48 @@ impl ExternalAuthenticator for RelayAssertionAuth {
         Ok(policy.shares.then_some(policy.shares_gateway).flatten())
     }
 
+    fn phone_refused(&self, caller: &crate::auth::RelayCaller, path: &str) {
+        if let (Some(store), Some(phone)) = (&self.phone, &caller.phone) {
+            store.note_refused(
+                &caller.account,
+                &phone.device,
+                path.rsplit('/').next().unwrap_or(""),
+            );
+        }
+    }
+
+    fn phone_used(&self, caller: &crate::auth::RelayCaller, scope: crate::phone_control::Scope) {
+        if let (Some(store), Some(phone)) = (&self.phone, &caller.phone) {
+            store.note_use(&caller.account, &phone.device, scope);
+        }
+    }
+
+    fn phone_still_allowed(
+        &self,
+        _caller: &crate::auth::RelayCaller,
+        path: &str,
+    ) -> Result<(), String> {
+        let Some(store) = &self.phone else {
+            return Err("this computer does not answer phones".into());
+        };
+        let policy = self.policy()?;
+        if !policy.sharing {
+            return Err("this computer stopped sharing".into());
+        }
+        if crate::auth::desktop_path(path) && !policy.share_desktop {
+            return Err("this computer stopped sharing its desktop".into());
+        }
+        if !self.mobile_on(&policy) {
+            return Err(
+                "this computer does not answer phones: the mobile experiment is off".into(),
+            );
+        }
+        if store.phones_off() {
+            return Err("phones are turned off on this computer".into());
+        }
+        Ok(())
+    }
+
     fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
         let token = headers.get(ASSERTION_HEADER)?.to_str().ok()?;
         Some((|| {
@@ -320,8 +429,13 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                 },
             };
             let policy = self.policy()?;
+            let phone = self.phone_of(&claims, &policy)?;
             if claims.role == cua_relay::assertion::THREAD_ROLE {
-                return thread_grant(&claims, &policy, headers);
+                let mut grant = thread_grant(&claims, &policy, headers)?;
+                if let Some(a) = grant.account.as_mut() {
+                    a.phone = phone;
+                }
+                return Ok(grant);
             }
             let access = policy.authorize(&claims, self.link.owner().as_deref())?;
             let client = crate::auth::principal_from_headers(headers);
@@ -342,6 +456,8 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                     issued_at: claims.iat,
                     teams: claims.teams.clone(),
                     space: None,
+                    phone,
+                    device: claims.dev.clone(),
                 }),
             })
         })())
@@ -394,6 +510,8 @@ fn thread_grant(
             issued_at: claims.iat,
             teams: claims.teams.clone(),
             space: Some(space.to_owned()),
+            phone: None,
+            device: None,
         }),
     })
 }
@@ -421,6 +539,8 @@ mod tests {
             teams: Vec::new(),
             space: None,
             space_role: None,
+            dev: None,
+            dcls: None,
         }
     }
 
@@ -611,5 +731,177 @@ mod tests {
             key.sign(&claims("ada", "owner", None)).parse().unwrap(),
         );
         assert!(auth.authenticate(&headers).unwrap().is_err());
+    }
+
+    fn phone_claims(acct: &str, device: &str) -> AssertionClaims {
+        let mut c = claims(acct, "owner", None);
+        c.dev = Some(device.into());
+        c.dcls = Some(cua_relay::phone::CLASS_MOBILE.into());
+        c
+    }
+
+    struct PhoneRig {
+        key: RelayKey,
+        auth: RelayAssertionAuth,
+        store: Arc<crate::phone_control::PhoneControl>,
+        home: tempfile::TempDir,
+        _dir: tempfile::TempDir,
+    }
+
+    /// A machine of `ada` whose policy names a cua home; `on` writes that
+    /// home's `mobile` switch; `phones` lets it answer phones at all.
+    fn phone_rig(on: bool, phones: bool) -> PhoneRig {
+        let key = RelayKey::generate();
+        let link = Arc::new(AccountLink::default());
+        link.keys.set_jwks_json(&key.jwks().to_string()).unwrap();
+        *link.owner.write().unwrap() = Some("ada".into());
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        if on {
+            std::fs::create_dir_all(home.path().join("experiments")).unwrap();
+            std::fs::write(home.path().join("experiments/mobile"), "on\n").unwrap();
+        }
+        let policy = dir.path().join("host.json");
+        std::fs::write(
+            &policy,
+            serde_json::json!({"owner": "ada", "spaces_daemon": {"socket": "/x", "cua_home": home.path()}})
+                .to_string(),
+        )
+        .unwrap();
+        let store = Arc::new(crate::phone_control::PhoneControl::in_data_dir(dir.path()));
+        let mut auth = RelayAssertionAuth::new("machine-0001".into(), link, Some(policy));
+        if phones {
+            auth = auth.with_phone(store.clone());
+        }
+        PhoneRig {
+            key,
+            auth,
+            store,
+            home,
+            _dir: dir,
+        }
+    }
+
+    fn call(rig: &PhoneRig, c: &AssertionClaims) -> Result<ExternalGrant, String> {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(ASSERTION_HEADER, rig.key.sign(c).parse().unwrap());
+        rig.auth.authenticate(&headers).unwrap()
+    }
+
+    /// Nothing about phones works until the owner turned the experiment on,
+    /// and a machine started without phone support never answers one.
+    #[test]
+    fn a_phone_is_answered_only_while_the_mobile_experiment_is_on() {
+        if std::env::var_os("CUA_EXPERIMENTS").is_some() {
+            return; // the environment would decide, not the switch under test
+        }
+        let off = phone_rig(false, true);
+        let e = call(&off, &phone_claims("ada", "dev_1")).unwrap_err();
+        assert!(e.contains("the mobile experiment is off"), "{e}");
+        // A computer is untouched by it.
+        assert!(call(&off, &claims("ada", "owner", None)).is_ok());
+
+        let none = phone_rig(true, false);
+        let e = call(&none, &phone_claims("ada", "dev_1")).unwrap_err();
+        assert_eq!(e, "this computer does not answer phones");
+
+        let on = phone_rig(true, true);
+        let g = call(&on, &phone_claims("ada", "dev_1")).unwrap();
+        let p = g.account.as_ref().unwrap().phone.clone().unwrap();
+        assert_eq!(p.device, "dev_1");
+        // A phone without a device, and a kind nobody knows, are refused.
+        let mut nameless = phone_claims("ada", "");
+        nameless.dev = None;
+        assert_eq!(
+            call(&on, &nameless).unwrap_err(),
+            "a phone's call does not say which phone it is"
+        );
+        let mut odd = phone_claims("ada", "dev_1");
+        odd.dcls = Some("watch".into());
+        assert!(call(&on, &odd)
+            .unwrap_err()
+            .contains("does not know this kind"));
+        // A computer carries no phone state.
+        let g = call(&on, &claims("ada", "owner", None)).unwrap();
+        assert!(g.account.unwrap().phone.is_none());
+    }
+
+    /// The kill switch is read on every call: while it is on, no phone is
+    /// answered, and turning it off brings them back at the next call.
+    #[test]
+    fn the_phones_switch_is_read_on_every_call() {
+        if std::env::var_os("CUA_EXPERIMENTS").is_some() {
+            return;
+        }
+        let rig = phone_rig(true, true);
+        let c = phone_claims("ada", "dev_1");
+        assert!(call(&rig, &c).is_ok());
+        rig.store.set_off(true).unwrap();
+        assert_eq!(
+            call(&rig, &c).unwrap_err(),
+            "phones are turned off on this computer"
+        );
+        // A computer is untouched by it.
+        assert!(call(&rig, &claims("ada", "owner", None)).is_ok());
+        rig.store.set_off(false).unwrap();
+        assert!(call(&rig, &c).is_ok());
+        // Another account's phone is not answered on this computer at all.
+        let mut bob = phone_claims("bob", "dev_1");
+        bob.role = "owner".into();
+        assert!(call(&rig, &bob).is_err(), "bob is not on this machine");
+        let _ = &rig.home;
+    }
+
+    /// A phone's running call is allowed only while this computer still
+    /// shares, still shares its desktop (for the picture and the input),
+    /// still answers phones.
+    #[test]
+    fn a_running_phone_call_stops_when_the_computer_stops_sharing_its_desktop() {
+        if std::env::var_os("CUA_EXPERIMENTS").is_some() {
+            return;
+        }
+        let rig = phone_rig(true, true);
+        let caller = call(&rig, &phone_claims("ada", "dev_1"))
+            .unwrap()
+            .account
+            .unwrap();
+        let open = "/cua.env.v1.StreamService/OpenMedia";
+        let thread = "/cua.env.v1.HostThreadService/CallThreadTool";
+        assert!(rig.auth.phone_still_allowed(&caller, open).is_ok());
+        let write = |v: serde_json::Value| {
+            std::fs::write(
+                rig._dir.path().join("host.json"),
+                serde_json::json!({"owner": "ada", "spaces_daemon": {"socket": "/x", "cua_home": rig.home.path()}})
+                    .as_object()
+                    .cloned()
+                    .map(|mut m| {
+                        m.extend(v.as_object().unwrap().clone());
+                        serde_json::Value::Object(m)
+                    })
+                    .unwrap()
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        write(serde_json::json!({"share_desktop": false}));
+        assert_eq!(
+            rig.auth.phone_still_allowed(&caller, open).unwrap_err(),
+            "this computer stopped sharing its desktop"
+        );
+        assert!(
+            rig.auth.phone_still_allowed(&caller, thread).is_ok(),
+            "the thread of a Space it provides goes on"
+        );
+        write(serde_json::json!({"sharing": false}));
+        assert_eq!(
+            rig.auth.phone_still_allowed(&caller, thread).unwrap_err(),
+            "this computer stopped sharing"
+        );
+        write(serde_json::json!({}));
+        rig.store.set_off(true).unwrap();
+        assert_eq!(
+            rig.auth.phone_still_allowed(&caller, thread).unwrap_err(),
+            "phones are turned off on this computer"
+        );
     }
 }

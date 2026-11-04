@@ -35,6 +35,10 @@
   ],
   "features_optional": [
     "hotspot",
+    "spawn",
+    "exit",
+    "host_ports",
+    "process.services",
     "relay_attach",
     "teleport.*",
     "audio.desktop",

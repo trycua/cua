@@ -62,14 +62,14 @@ pub const OFFERED: [&str; 5] = PREFERENCE;
 const AGENT_KEYS: [(&str, &str); 2] = [("claude-code", "anthropic"), ("codex", "openai")];
 
 /// Home's to-do request: it works on this computer with nothing else set up.
-pub const FIRST_PROMPT: &str = "List my machines and tell me what's on this Mac";
-const FIRST_PROMPT_OTHER: &str = "List my machines and tell me what's on this machine";
-const FIRST_PROMPT_PC: &str = "List my machines and tell me what's on this PC";
+pub const FIRST_PROMPT: &str = "List my computers and tell me what's on this Mac";
+const FIRST_PROMPT_OTHER: &str = "List my computers and tell me what's on this computer";
+const FIRST_PROMPT_PC: &str = "List my computers and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
 pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and show its desktop in a new window.";
 const TRY_PROMPT_OTHER: &str =
-    "Make a Linux Space on this machine and show its desktop in a new window.";
+    "Make a Linux Space on this computer and show its desktop in a new window.";
 const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and show its desktop in a new window.";
 
 /// The CLI's name when the host did not say (the released app's,
@@ -168,7 +168,10 @@ pub fn steps(input: &FirstRunInput) -> Vec<FirstRunStep> {
     if asks_permissions(input) {
         out.push(FirstRunStep::Permissions);
     }
-    out.push(FirstRunStep::Setup);
+    // Ask first has no "Try it" screen: the person asks in the ask-first Space.
+    if !input.ask_first {
+        out.push(FirstRunStep::Setup);
+    }
     out
 }
 
@@ -335,6 +338,21 @@ pub struct FirstRunInput {
     /// The CLI's name (`SettingsSnapshot.cli`: `CuaChannel::cli_name`);
     /// none: the install plan's file name, else `cua`.
     pub cli_name: Option<String>,
+    /// Ask first is on: there is no "Try it in your agent" screen. The last
+    /// screen's button opens the ask-first Space, which is already being
+    /// prepared, and the person asks there.
+    #[serde(default)]
+    pub ask_first: bool,
+}
+
+/// The label of the button that ends the first run: "Open Cua" on the last
+/// screen of an ask-first run, "Continue" on every other.
+fn continue_label(input: &FirstRunInput, step: FirstRunStep) -> &'static str {
+    if input.ask_first && steps(input).last() == Some(&step) {
+        "Open Cua"
+    } else {
+        "Continue"
+    }
 }
 
 /// The CLI's name for `input`: the host's, else the install plan's file
@@ -746,7 +764,7 @@ fn this_computer(os: &str) -> &'static str {
     match os {
         "macos" => "this Mac",
         "windows" => "this PC",
-        _ => "this machine",
+        _ => "this computer",
     }
 }
 
@@ -763,7 +781,7 @@ fn os_name(os: &str) -> &'static str {
         "linux" => "Linux",
         "omarchy" => "Omarchy",
         "windows" => "Windows",
-        _ => "a machine",
+        _ => "a computer",
     }
 }
 
@@ -1062,7 +1080,7 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your machines, shared by your team and its agents.".into(),
+        title: "Your computers, shared by your team and its agents.".into(),
         lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
@@ -1217,7 +1235,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
     let place = this_computer(&input.host_os);
     let rows = vec![
         DeviceRow {
-            title: "Your other machines".into(),
+            title: "Your other computers".into(),
             note: "Sign in with the same account".into(),
         },
         DeviceRow {
@@ -1234,18 +1252,18 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             } else {
                 format!("Adding {place} to your account.")
             },
-            lede: "Sign in on your other machines to use its Spaces.".into(),
+            lede: "Sign in on your other computers to use its Spaces.".into(),
             rows,
             status,
-            primary: button("continue", "Continue"),
+            primary: button("continue", continue_label(input, FirstRunStep::Devices)),
             secondary: None,
             note: None,
         };
     }
     DevicesView {
-        title: "Add your other machines.".into(),
+        title: "Add your other computers.".into(),
         lede: format!(
-            "Sign in to Cua here and on your other machines. Then they can all use {place}'s Spaces."
+            "Sign in to Cua here and on your other computers. Then they can all use {place}'s Spaces."
         ),
         rows,
         status: account_row(input),
@@ -1364,7 +1382,7 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
         },
         rows,
         note: format!("Allow opens System Settings, where you turn on {app}."),
-        primary: all.then(|| button("continue", "Continue")),
+        primary: all.then(|| button("continue", continue_label(input, FirstRunStep::Permissions))),
         secondary: (!all).then(|| button("not-now", "Not now")),
     }
 }
@@ -1396,7 +1414,7 @@ fn computer_row(input: &FirstRunInput) -> CheckRow {
         return row(
             RowState::Fix,
             "Sign in to Cua".into(),
-            &format!("So your other machines can reach {place}."),
+            &format!("So your other computers can reach {place}."),
             Some(button("sign-in", "Sign in")),
         );
     }
@@ -1744,6 +1762,8 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
     // its screen is not shared) shows the try screen instead.
     let step = if all.contains(&input.step) {
         input.step
+    } else if input.ask_first {
+        all.last().copied().unwrap_or(FirstRunStep::Welcome)
     } else {
         FirstRunStep::Setup
     };
@@ -1919,11 +1939,11 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     });
     items.push(FirstRunTodo {
         id: "sign-in".into(),
-        title: "Add your other machines (optional)".into(),
+        title: "Add your other computers (optional)".into(),
         note: if input.signed_in {
             "Signed in to Cua.".into()
         } else {
-            format!("Sign in to use {place}'s Spaces from your other machines.")
+            format!("Sign in to use {place}'s Spaces from your other computers.")
         },
         done: input.signed_in,
         optional: true,
@@ -2072,6 +2092,123 @@ mod tests {
     }
 
     #[test]
+    fn ask_first_has_no_try_it_screen_and_the_last_screen_opens_cua() {
+        let mut i = input(FirstRunStep::Devices, vec![claude(true)]);
+        // Off: the Try it screen is last, as before.
+        assert_eq!(steps(&i).last(), Some(&FirstRunStep::Setup));
+        i.ask_first = true;
+        // Signed out: no permissions screen, so Add your other machines is last.
+        assert_eq!(
+            steps(&i),
+            vec![
+                FirstRunStep::Welcome,
+                FirstRunStep::Connect,
+                FirstRunStep::Devices
+            ]
+        );
+        assert!(!steps(&i).contains(&FirstRunStep::Setup));
+        assert_eq!(view(&i).dots, 3);
+        // Signed in and not sharing the screen: still no permissions screen; the button ends the run.
+        i.signed_in = true;
+        i.host = Some(FirstRunHost {
+            configured: true,
+            share_desktop: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(view(&i).devices.unwrap().primary.label, "Open Cua");
+        // A Mac that shares its screen asks for permissions last: Continue on Devices, Open Cua there.
+        i.host = Some(FirstRunHost {
+            configured: true,
+            ..Default::default()
+        });
+        assert_eq!(steps(&i).last(), Some(&FirstRunStep::Permissions));
+        assert_eq!(view(&i).devices.unwrap().primary.label, "Continue");
+        i.step = FirstRunStep::Permissions;
+        assert_eq!(
+            view(&i).permissions.unwrap().primary.map(|b| b.label),
+            Some("Open Cua".to_string())
+        );
+        // A run saved on the removed screen shows the last one.
+        i.step = FirstRunStep::Setup;
+        assert_eq!(view(&i).step, FirstRunStep::Permissions);
+    }
+
+    #[test]
+    fn every_page_in_every_branch_has_its_action_and_every_agent_row_its_state_or_action() {
+        for ask_first in [false, true] {
+            for signed_in in [false, true] {
+                for cli_missing in [false, true] {
+                    let mut base = input(
+                        FirstRunStep::Welcome,
+                        vec![claude(false), codex(false, false), hermes()],
+                    );
+                    base.ask_first = ask_first;
+                    base.signed_in = signed_in;
+                    if signed_in {
+                        base.host = Some(FirstRunHost {
+                            configured: true,
+                            ..Default::default()
+                        });
+                    }
+                    if cli_missing {
+                        base.cli.plan = Some(crate::installer::CliInstallPlan {
+                            source: Some("/app/cua".into()),
+                            target: "/usr/local/bin/cua".into(),
+                            ..Default::default()
+                        });
+                    }
+                    let all = steps(&base);
+                    assert_eq!(all.contains(&FirstRunStep::Setup), !ask_first);
+                    for st in all {
+                        let mut i = base.clone();
+                        i.step = st;
+                        let v = view(&i);
+                        let what = format!(
+                            "ask_first {ask_first}, signed_in {signed_in}, cli_missing {cli_missing}, {st:?}"
+                        );
+                        assert_eq!(v.step, st, "{what}");
+                        match st {
+                            FirstRunStep::Welcome => {
+                                assert!(!v.welcome.unwrap().primary.label.is_empty(), "{what}")
+                            }
+                            FirstRunStep::Connect => {
+                                let c = v.connect.unwrap();
+                                assert!(!c.primary.label.is_empty(), "{what}: Continue");
+                                assert!(!c.agents.is_empty(), "{what}");
+                                for a in &c.agents {
+                                    assert!(
+                                        a.connected || a.action.is_some() || a.note.is_some(),
+                                        "{what}: {} has no state or action",
+                                        a.name
+                                    );
+                                }
+                            }
+                            FirstRunStep::Cli => {
+                                let c = v.cli.unwrap();
+                                assert!(c.primary.is_some(), "{what}");
+                            }
+                            FirstRunStep::Devices => {
+                                let d = v.devices.unwrap();
+                                assert!(!d.primary.label.is_empty(), "{what}");
+                            }
+                            FirstRunStep::Permissions => {
+                                let p = v.permissions.unwrap();
+                                assert!(
+                                    p.primary.is_some() || p.secondary.is_some(),
+                                    "{what}: no Continue and no Not now"
+                                );
+                            }
+                            FirstRunStep::Setup => {
+                                assert!(v.setup.is_some(), "{what}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn four_screens_in_order_and_a_fresh_run_starts_on_welcome() {
         assert_eq!(FirstRunInput::default().step, FirstRunStep::Welcome);
         let mut i = input(FirstRunStep::Welcome, vec![claude(false)]);
@@ -2096,7 +2233,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Your machines, shared by your team and its agents."
+            "Your computers, shared by your team and its agents."
         );
         assert_eq!(w.primary.id, "start");
     }
@@ -2315,13 +2452,13 @@ mod tests {
     fn signing_in_is_optional_and_says_what_it_connects() {
         let mut i = input(FirstRunStep::Devices, vec![]);
         let d = view(&i).devices.unwrap();
-        assert_eq!(d.title, "Add your other machines.");
+        assert_eq!(d.title, "Add your other computers.");
         assert_eq!(
             d.lede,
-            "Sign in to Cua here and on your other machines. Then they can all use this Mac's Spaces."
+            "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces."
         );
         let rows: Vec<&str> = d.rows.iter().map(|r| r.title.as_str()).collect();
-        assert_eq!(rows, ["Your other machines", "Your cloud"]);
+        assert_eq!(rows, ["Your other computers", "Your cloud"]);
         assert_eq!(
             (d.primary.id.as_str(), d.primary.label.as_str()),
             ("sign-in", "Sign in")

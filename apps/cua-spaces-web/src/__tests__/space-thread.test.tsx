@@ -5,6 +5,7 @@
 // with tasks, replies and an approval, the members on the right. A daemon
 // without the thread keeps the classic page exactly as it was.
 
+import { closeNetworkSheet, openNetworkSheet } from "@/components/network/use-network";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -185,6 +186,20 @@ describe("a Space's thread", () => {
     expect(q("[data-stream-desktop]")?.getAttribute("aria-current")).toBe("true");
     fireEvent.click(q("[data-stream-show-all]")!);
     await waitFor(() => expect(q("[data-call-more-sheet] [data-section='stream']")).not.toBeNull());
+  });
+
+  it("shows one dialog at a time: the Network sheet replaces the details it was opened from", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    const more = await waitFor(() => {
+      const el = q("[data-call-more]");
+      expect(el).not.toBeNull();
+      return el!;
+    }, { timeout: 4000 });
+    fireEvent.click(more);
+    await waitFor(() => expect(q("[data-call-more-sheet]")).not.toBeNull());
+    act(() => openNetworkSheet(DEMO_THREAD_SPACE));
+    await waitFor(() => expect(q("[data-call-more-sheet]")).toBeNull());
+    act(() => closeNetworkSheet());
   });
 
   it("shows a window on the stage when it is picked, and a post made then says where it was sent from", async () => {

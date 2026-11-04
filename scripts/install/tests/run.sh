@@ -82,10 +82,10 @@ for platform in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
     # Apple silicon: the microVM monitor and guest init, and the static
     # cua-spacesd injected into OCI images, travel with `cua`.
     if [ "$platform" = darwin-arm64 ]; then
-        for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64; do
+        for f in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64; do
             printf '#!/bin/sh\necho %s\n' "$f" >"$work/stage/$platform/$f"
         done
-        extra="cua-vz cua-microvm-init cua-spacesd-linux-aarch64"
+        extra="cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64"
     fi
     # shellcheck disable=SC2086
     tar -czf "$tag_dir/cua-cli-$version-$platform.tar.gz" -C "$work/stage/$platform" cua $extra
@@ -387,7 +387,7 @@ inst CUA_INSTALL_OS=MINGW64_NT-10.0 -- --yes
 check "Windows shells point at install.ps1" sh -c "[ $status != 0 ] && grep -q install.ps1 '$work/out'"
 
 inst CUA_INSTALL_OS=Darwin CUA_INSTALL_ARCH=arm64 -- --yes --no-onboarding --cli-only --prefix "$work/mvz"
-check "darwin arm64: cua-vz, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
+check "darwin arm64: cua-vz, its network gateway, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-netgw' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
 inst -- --yes --no-onboarding --cli-only --prefix "$work/nvz"
 check "linux: no microVM monitor in the archive, none installed" sh -c "[ $status = 0 ] && [ -e '$work/nvz/bin/cua' ] && [ ! -e '$work/nvz/bin/cua-vz' ]"
 

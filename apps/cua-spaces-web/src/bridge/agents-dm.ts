@@ -16,6 +16,7 @@
  *   answers approvals.
  */
 
+import { useHiddenSpaceIds } from "../lib/prepare/store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CoreClient } from "./core";
@@ -238,7 +239,9 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   const [settled, setSettled] = useState(false);
   const [pending, setPending] = useState(0);
   const [round, setRound] = useState(0);
-  const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:"));
+  // The home warming for Home's box is no agent's place until a person wrote into it.
+  const warming = useHiddenSpaceIds(core);
+  const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:") && !warming.has(s.id));
   const ids = list.map((s) => s.id).join("\n");
   // Not asked again for a minute: a Space with no thread (a stopped machine, an old daemon) stays that way.
   const misses = useRef(new MissCache(MISS_TTL_MS));

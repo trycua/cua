@@ -49,6 +49,9 @@ pub struct InitState {
     /// Environment set by the hotspot (`set_system_proxy`), layered below
     /// `env`.
     pub proxy_env: BTreeMap<String, String>,
+    /// Environment the spawn channel adds to every new process
+    /// (`CUA_SPACE`, `CUA_SPAWN`, `CUA_SPAWN_TOKEN_FILE`); `Init` keeps it.
+    pub spawn_env: BTreeMap<String, String>,
 }
 
 struct Inner {
@@ -302,6 +305,23 @@ impl ServerContext {
         self.inner
             .auth
             .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
+    }
+
+    /// [`Self::mint_ticket_issued`] bound to the enrolled `device` whose call
+    /// minted it.
+    pub fn mint_ticket_for(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        device: Option<&str>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
+        self.inner
+            .auth
+            .mint_ticket_for(scope, resource, principal_id, issued, device, ttl)
     }
 
     /// Validates a ticket string for `scope`.

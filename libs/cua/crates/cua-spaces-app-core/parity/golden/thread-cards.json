@@ -1,0 +1,566 @@
+{
+  "flow": "thread-cards",
+  "frames": [
+    {
+      "step": "a push that opens a pull request",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push and open PR",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          },
+          {
+            "author": "Hermes",
+            "sha": "9f8e7d6",
+            "subject": "Test the retry delays"
+          }
+        ],
+        "commitsHeading": "2 commits",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "+9",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-3",
+            "dir": "src/net/",
+            "name": "retry.py",
+            "note": "",
+            "status": "modified"
+          },
+          {
+            "additions": "+21",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "add"
+            ],
+            "deletions": "",
+            "dir": "tests/",
+            "name": "test_retry.py",
+            "note": "",
+            "status": "added"
+          },
+          {
+            "additions": "",
+            "bar": [
+              "del",
+              "del",
+              "del",
+              "del",
+              "del"
+            ],
+            "deletions": "-14",
+            "dir": "docs/",
+            "name": "old-notes.md",
+            "note": "",
+            "status": "deleted"
+          }
+        ],
+        "headline": "Hermes wants to push a branch and open a pull request on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": {
+          "body": [
+            "Retries now wait 1s, 2s, 4s.",
+            "Fixes the flaky sync test."
+          ],
+          "state": "Open",
+          "title": "Back off between retries"
+        },
+        "repo": "acme/app",
+        "resultApproved": "Approved the push and pull request of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push and pull request of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+30",
+          "deletions": "-17",
+          "files": "3 files"
+        }
+      }
+    },
+    {
+      "step": "a pull request opened as a draft",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push and open PR",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          }
+        ],
+        "commitsHeading": "1 commit",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "+9",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-3",
+            "dir": "src/net/",
+            "name": "retry.py",
+            "note": "",
+            "status": "modified"
+          }
+        ],
+        "headline": "Hermes wants to push a branch and open a pull request on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": {
+          "body": [
+            "Retries now wait 1s, 2s, 4s.",
+            "Fixes the flaky sync test."
+          ],
+          "state": "Draft",
+          "title": "Back off between retries"
+        },
+        "repo": "acme/app",
+        "resultApproved": "Approved the push and pull request of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push and pull request of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+30",
+          "deletions": "-17",
+          "files": "1 file"
+        }
+      }
+    },
+    {
+      "step": "a pull request with no title shows no preview",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push and open PR",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          },
+          {
+            "author": "Hermes",
+            "sha": "9f8e7d6",
+            "subject": "Test the retry delays"
+          }
+        ],
+        "commitsHeading": "2 commits",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "+9",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-3",
+            "dir": "src/net/",
+            "name": "retry.py",
+            "note": "",
+            "status": "modified"
+          },
+          {
+            "additions": "+21",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "add"
+            ],
+            "deletions": "",
+            "dir": "tests/",
+            "name": "test_retry.py",
+            "note": "",
+            "status": "added"
+          },
+          {
+            "additions": "",
+            "bar": [
+              "del",
+              "del",
+              "del",
+              "del",
+              "del"
+            ],
+            "deletions": "-14",
+            "dir": "docs/",
+            "name": "old-notes.md",
+            "note": "",
+            "status": "deleted"
+          }
+        ],
+        "headline": "Hermes wants to push a branch and open a pull request on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": null,
+        "repo": "acme/app",
+        "resultApproved": "Approved the push and pull request of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push and pull request of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+30",
+          "deletions": "-17",
+          "files": "3 files"
+        }
+      }
+    },
+    {
+      "step": "a push the connection cannot open a pull request for",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          },
+          {
+            "author": "Hermes",
+            "sha": "9f8e7d6",
+            "subject": "Test the retry delays"
+          }
+        ],
+        "commitsHeading": "2 commits",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "+9",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-3",
+            "dir": "src/net/",
+            "name": "retry.py",
+            "note": "",
+            "status": "modified"
+          },
+          {
+            "additions": "+21",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "add"
+            ],
+            "deletions": "",
+            "dir": "tests/",
+            "name": "test_retry.py",
+            "note": "",
+            "status": "added"
+          },
+          {
+            "additions": "",
+            "bar": [
+              "del",
+              "del",
+              "del",
+              "del",
+              "del"
+            ],
+            "deletions": "-14",
+            "dir": "docs/",
+            "name": "old-notes.md",
+            "note": "",
+            "status": "deleted"
+          }
+        ],
+        "headline": "Hermes wants to push a branch on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": null,
+        "repo": "acme/app",
+        "resultApproved": "Approved the push of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+30",
+          "deletions": "-17",
+          "files": "3 files"
+        }
+      }
+    },
+    {
+      "step": "a binary file, a rename and a deep path",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push and open PR",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          },
+          {
+            "author": "Hermes",
+            "sha": "9f8e7d6",
+            "subject": "Test the retry delays"
+          }
+        ],
+        "commitsHeading": "2 commits",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "",
+            "bar": [
+              "none",
+              "none",
+              "none",
+              "none",
+              "none"
+            ],
+            "deletions": "",
+            "dir": "img/",
+            "name": "logo.png",
+            "note": "binary file",
+            "status": "modified"
+          },
+          {
+            "additions": "",
+            "bar": [
+              "none",
+              "none",
+              "none",
+              "none",
+              "none"
+            ],
+            "deletions": "",
+            "dir": "src/net/",
+            "name": "transport.py",
+            "note": "renamed from src/net/http.py",
+            "status": "renamed"
+          },
+          {
+            "additions": "+1,200",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-3",
+            "dir": "…/c/d/",
+            "name": "deep.py",
+            "note": "",
+            "status": "modified"
+          }
+        ],
+        "headline": "Hermes wants to push a branch and open a pull request on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": {
+          "body": [
+            "Retries now wait 1s, 2s, 4s.",
+            "Fixes the flaky sync test."
+          ],
+          "state": "Open",
+          "title": "Back off between retries"
+        },
+        "repo": "acme/app",
+        "resultApproved": "Approved the push and pull request of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push and pull request of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+1,200",
+          "deletions": "-3",
+          "files": "3 files"
+        }
+      }
+    },
+    {
+      "step": "a very large diff is cut and still counted",
+      "view": {
+        "account": "Cua pushes it from this computer as ada, signed in with gh.",
+        "allow": "Push",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [
+          {
+            "author": "Hermes",
+            "sha": "0a1b2c3",
+            "subject": "Back off between retries"
+          },
+          {
+            "author": "Hermes",
+            "sha": "9f8e7d6",
+            "subject": "Test the retry delays"
+          }
+        ],
+        "commitsHeading": "31 commits",
+        "deny": "Not now",
+        "expandable": true,
+        "files": [
+          {
+            "additions": "+1,000",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-20",
+            "dir": "pkg/",
+            "name": "mod0.rs",
+            "note": "",
+            "status": "modified"
+          },
+          {
+            "additions": "+1,000",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-20",
+            "dir": "pkg/",
+            "name": "mod1.rs",
+            "note": "",
+            "status": "modified"
+          },
+          {
+            "additions": "+1,000",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "deletions": "-20",
+            "dir": "pkg/",
+            "name": "mod2.rs",
+            "note": "",
+            "status": "modified"
+          }
+        ],
+        "headline": "Hermes wants to push a branch on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": "+29 more",
+        "moreFiles": "+12,342 more",
+        "pr": null,
+        "repo": "acme/app",
+        "resultApproved": "Approved the push of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "+4,000,000",
+          "deletions": "-99,000",
+          "files": "12,345 files"
+        }
+      }
+    },
+    {
+      "step": "nothing changed, no account",
+      "view": {
+        "account": null,
+        "allow": "Push",
+        "base": "main",
+        "branch": "fix/retry-backoff",
+        "branchLine": "fix/retry-backoff into main",
+        "commits": [],
+        "commitsHeading": "0 commits",
+        "deny": "Not now",
+        "expandable": false,
+        "files": [],
+        "headline": "Hermes wants to push a branch on acme/app.",
+        "hideLabel": "Hide changes",
+        "moreCommits": null,
+        "moreFiles": null,
+        "pr": null,
+        "repo": "acme/app",
+        "resultApproved": "Approved the push of fix/retry-backoff to acme/app",
+        "resultDeclined": "Declined the push of fix/retry-backoff to acme/app",
+        "showLabel": "Show changes",
+        "totals": {
+          "additions": "",
+          "deletions": "",
+          "files": "No files"
+        }
+      }
+    },
+    {
+      "step": "Cua's own entry",
+      "view": {
+        "avatar": "cua-app-icon",
+        "avatarLabel": "Cua app",
+        "kind": "system",
+        "name": "Cua",
+        "tag": "APP"
+      }
+    },
+    {
+      "step": "an agent keeps how it shows",
+      "view": {
+        "avatar": null,
+        "avatarLabel": null,
+        "kind": "agent",
+        "name": "Hermes",
+        "tag": null
+      }
+    },
+    {
+      "step": "a person keeps how they show",
+      "view": {
+        "avatar": null,
+        "avatarLabel": null,
+        "kind": "person",
+        "name": "Ada",
+        "tag": null
+      }
+    }
+  ]
+}

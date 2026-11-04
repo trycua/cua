@@ -30,11 +30,15 @@ pub mod access;
 pub mod bridge;
 pub mod durable;
 pub mod home;
+pub mod host_tools;
 pub mod identity;
+pub mod jobs;
 pub mod join;
 pub mod members;
 pub mod notify;
 pub mod phases;
+pub mod phone;
+pub mod push_card;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
 pub mod wake;
@@ -185,6 +189,14 @@ pub struct AgentRecord {
     /// As an agent member: how it runs.
     #[serde(default)]
     pub policy: Policy,
+    /// Standing instructions for its runs (an agent home's: where it is, what
+    /// it may do, how to ask). The first message a run takes carries them in
+    /// front of the message's text; the thread shows only the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    /// The run the brief was last given to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub briefed_run: Option<String>,
     /// Who added it (absent: the owner, for agents created before members).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub added_by: Option<crate::thread::Author>,
@@ -400,6 +412,8 @@ pub struct AgentSpec {
     pub harness: String,
     pub space: String,
     pub model: Option<String>,
+    /// Standing instructions ([`AgentRecord::brief`]).
+    pub brief: Option<String>,
     pub base_url: Option<String>,
     pub env_from_host: Vec<String>,
     /// More environment for every run (not secrets).
@@ -476,6 +490,8 @@ pub(crate) struct Live {
     joining: HashMap<String, u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
+    /// When a standby run may be started again after one that failed, by member.
+    standby_retry: HashMap<String, std::time::Instant>,
 }
 
 /// The persistent agents of one cua home. Cheap to clone.
@@ -639,6 +655,7 @@ impl Persistent {
             cua_spaces::agents::keys::global().names()
         };
         for k in &spec.env_from_host {
+            cua_spaces::agents::refuse_host_only(k)?;
             if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
                     "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Connections)"
@@ -654,6 +671,8 @@ impl Persistent {
             base_url: spec.base_url,
             env_from_host: spec.env_from_host,
             env: spec.env,
+            brief: spec.brief,
+            briefed_run: None,
             created_ms: cua_volume::now_ms(),
             paused: false,
             space_state: SpaceState::Running,
@@ -743,8 +762,11 @@ impl Persistent {
     }
 
     fn session(&self, rec: &AgentRecord) -> cua_volume::Session {
-        self.drive
-            .session(cua_volume::Context::agent(&rec.name, Some(&rec.space)))
+        self.drive.session(crate::drive_runtime::agent_context(
+            &self.spaces,
+            &rec.name,
+            Some(&rec.space),
+        ))
     }
 
     /// A fresh agent runner for `space` (one guest round trip), remembered
@@ -1048,6 +1070,8 @@ impl Persistent {
                         format!("{} (session {k})", rec.name)
                     }),
                     durable,
+                    // A standby run waits for its messages for as long as it lives.
+                    idle_exit_secs: rec.policy.standby.then_some(7 * 24 * 3600),
                     ..Default::default()
                 },
             )
@@ -1178,7 +1202,9 @@ impl Persistent {
                     if rec.k() == 1 && !self.live.lock().await.leases.contains_key(name) {
                         self.take_lease(&rec).await?;
                     }
-                    agents.send(run, text, vec![]).await?;
+                    agents
+                        .send_with_model(run, text, vec![], rec.model.as_deref())
+                        .await?;
                     return Ok(Delivery {
                         run_id: run.clone(),
                         started: false,
@@ -1760,10 +1786,12 @@ impl Persistent {
             }
         }
         self.tick_setups(&mut report).await;
+        self.tick_standby(&mut report).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
         self.dispatch(&mut report).await;
         self.tick_watched(&mut report).await;
+        self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
         report
     }
@@ -1779,6 +1807,78 @@ impl Persistent {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Starts the run of every member kept on standby that has none (or
+    /// whose run is gone): the agent process, its handshake and its session,
+    /// no prompt. A message later finds a session ready. A start that fails
+    /// is tried again after half a minute.
+    async fn tick_standby(&self, _report: &mut TickReport) {
+        let Ok(records) = self.list() else { return };
+        let off = self.spaces_off();
+        let wanted: Vec<AgentRecord> = records
+            .into_iter()
+            .filter(|r| {
+                r.policy.standby
+                    && !r.paused
+                    && r.held_by.is_none()
+                    && !r.relaunch
+                    && r.sessions <= 1
+                    && !off.contains(&r.space)
+                    && r.setup != durable::setup::PENDING
+                    && r.setup != durable::setup::FAILED
+                    && !identity::is_external(r)
+            })
+            .collect();
+        for rec in wanted {
+            // Only when nothing is queued for it (a task starts the run with
+            // its own prompt) and no start is under way.
+            let busy_until = self.live.lock().await.standby_retry.get(&rec.name).copied();
+            if busy_until.is_some_and(|t| Instant::now() < t) {
+                continue;
+            }
+            let up = match rec.run_id.as_deref() {
+                None => false,
+                Some(run) => match self.cached_agents(&rec.space).await {
+                    Ok(agents) => agents
+                        .status(run)
+                        .await
+                        .map(|st| st.alive != Some(false) || st.status == RunStatus::Running)
+                        .unwrap_or(true),
+                    Err(_) => true,
+                },
+            };
+            if up {
+                continue;
+            }
+            let has_task = self
+                .thread_store(&rec.space)
+                .fold()
+                .map(|f| !f.open_tasks(Some(&rec.name)).is_empty())
+                .unwrap_or(false);
+            if has_task {
+                continue;
+            }
+            let Some(guard) = phases::ServingGuard::take(&self.dir, &rec.name) else {
+                continue;
+            };
+            self.live
+                .lock()
+                .await
+                .standby_retry
+                .insert(rec.name.clone(), Instant::now() + Duration::from_secs(30));
+            let me = self.clone();
+            tokio::spawn(async move {
+                let _guard = guard;
+                match Box::pin(me.start_session(&rec, "", "standby", None)).await {
+                    Ok(d) => {
+                        me.live.lock().await.standby_retry.remove(&rec.name);
+                        tracing::info!(agent = %rec.name, run = %d.run_id, "standby run started");
+                    }
+                    Err(e) => tracing::warn!(agent = %rec.name, "standby run did not start: {e}"),
+                }
+            });
+        }
     }
 
     async fn tick_agent(&self, rec: AgentRecord, report: &mut TickReport) -> Result<()> {

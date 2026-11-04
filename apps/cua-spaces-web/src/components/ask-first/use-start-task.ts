@@ -3,10 +3,11 @@
 
 import { useNavigate, useRouter } from "@tanstack/react-router";
 
-import { firstMessage, newPendingId, threadOpAvailable, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type AgentMember, type HostStatus } from "@/bridge";
+import { firstMessage, newPendingId, useAgents, useBridge, useFeatureRecorder, useFirstSpaceOffers, useSpaces, type HostStatus } from "@/bridge";
+import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
-import { sendWithSummon } from "@/components/space-thread/summon";
 import { useConnectors } from "@/hooks/use-connectors";
+import { getDriver } from "@/lib/prepare/store";
 import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
 
 /** Task and Space pairs whose thread already has the task's job. */
@@ -36,26 +37,9 @@ export function useStartTask(): {
   // the job is its first message, @mentioning the agent (the same summon as the composer's).
   const { input: connectors } = useConnectors();
 
-  /** What summoning reads for `spaceId`: its agents now and this device's connectors. */
-  const summonInput = async (spaceId: string) => {
-    const members = ((await host!.call("thread.members", { spaceId }).catch(() => null))?.members ?? []) as AgentMember[];
-    return { members: members.map((m) => ({ handle: m.name, harness: m.harness, label: m.name })), people: [], canAdd: true, connectors };
-  };
-  const send = (spaceId: string, input: Awaited<ReturnType<typeof summonInput>>) => (text: string) =>
-    sendWithSummon({ core, data: host!, spaceId, input, text, post: (t) => host!.call("thread.post", { spaceId, text: t }) });
-  const canSummon = () => !!host && threadOpAvailable(host.mode, "thread.agentAdd");
+  const { summonInput, send, summonIn, canSummon } = useSummonIn();
 
-  /** The job as the Space's first message, through the summon; false when this agent can't join a Space. */
-  const summonIn = async (spaceId: string, agent: string, prompt: string): Promise<boolean> => {
-    if (!canSummon()) return false;
-    const input = await summonInput(spaceId);
-    const first = firstMessage(core, input, agent, prompt);
-    if (!first?.handle) return false;
-    await send(spaceId, input)(first.text);
-    return true;
-  };
-
-  const run = (id: string, target: TaskTarget, place?: { pendingId?: string; queued?: boolean; onSpace?: (spaceId: string) => void; onCreated?: (spaceId: string) => void; onNoSpace?: () => void }) =>
+  const run = (id: string, target: TaskTarget, place?: { pendingId?: string; queued?: boolean; onCreated?: (spaceId: string) => void }) =>
     void (async () => {
       try {
         let spaceId = target.kind === "space" ? target.spaceId : null;
@@ -64,7 +48,6 @@ export function useStartTask(): {
           spaceId = hostSpaceId(status);
           if (!spaceId) throw new Error(HOST_NOT_SHARED);
           updateAskTask(id, { spaceId, onHost: true });
-          place?.onSpace?.(spaceId);
         }
         if (!spaceId) {
           const os = target.kind === "create" ? target.os : "linux";
@@ -98,17 +81,27 @@ export function useStartTask(): {
         updateAskTask(id, { runId: started.run_id });
       } catch (e) {
         updateAskTask(id, { error: e instanceof Error ? e.message : String(e), pendingId: null });
-        // No Space to show it in (this Mac isn't shared): its conversation page says why.
-        if (!askTask(id)?.spaceId) place?.onNoSpace?.();
       }
     })();
 
   return {
     start: ({ prompt, agent, where }) => {
       const target = taskTarget(where);
+      // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
+      // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
+      const preparing = getDriver();
+      const prep = preparing?.state;
+      if (preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux") {
+        const spaceId = prep.homeSpaceId;
+        const task = addAskTask({ prompt: prompt.trim(), agent, os: "linux", spaceId, pendingId: spaceId ? null : prep.pendingId, onHost: false });
+        record("ask_first_task_started");
+        preparing.send({ id: task.id, text: prompt.trim(), agent });
+        void navigate({ to: "/spaces/$spaceId", params: { spaceId: spaceId ?? prep.pendingId! } });
+        return;
+      }
       const task = addAskTask({ prompt: prompt.trim(), agent, os: whereOs(where), spaceId: target.kind === "space" ? target.spaceId : null, onHost: target.kind === "host" });
       record("ask_first_task_started");
-      // Straight to the Space: the one picked, the one being made (its page follows the create), or this Mac's.
+      // Straight to the Space: the one picked or the one being made (its page follows the create); this Mac opens the task's page.
       const go = (spaceId: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } });
       if (target.kind === "space") {
         run(task.id, target, {});
@@ -125,7 +118,13 @@ export function useStartTask(): {
         run(task.id, target, { pendingId, onCreated, queued: Boolean(first?.handle) });
         go(pendingId);
       } else {
-        run(task.id, target, { onSpace: go, onNoSpace: () => void navigate({ to: "/home/$taskId", params: { taskId: task.id } }) });
+        // This Mac's own Space id (`relay:<machine>`) is not in the Spaces list: the roster
+        // swaps it for the `this-mac` row, so `/spaces/relay:<machine>` says "This Space isn't
+        // here" (trycua/cua#6363). The task's page is where this Mac's conversation lives, and
+        // it also says why when the start fails. No `place`: nothing summons in a Space page
+        // the person can't open; the run starts straight from the task.
+        run(task.id, target);
+        void navigate({ to: "/home/$taskId", params: { taskId: task.id } });
       }
     },
     retry: (task, where) => {

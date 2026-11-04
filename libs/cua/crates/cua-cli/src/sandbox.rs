@@ -2925,6 +2925,9 @@ async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>,
     } else {
         match cua.sandboxes().get(name.to_string()).await {
             Err(CuaError::NotFound(_)) => None,
+            // Inside a Space, the spawn channel serves Spaces and not the
+            // sandbox API: a child is found among the Space's own children.
+            Err(CuaError::Unsupported(_)) if cua_daemon::client::spawn_channel().is_some() => None,
             _ => return Ok(None),
         }
     };
@@ -3583,11 +3586,18 @@ pub async fn viewer_link(
     files_root: Option<String>,
 ) -> Result<cua_sdk::ViewerLink, CuaError> {
     let sandbox = sandbox_with_token(cua, name).await?;
-    sandbox
+    // The Space's clipboard setting (`cua spaces set --clipboard`), under
+    // Secure Spaces: `off` asks the viewer ticket for no clipboard, and the
+    // page gets the word (`view` only while you're viewing, or `ask`).
+    // Without the experiment the page keeps the clipboard in sync both ways,
+    // as it always did.
+    let clipboard = space_clipboard(cua, name).await;
+    let mut link = sandbox
         .viewer_url(Some(cua_sdk::ViewerOptions {
             ttl_seconds: ttl_secs,
             view_only,
             files_root,
+            clipboard: clipboard.as_deref() != Some("off"),
             ..Default::default()
         }))
         .await
@@ -3596,7 +3606,32 @@ pub async fn viewer_link(
                 "{m}. The viewer needs cua-spacesd in the sandbox; for an image that serves its own display page pass --service NAME"
             )),
             other => other,
-        })
+        })?;
+    match clipboard.as_deref() {
+        Some("ask") => link.url.push_str("&clipboard=ask"),
+        Some("viewing") => link.url.push_str("&clipboard=view"),
+        _ => {}
+    }
+    Ok(link)
+}
+
+/// The clipboard setting of the Space `name` under Secure Spaces (`viewing`,
+/// `ask` or `off`; `viewing` when it cannot be read). `None` without the
+/// experiment: the viewer then syncs as it always did.
+async fn space_clipboard(cua: &Arc<Cua>, name: &str) -> Option<String> {
+    if cua_vmm::network::Mode::from_env() != cua_vmm::network::Mode::Secure {
+        return None;
+    }
+    let local = format!("local:{name}");
+    Some(match cua.spaces().list().await {
+        Ok(all) => all
+            .into_iter()
+            .find(|s| s.id == name || s.id == local || s.name == name)
+            .map(|s| s.clipboard)
+            .filter(|c| matches!(c.as_str(), "ask" | "off"))
+            .unwrap_or_else(|| "viewing".into()),
+        Err(_) => "viewing".into(),
+    })
 }
 
 /// A browser URL for a web service of the sandbox (no credentials): the
@@ -4260,7 +4295,10 @@ mod tests {
             r("python:3.12", Some("slim")),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |x: &str| cua_image::catalog::find(x).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |x: &str| {
+            cua_image::catalog::find(x).is_none_or(|e| e.published || e.derived_from.is_some())
+        };
         for (got, want, os) in [
             (
                 r("linux", Some("slim")),

@@ -81,6 +81,10 @@ pub(crate) struct Shared {
     /// cua-spacesd).
     #[cfg(feature = "spaces")]
     pub host_spaces: Arc<cua_spaces::host_spaces::HostSpacesServer>,
+    /// Child Spaces (the spawn capabilities this host mints); `None` when
+    /// the home has no room for them.
+    #[cfg(feature = "spaces")]
+    pub children: Option<Arc<crate::children::Children>>,
 }
 
 /// Counts a request as in flight until dropped.
@@ -123,6 +127,10 @@ fn unix_now() -> u64 {
 /// How often the daemon checks whether the built-in Linux runtime VM runs
 /// with no Linux Space in it.
 const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
+/// How often exits and published host ports are checked against each
+/// Space's settings.
+#[cfg(feature = "spaces")]
+const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -566,9 +574,19 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));
+    #[cfg(feature = "spaces")]
+    let children = match crate::children::Children::open(runtime.spaces().home_dir()) {
+        Ok(c) => Some(Arc::new(c)),
+        Err(e) => {
+            tracing::warn!(error = %e, "child Spaces are unavailable in this daemon");
+            None
+        }
+    };
     let shared = Arc::new(Shared {
         #[cfg(feature = "spaces")]
         host_spaces,
+        #[cfg(feature = "spaces")]
+        children,
         runtime,
         token: config.token.clone(),
         info: Mutex::new(pb::GetInfoResponse {
@@ -676,6 +694,18 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.shutdown.subscribe(),
         )));
     }
+    // VMs and containers failed Space creates left, holding this
+    // machine's memory and vCPUs against every later create.
+    #[cfg(feature = "spaces")]
+    if std::env::var(crate::space_orphans::ENV_SWEEP).as_deref() != Ok("0")
+        && let Ok(vmm) = shared.runtime.vmm().cloned()
+    {
+        tasks.push(tokio::spawn(crate::space_orphans::sweep_loop(
+            crate::cua_home(),
+            vmm,
+            shared.shutdown.subscribe(),
+        )));
+    }
     // The built-in Linux runtime VM holds the memory its Spaces used until
     // it stops: stop it once idle, also when this daemon started after the
     // last Space was gone.
@@ -691,12 +721,62 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             }
         }));
     }
+    // The open-file guard: warns and heals before "Too many open files"
+    // takes the Keyvault, agents and Space calls down together.
+    if let Some(every) = crate::fd_guard::interval() {
+        #[cfg(feature = "spaces")]
+        let shed: crate::fd_guard::Shed = {
+            let runtime = shared.runtime.clone();
+            std::sync::Arc::new(move || {
+                let runtime = runtime.clone();
+                Box::pin(async move { runtime.spaces().shed_mesh_forwards().await })
+            })
+        };
+        #[cfg(not(feature = "spaces"))]
+        let shed: crate::fd_guard::Shed = std::sync::Arc::new(|| Box::pin(async { 0 }));
+        tasks.push(tokio::spawn(crate::fd_guard::run(
+            every,
+            shed,
+            shared.shutdown.subscribe(),
+        )));
+    }
     if std::env::var(crate::maintenance::ENV_DAEMON_MAINTENANCE).as_deref() != Ok("0") {
         tasks.push(tokio::spawn(maintenance_loop(
             shared.clone(),
             shared.shutdown.subscribe(),
         )));
         tasks.push(tokio::spawn(repo_cache_loop(shared.shutdown.subscribe())));
+    }
+    // Child Spaces: the spawn channel of each running Space with children
+    // on, and no capability left for a Space that is gone.
+    #[cfg(feature = "spaces")]
+    tasks.push(crate::children::bridge::spawn(
+        shared.clone(),
+        shared.shutdown.subscribe(),
+    ));
+    // Exits ("Exit through") and the host's ports at `localhost`: kept in
+    // line with each Space's settings, re-attached after a Space or its
+    // exit restarts. Part of Secure Spaces; a Space whose exit isn't
+    // running stays closed (it fails closed).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            loop {
+                if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+                    // A shutdown never waits for a pass that is still working.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = rt.spaces().reconcile_network() => {}
+                    }
+                }
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
+                }
+            }
+        }));
     }
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]
@@ -1038,7 +1118,7 @@ fn unauthorized(req: &Request<AxumBody>) -> Response<AxumBody> {
 // ------------------------------------------------------------------ services
 
 #[derive(Clone)]
-pub(crate) struct Svc(pub(crate) Arc<Shared>);
+pub struct Svc(pub(crate) Arc<Shared>);
 
 impl Svc {
     pub(crate) fn rt(&self) -> &Runtime {
@@ -1844,5 +1924,30 @@ impl Shared {
             .get(ticket)
             .filter(|b| b.expires > SystemTime::now())
             .cloned()
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+impl Shared {
+    /// A daemon's shared state without its listeners, for tests of what
+    /// its services answer.
+    pub(crate) fn for_tests(runtime: Runtime) -> Arc<Self> {
+        let host_spaces = cua_spaces::host_spaces::HostSpacesServer::new(runtime.spaces().clone());
+        let children = crate::children::Children::open(runtime.spaces().home_dir())
+            .ok()
+            .map(Arc::new);
+        let (tx, _) = watch::channel(false);
+        Arc::new(Shared {
+            host_spaces,
+            children,
+            runtime,
+            token: "owner-token".into(),
+            info: Mutex::new(pb::GetInfoResponse::default()),
+            bridges: Mutex::new(HashMap::new()),
+            bridge_ttl: Duration::from_secs(60),
+            shutdown: tx,
+            inflight: Default::default(),
+            last_activity: std::sync::atomic::AtomicU64::new(0),
+        })
     }
 }

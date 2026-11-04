@@ -3,7 +3,7 @@
 
 // The first run's saved state (the SwiftUI app's OnboardingModel completed,
 // finish and restart): the same onboarding.json, and "Show again".
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,5 +44,31 @@ describe("the first run's state", () => {
     expect(JSON.parse(readFileSync(s.file, "utf8")).completed).toBe(true);
     s.finish("client");
     expect(s.read().completed).toBe(true);
+  });
+
+  it("Reset & Show forgets the saved first run, and only that file, as the core's plan lists", () => {
+    const s = store();
+    s.finish("host");
+    const beside = path.join(path.dirname(s.file), "checklist.json");
+    writeFileSync(beside, "{}");
+    let told = 0;
+    s.subscribe(() => told++);
+    s.restart();
+    s.reset();
+    expect(existsSync(s.file)).toBe(false);
+    expect(existsSync(beside)).toBe(true);
+    expect(s.read()).toEqual({ completed: false, mode: "client" });
+    expect(told).toBe(2);
+    // Twice is the same as once, and a finish after it is saved as usual.
+    s.reset();
+    expect(s.read()).toEqual({ completed: false, mode: "client" });
+    s.finish("client");
+    expect(s.read()).toEqual({ completed: true, mode: "client" });
+    // The file it removes is the one the app core's reset plan names.
+    const plan = JSON.parse(
+      readFileSync(path.join(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/contracts/onboarding-reset.json"), "utf8"),
+    ) as { hostFiles: string[]; firstStep: string };
+    expect(plan.hostFiles).toEqual([path.basename(s.file)]);
+    expect(plan.firstStep).toBe("welcome");
   });
 });

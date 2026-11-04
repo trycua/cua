@@ -455,10 +455,10 @@ describe("<StreamSurface> native video", () => {
     posted = [];
   });
 
-  const mount = (props: { canStream?: boolean; children?: React.ReactNode } = {}) =>
+  const mount = (props: { canStream?: boolean; viewOnly?: boolean; children?: React.ReactNode } = {}) =>
     render(
       <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={noCore}>
-        <StreamSurface spaceId="sp-1" os="macos" canStream={props.canStream ?? true} previewText="Not reachable">
+        <StreamSurface spaceId="sp-1" os="macos" canStream={props.canStream ?? true} previewText="Not reachable" viewOnly={props.viewOnly}>
           {props.children}
         </StreamSurface>
       </BridgeProvider>,
@@ -506,6 +506,21 @@ describe("<StreamSurface> native video", () => {
 
     act(() => unmount());
     expect(posted.at(-1)).toEqual({ type: "surfaces", update: [], remove: [first.surfaceId] });
+  });
+
+  // CUA-3041: a teammate with Can view is told it is view only; the host is never asked to give the keys.
+  it("says view only for a viewer and never offers control", async () => {
+    hostDrawsVideo();
+    const { container, queryByText } = mount({ viewOnly: true });
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0];
+    if (!first) throw new Error("no surface update");
+    expect(first).toMatchObject({ interactive: false });
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector("[data-view-only]")?.textContent).toContain("View only");
+    act(() => hostEvent("video.focus", { surfaceId: first.surfaceId }));
+    expect(queryByText("Stop controlling")).toBeNull();
+    expect(container.querySelector("[data-video-focus]")).toBeNull();
   });
 
   // Regression: closing picture in picture showed "Could not connect to the

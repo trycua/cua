@@ -265,6 +265,10 @@ mod tests {
             created_at_unix: 0,
             egress: Default::default(),
             egress_enforced: None,
+            network: None,
+            tree: None,
+            clipboard: Default::default(),
+            volume_setting: Default::default(),
             sharing: None,
             volumes: Vec::new(),
         }

@@ -678,9 +678,10 @@ impl Spaces {
                 "nothing here can ask you to confirm; share from the Cua app or run `cua spaces share` in a terminal",
             )
         })?;
+        let label = self.space_label(&canonical);
         let reason = match role {
-            ShareRole::Viewer => format!("Let {who} watch {canonical}"),
-            ShareRole::Editor => format!("Let {who} use {canonical} (see and control it)"),
+            ShareRole::Viewer => format!("let {who} watch \"{label}\""),
+            ShareRole::Editor => format!("let {who} use \"{label}\" (see and control it)"),
         };
         tokio::task::spawn_blocking(move || consent.confirm(&reason))
             .await
@@ -761,6 +762,17 @@ impl Spaces {
             });
         }
         self.shares_of(&canonical, &machine).await
+    }
+
+    /// The name people gave a Space, for prompts; the id only when it has
+    /// no name.
+    fn space_label(&self, canonical: &str) -> String {
+        self.list()
+            .ok()
+            .and_then(|l| l.into_iter().find(|i| i.id == canonical))
+            .map(|i| i.shown_name().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| canonical.to_string())
     }
 
     /// The consent prompt, run off the async runtime.
@@ -854,12 +866,16 @@ impl Spaces {
             .filter(|o| !o.is_empty())
             .unwrap_or_default();
         let label = listed.map(|i| i.name).unwrap_or_default();
+        let space_label = self.space_label(&canonical);
         self.confirm_share(match role {
             ShareRole::Viewer => {
-                format!("Let every member of team {} watch {canonical}", org.label())
+                format!(
+                    "let every member of team {} watch \"{space_label}\"",
+                    org.label()
+                )
             }
             ShareRole::Editor => format!(
-                "Let every member of team {} use {canonical} (see and control it)",
+                "let every member of team {} use \"{space_label}\" (see and control it)",
                 org.label()
             ),
         })

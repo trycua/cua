@@ -1810,6 +1810,83 @@ mod tests {
         }
     }
 
+    /// A Mac that can't run virtual machines is refused by the daemon's
+    /// preflight with a plain sentence (`MAC_UNSUPPORTED`, or the built-in
+    /// runtime's identical one). That ends a create like any failure, so it
+    /// counts: `cua_space_create` with outcome `error`, `error_kind`
+    /// `virtualization_unavailable`, failed_step `check_host`, sent at once
+    /// (a lasting cause is never retried), and through the usage-data switch.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn a_mac_that_cannot_run_vms_sends_virtualization_unavailable() {
+        use crate::spaces::creating::reduce;
+        for (os, kind) in [
+            (SpaceOs::Macos, SpaceKind::Vm),
+            (SpaceOs::Linux, SpaceKind::Container),
+        ] {
+            let mut st = reduce(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    id: "pending:a".into(),
+                    name: "my-private-space".into(),
+                    os,
+                    provider: SpaceProvider::Local,
+                    now: 1_000,
+                    image: None,
+                    kind: Some(kind),
+                    host_arch: None,
+                    gpu: false,
+                    host: None,
+                    host_name: None,
+                },
+            );
+            st.pending[0].phase = "preparing".into();
+            let signals = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: format!(
+                        "local runtime: {}",
+                        cua_create_failure::preflight::MAC_UNSUPPORTED
+                    ),
+                    error_variant: "Runtime".into(),
+                    now: Some(2_000),
+                },
+                2_000,
+            );
+            assert_eq!(signals.len(), 1, "sent at once, not retried");
+            let home = tempfile::tempdir().unwrap();
+            let sink = std::sync::Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(|k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    _ => None,
+                })
+                .home(home.path())
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            assert_eq!(record(&t, &signals), 1);
+            t.flush(std::time::Duration::from_secs(2));
+            let events = sink.events();
+            let create = events
+                .iter()
+                .find(|e| e["event"] == "cua_space_create")
+                .expect("cua_space_create was sent");
+            let props = &create["properties"];
+            assert_eq!(props["outcome"], "error");
+            assert_eq!(props["error_kind"], "virtualization_unavailable");
+            assert_eq!(props["failed_phase"], "preparing");
+            assert_eq!(props["failed_step"], "check_host");
+            assert_eq!(props["error_subclass"], "none");
+            // Fixed words only.
+            let text = serde_json::to_string(&events).unwrap().to_lowercase();
+            assert!(!text.contains("private") && !text.contains("virtual machine"));
+        }
+    }
+
     #[test]
     fn a_retried_create_counts_once_with_its_final_outcome() {
         use crate::spaces::creating::reduce;
@@ -2116,7 +2193,13 @@ mod tests {
                     "cua_volume".into(),
                     "your_cloud".into(),
                     "sharing".into(),
-                    "web_ui".into()
+                    "web_ui".into(),
+                    "secure_spaces".into(),
+                    "child_spaces".into(),
+                    "ask_first".into(),
+                    "ci_runners".into(),
+                    "tcp_shares".into(),
+                    "mobile".into()
                 ]
             }]
         );

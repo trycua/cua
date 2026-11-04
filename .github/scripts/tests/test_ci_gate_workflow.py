@@ -241,3 +241,53 @@ def test_gate_fails_on_a_merge_queue_ref_without_a_pull_request_number():
     completed = run_gate(DONE, queue_ref='refs/heads/gh-readonly-queue/main/odd')
     assert completed.returncode == 1
     assert 'build: pass' not in completed.stdout
+
+
+QUARANTINE_MOCK = MOCK.replace("    *) printf '999' ;;", """    *'--jq .run_attempt'*) cat "$STATE/attempt" ;;
+    *) printf '999' ;;""").replace("""    *'head_sha='*)""", """    *'head_sha='*)
+      if [[ -f "$STATE/reran" ]]; then printf '%s' "$ROWS_AFTER"; return; fi""") + '''
+gh() { if [[ "$*" == *rerun-failed-jobs* ]]; then touch "$STATE/reran"; echo 2 > "$STATE/attempt"; else return 1; fi; }
+'''
+
+
+def run_quarantine_gate(tmp_path, check, attempt='1', after='1\t11\tbuild\tsuccess\tcompleted'):
+    stub = tmp_path / 'flaky.py'
+    stub.write_text(f'import sys; sys.stdin.read(); print({check!r})\n')
+    (tmp_path / 'attempt').write_text(attempt)
+    return subprocess.run(
+        ['bash', '-e', '-c', QUARANTINE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
+        env={**os.environ, 'PR_SHA': 'abc', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+             'GITHUB_RUN_ID': '99', 'ROWS': '1\t11\tbuild\tfailure\tcompleted', 'ROWS_AFTER': after,
+             'JOBS': '5\tlinux-kvm (concurrent)', 'OLDER_JOBS': '', 'ROWS_DIR': '', 'STATE': str(tmp_path),
+             'FLAKY_PY': str(stub), 'QUARANTINE_FILE': 'q.json', 'MAX_SLEEPS': '12', 'MAX_SECONDS': str(10**9)},
+        capture_output=True, text=True, timeout=20,
+    )
+
+
+def test_gate_reruns_a_quarantined_flake_once_and_passes_when_it_passes(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'all')
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / 'reran').exists()
+    assert 'rerunning its failed jobs once' in done.stdout
+    assert done.stdout.strip().splitlines()[-1] == 'build: pass'
+
+
+def test_gate_does_not_fail_on_a_quarantined_flake_that_fails_again(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'all', after='1\t11\tbuild\tfailure\tcompleted')
+    assert done.returncode == 0, done.stderr
+    assert 'build: pass (quarantined flake' in done.stdout
+
+
+def test_gate_fails_a_failure_that_is_not_quarantined(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'none')
+    assert done.returncode == 1
+    assert not (tmp_path / 'reran').exists()
+    assert 'build: fail' in done.stdout
+
+
+def test_gate_reads_the_quarantine_list_from_the_base_commit():
+    steps = GATE['jobs']['ci-gate']['steps']
+    base = steps[0]['with']['sparse-checkout'].split()
+    assert '/.github/flaky/quarantine.json' in base and '/.github/scripts/flaky/flaky.py' in base
+    env = STEPS['Wait for every other workflow on the pull request head']['env']
+    assert env['FLAKY_PY'].startswith('base/') and env['QUARANTINE_FILE'].startswith('base/')

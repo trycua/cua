@@ -507,6 +507,9 @@ async fn a_revoked_device_fails_fast_with_the_reason() {
         static_auth(vec![("x-test-device".into(), "dev-c".into())]),
     );
     cfg.name = "c".into();
+    // The reconnect after the relay's close waits up to ~11 s (backoff plus
+    // the spread); the speed-up keeps that inside the deadline below.
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let client = Mesh::start(cfg).await.unwrap();
     client.wait_ready(READY).await.unwrap();
     serve_echo(&machine);
@@ -735,6 +738,36 @@ async fn the_control_socket_makes_forwards_that_live_with_the_connection() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(gone, "the forward outlived its control connection");
+    server.abort();
+}
+
+/// The control socket reports how traffic reaches each other machine and
+/// takes a path pin; lifting the pin goes back to automatic.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_control_socket_reports_paths_and_takes_a_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let _b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    let sock = dir.path().join("host").join(cua_mesh::gang::CONTROL_SOCKET);
+    let server = cua_mesh::gang::serve_control(a.clone(), &sock).unwrap();
+    let mut ctl = cua_mesh::gang::ControlClient::connect(&sock).await.unwrap();
+
+    let (prefer, _paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Auto);
+
+    ctl.set_prefer(cua_mesh::Prefer::Relay).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Relay);
+    let (prefer, paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Relay);
+    for p in paths {
+        assert_ne!(p.kind, "lan", "a relay pin keeps traffic off direct paths");
+    }
+
+    ctl.set_prefer(cua_mesh::Prefer::Auto).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Auto);
     server.abort();
 }
 

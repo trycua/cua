@@ -629,7 +629,8 @@ extension Server {
                 nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false,
-                vncPolicy: vncPolicy
+                vncPolicy: vncPolicy,
+                forwards: request.forwards ?? []
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -1106,7 +1107,8 @@ extension Server {
         nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled,
+        forwards: [UInt16] = []
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -1142,6 +1144,7 @@ extension Server {
                     networkMode: networkMode,
                     clipboard: clipboard,
                     vncPolicy: vncPolicy,
+                    forwards: forwards,
                     telemetryTransport: .http
                 )
                 Logger.info("VM run ended in background task", metadata: ["name": name])

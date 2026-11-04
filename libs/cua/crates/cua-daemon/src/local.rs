@@ -38,7 +38,7 @@ use cua_vmm::{
     VmmError,
     auto::{self, DoctorReport},
     container::{ContainerConfig, ContainerRuntime},
-    containerization::ContainerizationRuntime,
+    containerization::{ContainerizationConfig, ContainerizationRuntime},
     lume::LumeRuntime,
     managed::{self, LinuxSource},
     microvm::{MicroVmConfig, MicroVmRuntime},
@@ -621,7 +621,13 @@ impl VmmLocal {
                 resolver: Some(cua_image::RootfsLayerResolver::shared()),
                 ..MicroVmConfig::default()
             })),
-            apple: Arc::new(ContainerizationRuntime::with_defaults()),
+            // Images come through the shared puller (the host's registry
+            // credentials, mirrors and layer cache), then load into
+            // Apple's store.
+            apple: Arc::new(ContainerizationRuntime::new(ContainerizationConfig {
+                resolver: Some(cua_image::RootfsLayerResolver::shared()),
+                ..ContainerizationConfig::default()
+            })),
             pool: std::sync::OnceLock::new(),
             named_state: Default::default(),
             resolved: Default::default(),
@@ -983,6 +989,100 @@ impl VmmLocal {
     /// The QEMU backend.
     pub fn qemu(&self) -> &Arc<QemuRuntime> {
         &self.qemu
+    }
+
+    /// Every instance Cua made on this machine, in every local runtime,
+    /// for [`crate::space_orphans`]: QEMU VMs and microVMs in their own
+    /// state directories, containers with Cua's label, Apple
+    /// Containerization containers Cua created, and macOS VMs Cua recorded
+    /// as its own (`vmm/lume/owned`, never any other VM Lume has). Bases,
+    /// checkpoints and warm-pool members are left out. Never installs,
+    /// boots or starts a runtime to answer: one that is down runs nothing.
+    /// Any runtime that is up but does not answer fails the whole listing,
+    /// so a partial view never looks like "nothing there".
+    #[cfg(feature = "spaces")]
+    pub async fn cua_instances(
+        &self,
+    ) -> std::result::Result<Vec<crate::space_orphans::Found>, String> {
+        let mut out = Vec::new();
+        let mut add = |kind: BackendKind,
+                       list: std::result::Result<Vec<cua_vmm::InstanceSummary>, VmmError>|
+         -> std::result::Result<(), String> {
+            let rows = list.map_err(|e| format!("{}: {e}", kind.as_str()))?;
+            out.extend(
+                rows.into_iter()
+                    .filter(|s| !cua_vmm::is_pool_member(&s.name))
+                    .map(|s| crate::space_orphans::Found {
+                        name: s.name,
+                        runtime: kind.as_str().to_string(),
+                    }),
+            );
+            Ok(())
+        };
+        if let Some(rt) = self.container_if_up().await {
+            add(BackendKind::Container, rt.list().await)?;
+        }
+        add(BackendKind::Qemu, self.qemu.instances())?;
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            let kind = if cfg!(target_os = "macos") {
+                BackendKind::Vz
+            } else {
+                BackendKind::Firecracker
+            };
+            add(kind, self.microvm.list().await)?;
+        }
+        if cfg!(target_os = "macos") {
+            add(BackendKind::Containerization, self.apple.list().await)?;
+            let owned = cua_vmm::lume::OwnedVms::default();
+            let ours: std::collections::HashSet<String> = owned
+                .list()
+                .into_iter()
+                .filter(|v| v.kind == cua_vmm::lume::OwnedKind::Instance)
+                .map(|v| v.name)
+                .collect();
+            // Asked only when Cua recorded a macOS VM of its own: listing
+            // starts `lume serve`.
+            if !ours.is_empty() {
+                let listed = self.lume.list().await.map(|rows| {
+                    rows.into_iter()
+                        .filter(|r| ours.contains(&r.name))
+                        .collect::<Vec<_>>()
+                });
+                add(BackendKind::Lume, listed)?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Deletes `name` on the runtime `runtime` (a [`BackendKind`] word, as
+    /// [`VmmLocal::cua_instances`] reports it) only: never another
+    /// runtime's instance of the same name.
+    pub async fn delete_on(&self, runtime: &str, name: &str) -> std::result::Result<(), String> {
+        let kind = [
+            BackendKind::Container,
+            BackendKind::Qemu,
+            BackendKind::Vz,
+            BackendKind::Firecracker,
+            BackendKind::Containerization,
+            BackendKind::Lume,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == runtime)
+        .ok_or_else(|| format!("unknown runtime {runtime}"))?;
+        let rt = match kind {
+            // Never boot the built-in Linux runtime to delete: it was up
+            // when the container was listed.
+            BackendKind::Container => self
+                .container_if_up()
+                .await
+                .map(|r| r as Arc<dyn VmmRuntime>)
+                .ok_or_else(|| "the container engine is not running".to_string())?,
+            k => self.runtime(k).await.map_err(|e| e.to_string())?,
+        };
+        match rt.delete(name).await {
+            Ok(()) | Err(VmmError::NotFound(_)) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     async fn runtime(
@@ -1705,6 +1805,8 @@ impl VmmLocal {
         s.restrict_network = spec.restrict_network;
         s.forkable = spec.forkable;
         s.egress = spec.egress.clone();
+        s.network = spec.network.clone();
+        s.tree = spec.tree.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
         if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await
@@ -2059,6 +2161,23 @@ impl LocalRuntime for VmmLocal {
     async fn egress(&self, name: &str) -> RuntimeResult<cua_vmm::egress::EgressPolicy> {
         let (_, rt) = self.owner(name).await?;
         rt.egress(name).await.map_err(rt_err)
+    }
+
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        let (_, rt) = self.owner(name).await?;
+        rt.network_events(name).await.map_err(rt_err)
+    }
+
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let (_, rt) = self.owner(name).await?;
+        rt.set_network(name, settings).await.map_err(rt_err)
     }
 
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
@@ -2775,12 +2894,15 @@ async fn setup_with(
     } else {
         components.to_vec()
     };
-    let mut steps = Vec::new();
+    // Every name is checked before any installer runs, so a typo cannot
+    // leave a half-finished setup behind an error.
+    let mut kinds = Vec::new();
     for c in wanted {
         let kind = match c.as_str() {
             "qemu" => Some(BackendKind::Qemu),
             "lume" => Some(BackendKind::Lume),
             "container" | "runsc" | "gvisor" => Some(BackendKind::Container),
+            "managed" => Some(BackendKind::Managed),
             "firecracker" => Some(BackendKind::Firecracker),
             "microvm" | "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
             "microvm" => Some(BackendKind::Firecracker),
@@ -2790,6 +2912,10 @@ async fn setup_with(
         let Some(kind) = kind else {
             return Err(Error::InvalidArgument(format!("unknown component {c:?}")));
         };
+        kinds.push((c, kind));
+    }
+    let mut steps = Vec::new();
+    for (c, kind) in kinds {
         let b = report.backend(kind).cloned();
         let plan = b
             .as_ref()
@@ -2808,6 +2934,16 @@ async fn setup_with(
                 name: c,
                 status: CheckStatus::Installable as i32,
                 detail: format!("would: {plan}"),
+            });
+            continue;
+        }
+        if kind == BackendKind::Managed {
+            // The built-in Linux runtime downloads and boots with the first
+            // Linux Space, so there is nothing to run ahead of it.
+            steps.push(SetupStep {
+                name: c,
+                status: CheckStatus::Ok as i32,
+                detail: format!("set up when the first Linux Space is created ({plan})"),
             });
             continue;
         }
@@ -2874,7 +3010,12 @@ pub(crate) fn headless_command_line() -> Vec<String> {
         "/bin/sh".into(),
         "-c".into(),
         concat!(
-            "if [ -z \"$CUA_ENV_TOKEN\" ]; then ",
+            // A guest that awaits its token file (a microVM's init writes it,
+            // and rewrites it at every boot) must not also be handed the
+            // token in the environment: cua-spacesd refuses both ("--await-token-file
+            // takes the token only from --token-file"), so a restarted microVM,
+            // whose token file already held the token, never came back.
+            "if [ \"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1 ] && [ -z \"$CUA_ENV_TOKEN\" ]; then ",
             "for f in /run/cua/env-token /etc/cua/env-token; do ",
             "if [ -r \"$f\" ]; then CUA_ENV_TOKEN=$(tr -d '\\r\\n' < \"$f\"); export CUA_ENV_TOKEN; break; fi; ",
             "done; fi; ",
@@ -2886,8 +3027,8 @@ pub(crate) fn headless_command_line() -> Vec<String> {
 
 /// `cua runtime setup firecracker`: the pinned Firecracker release into
 /// `~/.cua/bin` and the guest kernel into the microVM cache.
-/// macOS microVMs: the pinned guest kernel and gvproxy (`cua-vz` and the
-/// guest init ship with cua).
+/// macOS microVMs: the pinned guest kernel and gvproxy, or the network
+/// gateway under Secure Spaces (`cua-vz` and the guest init ship with cua).
 async fn install_vz() -> std::result::Result<(), VmmError> {
     use cua_vmm::microvm::{assets, vz};
     if let Some(why) = vz::unsupported_reason() {
@@ -2900,7 +3041,19 @@ async fn install_vz() -> std::result::Result<(), VmmError> {
              aarch64-unknown-linux-musl cua-microvm-init in ~/.cua/bin)",
         ));
     }
-    vz::ensure_gvproxy().await?;
+    // Secure Spaces runs the guests' network behind the Cua network gateway
+    // (it ships next to `cua`); without the experiment it is gvproxy,
+    // downloaded here.
+    if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+        if cua_vmm::netgw::bin().is_none() {
+            return Err(VmmError::missing(
+                "cua-netgw",
+                "it ships next to `cua` (a cua release, or libs/cua/netgw/build.sh into ~/.cua/bin)",
+            ));
+        }
+    } else {
+        vz::ensure_gvproxy().await?;
+    }
     assets::ensure_kernel(&MicroVmConfig::default().root).await?;
     Ok(())
 }
@@ -3157,6 +3310,51 @@ mod tests {
             super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
             None
         );
+    }
+
+    /// A guest that awaits its token file (every microVM whose token is
+    /// delivered later) is never also handed the token through the
+    /// environment: cua-spacesd refuses both, and a restarted microVM, whose
+    /// token file already held the token, never came back.
+    #[cfg(unix)]
+    #[test]
+    fn a_headless_guest_that_awaits_its_token_file_is_not_given_the_token_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let cmd = headless_command_line();
+        let script = &cmd[2];
+        assert!(
+            script.contains("\"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1"),
+            "the token files are read only when the guest does not await its own: {script}"
+        );
+        let dir = std::env::temp_dir().join(format!("cua-headless-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stub = dir.join("spacesd");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho \"token=[$CUA_ENV_TOKEN] await=[$CUA_ENV_AWAIT_TOKEN_FILE]\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |env: &[(&str, &str)]| {
+            let mut c = std::process::Command::new(&cmd[0]);
+            c.args(&cmd[1..])
+                .env_remove("CUA_ENV_TOKEN")
+                .env_remove("CUA_ENV_AWAIT_TOKEN_FILE")
+                .env("CUA_SPACESD_BIN", &stub);
+            for (k, v) in env {
+                c.env(k, v);
+            }
+            String::from_utf8_lossy(&c.output().unwrap().stdout)
+                .trim()
+                .to_string()
+        };
+        assert_eq!(
+            run(&[("CUA_ENV_AWAIT_TOKEN_FILE", "1")]),
+            "token=[] await=[1]"
+        );
+        // A token the runtime put in the environment still passes through.
+        assert_eq!(run(&[("CUA_ENV_TOKEN", "abc")]), "token=[abc] await=[]");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3815,6 +4013,37 @@ mod tests {
             setup_steps(qemu_report(false), &["qemu"], true, true).await,
             steps(&[("qemu", Installable), ("kvm", Ok)])
         );
+    }
+
+    #[tokio::test]
+    async fn the_default_set_names_only_components_setup_knows() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        let mut report = qemu_report(true);
+        report.backends.push(cua_vmm::auto::BackendStatus {
+            backend: super::BackendKind::Managed,
+            ready: false,
+            provisionable: true,
+            detail: String::new(),
+            missing: vec![],
+            provisioning: vec!["download the built-in Linux runtime".into()],
+        });
+        // `cua runtime setup` with no components, as doctor lists them.
+        assert_eq!(
+            setup_steps(report.clone(), &[], true, true).await,
+            steps(&[("managed", Installable)])
+        );
+        assert_eq!(
+            setup_steps(report.clone(), &[], false, true).await,
+            steps(&[("managed", Ok)])
+        );
+        // A bad name stops before any installer runs.
+        let components = vec!["qemu".to_string(), "nope".to_string()];
+        let install = async || -> cua_vmm::Result<()> { panic!("installer ran") };
+        let kvm = async |_| kvm_step();
+        let err = super::setup_with(report, &components, false, &install, &install, kvm)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown component"), "{err}");
     }
 
     #[tokio::test]

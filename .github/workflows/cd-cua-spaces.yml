@@ -1843,13 +1843,15 @@ jobs:
           MAC: ${{ needs.electron-mac.result }}
           WINDOWS: ${{ needs.electron-plan.outputs.windows }}
           LINUX: ${{ needs.electron-plan.outputs.linux }}
+          PRERELEASE: ${{ needs.electron-plan.outputs.prerelease }}
         run: |
           set -euo pipefail
           tag="cua-spaces-v${VERSION}"
           # build-macos normally made the draft; a hand-pushed tag may race it.
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --prerelease --verify-tag \
+            pre=(); [ "$PRERELEASE" = true ] && pre=(--prerelease)
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft ${pre[@]+"${pre[@]}"} --verify-tag \
               --title "Cua Spaces v${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md" \
               || gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
@@ -2237,7 +2239,13 @@ jobs:
           set -euo pipefail
           flags=(--draft=false)
           # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          # A stable release must not stay a prerelease: the Electron job can create the
+          # draft first (as a prerelease), and the site and installers skip prereleases.
+          if [ "$PRERELEASE" = true ]; then
+            flags+=(--prerelease --latest=false)
+          else
+            flags+=(--prerelease=false)
+          fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".
@@ -2323,6 +2331,11 @@ jobs:
         with:
           name: sparkle-appcast
           path: sparkle
+      # Every item on its channel before the feed goes live: a prerelease
+      # without <sparkle:channel> would update every Stable Mac (CUA-3131).
+      - name: Check the Sparkle appcast channels
+        if: needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'
+        run: python3 .github/scripts/sparkle_feed.py check sparkle/cua-spaces-appcast.xml
       - name: Upload the Sparkle appcast to cua-spaces-latest
         if: needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'
         env:
@@ -2380,3 +2393,40 @@ jobs:
           gh release upload cua-install-latest assets/release-artifacts.json \
             stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # CUA-3128: a stable release must never ship without cua.ai following it.
+  # Waits up to 15 minutes for the download page, the three download links
+  # and the in-app updater feeds to serve this version; fails loudly if not.
+  # A feed for a platform a patch release skipped keeps its previous version.
+  site-follows-release:
+    name: cua.ai serves the new release
+    needs: [installer-manifest, electron-plan]
+    if: >-
+      !cancelled() && needs.installer-manifest.result == 'success'
+      && startsWith(github.ref, 'refs/tags/cua-spaces-v')
+      && github.repository == 'trycua/cua'
+      && needs.electron-plan.outputs.prerelease != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check cua.ai/download, the download links and the updater feeds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.electron-plan.outputs.version }}
+          MACOS: ${{ needs.electron-plan.outputs.macos }}
+          WINDOWS: ${{ needs.electron-plan.outputs.windows }}
+          LINUX: ${{ needs.electron-plan.outputs.linux }}
+        run: |
+          set -euo pipefail
+          feeds=()
+          [ "$MACOS" = true ] && feeds+=(sparkle)
+          [ "$WINDOWS" = true ] && feeds+=(electron-win)
+          [ "$LINUX" = true ] && feeds+=(electron-linux)
+          python3 .github/scripts/check_spaces_site_follows_release.py \
+            --version "$VERSION" --timeout 900 --feeds "$(IFS=,; echo "${feeds[*]}")"

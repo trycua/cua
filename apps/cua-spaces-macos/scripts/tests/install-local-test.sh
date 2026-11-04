@@ -827,7 +827,7 @@ WEB_DIST="$FAKE_REPO/apps/cua-spaces-web/dist"
 check "the web UI is built as the release build does: pnpm install --ignore-workspace --frozen-lockfile, then pnpm build, in apps/cua-spaces-web" \
     '[ "$(cat "$WEB_LOG")" = "pnpm install --ignore-workspace --frozen-lockfile [in cua-spaces-web] CI=true
 pnpm build [in cua-spaces-web] CI=" ]'
-check "it is built before the Rust build (the quick one fails first)" '[ -s "$WEB_LOG" ] && [ -s "$CARGO_LOG" ]'
+check "it is built alongside the Rust build" '[ -s "$WEB_LOG" ] && [ -s "$CARGO_LOG" ]'
 check "the build is told where the web UI is, and the installed app has it" \
     'grep >/dev/null "^webui=$WEB_DIST\$" "$BUILD_LOG" && [ -f "$LOCAL_APP/Contents/Resources/WebUI/index.html" ]'
 check "the signature covers the web UI (it verifies, deep and strict)" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
@@ -856,8 +856,8 @@ check "a CUA_WEBUI_DIST without an index.html stops with the same message" \
 reset_fixture
 ALL_BEFORE="$(snap_all)"
 run env SHIM_PNPM_BUILD_FAILS=1 "$FAKE_SCRIPTS/install-local.sh" --no-launch
-check "a failing web UI build stops the install, and nothing is built after it or installed" \
-    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "the web UI build failed" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+check "a failing web UI build stops the install: the app is not built or installed (cargo runs alongside it)" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "the web UI build failed" && [ ! -s "$BUILD_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 
 reset_fixture
 install

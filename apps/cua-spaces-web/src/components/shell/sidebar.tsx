@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
@@ -30,10 +31,13 @@ export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
   const { data: spaces, listStatus } = useSpaces();
   const { data: machines } = useMachines();
+  const { core } = useBridge();
   const notifications = useNotifications();
   // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
   // Spaces known so far.
   const { counted } = useListedSpaces(spaces);
+  // The home warming for Home's box is no "Making" item either: Home's own line says how it goes.
+  const warming = useHiddenSpaceIds(core);
   const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   // Machines waiting to be added show beside the item, so they are seen from every page.
   const { pending } = useMachinesAccount();
@@ -89,7 +93,7 @@ export function Sidebar() {
       {/* A spacer, not a wrapper pushed down: what appears at the foot (a tip, the account) grows
           upward without moving anything already drawn (CUA-1951). */}
       <div className="flex-1" />
-      <SidebarCreating spaces={spaces ?? []} />
+      <SidebarCreating spaces={(spaces ?? []).filter((s) => !warming.has(s.id))} />
       <SidebarTip />
       {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
       <ProBanner />
@@ -177,7 +181,14 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
   return (
     <div className={cn("mt-auto", footer.state === "signedIn" ? "px-2.5 pt-1 pb-2.5" : "border-t px-3 py-2.5")} data-signin={footer.state}>
       {unfinished ? (
-        <Link to="/onboarding" className="mb-2 block text-xs text-muted-foreground hover:text-foreground">
+        // A real button, not a small grey line: a new user who skipped the
+        // first run has to find it again (CUA-3063).
+        <Link
+          to="/onboarding"
+          data-finish-setup
+          className="mb-2 flex items-center gap-2 rounded-lg bg-accent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent/70"
+        >
+          <CuaKey size={18} />
           Finish setting up
         </Link>
       ) : null}

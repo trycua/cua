@@ -1860,6 +1860,9 @@ impl ToolRegistry {
         } else {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
+        let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
+            .then(|| crate::fast_path::wire::delta_target(&args))
+            .flatten();
         let mut result = match wait {
             Ok(wait) => {
                 crate::post_action_wait::scope(
@@ -1870,6 +1873,21 @@ impl ToolRegistry {
             }
             Err((message, structured)) => ToolResult::error(message).with_structured(structured),
         };
+        // Fast path `on` (CUA-3102): a direct action returns the window's
+        // delta in the same result, so the agent needs no separate re-read.
+        if let Some((pid, window_id)) = delta_target.filter(|_| result.is_error != Some(true)) {
+            let mut read = serde_json::json!({
+                "pid": pid,
+                "window_id": window_id,
+                "since": "latest",
+            });
+            if let Some(session) = session.as_deref() {
+                read["session"] = Value::String(session.to_owned());
+            }
+            let delta =
+                Box::pin(self.invoke_authorized("get_window_state", read, context, evidence)).await;
+            crate::fast_path::wire::attach_delta(&mut result, delta);
+        }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
@@ -4364,6 +4382,51 @@ mod runtime_isolation_tests {
                 .await;
             assert_eq!(result.is_error != Some(true), expected_allowed);
             assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
+    }
+
+    #[tokio::test]
+    async fn manifest_launch_reaches_the_platform_only_for_launchable_apps() {
+        const MANIFEST: &str = "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  apps:\n    - bundle_id: com.apple.TextEdit\n      launch: true\n    - bundle_id: com.apple.Preview\n      launch: false\nallow:\n  tools: [launch_app]\n";
+        // A loaded manifest narrows every mode, so the launch grant applies to
+        // standard and unrestricted runtimes as well as bounded ones.
+        for mode in [
+            PermissionMode::Bounded,
+            PermissionMode::Standard,
+            PermissionMode::Unrestricted,
+        ] {
+            for (bundle_id, expected_allowed) in [
+                ("com.apple.TextEdit", true),
+                ("com.apple.Preview", false),
+                ("com.apple.calculator", false),
+            ] {
+                let hits = Arc::new(AtomicUsize::new(0));
+                let registry = observation_registry_for("launch_app", None, hits.clone());
+                let context = manifest_context(mode, MANIFEST);
+                let result = registry
+                    .invoke_with_context(
+                        "launch_app",
+                        serde_json::json!({"bundle_id": bundle_id, "session": "review"}),
+                        context,
+                    )
+                    .await;
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    usize::from(expected_allowed),
+                    "{mode:?} {bundle_id}"
+                );
+                if expected_allowed {
+                    assert_ne!(result.is_error, Some(true));
+                } else {
+                    let structured = result.structured_content.unwrap();
+                    assert_eq!(structured["refusal"]["code"], "permission_denied");
+                    let expected = format!(
+                        "Permission denied: launch_app bundle_id '{bundle_id}' {}",
+                        "is outside the capability manifest"
+                    );
+                    assert_eq!(structured["refusal"]["message"], expected, "{mode:?}");
+                }
+            }
         }
     }
 

@@ -37,6 +37,16 @@
 //!   `bind` (a private or loopback address of this machine; default
 //!   loopback) is where the forward listens.
 //!
+//!   The same socket answers how traffic reaches each other machine and
+//!   takes a path pin (`cua mesh status`, `--prefer`):
+//!
+//!   ```text
+//!   -> {"status": {}}
+//!   <- {"prefer": "auto", "paths": [{"machine": "<id>", "name": "studio-mac", "kind": "lan", ...}]}
+//!   -> {"prefer": {"prefer": "lan"}}
+//!   <- {"prefer": "lan"}
+//!   ```
+//!
 //!   A forward lives until the requester closes its control connection
 //!   (or the node stops).
 
@@ -280,10 +290,60 @@ pub enum ControlRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bind: Option<std::net::IpAddr>,
     },
+    /// How traffic reaches each other machine now.
+    Status {},
+    /// Pins the path to every machine ([`crate::engine::Prefer`]).
+    Prefer {
+        /// The pin.
+        prefer: crate::engine::Prefer,
+    },
+}
+
+/// How traffic reaches one other machine ([`ControlRequest::Status`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MachinePath {
+    /// Its machine id.
+    #[serde(default)]
+    pub machine: String,
+    /// Its name.
+    pub name: String,
+    /// Online at the coordinator.
+    pub online: bool,
+    /// `lan`, `direct` or `relay`.
+    pub kind: String,
+    /// `direct <addr>` or `relay`.
+    pub path: String,
+    /// The direct path's round trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtt_ms: Option<f64>,
+    /// Why this path, in plain words.
+    pub why: String,
+    /// Path switches so far.
+    #[serde(default)]
+    pub switches: u64,
+}
+
+/// The machines of `status`, as [`MachinePath`]s.
+pub fn machine_paths(status: &crate::node::Status) -> Vec<MachinePath> {
+    status
+        .peers
+        .iter()
+        .filter(|p| p.kind == proto::NodeKind::Machine)
+        .map(|p| MachinePath {
+            machine: p.machine_id.clone().unwrap_or_default(),
+            name: p.name.clone(),
+            online: p.online,
+            kind: p.path_kind.clone(),
+            path: p.path.clone(),
+            rtt_ms: p.rtt_ms,
+            why: p.why.clone(),
+            switches: p.path_switches,
+        })
+        .collect()
 }
 
 /// A control reply.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ControlReply {
     /// Where to connect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -297,6 +357,12 @@ pub struct ControlReply {
     /// Why there is no forward.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The path pin (status and prefer requests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefer: Option<crate::engine::Prefer>,
+    /// How traffic reaches each other machine (status requests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<MachinePath>>,
 }
 
 /// `direct` or `relayed`.
@@ -383,6 +449,45 @@ impl ControlClient {
             (None, None) => Err("mesh control: an empty answer".into()),
         }
     }
+
+    /// One request, one reply.
+    async fn ask(&mut self, req: &ControlRequest) -> Result<ControlReply, String> {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+        let mut line = serde_json::to_string(req).map_err(|e| e.to_string())?;
+        line.push('\n');
+        self.stream
+            .get_mut()
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("mesh control: {e}"))?;
+        let mut reply = String::new();
+        let n = tokio::time::timeout(Duration::from_secs(10), self.stream.read_line(&mut reply))
+            .await
+            .map_err(|_| "mesh control: no answer".to_string())?
+            .map_err(|e| format!("mesh control: {e}"))?;
+        if n == 0 {
+            return Err("mesh control: the mesh node closed the connection".into());
+        }
+        let reply: ControlReply =
+            serde_json::from_str(reply.trim()).map_err(|e| format!("mesh control: {e}"))?;
+        match reply.error {
+            Some(e) => Err(e),
+            None => Ok(reply),
+        }
+    }
+
+    /// How traffic reaches each other machine now, and the pin.
+    pub async fn status(&mut self) -> Result<(crate::engine::Prefer, Vec<MachinePath>), String> {
+        let r = self.ask(&ControlRequest::Status {}).await?;
+        Ok((r.prefer.unwrap_or_default(), r.paths.unwrap_or_default()))
+    }
+
+    /// Pins the path to every machine (`auto` lifts the pin).
+    pub async fn set_prefer(&mut self, prefer: crate::engine::Prefer) -> Result<(), String> {
+        self.ask(&ControlRequest::Prefer { prefer })
+            .await
+            .map(|_| ())
+    }
 }
 
 /// Serves the control socket at `path` for `mesh` until the returned task
@@ -462,6 +567,22 @@ async fn control_session(mesh: Mesh, stream: tokio::net::UnixStream) {
                     ..Default::default()
                 },
             },
+            Ok(ControlRequest::Status {}) => {
+                let status = mesh.status();
+                ControlReply {
+                    prefer: Some(status.prefer),
+                    paths: Some(machine_paths(&status)),
+                    ..Default::default()
+                }
+            }
+            Ok(ControlRequest::Prefer { prefer }) => {
+                mesh.set_prefer(prefer);
+                tracing::info!(prefer = prefer.as_str(), "mesh path pin");
+                ControlReply {
+                    prefer: Some(prefer),
+                    ..Default::default()
+                }
+            }
             Err(e) => ControlReply {
                 error: Some(format!("bad request: {e}")),
                 ..Default::default()
@@ -519,6 +640,7 @@ pub async fn forward_on(
         path: path.as_ref().map(|p| path_word(p).to_owned()),
         peer: Some(peer.name.clone()),
         error: None,
+        ..ControlReply::default()
     };
     Ok((fwd, reply))
 }

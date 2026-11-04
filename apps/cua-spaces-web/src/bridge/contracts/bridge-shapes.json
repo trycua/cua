@@ -803,6 +803,369 @@
         "json"
       ]
     },
+    "CiConnectAnswer": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "waiting",
+            "connected",
+            "sign_in",
+            "failed"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "login": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "CiGithub": {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "login": {
+          "type": "string"
+        },
+        "choose_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connected",
+        "mode",
+        "login",
+        "choose_url"
+      ]
+    },
+    "CiJob": {
+      "type": "object",
+      "properties": {
+        "job_key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "queued_ms": {
+          "type": "number"
+        },
+        "wait_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "run_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost_micros": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "all_in_micros": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "start_mode": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "machine_type": {
+          "type": "string"
+        },
+        "cloud": {
+          "type": "string"
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "log_pool": {
+          "type": "string"
+        },
+        "log_slot": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_key",
+        "name",
+        "repo",
+        "state",
+        "queued_ms",
+        "start_mode",
+        "machine",
+        "machine_type",
+        "cloud",
+        "spot",
+        "log_pool",
+        "log_slot"
+      ]
+    },
+    "CiOverview": {
+      "type": "object",
+      "properties": {
+        "generated_ms": {
+          "type": "number"
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiSetupStep"
+          }
+        },
+        "github": {
+          "$ref": "#/$defs/CiGithub"
+        },
+        "repositories": {
+          "type": "object",
+          "properties": {
+            "used": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "jobs_7d": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "jobs_7d"
+                ]
+              }
+            },
+            "all": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "allowed"
+                ]
+              }
+            }
+          },
+          "required": [
+            "used",
+            "all"
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "starts_24h": {
+              "type": "number"
+            },
+            "jobs_7d": {
+              "type": "number"
+            },
+            "pass_rate_7d": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "spend_7d_micros": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "starts_24h",
+            "jobs_7d",
+            "pass_rate_7d",
+            "spend_7d_micros"
+          ]
+        },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiJob"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiTarget"
+          }
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "month_committed_micros": {
+              "type": "number"
+            },
+            "monthly_micros": {
+              "type": "number"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "month_committed_micros",
+            "monthly_micros",
+            "state"
+          ]
+        }
+      },
+      "required": [
+        "generated_ms",
+        "setup",
+        "github",
+        "repositories",
+        "usage",
+        "jobs",
+        "targets",
+        "budget"
+      ]
+    },
+    "CiPilotClass": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "jobs_seen": {
+          "type": "number"
+        },
+        "warm_now": {
+          "type": "number"
+        },
+        "idle_ttl_secs": {
+          "type": "number"
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "class",
+        "phase",
+        "jobs_seen",
+        "warm_now",
+        "idle_ttl_secs",
+        "spot",
+        "reasons"
+      ]
+    },
+    "CiSetupStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "detail"
+      ]
+    },
+    "CiTarget": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "warm": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "autopilot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "classes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CiPilotClass"
+              }
+            }
+          },
+          "required": [
+            "classes"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "goal"
+      ]
+    },
     "CliInstallPlan": {
       "type": "object",
       "properties": {
@@ -1679,8 +2042,163 @@
         },
         "webUi": {
           "type": "boolean"
+        },
+        "secureSpaces": {
+          "type": "boolean"
+        },
+        "childSpaces": {
+          "type": "boolean"
+        },
+        "askFirst": {
+          "type": "boolean"
+        },
+        "ciRunners": {
+          "type": "boolean"
+        },
+        "tcpShares": {
+          "type": "boolean"
+        },
+        "mobile": {
+          "type": "boolean"
         }
       }
+    },
+    "GithubReport": {
+      "type": "object",
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git"
+                ]
+              },
+              "login": {
+                "type": "string"
+              },
+              "envName": {
+                "type": "string"
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": "string"
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "ghFound": {
+          "type": "boolean"
+        },
+        "ghOld": {
+          "type": "boolean"
+        },
+        "canSave": {
+          "type": "boolean"
+        },
+        "scannedMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "hosts",
+        "ghFound",
+        "ghOld",
+        "canSave",
+        "scannedMs"
+      ]
     },
     "GpuChoice": {
       "type": "object",
@@ -3662,6 +4180,37 @@
         "lastSeenMs"
       ]
     },
+    "NetworkEvent": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "dst": {
+          "type": "string"
+        },
+        "proto": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "count": {
+          "type": "number"
+        },
+        "lastUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "dst",
+        "count"
+      ]
+    },
     "NewSpaceOptions": {
       "type": "object",
       "properties": {
@@ -4746,6 +5295,110 @@
         "canLeave"
       ]
     },
+    "SpaceNetwork": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string"
+        },
+        "localhostPorts": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "allLocalhostPorts": {
+          "type": "boolean"
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "customBase": {
+          "type": "string"
+        },
+        "via": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topologyJson": {
+          "type": "string"
+        },
+        "widenedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "widenings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enforcement": {
+          "type": "string"
+        },
+        "point": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alwaysBlocked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "noticePending": {
+          "type": "boolean"
+        },
+        "clipboard": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "preset",
+        "summary",
+        "enforcement",
+        "point",
+        "noticePending",
+        "clipboard",
+        "volume"
+      ]
+    },
     "SpaceProgress": {
       "type": "object",
       "properties": {
@@ -5418,6 +6071,13 @@
             },
             "state": {
               "type": "string"
+            },
+            "card": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {}
             }
           },
           "required": [
@@ -7759,6 +8419,70 @@
         "state"
       ]
     },
+    "ci.connect": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.connectCancel": {
+      "type": "null"
+    },
+    "ci.connectToken": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.goal": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "goal",
+        "applied"
+      ]
+    },
+    "ci.log": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at_ms": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "at_ms",
+              "text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "ci.overview": {
+      "$ref": "#/$defs/CiOverview"
+    },
+    "ci.repositories": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "cli.install": {
       "$ref": "#/$defs/CliInstallPlan"
     },
@@ -7944,6 +8668,18 @@
     "experiments.set": {
       "$ref": "#/$defs/Experiments"
     },
+    "github.enable": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.rescan": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.status": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.use": {
+      "$ref": "#/$defs/GithubReport"
+    },
     "host.action": {
       "$ref": "#/$defs/HostStatus"
     },
@@ -8017,6 +8753,105 @@
     "keyvault.unlock": {
       "type": "null"
     },
+    "links.approve": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
     "links.create": {
       "type": "object",
       "properties": {
@@ -8059,6 +8894,49 @@
             "number",
             "null"
           ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -8071,6 +8949,17 @@
         "owner",
         "createdAtUnix",
         "expiresAtUnix"
+      ]
+    },
+    "links.deny": {
+      "type": "object",
+      "properties": {
+        "denied": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denied"
       ]
     },
     "links.list": {
@@ -8118,6 +9007,49 @@
               "expiresAtUnix": {
                 "type": [
                   "number",
+                  "null"
+                ]
+              },
+              "tcpConnectWith": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tcpAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "route": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "routeLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "waiting": {
+                "enum": [
+                  "approval",
+                  "consent",
+                  null
+                ]
+              },
+              "waitingText": {
+                "type": [
+                  "string",
                   "null"
                 ]
               }
@@ -8177,6 +9109,32 @@
     },
     "machines.rename": {
       "type": "null"
+    },
+    "network.ackNotice": {
+      "type": "null"
+    },
+    "network.get": {
+      "$ref": "#/$defs/SpaceNetwork"
+    },
+    "network.log": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NetworkEvent"
+      }
+    },
+    "network.set": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "enum": [
+            "now",
+            "next_start"
+          ]
+        }
+      },
+      "required": [
+        "applied"
+      ]
     },
     "notifications.list": {
       "type": "array",
@@ -8430,6 +9388,9 @@
     "session.openExternal": {
       "type": "null"
     },
+    "session.resetOnboarding": {
+      "type": "null"
+    },
     "session.signIn": {
       "type": "object",
       "properties": {
@@ -8461,6 +9422,166 @@
     },
     "settings.set": {
       "$ref": "#/$defs/SettingsSnapshot"
+    },
+    "shares.edge.remove": {
+      "type": "object",
+      "properties": {
+        "ended": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ended"
+      ]
+    },
+    "shares.settings.get": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
+    },
+    "shares.settings.set": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
     },
     "sharing.ackRemovals": {
       "type": "null"
@@ -8596,6 +9717,9 @@
           "bytes"
         ]
       }
+    },
+    "spaces.setAccess": {
+      "type": "null"
     },
     "spaces.setPower": {
       "type": "object",
@@ -10566,6 +11690,78 @@
         "state"
       ]
     },
+    "ci.connect": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.connectCancel": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "ci.connectToken": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.goal": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "goal",
+        "applied"
+      ]
+    },
+    "ci.log": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at_ms": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "at_ms",
+              "text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "ci.overview": {
+      "$ref": "#/$defs/CiOverview"
+    },
+    "ci.repositories": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "cli.install": {
       "$ref": "#/$defs/CliInstallPlan"
     },
@@ -10748,6 +11944,650 @@
     "devices.revokePairingCode": {
       "type": "null"
     },
+    "github.enable": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.rescan": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.status": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.use": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
     "host.action": {
       "anyOf": [
         {
@@ -10861,6 +12701,105 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.approve": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
     "links.create": {
       "type": "object",
       "properties": {
@@ -10903,6 +12842,49 @@
             "number",
             "null"
           ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -10915,6 +12897,17 @@
         "owner",
         "createdAtUnix",
         "expiresAtUnix"
+      ]
+    },
+    "links.deny": {
+      "type": "object",
+      "properties": {
+        "denied": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denied"
       ]
     },
     "links.list": {
@@ -10962,6 +12955,49 @@
               "expiresAtUnix": {
                 "type": [
                   "number",
+                  "null"
+                ]
+              },
+              "tcpConnectWith": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tcpAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "route": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "routeLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "waiting": {
+                "enum": [
+                  "approval",
+                  "consent",
+                  null
+                ]
+              },
+              "waitingText": {
+                "type": [
+                  "string",
                   "null"
                 ]
               }
@@ -11019,6 +13055,33 @@
     "machines.rename": {
       "type": "null"
     },
+    "network.ackNotice": {
+      "type": "object",
+      "properties": {}
+    },
+    "network.get": {
+      "$ref": "#/$defs/SpaceNetwork"
+    },
+    "network.log": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NetworkEvent"
+      }
+    },
+    "network.set": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "enum": [
+            "now",
+            "next_start"
+          ]
+        }
+      },
+      "required": [
+        "applied"
+      ]
+    },
     "notifications.list": {
       "type": "array",
       "items": {
@@ -11068,6 +13131,9 @@
       "$ref": "#/$defs/WkOnboarding"
     },
     "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.reset": {
       "$ref": "#/$defs/WkOnboarding"
     },
     "relay.usage": {
@@ -11239,6 +13305,166 @@
     "settings.update": {
       "$ref": "#/$defs/WkSettings"
     },
+    "shares.edge.remove": {
+      "type": "object",
+      "properties": {
+        "ended": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ended"
+      ]
+    },
+    "shares.settings.get": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
+    },
+    "shares.settings.set": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
+    },
     "sharing.ackRemovals": {
       "type": "null"
     },
@@ -11350,6 +13576,10 @@
           "bytes"
         ]
       }
+    },
+    "spaces.setAccess": {
+      "type": "object",
+      "properties": {}
     },
     "spaces.setPower": {
       "$ref": "#/$defs/WkSpaces"

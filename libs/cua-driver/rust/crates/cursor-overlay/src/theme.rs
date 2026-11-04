@@ -2,8 +2,8 @@
 //!
 //! The default artwork is authored as a checked-in dotLottie archive and
 //! compiled into the bounded artifact embedded by [`crate::theme_artifact`].
-//! This module owns transport-neutral state, session colors, and the shared
-//! runtime float transform. It does not parse Lottie at runtime.
+//! This module owns transport-neutral state and session colors. It does not
+//! parse Lottie at runtime.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,6 @@ pub const DEFAULT_THEME_VERSION: &str = "2.0.0";
 pub const THEME_PROFILE: &str = "cua-driver-actions-v2";
 pub const CANVAS_SIZE: f32 = 128.0;
 pub const DISPLAY_SIZE: f32 = 42.0;
-const FLOAT_DURATION_SECS: f32 = 4.0;
 
 pub const DEFAULT_CURSOR_FILL: [u8; 4] = [94, 192, 232, 255];
 
@@ -177,24 +176,6 @@ impl CursorVisualState {
         };
         (elapsed * 30.0).floor() as u32
     }
-}
-
-/// Peak lift of the resting float, in theme canvas units (about 4 pt).
-const FLOAT_LIFT: f32 = 12.0;
-
-/// Vertical offset (theme canvas units, negative is up) of the resting
-/// float: the arrow rises and settles back on a 4 s loop. It never moves
-/// sideways or tilts, so the arrow stays upright, and it starts and ends
-/// each loop on the hotspot, so a cursor that just arrived does not jump.
-pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> f32 {
-    if visual.reduced_motion == ReducedMotion::On {
-        return 0.0;
-    }
-
-    let progress =
-        (visual.elapsed_secs as f32).rem_euclid(FLOAT_DURATION_SECS) / FLOAT_DURATION_SECS;
-    let angle = progress * std::f32::consts::TAU;
-    -0.5 * FLOAT_LIFT * (1.0 - angle.cos())
 }
 
 /// Paint one frame of the embedded actions-v2 theme.
@@ -388,55 +369,6 @@ mod tests {
         );
 
         assert_eq!(pixmap.data(), base.data());
-    }
-
-    #[test]
-    fn every_action_inherits_the_same_floating_base_motion() {
-        let idle = CursorVisualState {
-            elapsed_secs: 0.75,
-            ..CursorVisualState::default()
-        };
-        let expected = shared_float_motion(&idle);
-        assert!(expected < 0.0, "the float lifts the arrow");
-
-        for action in CursorAction::ALL {
-            let mut visual = CursorVisualState::default();
-            visual.begin(action, None, None);
-            visual.elapsed_secs = 0.75;
-            assert_eq!(
-                shared_float_motion(&visual),
-                expected,
-                "{} did not inherit the shared floating motion",
-                action.as_str()
-            );
-        }
-    }
-
-    #[test]
-    fn the_float_is_a_vertical_lift_that_returns_to_the_hotspot() {
-        let at = |elapsed_secs| {
-            shared_float_motion(&CursorVisualState {
-                elapsed_secs,
-                ..CursorVisualState::default()
-            })
-        };
-        assert_eq!(at(0.0), 0.0);
-        assert!((at(f64::from(FLOAT_DURATION_SECS) / 2.0) + FLOAT_LIFT).abs() < 1e-4);
-        assert!(at(f64::from(FLOAT_DURATION_SECS)).abs() < 1e-4);
-        for step in 0..40 {
-            let dy = at(f64::from(step) * 0.1);
-            assert!((-FLOAT_LIFT - 1e-4..=1e-4).contains(&dy), "{dy}");
-        }
-    }
-
-    #[test]
-    fn reduced_motion_disables_shared_floating_motion() {
-        let visual = CursorVisualState {
-            elapsed_secs: 0.75,
-            reduced_motion: ReducedMotion::On,
-            ..CursorVisualState::default()
-        };
-        assert_eq!(shared_float_motion(&visual), 0.0);
     }
 
     #[test]

@@ -113,22 +113,41 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     pid: Option<i32>,
     deadline: Instant,
 ) -> Result<()> {
-    let mut focused: Option<IpcWindow> = None;
+    // The last focus niri reported, `None` until a read-back answers.
+    let mut focused: Option<Option<IpcWindow>> = None;
     if interaction::confirm(deadline, |deadline| {
-        focused = ipc.query_until(Request::FocusedWindow, deadline)?;
+        let window: Option<IpcWindow> = match ipc.query_until(Request::FocusedWindow, deadline) {
+            Ok(window) => window,
+            // The read-back shares the confirm deadline: one it cut off
+            // means niri did not confirm in time, not that IPC failed.
+            Err(error) if timed_out(&error) => return anyhow::Ok(false),
+            Err(error) => return Err(error),
+        };
+        let observed = window.as_ref().map(|window| (window.pid, window.id));
+        focused = Some(window);
         anyhow::Ok(interaction::policy::focused(
             &(pid, id),
-            &interaction::facts::Fact::Known(
-                focused.as_ref().map(|window| (window.pid, window.id)),
-            ),
+            &interaction::facts::Fact::Known(observed),
         ))
     })? {
         return Ok(());
     }
     Err(foreground_unavailable(format!(
         "niri did not confirm focus on window {id} (focused: {})",
-        focused.map_or_else(|| "none".to_owned(), |focused| focused.id.to_string())
+        match focused {
+            None => "unknown".to_owned(),
+            Some(None) => "none".to_owned(),
+            Some(Some(focused)) => focused.id.to_string(),
+        }
     )))
+}
+
+fn timed_out(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::TimedOut)
+    })
 }
 
 /// Focus an exact niri window for input, confirmed by read-back.

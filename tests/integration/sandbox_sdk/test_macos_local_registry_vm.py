@@ -13,7 +13,6 @@ then auto-selects LumeRuntime for macOS VMs on a macOS host.
 Contrast:
     Image.macos("26")                                + local=True  -> Lume VM, managed Cua image (auto-resolved)
     Image.from_registry("ghcr.io/trycua/macos-...") + local=True  -> Lume VM, trycua registry image (manifest-resolved)
-    Image.from_registry("ghcr.io/trycua/macos-...") + local=False -> Cua cloud VM
 """
 
 from __future__ import annotations

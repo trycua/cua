@@ -9,14 +9,56 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_contract::{CaptureScope, GetSessionStateInput, StartSessionInput};
-use cua_driver_sdk::{CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostState};
-use cua_driver_testkit::{spawn_in_job, ChildReaper};
+use cua_driver_sdk::{
+    CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostOptions,
+    EmbeddedDriverHostState, EmbeddedEnvironmentVariable,
+};
+use cua_driver_testkit::{spawn_in_job, ChildReaper, IsolatedStateRoot};
 use serde_json::{json, Value};
 
 fn read_json(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
     let mut line = String::new();
     reader.read_line(&mut line).expect("read MCP response");
     serde_json::from_str(line.trim()).expect("parse MCP response")
+}
+
+/// Construct a host for the source-built driver with per-user state isolated
+/// from the developer's installed product (#4094). Keep the returned root alive
+/// for as long as the daemon runs.
+fn isolated_driver_host(
+    host_bundle_id: &str,
+) -> (std::sync::Arc<EmbeddedCuaDriverHost>, IsolatedStateRoot) {
+    let state = IsolatedStateRoot::new().expect("isolated driver state root");
+    let host = EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
+        binary_path: env!("CARGO_BIN_EXE_cua-driver").into(),
+        host_bundle_id: host_bundle_id.into(),
+        socket_path: None,
+        startup_timeout_ms: None,
+        shutdown_timeout_ms: None,
+        permission_mode: None,
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
+        session_policy_path: None,
+        approve_session_policy: false,
+        dangerously_bypass_approvals: false,
+        environment: state
+            .env()
+            .into_iter()
+            // The SDK forwards only its safe allowlist; without XDG overrides
+            // the driver derives its XDG state from the isolated HOME.
+            .filter(|(name, _)| matches!(*name, "HOME" | "CUA_DRIVER_RS_HOME"))
+            .map(|(name, value)| EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: value.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        inherit_stderr: true,
+        // No overlay window on the developer's display.
+        no_overlay: true,
+        capture_stderr: false,
+    })
+    .expect("construct host");
+    (host, state)
 }
 
 fn tool_names(value: &Value, field: &str) -> BTreeSet<String> {
@@ -75,13 +117,34 @@ fn write_test_shell_script(path: &std::path::Path, body: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+#[cfg(unix)]
+fn capturing_host(
+    binary: &std::path::Path,
+    host_bundle_id: &str,
+) -> std::sync::Arc<EmbeddedCuaDriverHost> {
+    EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
+        binary_path: binary.to_string_lossy().into_owned(),
+        host_bundle_id: host_bundle_id.into(),
+        socket_path: None,
+        startup_timeout_ms: None,
+        shutdown_timeout_ms: None,
+        permission_mode: None,
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
+        session_policy_path: None,
+        approve_session_policy: false,
+        dangerously_bypass_approvals: false,
+        environment: Vec::new(),
+        inherit_stderr: false,
+        no_overlay: false,
+        capture_stderr: true,
+    })
+    .expect("construct capturing host")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-contract-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-contract-test");
     let connection = host.clone().start().await.expect("start embedded host");
     assert_eq!(host.state(), EmbeddedDriverHostState::Ready);
 
@@ -154,6 +217,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
             session: Some("embedded-sdk-window".into()),
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
+            cursor_motion: None,
         })
         .await
         .expect("start SDK-owned session");
@@ -235,11 +299,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropping_the_host_cannot_orphan_its_daemon() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-drop-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-drop-test");
     let connection = host.clone().start().await.expect("start embedded host");
     drop(host);
 
@@ -262,11 +322,7 @@ async fn dropping_the_host_cannot_orphan_its_daemon() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_start_coalesces_and_restart_rotates_generation() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-lifecycle-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-lifecycle-test");
 
     let (left, right, third) = tokio::join!(
         host.clone().start(),
@@ -302,12 +358,15 @@ async fn concurrent_start_coalesces_and_restart_rotates_generation() {
 async fn stop_cancels_startup_and_unblocks_every_waiter() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("never-ready-driver");
-    write_test_shell_script(&binary, "read _");
-    let host = EmbeddedCuaDriverHost::new(
-        binary.to_string_lossy().into_owned(),
-        "com.trycua.embedded-cancel-test".into(),
-    )
-    .expect("construct host");
+    let started = directory.path().join("started");
+    write_test_shell_script(
+        &binary,
+        &format!(
+            "printf 'cancelled-startup\\n' >&2\n: > '{}'\nread _\nexit 9",
+            started.display()
+        ),
+    );
+    let host = capturing_host(&binary, "com.trycua.embedded-cancel-test");
 
     let starting = tokio::spawn(host.clone().start());
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -315,6 +374,11 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(host.state(), EmbeddedDriverHostState::Starting);
+    let fixture_deadline = Instant::now() + Duration::from_secs(10);
+    while !started.exists() && Instant::now() < fixture_deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(started.exists(), "startup fixture did not run");
 
     host.clone().stop().await.expect("cancel startup");
     let start_error = starting.await.unwrap().unwrap_err();
@@ -323,6 +387,9 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
         cua_driver_sdk::EmbeddedDriverError::StartupCancelled
     ));
     assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
+    let diagnostics = host.last_diagnostics().unwrap();
+    assert_eq!(diagnostics.stderr_tail, "cancelled-startup\n");
+    assert_eq!(diagnostics.exit_code, Some(9));
 }
 
 #[cfg(unix)]
@@ -330,12 +397,8 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
 async fn early_child_exit_resets_the_host_to_stopped() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("early-exit-driver");
-    write_test_shell_script(&binary, "exit 7");
-    let host = EmbeddedCuaDriverHost::new(
-        binary.to_string_lossy().into_owned(),
-        "com.trycua.embedded-early-exit-test".into(),
-    )
-    .expect("construct host");
+    write_test_shell_script(&binary, "printf 'complete-startup-error\\n' >&2\nexit 7");
+    let host = capturing_host(&binary, "com.trycua.embedded-early-exit-test");
     for attempt in 1..=64 {
         let error = host.clone().start().await.unwrap_err();
         assert!(
@@ -350,5 +413,44 @@ async fn early_child_exit_resets_the_host_to_stopped() {
             EmbeddedDriverHostState::Stopped,
             "attempt {attempt}/64 did not reset the host after {error:?}"
         );
+        let diagnostics = host
+            .last_diagnostics()
+            .expect("failed startup should retain diagnostics");
+        assert_eq!(diagnostics.exit_code, Some(7));
+        assert_eq!(diagnostics.stderr_tail, "complete-startup-error\n");
+        assert!(!diagnostics.stderr_truncated);
     }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_stderr_from_an_old_start_cannot_contaminate_the_next_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("generation-driver");
+    let counter = directory.path().join("started-once");
+    write_test_shell_script(
+        &binary,
+        &format!(
+            "if [ ! -e '{}' ]; then\n  : > '{}'\n  (sleep 1; printf 'stale-generation\\n' >&2) &\n  exit 7\nfi\nprintf 'current-generation\\n' >&2\nexit 8",
+            counter.display(),
+            counter.display()
+        ),
+    );
+    let host = capturing_host(&binary, "com.trycua.embedded-generation-test");
+
+    let first = host.clone().start().await.unwrap_err();
+    assert!(matches!(
+        first,
+        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(7) }
+    ));
+    let second = host.clone().start().await.unwrap_err();
+    assert!(matches!(
+        second,
+        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(8) }
+    ));
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    let diagnostics = host.last_diagnostics().unwrap();
+    assert_eq!(diagnostics.exit_code, Some(8));
+    assert_eq!(diagnostics.stderr_tail, "current-generation\n");
 }

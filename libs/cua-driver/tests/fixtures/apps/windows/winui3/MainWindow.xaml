@@ -65,6 +65,13 @@
                        Text="mirror="/>
         </StackPanel>
 
+        <!-- Dedicated real multiline editor for foreground type_text tests. -->
+        <TextBox x:Name="TxtMultilineInput"
+                 auto:AutomationProperties.AutomationId="txt-multiline-input"
+                 Width="420" Height="100" HorizontalAlignment="Left"
+                 AcceptsReturn="True" TextWrapping="Wrap"
+                 TextChanged="OnMultilineInputChanged"/>
+
         <!-- Slider -->
         <StackPanel Spacing="4">
             <Slider x:Name="SldValue"

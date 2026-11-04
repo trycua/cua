@@ -1,0 +1,10 @@
+{
+  "title": "Cua Bench",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "guides",
+    "reference"
+  ]
+}

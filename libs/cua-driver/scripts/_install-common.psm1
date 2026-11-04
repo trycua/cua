@@ -1,13 +1,11 @@
-# _install-common.psm1 - shared helpers for install.ps1 + install-local.ps1.
+# _install-common.psm1 - daemon cleanup helpers for install.ps1.
 #
-# Both scripts import this module to avoid drift in the daemon-kill logic.
-#
-#   * install-local.ps1 runs from a checked-out repo, so it imports the
-#     module from disk via $PSScriptRoot/_install-common.psm1.
-#   * install.ps1 is fetched via `irm | iex` and has no file on disk
-#     during execution. It uses Import-CuaDriverInstallModule (below)
-#     which prefers the on-disk copy when available (dev / CI) and
-#     falls back to fetching the .psm1 from GitHub raw.
+# install.ps1 is usually fetched via `irm | iex` (including by
+# `cua-driver update --apply`) and has no file on disk during execution.
+# It prefers the on-disk copy of this module when one sits next to it
+# (dev / CI) and otherwise fetches it from https://cua.ai/driver/.
+# install-local.ps1 manages the separate cua-driver-local identity and
+# keeps its own cleanup.
 #
 # Keep this module narrow on purpose - it's loaded over the network in
 # the production install path, so every additional line is paid for in
@@ -18,6 +16,41 @@
 
 Set-StrictMode -Version Latest
 
+# PIDs of this process and its live ancestors, nearest first.
+#
+# `cua-driver update --apply` launches the installer as a descendant of
+# cua-driver.exe and waits for its exit code. Cleanup must never stop any
+# of these processes: stopping the updater fails the update, and a tree
+# kill of it takes the installer down too (#2803, #4388). A recorded
+# parent PID can outlive its process and be reused, so a "parent" that was
+# created after its child ends the walk.
+function Get-CuaDriverAncestorProcessIds {
+    [CmdletBinding()]
+    param()
+    $ids = @([int]$PID)
+    try {
+        $child = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue
+        while ($child) {
+            $parentId = [int]$child.ParentProcessId
+            if ($parentId -le 0 -or $ids -contains $parentId) { break }
+            $parent = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue
+            if (-not $parent) { break }
+            if ($parent.CreationDate -and $child.CreationDate -and $parent.CreationDate -gt $child.CreationDate) { break }
+            $ids += $parentId
+            $child = $parent
+        }
+    } catch {
+        # A broken WMI provider must not fail the install; keep what we found.
+    }
+    return $ids
+}
+
+function Get-CuaDriverProcesses {
+    param([int[]]$ExcludeIds = @())
+    return @(Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue |
+        Where-Object { $ExcludeIds -notcontains $_.Id })
+}
+
 # Best-effort kill of any running cua-driver / cua-driver-uia processes
 # so the next `cua-driver autostart kick` / `cua-driver mcp` starts the
 # FRESH binary, not whatever's still in memory. Without this the
@@ -25,31 +58,50 @@ Set-StrictMode -Version Latest
 # until the user reboots - which surfaces as "the bug I just fixed is
 # still there" because the in-memory code is pre-fix.
 #
+# This process and its ancestors are never stopped (see
+# Get-CuaDriverAncestorProcessIds). Every other process is stopped by
+# PID, never by image name, because an image-name tree kill also reaches
+# the updater that launched this installer.
+#
 # Layers of escalation:
 #   1. schtasks /End - terminates an autostart-task instance. Task
 #      Scheduler runs as SYSTEM so it can kill High-IL processes that
 #      a Medium-IL shell can't. /End on an instance the current user
 #      registered does NOT need admin.
-#   2. taskkill /F /IM - Medium-IL backstop for any process that
-#      wasn't task-attached.
-#   3. Returns the surviving process list so callers can warn the user
+#   2. taskkill /F /T /PID - force-kills each remaining process and its
+#      descendants. More permissive than Stop-Process across ILs.
+#   3. Stop-Process - catches anything taskkill missed, such as a
+#      process that started meanwhile.
+#   4. Returns the surviving process list so callers can warn the user
 #      (these are the processes a Medium-IL shell genuinely can't reach
 #      - High-IL daemons whose parent wasn't `cua-driver-serve`).
+#      Protected ancestors are not survivors: they are not stale daemons.
 function Stop-CuaDriverDaemons {
     [CmdletBinding()]
     param()
+    $ancestorIds = @(Get-CuaDriverAncestorProcessIds)
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
         Start-Sleep -Milliseconds 200
-        & taskkill.exe /F /IM "cua-driver.exe" /T 2>$null | Out-Null
-        & taskkill.exe /F /IM "cua-driver-uia.exe" /T 2>$null | Out-Null
+        foreach ($proc in (Get-CuaDriverProcesses -ExcludeIds $ancestorIds)) {
+            & taskkill.exe /F /T /PID $proc.Id 2>$null | Out-Null
+        }
+        foreach ($proc in (Get-CuaDriverProcesses -ExcludeIds $ancestorIds)) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
     } finally {
         $ErrorActionPreference = $prevEAP
     }
+    $kept = @(Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue |
+        Where-Object { $ancestorIds -contains $_.Id })
+    if ($kept.Count -gt 0) {
+        $keptIds = ($kept | ForEach-Object { $_.Id }) -join ', '
+        Write-Host "Leaving the cua-driver process(es) that launched this installer running (pid: $keptIds)." -ForegroundColor DarkGray
+    }
     Start-Sleep -Milliseconds 200
-    return @(Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue)
+    return (Get-CuaDriverProcesses -ExcludeIds $ancestorIds)
 }
 
 # Probe whether `\\.\pipe\cua-driver` is currently accepting connections.

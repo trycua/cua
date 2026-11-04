@@ -58,10 +58,18 @@ class VM {
     private var scopedSharedDirectoryURLs: [URL] = []
     private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
+    /// The framework VM is being started or restored: a stop (or suspend)
+    /// that arrives meanwhile waits for it, since stopping a VM mid-restore
+    /// fails and would leave it running untracked once the restore ends.
+    private var starting = false
     /// Policy of the session currently owned by this object. Cleanup needs it
     /// because a VNC-disabled session's marker is not owned by `vncService`.
     private var activeVNCPolicy: VNCPolicy = .enabled
     private var activeNoVNCSession: VNCSession?
+    /// Host loopback ports carried to the guest over vsock (a run with
+    /// `forwards`), and whether this run's VM has the socket device.
+    private var vsockForwarder: VsockForwarder?
+    private var activeSocketDevice = false
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
@@ -70,6 +78,15 @@ class VM {
     // Lifecycle commands may run while the host is under VM boot I/O. Give
     // their one-shot lock lookup more time than list/get's latency-bound probe.
     private let runLockProbe: RunLockProbe = LsofRunLockProbe(timeout: 10)
+
+    /// Default number of seconds a graceful `stop` waits for the owning process
+    /// to exit before escalating to a forced power-off.
+    nonisolated static let defaultStopTimeout: TimeInterval = 10
+
+    /// Signal handlers that let an external `stop` (SIGTERM) or an interactive
+    /// Ctrl-C (SIGINT) shut this run down cleanly. Installed only by the process
+    /// that actually owns the running VM.
+    private var shutdownSignalSources: [DispatchSourceSignal] = []
 
     // MARK: - Initialization
 
@@ -100,6 +117,23 @@ class VM {
     /// The VM configuration
     var config: VMConfig { vmDirContext.config }
 
+    /// Whether this process is running the guest: true from the moment `run`
+    /// starts until the guest stops or the run fails.
+    var isRunActive: Bool { !sessionCleanedUp }
+
+    /// The network mode of the run in progress (the run's override, or the
+    /// VM's configured mode), while it runs.
+    private(set) var activeNetworkMode: NetworkMode?
+
+    /// The guest's address: the gateway's DHCP lease in gateway mode,
+    /// vmnet's leases (or the ARP table) otherwise.
+    static func ipAddress(forMAC mac: String, networkMode: NetworkMode?) -> String? {
+        if let control = networkMode?.gatewayControlSocket {
+            return GatewayNetwork.leasedAddress(control: control, mac: mac)
+        }
+        return DHCPLeaseParser.getIPAddress(forMAC: mac)
+    }
+
     // MARK: - VM State Management
 
     private var isRunning: Bool {
@@ -109,6 +143,12 @@ class VM {
                 "Cannot check if VM is running: macAddress is nil",
                 metadata: ["name": vmDirContext.name])
             return false
+        }
+
+        // Behind a gateway the guest's address is not reachable from the
+        // host: the run itself says whether it runs.
+        if activeNetworkMode?.gatewayControlSocket != nil {
+            return isRunActive
         }
 
         // Then check if we have an IP address
@@ -139,10 +179,12 @@ class VM {
         // Safely access MAC address
         let macAddress = vmDirContext.config.macAddress
         let ipAddress: String? =
-            isRunning && macAddress != nil ? DHCPLeaseParser.getIPAddress(forMAC: macAddress!) : nil
+            isRunning && macAddress != nil
+            ? VM.ipAddress(forMAC: macAddress!, networkMode: activeNetworkMode) : nil
 
         // Check if SSH is available (only if we have an IP)
         let sshAvailable: Bool? = ipAddress != nil ? NetworkUtils.isSSHAvailable(ipAddress: ipAddress!) : nil
+        let vsockSession = isRunning ? vmDirContext.dir.loadVsockSession() : nil
 
         return VMDetails(
             name: vmDirContext.name,
@@ -156,7 +198,12 @@ class VM {
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
             locationName: vmDirContext.storage ?? "home",
-            networkMode: vmDirContext.config.networkMode.description
+            networkMode: vmDirContext.config.networkMode.description,
+            machineIdentifier: vmDirContext.config.machineIdentifier?.base64EncodedString(),
+            macAddress: macAddress,
+            savedState: vmDirContext.dir.hasSavedState(),
+            vsock: vsockSession.map { _ in true },
+            forwards: vsockSession.flatMap { $0.agent ? $0.forwards : nil }
         )
     }
 
@@ -176,7 +223,7 @@ class VM {
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = []
     ) async throws {
         // Defense in depth: the CLI and the controller reject these combinations
         // first, but no caller may reach a VNC-dependent path with VNC disabled.
@@ -217,8 +264,6 @@ class VM {
             throw VMError.notInitialized(vmDirContext.name)
         }
 
-        // Refuse to boot while a disk-resize transaction is armed. The marker is
-        // authoritative because run()'s emergency lock cleanup can defeat flock.
         if vmDirContext.dir.hasResizeMarker() {
             Logger.error(
                 "Refusing to run VM: a disk resize is in progress",
@@ -233,7 +278,7 @@ class VM {
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        var fileHandle = try FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
+        let fileHandle = try FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
 
         if flock(fileHandle.fileDescriptor, LOCK_EX | LOCK_NB) != 0 {
             try? fileHandle.close()
@@ -241,37 +286,16 @@ class VM {
                 "VM already running (failed to acquire lock)", metadata: ["name": vmDirContext.name]
             )
 
-            // Try to forcibly clear the lock before giving up
-            Logger.info("Attempting emergency lock cleanup", metadata: ["name": vmDirContext.name])
-            unlockConfigFile()
-
-            // Try one more time to acquire the lock
-            if let retryHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url),
-                flock(retryHandle.fileDescriptor, LOCK_EX | LOCK_NB) == 0
-            {
-                Logger.info("Emergency lock cleanup worked", metadata: ["name": vmDirContext.name])
-                // Continue with a fresh file handle
-                try? retryHandle.close()
-                // Get a completely new file handle to be safe
-                guard let newHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
-                else {
-                    throw VMError.internalError("Failed to open file handle after lock cleanup")
-                }
-                // Update our main file handle
-                fileHandle = newHandle
-            } else {
-                // If we still can't get the lock, give up
-                Logger.error(
-                    "Could not acquire lock even after emergency cleanup",
-                    metadata: ["name": vmDirContext.name])
-                throw VMError.alreadyRunning(vmDirContext.name)
-            }
+            throw VMError.alreadyRunning(vmDirContext.name)
         }
         Logger.info("Successfully acquired lock", metadata: ["name": vmDirContext.name])
         defer {
             flock(fileHandle.fileDescriptor, LOCK_UN)
             try? fileHandle.close()
         }
+        guard let owner = RunOwner.current() else { throw VMError.unsafeOwner(vmDirContext.name) }
+        try owner.save(vmDirContext.dir.runOwnerURL)
+        defer { owner.remove(vmDirContext.dir.runOwnerURL) }
         sessionCleanedUp = false
         activeVNCPolicy = vncPolicy
         activeNoVNCSession = nil
@@ -313,7 +337,7 @@ class VM {
 
             Logger.info(
                 "Creating virtualization service context", metadata: ["name": vmDirContext.name])
-            let config = try createVMVirtualizationServiceContext(
+            var config = try createVMVirtualizationServiceContext(
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 display: vmDirContext.config.display.string,
@@ -324,6 +348,16 @@ class VM {
                 additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode
             )
+            activeNetworkMode = config.networkMode
+            // A saved state restores only into the devices it was saved
+            // with: one saved without the socket device resumes without
+            // forwards (the client then uses the VM's address).
+            activeSocketDevice = Self.usesSocketDevice(
+                forwards: forwards,
+                hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
+                savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
+            config.socketDevice = activeSocketDevice
+            vmDirContext.dir.clearVsockSession()
             Logger.info(
                 "Successfully created virtualization service context",
                 metadata: ["name": vmDirContext.name])
@@ -335,9 +369,20 @@ class VM {
                 "Successfully initialized virtualization service",
                 metadata: ["name": vmDirContext.name])
 
-            guard let service = virtualizationService else {
+            guard var service = virtualizationService else {
                 Logger.error("Virtualization service is nil", metadata: ["name": vmDirContext.name])
                 throw VMError.internalError("Virtualization service not initialized")
+            }
+
+            // A VM with a saved state (`suspend`, or a clone of a suspended
+            // VM) resumes from it; that happens before the VNC server
+            // attaches, since a state that cannot be restored leaves the
+            // framework VM unusable and the VM boots on a fresh one.
+            let resumedFromState = !recoveryMode && vmDirContext.dir.hasSavedState()
+            if resumedFromState {
+                starting = true
+                defer { starting = false }
+                service = try await restoreOrBoot(service: service, config: config)
             }
 
             let presenter = displayPresenterFactory(displayMode, vncService)
@@ -392,11 +437,20 @@ class VM {
                     ])
             }
 
-            // Start the VM
-            Logger.info(
-                "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
-            try await service.start()
+            // Start the VM (unless it resumed from its saved state above).
+            if !resumedFromState {
+                // A state left from before a cold boot no longer matches the disk.
+                vmDirContext.dir.discardSavedState()
+                Logger.info(
+                    "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
+                starting = true
+                defer { starting = false }
+                try await service.start()
+            }
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+            if activeSocketDevice {
+                startVsockForwards(forwards, service: service)
+            }
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
                     transport: telemetryTransport,
@@ -466,6 +520,11 @@ class VM {
                             "error": error.localizedDescription,
                         ])
                 }
+
+                // The AppKit run loop swallows SIGINT, so install explicit
+                // handlers that turn an external `stop` (SIGTERM) or an
+                // interactive Ctrl-C (SIGINT) into a clean shutdown.
+                installShutdownSignalHandlers()
             }
 
             // Write VNC config into VM via SSH (background task).
@@ -702,9 +761,143 @@ class VM {
             ])
     }
 
+    /// Installs SIGTERM/SIGINT handlers that request a clean VM shutdown. Only
+    /// the process that owns the running VM calls this. Ignoring the default
+    /// disposition first lets the dispatch source observe the signal instead of
+    /// the process being terminated (or, for SIGINT under AppKit, ignored).
+    @MainActor
+    private func installShutdownSignalHandlers() {
+        guard shutdownSignalSources.isEmpty else { return }
+        for signalNumber in [SIGTERM, SIGINT] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { [weak self] in
+                Task { @MainActor in
+                    await self?.requestGracefulShutdown()
+                }
+            }
+            source.resume()
+            shutdownSignalSources.append(source)
+        }
+    }
+
+    @MainActor
+    private func removeShutdownSignalHandlers() {
+        for source in shutdownSignalSources {
+            source.cancel()
+        }
+        shutdownSignalSources.removeAll()
+    }
+
+    /// Stops the running VM in response to a shutdown signal. Returning from the
+    /// framework's stop lets `run`'s lifecycle wait complete, which drives the
+    /// normal session teardown and process exit.
+    @MainActor
+    private func requestGracefulShutdown() async {
+        Logger.info(
+            "Received shutdown signal; stopping VM", metadata: ["name": vmDirContext.name])
+        guard let service = virtualizationService else { return }
+        if service.state == .running || service.state == .paused {
+            try? await service.stop()
+        }
+    }
+
+    /// Resumes the VM from its saved state, or boots it when the state
+    /// cannot be restored (say the configuration changed since it was saved;
+    /// the disk is then as the VM left it at the save, like after a power
+    /// loss). The state is consumed either way: once the guest runs, its disk
+    /// diverges from the saved memory. Returns the service now running.
+    private func restoreOrBoot(
+        service: VMVirtualizationService, config: VMVirtualizationServiceContext
+    ) async throws -> VMVirtualizationService {
+        let state = vmDirContext.dir.statePath
+        let started = Date()
+        do {
+            try await service.restoreMachineState(from: state.url)
+            try await service.resume()
+            vmDirContext.dir.discardSavedState()
+            Logger.info(
+                "VM resumed from its saved state",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "ms": "\(Int(Date().timeIntervalSince(started) * 1000))",
+                ])
+            return service
+        } catch {
+            Logger.error(
+                "Could not restore the saved state; booting the VM instead",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+            vmDirContext.dir.discardSavedState()
+            if service.state == .running || service.state == .paused {
+                try? await service.stop()
+            }
+            let fresh = try virtualizationServiceFactory(config)
+            virtualizationService = fresh
+            try await fresh.start()
+            return fresh
+        }
+    }
+
+    /// Saves the running VM's state to its directory and stops it; the next
+    /// run resumes from that state ([`restoreOrBoot`]). The state is written
+    /// next to the disk under a temporary name first, so a failed save never
+    /// leaves a partial state a run would try to restore. On failure the VM
+    /// keeps running.
+    @MainActor
+    func suspend() async throws {
+        await waitForStart()
+        guard let service = virtualizationService,
+            service.state == .running || service.state == .paused
+        else {
+            throw VMError.notRunning(vmDirContext.name)
+        }
+        let wasRunning = service.state == .running
+        let state = vmDirContext.dir.statePath
+        let partial = URL(fileURLWithPath: state.path + ".partial")
+        try? FileManager.default.removeItem(at: partial)
+        let started = Date()
+        do {
+            if wasRunning {
+                try await service.pause()
+            }
+            try await service.saveMachineState(to: partial)
+            try? FileManager.default.removeItem(at: state.url)
+            try FileManager.default.moveItem(at: partial, to: state.url)
+            vmDirContext.dir.markSavedStateVsock(activeSocketDevice)
+        } catch {
+            try? FileManager.default.removeItem(at: partial)
+            if wasRunning, service.state == .paused {
+                try? await service.resume()
+            }
+            Logger.error(
+                "Failed to save the VM state",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+            throw error
+        }
+        Logger.info(
+            "Saved the VM state",
+            metadata: [
+                "name": vmDirContext.name,
+                "ms": "\(Int(Date().timeIntervalSince(started) * 1000))",
+            ])
+        try await service.stop()
+        await cleanupSession()
+    }
+
+    /// Waits (bounded) while this process starts or restores the VM.
+    @MainActor
+    private func waitForStart() async {
+        let deadline = Date().addingTimeInterval(120)
+        while starting && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
     private func cleanupSession() async {
         guard !sessionCleanedUp else { return }
         sessionCleanedUp = true
+
+        removeShutdownSignalHandlers()
 
         // Detach native display before releasing the framework VM.
         if nativeAttachRegistered {
@@ -722,6 +915,9 @@ class VM {
         scopedSharedDirectoryURLs.removeAll()
         activeSharedDirectories.removeAll()
         vncService.stop()
+        vsockForwarder?.stop()
+        vsockForwarder = nil
+        vmDirContext.dir.clearVsockSession()
         if !activeVNCPolicy.isEnabled {
             // No VNC service owns this run's marker, so drop it here. Doing it
             // unconditionally also covers a failed start that never booted.
@@ -733,13 +929,31 @@ class VM {
 
     @MainActor
     func stop() async throws {
+        try await stop(force: false, timeout: VM.defaultStopTimeout)
+    }
+
+    /// Stops the VM.
+    ///
+    /// When this process owns the running VM, the framework stops it directly.
+    /// Otherwise `stop` resolves the process holding the config-file run lock
+    /// (typically a detached `lume run`) and signals it: by default it requests
+    /// a graceful shutdown and waits up to `timeout` seconds before escalating to
+    /// a forced power-off. `force` skips the graceful phase and powers the VM off
+    /// immediately.
+    @MainActor
+    func stop(force: Bool, timeout: TimeInterval) async throws {
         guard vmDirContext.initialized else {
             throw VMError.notInitialized(vmDirContext.name)
         }
 
-        Logger.info("Attempting to stop VM", metadata: ["name": vmDirContext.name])
+        Logger.info(
+            "Attempting to stop VM",
+            metadata: ["name": vmDirContext.name, "force": "\(force)"])
 
-        // If we have a virtualization service, try to stop it cleanly first
+        // If we own the running VM in this process, stop it directly. The
+        // framework's stop is an immediate power-off, so it serves both the
+        // graceful and forced requests.
+        await waitForStart()
         if let service = virtualizationService {
             do {
                 Logger.info(
@@ -763,208 +977,166 @@ class VM {
             }
         }
 
-        // Try to open config file to get file descriptor
         Logger.info(
-            "Attempting to access config file lock",
+            "Resolving process holding the config-file run lock",
             metadata: [
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        let fileHandle = try? FileHandle(forReadingFrom: vmDirContext.dir.configPath.url)
-        guard let fileHandle = fileHandle else {
-            Logger.info(
-                "Failed to open config file - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't open the file, try to force unlock anyway
-            unlockConfigFile()
-
+        let owner = RunOwner.load(vmDirContext.dir.runOwnerURL)
+        if RunOwner.lockHeld(vmDirContext.dir.configPath.url) == false,
+            owner?.matches != true {
             throw VMError.notRunning(vmDirContext.name)
         }
-
-        // Get the PID of the process holding the lock
-        Logger.info(
-            "Finding process holding lock on config file", metadata: ["name": vmDirContext.name])
-        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path)
-        else {
-            try? fileHandle.close()
-            Logger.info(
-                "Failed to find process holding lock - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't find the process, try to force unlock
-            unlockConfigFile()
-
-            throw VMError.notRunning(vmDirContext.name)
+        guard let owner, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
         }
+        let pid = owner.pid
 
         Logger.info(
             "Found process \(pid) holding lock on config file",
             metadata: ["name": vmDirContext.name])
 
-        // First try graceful shutdown with SIGINT
-        if kill(pid, SIGINT) == 0 {
-            Logger.info("Sent SIGINT to VM process \(pid)", metadata: ["name": vmDirContext.name])
+        // A `lume serve` may host other VMs too: a signal would end the server
+        // and all of them. Ask it to stop this one.
+        if let port = LumeServeProcess.apiPort(ofProcess: pid) {
+            try await stopThroughServer(pid: pid, port: port, force: force, timeout: timeout)
+            return
         }
 
-        // Wait for process to stop with timeout
-        var attempts = 0
-        while attempts < 10 {
+        if force {
             Logger.info(
-                "Waiting for process \(pid) to terminate (attempt \(attempts + 1)/10)",
+                "Force stop requested; powering off process \(pid) immediately",
                 metadata: ["name": vmDirContext.name])
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-
-            // Check if process still exists
-            if kill(pid, 0) != 0 {
-                // Process is gone, do final cleanup
-                Logger.info("Process \(pid) has terminated", metadata: ["name": vmDirContext.name])
-                virtualizationService = nil
-                vncService.stop()
-                try? fileHandle.close()
-
-                // Force unlock the config file
-                unlockConfigFile()
-
-                Logger.info(
-                    "VM stopped successfully via process termination",
-                    metadata: ["name": vmDirContext.name])
-                return
-            }
-            attempts += 1
+            try await forcePowerOff(owner: owner, graceful: false)
+            return
         }
 
-        // If graceful shutdown failed, force kill the process
+        // Graceful first: ask the owner to shut down. SIGTERM is honored by the
+        // run process (its handler triggers a clean stop); even without a handler
+        // its default disposition terminates the process, so unlike SIGINT — which
+        // the AppKit run loop swallows — the VM never lingers.
+        guard LumeServeProcess.apiPort(ofProcess: pid) == nil, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
+        }
+        if kill(pid, SIGTERM) == 0 {
+            Logger.info(
+                "Sent SIGTERM to VM process \(pid) for graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+        }
+
+        if await waitForProcessExit(owner: owner, timeout: timeout) {
+            Logger.info(
+                "Process \(pid) exited after graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+            finalizeCrossProcessStop()
+            Logger.info(
+                "VM stopped successfully via process termination",
+                metadata: ["name": vmDirContext.name])
+            return
+        }
+
         Logger.info(
-            "Graceful shutdown failed, forcing termination of process \(pid)",
+            "Graceful shutdown did not complete within \(Int(timeout))s; forcing power-off of process \(pid)",
             metadata: ["name": vmDirContext.name])
-        if kill(pid, SIGKILL) == 0 {
-            Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
+        try await forcePowerOff(owner: owner, graceful: true)
+    }
 
-            // Wait a moment for the process to be fully killed
-            try await Task.sleep(nanoseconds: 2_000_000_000)
+    /// Stops this VM through the `lume serve` (process `pid`, API on `port`)
+    /// that runs it, leaving the server and its other VMs running.
+    @MainActor
+    private func stopThroughServer(
+        pid: pid_t, port: UInt16, force: Bool, timeout: TimeInterval
+    ) async throws {
+        Logger.info(
+            "VM runs in lume serve; asking the server to stop it",
+            metadata: ["name": vmDirContext.name, "pid": "\(pid)", "port": "\(port)"])
+        let name =
+            vmDirContext.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? vmDirContext.name
+        guard let url = URL(string: "http://127.0.0.1:\(port)/lume/vms/\(name)/stop") else {
+            throw VMError.internalError("Invalid lume serve URL for port \(port)")
+        }
+        var body: [String: Any] = ["force": force, "timeout": timeout]
+        if let storage = vmDirContext.storage { body["storage"] = storage }
+        var request = URLRequest(url: url, timeoutInterval: max(timeout, 0) + 30)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            // Never fall back to signalling the server: that is what ends
+            // every VM it hosts.
+            throw VMError.internalError(
+                "VM '\(vmDirContext.name)' runs in lume serve (process \(pid)), which did not answer on port \(port): \(error.localizedDescription)"
+            )
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            let detail = String(decoding: data, as: UTF8.self)
+            throw VMError.internalError(
+                "lume serve (process \(pid)) could not stop VM '\(vmDirContext.name)' (HTTP \(status)): \(detail)"
+            )
+        }
+        finalizeCrossProcessStop()
+        Logger.info("VM stopped through lume serve", metadata: ["name": vmDirContext.name])
+    }
 
-            // Do final cleanup
-            virtualizationService = nil
-            vncService.stop()
-            try? fileHandle.close()
+    /// Polls until `pid` is no longer signalable or `timeout` elapses.
+    /// Returns `true` if the process exited within the budget.
+    @MainActor
+    private func waitForProcessExit(owner: RunOwner, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(max(timeout, 0))
+        repeat {
+            if !owner.matches { return true }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        } while Date() < deadline
+        return !owner.matches
+    }
 
-            // Force unlock the config file
-            unlockConfigFile()
+    /// SIGKILLs `pid`, confirms it is gone, and releases this VM's local state.
+    @MainActor
+    private func forcePowerOff(owner: RunOwner, graceful: Bool) async throws {
+        if graceful && (!owner.matches || RunOwner.load(vmDirContext.dir.runOwnerURL) == nil
+            || RunOwner.lockHeld(vmDirContext.dir.configPath.url) == false) {
+            finalizeCrossProcessStop()
+            return
+        }
+        guard LumeServeProcess.apiPort(ofProcess: owner.pid) == nil, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
+        }
+        let pid = owner.pid
+        _ = kill(pid, SIGKILL)
+        Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
 
+        if await waitForProcessExit(owner: owner, timeout: 5) {
+            finalizeCrossProcessStop()
             Logger.info("VM forcefully stopped", metadata: ["name": vmDirContext.name])
             return
         }
 
-        // If we get here, something went very wrong
-        try? fileHandle.close()
+        // SIGKILL cannot be caught, so surviving it means the process is wedged
+        // in the kernel. Release our side anyway so the run lock is not orphaned.
+        finalizeCrossProcessStop()
         Logger.error(
-            "Failed to stop VM - could not terminate process \(pid)",
+            "Failed to stop VM - process \(pid) did not terminate",
             metadata: ["name": vmDirContext.name])
-
-        // As a last resort, try to force unlock
-        unlockConfigFile()
-
-        throw VMError.internalError("Failed to stop VM process")
+        throw VMError.internalError("Failed to stop VM process \(pid)")
     }
 
-    // Helper method to forcibly clear any locks on the config file
-    private func unlockConfigFile() {
-        Logger.info(
-            "Forcibly clearing locks on config file",
-            metadata: [
-                "path": vmDirContext.dir.configPath.path,
-                "name": vmDirContext.name,
-            ])
+    /// Releases the resources a cross-process stop is responsible for cleaning up.
+    @MainActor
+    private func finalizeCrossProcessStop() {
+        virtualizationService = nil
+        vncService.stop()
+    }
 
-        // First attempt: standard unlock methods
-        if let fileHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            // Use F_GETLK and F_SETLK to check and clear locks
-            var lockInfo = flock()
-            lockInfo.l_type = Int16(F_UNLCK)
-            lockInfo.l_whence = Int16(SEEK_SET)
-            lockInfo.l_start = 0
-            lockInfo.l_len = 0
-
-            // Try to unlock the file using fcntl
-            _ = fcntl(fileHandle.fileDescriptor, F_SETLK, &lockInfo)
-
-            // Also try the regular flock method
-            flock(fileHandle.fileDescriptor, LOCK_UN)
-
-            try? fileHandle.close()
-            Logger.info("Standard unlock attempts performed", metadata: ["name": vmDirContext.name])
-        }
-
-        // Second attempt: try to acquire and immediately release a fresh lock
-        if let tempHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            if flock(tempHandle.fileDescriptor, LOCK_EX | LOCK_NB) == 0 {
-                Logger.info(
-                    "Successfully acquired and released lock to reset state",
-                    metadata: ["name": vmDirContext.name])
-                flock(tempHandle.fileDescriptor, LOCK_UN)
-            } else {
-                Logger.info(
-                    "Could not acquire lock for resetting - may still be locked",
-                    metadata: ["name": vmDirContext.name])
-            }
-            try? tempHandle.close()
-        }
-
-        // Third attempt (most aggressive): copy the config file, remove the original, and restore
-        Logger.info(
-            "Trying aggressive method: backup and restore config file",
-            metadata: ["name": vmDirContext.name])
-        // Only proceed if the config file exists
-        let fileManager = FileManager.default
-        let configPath = vmDirContext.dir.configPath.path
-        let backupPath = configPath + ".backup"
-
-        if fileManager.fileExists(atPath: configPath) {
-            // Create a backup of the config file
-            if let configData = try? Data(contentsOf: URL(fileURLWithPath: configPath)) {
-                // Make backup
-                try? configData.write(to: URL(fileURLWithPath: backupPath))
-
-                // Remove the original file to clear all locks
-                try? fileManager.removeItem(atPath: configPath)
-                Logger.info(
-                    "Removed original config file to clear locks",
-                    metadata: ["name": vmDirContext.name])
-
-                // Wait a moment for OS to fully release resources
-                Thread.sleep(forTimeInterval: 0.1)
-
-                // Restore from backup
-                try? configData.write(to: URL(fileURLWithPath: configPath))
-                Logger.info(
-                    "Restored config file from backup", metadata: ["name": vmDirContext.name])
-            } else {
-                Logger.error(
-                    "Could not read config file content for backup",
-                    metadata: ["name": vmDirContext.name])
-            }
-        } else {
-            Logger.info(
-                "Config file does not exist, cannot perform aggressive unlock",
-                metadata: ["name": vmDirContext.name])
-        }
-
-        // Final check
-        if let finalHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            let lockResult = flock(finalHandle.fileDescriptor, LOCK_EX | LOCK_NB)
-            if lockResult == 0 {
-                Logger.info(
-                    "Lock successfully cleared - verified by acquiring test lock",
-                    metadata: ["name": vmDirContext.name])
-                flock(finalHandle.fileDescriptor, LOCK_UN)
-            } else {
-                Logger.info(
-                    "Lock still present after all clearing attempts",
-                    metadata: ["name": vmDirContext.name, "severity": "warning"])
-            }
-            try? finalHandle.close()
-        }
+    private func verifiedOwner(_ owner: RunOwner) -> Bool {
+        owner.verified(record: vmDirContext.dir.runOwnerURL,
+            config: vmDirContext.dir.configPath.url, probe: runLockProbe)
     }
 
     // MARK: - Resource Management
@@ -1067,6 +1239,35 @@ class VM {
         try vmDirContext.saveConfig()
     }
 
+    /// Points this VM at its directory's new place after a rename (the
+    /// directory was moved; a running guest keeps its open files).
+    func relocate(to dir: VMDirectory) {
+        var moved = VMDirContext(
+            dir: dir, config: vmDirContext.config, home: vmDirContext.home,
+            storage: vmDirContext.storage)
+        moved.diskPathOverride = vmDirContext.diskPathOverride
+        moved.nvramPathOverride = vmDirContext.nvramPathOverride
+        vmDirContext = moved
+        vncService.relocate(to: dir)
+    }
+
+    /// Gives a stopped VM whose saved state cannot be used a new MAC
+    /// address and (macOS) machine identifier, dropping that state: used
+    /// when another running VM already has the state's MAC address (two
+    /// clones of one saved state), so this one boots as a machine of its
+    /// own instead of colliding on the network. The usual `isRunning` check
+    /// is skipped on purpose: it looks the MAC address up, and that address
+    /// is the other VM's.
+    func dropSavedStateForNewIdentity() throws {
+        vmDirContext.dir.discardSavedState()
+        vmDirContext.config.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
+        if getOSType().caseInsensitiveCompare("macOS") == .orderedSame {
+            vmDirContext.config.setMachineIdentifier(
+                DarwinVirtualizationService.generateMachineIdentifier())
+        }
+        try vmDirContext.saveConfig()
+    }
+
     func setMacAddress(_ newMacAddress: String) throws {
         guard !isRunning else {
             throw VMError.alreadyRunning(vmDirContext.name)
@@ -1084,7 +1285,9 @@ class VM {
     /// Best-effort write of VNC config into the VM via SSH.
     /// Silently gives up if SSH is not available (e.g., SSH disabled on the VM).
     /// The guest can still read config from VirtioFS or use hardcoded defaults.
-    static func writeVNCConfigViaSSH(
+    /// Nonisolated: the SSH session blocks its thread for seconds, and on the
+    /// main actor that stalls every `lume serve` request and VM start meanwhile.
+    nonisolated static func writeVNCConfigViaSSH(
         vmName: String, storage: String?, port: Int, password: String
     ) async {
         let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)"
@@ -1260,6 +1463,49 @@ class VM {
         return false
     }
 
+    // MARK: - Host port forwards over vsock
+
+    /// Whether a run with `forwards` gets a virtio socket device: always on
+    /// a cold boot; on a resume only when the state was saved with one.
+    nonisolated static func usesSocketDevice(
+        forwards: [UInt16], hasSavedState: Bool, savedStateHasVsock: Bool
+    ) -> Bool {
+        !forwards.isEmpty && (!hasSavedState || savedStateHasVsock)
+    }
+
+    /// Publishes `forwards` on host loopback ports through the guest agent
+    /// and records them (`vsock.json`) for `get`. A failure leaves the VM
+    /// reachable on its address only.
+    private func startVsockForwards(_ forwards: [UInt16], service: VMVirtualizationService) {
+        guard let connect = service.vsockConnector() else {
+            Logger.error("The VM has no virtio socket device", metadata: ["name": vmDirContext.name])
+            return
+        }
+        do {
+            let forwarder = try VsockForwarder(guestPorts: forwards, connect: connect)
+            let dir = vmDirContext.dir
+            dir.saveVsockSession(forwarder.session(agent: false))
+            let ready = forwarder.session(agent: true)
+            let name = vmDirContext.name
+            forwarder.start {
+                dir.saveVsockSession(ready)
+                Logger.info("The guest agent answers over vsock", metadata: ["name": name])
+            }
+            vsockForwarder = forwarder
+            Logger.info(
+                "Forwarding host loopback ports over vsock",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "forwards": forwarder.forwards.map { "\($0.value)->\($0.key)" }
+                        .sorted().joined(separator: ","),
+                ])
+        } catch {
+            Logger.error(
+                "Could not forward ports over vsock",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"])
+        }
+    }
+
     // MARK: - Platform-specific Methods
 
     func getOSType() -> String {
@@ -1384,6 +1630,14 @@ class VM {
             throw VMError.alreadyRunning(vmDirContext.name)
         }
 
+        defer {
+            flock(fileHandle.fileDescriptor, LOCK_UN)
+            try? fileHandle.close()
+        }
+        guard let owner = RunOwner.current() else { throw VMError.unsafeOwner(vmDirContext.name) }
+        try owner.save(vmDirContext.dir.runOwnerURL)
+        defer { owner.remove(vmDirContext.dir.runOwnerURL) }
+
         Logger.info(
             "Running VM with USB storage devices",
             metadata: [
@@ -1469,9 +1723,6 @@ class VM {
                 ])
             virtualizationService = nil
             vncService.stop()
-            // Release lock
-            flock(fileHandle.fileDescriptor, LOCK_UN)
-            try? fileHandle.close()
             throw error
         }
     }

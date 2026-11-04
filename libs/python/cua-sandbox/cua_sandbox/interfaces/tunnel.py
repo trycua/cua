@@ -65,10 +65,16 @@ class _TunnelContext:
         return self._open().__await__()
 
     async def _open(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:
-        for p in self._ports:
-            info = await self._t.forward_tunnel(p)
-            info._closer = self._close_one
-            self._infos.append(info)
+        opened: List[TunnelInfo] = []
+        try:
+            for p in self._ports:
+                info = await self._t.forward_tunnel(p)
+                info._closer = self._close_one
+                self._infos.append(info)
+                opened.append(info)
+        except BaseException:
+            await asyncio.gather(*(info.close() for info in opened), return_exceptions=True)
+            raise
         return self._result()
 
     def _result(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:

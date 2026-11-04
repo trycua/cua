@@ -37,9 +37,10 @@
 #     (each only when it's a reparse point — never clobber a real dir).
 #
 # Conservative on Claude MCP cleanup: we DON'T auto-edit %USERPROFILE%\
-# .claude.json on Windows (mirrors the macOS uninstall.sh's stance for
-# environments without python3). The closing message prints the
-# `claude mcp remove cua-driver-rs` command for the user to run.
+# .claude.json on Windows. The closing message tells the user to verify the
+# exact registration's command path belongs to this release before removing
+# the shared `cua-computer-use` name. The legacy `cua-driver-rs` name remains
+# release-specific guidance for older installs.
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
@@ -119,7 +120,7 @@ function Test-NeedsElevation {
 if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
     Write-Host "==> cua-driver-rs uninstaller: detected -AutoStart install state" -ForegroundColor Cyan
     Write-Host "    (the 'cua-driver-serve' task is RunLevel=Highest and/or a daemon is"
-    Write-Host "    running at High IL). Removing them needs admin — triggering UAC prompt."
+    Write-Host "    running at High IL). Removing them needs admin - triggering UAC prompt."
 
     # Re-exec self elevated. $MyInvocation.MyCommand.Path is set when invoked
     # from a file on disk; empty when piped through `irm ... | iex` (the
@@ -145,7 +146,7 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
     } catch {
         Write-Host "error: failed to elevate ($($_.Exception.Message))" -ForegroundColor Red
         Write-Host "  Re-run this script from an elevated PowerShell instead:" -ForegroundColor Yellow
-        Write-Host "  Right-click PowerShell → Run as Administrator, then re-run the uninstall." -ForegroundColor Yellow
+        Write-Host "  Right-click PowerShell -> Run as Administrator, then re-run the uninstall." -ForegroundColor Yellow
         exit 1
     }
 }
@@ -196,6 +197,15 @@ $SkillJunctions = @(
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
+)
+
+$OwnedSkillJunctions = @(
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver-rs")
 )
 
 # ---------- Log helpers ----------------------------------------------------
@@ -357,7 +367,7 @@ if (Test-Path -LiteralPath $VisibleBinDir) {
             Write-Step "skipped $VisibleBinDir (user declined)"
         }
     } else {
-        Write-WarningStep "$VisibleBinDir exists but is not a reparse point — refusing to remove."
+        Write-WarningStep "$VisibleBinDir exists but is not a reparse point - refusing to remove."
         Write-WarningStep "  install.ps1 only creates junctions at this path, so this is likely a hand-managed directory."
     }
 } else {
@@ -371,7 +381,7 @@ if (Test-Path -LiteralPath $CurrentDir) {
         Remove-Item -LiteralPath $CurrentDir -Force -Recurse -ErrorAction SilentlyContinue
         Write-Step "removed junction $CurrentDir"
     } else {
-        Write-WarningStep "$CurrentDir exists but is not a reparse point — leaving it for the package-home pass below."
+        Write-WarningStep "$CurrentDir exists but is not a reparse point - leaving it for the package-home pass below."
     }
 }
 
@@ -388,7 +398,7 @@ if (Test-Path -LiteralPath $HomeDir) {
         if ($Purge) {
             Remove-Item -LiteralPath $HomeDir -Force -Recurse -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $HomeDir) {
-                Write-WarningStep "$HomeDir was not fully removed — some files may still be locked."
+                Write-WarningStep "$HomeDir was not fully removed - some files may still be locked."
                 Write-WarningStep "  Close any open cua-driver processes / shells with cwd inside the tree and re-run."
             } else {
                 Write-Step "purged $HomeDir (including telemetry identity and preference)"
@@ -446,7 +456,7 @@ if (Test-Path -LiteralPath $LegacyHomeDir) {
     if ($Purge) {
         Remove-Item -LiteralPath $LegacyHomeDir -Force -Recurse -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $LegacyHomeDir) {
-            Write-WarningStep "$LegacyHomeDir was not fully removed — some files may still be locked."
+            Write-WarningStep "$LegacyHomeDir was not fully removed - some files may still be locked."
         } else {
             Write-Step "purged legacy package home $LegacyHomeDir"
         }
@@ -475,10 +485,35 @@ foreach ($skillLink in $SkillJunctions) {
             Remove-Item -LiteralPath $skillLink -Force -Recurse -ErrorAction SilentlyContinue
             Write-Step "removed skill junction $skillLink"
         } else {
-            Write-Step "$skillLink is a real directory (not a reparse point) — skipping"
+            Write-Step "$skillLink is a real directory (not a reparse point) - skipping"
         }
     } else {
         Write-Step "no skill junction at $skillLink (skipping)"
+    }
+}
+foreach ($skillLink in $OwnedSkillJunctions) {
+    if (-not (Test-Path -LiteralPath $skillLink)) {
+        Write-Step "no skill junction at $skillLink (skipping)"
+        continue
+    }
+    if (-not (Test-IsReparsePoint $skillLink)) {
+        Write-Step "$skillLink is a real directory (not a reparse point) - skipping"
+        continue
+    }
+    $targetProperty = (Get-Item -LiteralPath $skillLink -Force).PSObject.Properties['Target']
+    $owned = $false
+    $targets = if ($targetProperty) { @($targetProperty.Value) } else { @() }
+    foreach ($target in $targets) {
+        foreach ($root in @($HomeDir, $LegacyHomeDir)) {
+            $prefix = $root.TrimEnd('\') + '\'
+            if ($target -and $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $owned = $true }
+        }
+    }
+    if ($owned) {
+        Remove-Item -LiteralPath $skillLink -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Step "removed skill junction $skillLink"
+    } else {
+        Write-Step "$skillLink points outside the driver home - skipping"
     }
 }
 
@@ -496,14 +531,26 @@ if (-not $Purge) {
     Write-Host ""
 }
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
-Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver-rs"
-Write-Host "  with Claude Code, remove it manually:"
+Write-Host "  We don't auto-edit ~/.claude.json on Windows. Do NOT remove the shared"
+Write-Host "  cua-computer-use registration by name alone. First open ~/.claude.json"
+Write-Host "  and verify that the exact user-scope entry's 'command' belongs to this"
+Write-Host "  release install, for example cua-driver.exe under one of these paths:"
 Write-Host ""
-Write-Host "    claude mcp remove cua-driver-rs"
+Write-Host "    $VisibleBinDir"
+Write-Host "    $HomeDir\packages\"
+Write-Host "    $LegacyVisibleBinDir"
+Write-Host "    $LegacyHomeDir\packages\"
 Write-Host ""
-Write-Host "  Or edit ~/.claude.json directly and delete entries whose 'command' points at"
-Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\Cua\cua-driver\bin\"
-Write-Host "  (or the legacy %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\ from v0.2.13 and earlier)."
+Write-Host "  Only if that command path is release-owned, remove the current registration:"
+Write-Host ""
+Write-Host "    claude mcp remove cua-computer-use -s user"
+Write-Host ""
+Write-Host "  If it points somewhere else (for example cua-driver-local or another"
+Write-Host "  side-by-side install), preserve it and use that installation's uninstaller."
+Write-Host ""
+Write-Host "  For the older cua-driver-rs name, verify the exact command ownership too:"
+Write-Host ""
+Write-Host "    claude mcp remove cua-driver-rs -s user"
 Write-Host ""
 Write-Host "PATH:"
 Write-Host "  If you added $VisibleBinDir to your User PATH after the install, remove it:"
@@ -514,3 +561,41 @@ Write-Host "    [Environment]::SetEnvironmentVariable('Path', `$new, 'User')"
 Write-Host ""
 Write-Host "  Then open a new PowerShell window for the change to take effect."
 Write-Host ""
+
+$LocalHome = if ($env:CUA_DRIVER_LOCAL_HOME) { $env:CUA_DRIVER_LOCAL_HOME } else { Join-Path $env:USERPROFILE ".cua-driver-local" }
+$LocalBinDir = if ($env:CUA_DRIVER_LOCAL_INSTALL_DIR) { $env:CUA_DRIVER_LOCAL_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver-local\bin" }
+$LocalCli = Join-Path $LocalBinDir "cua-driver-local.exe"
+$LocalMarker = Join-Path $LocalHome "packages\current\cua-driver-local.exe"
+# Look the file up on PATH directly. `Get-Command -CommandType Application` for a
+# name that is not there costs about a second warm and 10 to 25 seconds on a cold
+# machine (command discovery), which made the Windows uninstall regression time out.
+function Find-OnPath([string]$FileName) {
+    foreach ($Dir in ($env:PATH -split ';')) {
+        $Dir = $Dir.Trim().Trim('"')
+        if (-not $Dir) { continue }
+        try {
+            $Candidate = [IO.Path]::Combine($Dir, $FileName)
+            if ([IO.File]::Exists($Candidate)) { return $Candidate }
+        } catch {}
+    }
+    return $null
+}
+$LocalCommandPath = Find-OnPath "cua-driver-local.exe"
+$LocalSurvivor = if (Test-Path -LiteralPath $LocalCli) {
+    $LocalCli
+} elseif (Test-Path -LiteralPath $LocalMarker) {
+    $LocalMarker
+} elseif ($LocalCommandPath) {
+    $LocalCommandPath
+} else {
+    $null
+}
+
+if ($LocalSurvivor) {
+    Write-Host "Note: a separate source-built cua-driver-local installation remains at $LocalSurvivor." -ForegroundColor Yellow
+    Write-Host "The cua-driver uninstaller intentionally leaves this local product untouched."
+    Write-Host "To remove it, run from your Cua checkout:"
+    Write-Host ""
+    Write-Host "  .\libs\cua-driver\scripts\uninstall-local.ps1"
+    Write-Host ""
+}

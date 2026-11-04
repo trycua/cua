@@ -3,14 +3,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -18,13 +18,73 @@ use cua_driver_core::browser::types::{
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
+    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+};
 
-#[derive(Debug, Default)]
-pub struct LinuxBrowserPlatform;
+pub struct LinuxBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Mutex<BrowserCursorTracker>,
+}
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
+impl LinuxBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Mutex::new(BrowserCursorTracker::default()),
+        }
+    }
+}
+
+impl Default for LinuxBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
+
+async fn x11_native_window(pid: i64, window_id: u64) -> Option<(NativeWindowInfo, bool)> {
+    let pid_u32 = u32::try_from(pid).ok()?;
+    tokio::task::spawn_blocking(move || {
+        select_x11_window(pid, window_id, crate::x11::list_windows(Some(pid_u32)))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn select_x11_window(
+    pid: i64,
+    window_id: u64,
+    windows: Vec<crate::x11::WindowInfo>,
+) -> Option<(NativeWindowInfo, bool)> {
+    let only = windows.len() == 1;
+    let window = windows
+        .into_iter()
+        .find(|w| w.xid == window_id && w.pid.map(i64::from) == Some(pid))?;
+    Some((
+        NativeWindowInfo {
+            pid,
+            window_id,
+            title: window.title,
+            bounds: Rect::new(
+                f64::from(window.x),
+                f64::from(window.y),
+                f64::from(window.width),
+                f64::from(window.height),
+            ),
+            geometry_exact: true,
+            ownership: NativeOwnershipProof {
+                method: NativeOwnershipMethod::PlatformAttested,
+                owner_pid: pid,
+                detail: Some(
+                    "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
+                        .to_owned(),
+                ),
+            },
+        },
+        only,
+    ))
 }
 
 fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
@@ -50,21 +110,21 @@ fn run_existing_profile_cleanup<T: Send + 'static>(
         .name("cua-browser-cleanup".into())
         .spawn(cleanup)
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not start exact browser cleanup: {error}"),
             )
         })?
         .join()
         .map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "exact browser cleanup worker panicked",
             )
         })
 }
 
-fn is_chromium(name: &str) -> bool {
+pub(crate) fn is_chromium_identity(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -74,14 +134,8 @@ fn is_chromium(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
-fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase().split_whitespace().any(|word| {
-        word.rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(word)
-            .trim_end_matches(".exe")
-            == "firefox"
-    })
+fn is_chromium(name: &str) -> bool {
+    is_chromium_identity(name)
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
@@ -175,18 +229,6 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
     }
 }
 
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
-}
-
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
     text.lines()
         .skip(1)
@@ -227,7 +269,7 @@ fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)
 
 fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
     if !std::path::Path::new(&format!("/proc/{root}")).exists() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {root} is no longer available"),
         ));
@@ -295,21 +337,6 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
-}
-
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let relative = match product {
@@ -323,7 +350,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} is no longer available"),
         )
@@ -360,14 +387,14 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         [path] if path.is_absolute() => Ok(Some(path.clone())),
         [path] => {
             let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserBindingStale,
                     format!("browser process {pid} working directory is unavailable"),
                 )
             })?;
             Ok(Some(cwd.join(path)))
         }
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "browser process has multiple distinct --user-data-dir arguments",
         )),
@@ -382,14 +409,14 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not read the browser's DevToolsActivePort file: {error}"),
             ))
         }
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserEndpointOwnerMismatch,
             "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
         ));
@@ -414,30 +441,17 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
 
 fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let tail = stat
-        .rsplit_once(')')
-        .map(|(_, tail)| tail.trim())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process identity for pid {pid}"),
-            )
-        })?;
-    let started = tail
-        .split_whitespace()
-        .nth(19)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process start time for pid {pid}"),
-            )
-        })?;
+    let started = crate::proc_fs::process_start_time_from_stat(&stat).ok_or_else(|| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not parse process start time for pid {pid}"),
+        )
+    })?;
     let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
@@ -445,47 +459,8 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (loopback_websocket_port(&url) == Some(port)).then_some(url)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    (loopback_websocket_port(&url) == Some(port)).then_some(url)
 }
 
 #[async_trait]
@@ -499,7 +474,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 return Ok(executable);
             }
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no root-owned, non-writable system Chromium executable is available for isolated launch",
         ))
@@ -509,9 +484,79 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
     }
 
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command_for(
+                key,
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        crate::overlay::send_command_for(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(action.window_id),
+        );
+        crate::overlay::animate_cursor_to_for(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command_for(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
+    }
+
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Linux process-id range"),
             )
@@ -529,7 +574,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         .ok()
         .and_then(|(process, executable)| process.map(|process| (process, executable)))
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("browser process {pid} is no longer available"),
             )
@@ -562,8 +607,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         pid: i64,
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal> {
+        if let Some((window, _)) = x11_native_window(pid, window_id).await {
+            return Ok(window);
+        }
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Linux process-id range"),
             )
@@ -577,13 +625,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 .ok()
                 .flatten()
                 .ok_or_else(|| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         "Hyprland could not attest the exact mapped browser window",
                     )
                 })?;
                 if !hyprland_identity_matches(pid_u32, window_id, window.pid, window.address) {
-                    return Err(refusal(
+                    return Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         "Hyprland browser window does not match the requested pid and full address",
                     ));
@@ -611,7 +659,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
-                    return Err(refusal(
+                    return Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!("Sway window {window_id} is not owned by pid {pid}"),
                     ));
@@ -667,7 +715,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             .ok()
             .flatten()
             .ok_or_else(|| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     "the active Wayland compositor cannot prove this window's pid and geometry",
                 )
@@ -694,39 +742,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             });
         }
 
-        let window = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .find(|window| window.xid == window_id)
-        })
-        .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
-            refusal(
+        Err({
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("X11 window {window_id} is not owned by pid {pid}"),
             )
-        })?;
-        Ok(NativeWindowInfo {
-            pid,
-            window_id,
-            title: window.title,
-            bounds: Rect::new(
-                f64::from(window.x),
-                f64::from(window.y),
-                f64::from(window.width),
-                f64::from(window.height),
-            ),
-            geometry_exact: true,
-            ownership: NativeOwnershipProof {
-                method: NativeOwnershipMethod::PlatformAttested,
-                owner_pid: pid,
-                detail: Some(
-                    "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
-                        .to_owned(),
-                ),
-            },
         })
     }
 
@@ -735,8 +755,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         pid: i64,
         window_id: u64,
     ) -> Result<Option<bool>, BrowserRefusal> {
+        if let Some((_, only)) = x11_native_window(pid, window_id).await {
+            return Ok(Some(only));
+        }
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Linux process-id range"),
             )
@@ -748,7 +771,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     .ok()
                     .and_then(Result::ok)
                     .ok_or_else(|| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             "Hyprland could not attest browser window cardinality",
                         )
@@ -784,7 +807,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     })
                     .await
                     .map_err(|error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             format!("could not enumerate cua-compositor browser windows: {error}"),
                         )
@@ -800,20 +823,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 .collect::<Vec<_>>();
             return Ok(Some(owned.len() == 1 && owned[0] == window_id));
         }
-        let owned = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .map(|window| u64::from(window.xid))
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not enumerate X11 browser windows: {error}"),
-            )
-        })?;
-        Ok(Some(owned.len() == 1 && owned[0] == window_id))
+        Ok(Some(false))
     }
 
     async fn discover_owned_endpoint(
@@ -823,7 +833,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("listener inspection task failed: {error}"),
                 )
@@ -856,7 +866,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("listener inspection task failed: {error}"),
                 )
@@ -880,7 +890,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     detail: Some("/proc owner plus /json/version".to_owned()),
                 },
             })),
-            _ => Err(refusal(
+            _ => Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingAmbiguous,
                 "multiple browser-level DevTools endpoints are owned by the approved process",
             )),
@@ -893,14 +903,14 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let Some(port) = loopback_websocket_port(expected_ws_url) else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
         if let Some(endpoint) = active_port_endpoint(pid)? {
             if endpoint.ws_url != expected_ws_url {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the browser's exact DevTools endpoint changed after approval",
                 ));
@@ -910,7 +920,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("listener inspection task failed: {error}"),
                 )
@@ -936,7 +946,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "approved existing-profile setup is not implemented for {:?}",
@@ -945,7 +955,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         let pid_u32 = u32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the Linux process-id range",
             )
@@ -965,7 +975,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             tokio::task::spawn_blocking(move || loopback_ports_for_pid(request.pid))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("listener inspection task failed: {error}"),
                     )
@@ -975,7 +985,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "could not inspect {}'s remote-debugging setup UI: {error}",
@@ -1004,7 +1014,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 Ok(Ok(ports)) => ports,
                 Ok(Err(error)) => break Err(error),
                 Err(error) => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("listener inspection task failed: {error}"),
                     ))
@@ -1033,7 +1043,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         "new PID-owned approval listener correlated with exact setup",
                     ));
                 } else if correlated.len() > 1 {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
                             "{} exposed multiple newly correlated PID-owned listeners",
@@ -1060,7 +1070,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 [] => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRequiresSetup,
                         format!(
                             "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
@@ -1069,7 +1079,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     ))
                 }
                 _ => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
                             "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
@@ -1100,12 +1110,12 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 let closed = tokio::task::spawn_blocking(move || handle.close_for_success())
                     .await
                     .map_err(|join_error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             format!("could not finish browser setup cleanup: {join_error}"),
                         )
                     })??;
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRequiresSetup,
                     format!(
                         "remote debugging is now enabled for this {} profile, but {} only opens \
@@ -1133,7 +1143,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 let error = tokio::task::spawn_blocking(move || handle.abort(error))
                     .await
                     .map_err(|join_error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             format!("could not roll back browser setup: {join_error}"),
                         )
@@ -1160,7 +1170,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
         let pid = u32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the Linux process-id range",
             )
@@ -1170,7 +1180,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not commit exact browser setup cleanup: {error}"),
             )
@@ -1182,7 +1192,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "existing-profile cleanup is not implemented for {:?}",
@@ -1191,7 +1201,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         let pid = u32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the Linux process-id range",
             )
@@ -1218,7 +1228,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
         .await
         .unwrap_or_else(|join_error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not roll back exact browser setup: {join_error}"),
             )
@@ -1236,7 +1246,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let (start_time, executable) = tokio::task::spawn_blocking(move || process_identity(pid))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("process fingerprint task failed: {error}"),
                 )
@@ -1253,7 +1263,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let Some(pid) = request.pid else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRequiresSetup,
                 "pid-free isolated launch is handled by shared core",
             ));
@@ -1268,7 +1278,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 attachment: None,
             });
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRequiresSetup,
             "No owned endpoint is available. Acting setup is handled by shared core only for a verified driver-owned isolated profile.",
         ))
@@ -1278,6 +1288,40 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_identity_and_cardinality_precede_compositor_selection() {
+        let window = |xid| crate::x11::WindowInfo {
+            xid,
+            pid: Some(42),
+            app_name: String::new(),
+            title: "browser".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+        };
+        let (native, only) = select_x11_window(42, 7, vec![window(7)]).unwrap();
+        assert!(native.geometry_exact && only);
+        assert_eq!(native.window_id, 7);
+        assert!(
+            !select_x11_window(42, 7, vec![window(7), window(8)])
+                .unwrap()
+                .1
+        );
+        for id in [8, u64::from(u32::MAX) + 1] {
+            let mut compositor_id = None;
+            let result = select_x11_window(42, id, vec![window(7)]).or_else(|| {
+                compositor_id = Some(id);
+                None
+            });
+            assert!(result.is_none());
+            assert_eq!(compositor_id, Some(id));
+        }
+        assert!(select_x11_window(43, 7, vec![window(7)]).is_none());
+    }
 
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
@@ -1325,6 +1369,53 @@ mod tests {
         .expect("cleanup worker");
 
         assert!(cleaned);
+    }
+
+    #[tokio::test]
+    async fn browser_visual_feedback_updates_the_declared_session_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-test".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-A".to_owned(),
+                tab_is_active: true,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-test")
+            .expect("browser action should materialize its session cursor");
+        assert_eq!((state.x, state.y), (Some(321.0), Some(456.0)));
+    }
+
+    #[tokio::test]
+    async fn inactive_tab_feedback_materializes_but_does_not_move_its_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-hidden".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-hidden".to_owned(),
+                tab_is_active: false,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-hidden")
+            .expect("browser action should establish its session-to-tab binding");
+        assert!(
+            state.x.is_none() && state.y.is_none(),
+            "an inactive tab must not animate or move its visible cursor"
+        );
     }
 
     #[test]
@@ -1394,47 +1485,6 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
-        );
-    }
-
-    #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("firefox --new-instance"));
-        assert!(is_firefox("Mozilla Firefox"));
-        assert!(!is_firefox("firefox-helper"));
-        assert!(!is_firefox("waterfox"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
-        assert_eq!(
-            loopback_websocket_port("ws://localhost:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://[::1]:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
-    }
-
-    #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
-            Some((9222, "/devtools/browser/abc-123"))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
         );
     }
 }

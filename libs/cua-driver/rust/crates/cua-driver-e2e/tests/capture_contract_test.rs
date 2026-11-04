@@ -1,0 +1,938 @@
+//! `get_window_state` perception contract,
+//! asserted on each platform's native controlled-harness app.
+//!
+//! get_window_state is perception-mode-agnostic now: it ALWAYS returns BOTH the
+//! element tree AND a screenshot (ground on both, cross-check the sometimes-lying
+//! tree). `capture_mode` is deprecated and ignored; the only way to suppress the
+//! screenshot is the perf opt-out `include_screenshot:false`.
+//!
+//! Oracle, against the harness window:
+//!   * default → BOTH the tree (`btn-increment`) AND an `image` content entry.
+//!   * `include_screenshot:false` → tree present, NO `image` (the cheap path).
+//!   * `capture_mode:"vision"` (deprecated) → IGNORED; still returns both.
+//!
+//! Run explicitly:
+//!   cargo test -p cua-driver-e2e --test capture_contract_test -- --ignored --nocapture --test-threads=1
+
+#![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::ax::element_index_by_id;
+use cua_driver_testkit::e2e::{
+    execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
+    OracleKind, Targeting,
+};
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::observer::TargetWindow;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use cua_driver_testkit::sentinel::ForegroundSentinel;
+use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
+
+/// The aid every harness exposes on its increment button — the tree marker
+/// (WPF AutomationId / AppKit AX identifier / GTK3 AT-SPI accessible name).
+const TREE_MARKER: &str = "btn-increment";
+
+fn strict() -> bool {
+    std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some()
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_driver(label: &str) -> Option<McpDriver> {
+    McpDriver::spawn_macos_daemon_proxy_named(label)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_driver(label: &str) -> Option<McpDriver> {
+    McpDriver::spawn_named(label)
+}
+
+fn test_driver(label: &str) -> Option<McpDriver> {
+    let driver = spawn_driver(label);
+    assert!(
+        driver.is_some() || !strict(),
+        "required source-built driver did not start"
+    );
+    driver
+}
+
+fn capture_toolkit() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "wpf"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "appkit"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "gtk3"
+    }
+}
+
+/// Does the response carry a screenshot? Checks both the MCP `image` content
+/// entry and the canonical `screenshot_png_b64` structured field (the CLI path
+/// surfaces only the latter), so the oracle is transport-agnostic.
+fn has_image(resp: &ToolResponse) -> bool {
+    let mcp_image = resp.raw["result"]["content"]
+        .as_array()
+        .map(|a| a.iter().any(|c| c["type"].as_str() == Some("image")))
+        .unwrap_or(false);
+    let structured_png = resp.structured()["screenshot_png_b64"]
+        .as_str()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    mcp_image || structured_png
+}
+
+/// Is the accessibility tree present (the increment-button marker rendered)?
+/// Checks the canonical `tree_markdown` structured field — `som` puts a short
+/// summary in the MCP text block but the full tree only in `tree_markdown`, so
+/// asserting on `text()` would under-report the tree in `som` mode.
+fn tree_has_marker(resp: &ToolResponse) -> bool {
+    resp.structured()["tree_markdown"]
+        .as_str()
+        .map(|t| t.contains(TREE_MARKER))
+        .unwrap_or(false)
+        || resp.text().contains(TREE_MARKER)
+}
+
+fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> ToolResponse {
+    driver.call(
+        "get_window_state",
+        serde_json::json!({ "pid": pid as i64, "window_id": wid, "capture_mode": mode }),
+    )
+}
+
+/// Snapshot, retrying until the accessibility tree has populated (the marker
+/// appears) or the attempts are exhausted. The AX/AT-SPI tree can lag a
+/// cold-launched window by several seconds: macOS AX registration is a few
+/// hundred ms, but a freshly launched GTK3 harness needs the AT-SPI atk-bridge
+/// to register on the a11y bus, which on a cold bus (CI cold boot) can take a
+/// few seconds. The budget is ~8s so the tree-bearing modes (`ax`, `som`)
+/// reliably exercise their assertions instead of degrading to a cold-start skip.
+fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> ToolResponse {
+    let mut resp = snapshot(driver, pid, wid, mode);
+    for _ in 0..16 {
+        if tree_has_marker(&resp) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        resp = snapshot(driver, pid, wid, mode);
+    }
+    resp
+}
+
+/// Snapshot with NO capture_mode / no extra args (the default path), retrying
+/// until the tree settles.
+fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    // A cold window can serve its tree before its first frame is capturable,
+    // so settle on both halves of the default response, not the tree alone.
+    let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        if (tree_has_marker(&resp) && has_image(&resp)) || std::time::Instant::now() >= deadline {
+            return resp;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until
+/// the tree settles.
+fn snapshot_settled_tree_only(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    let args =
+        serde_json::json!({ "pid": pid as i64, "window_id": wid, "include_screenshot": false });
+    let mut resp = driver.call("get_window_state", args.clone());
+    for _ in 0..16 {
+        if tree_has_marker(&resp) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        resp = driver.call("get_window_state", args.clone());
+    }
+    resp
+}
+
+#[cfg(target_os = "linux")]
+fn sway_json(args: &[&str]) -> serde_json::Value {
+    let output = Command::new("swaymsg")
+        .args(["-r"])
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run external Sway oracle");
+    assert!(
+        output.status.success(),
+        "Sway oracle {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse Sway oracle JSON")
+}
+
+#[cfg(target_os = "linux")]
+fn focused_workspace() -> String {
+    sway_json(&["-t", "get_workspaces"])
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .find(|workspace| workspace["focused"] == true)
+        })
+        .and_then(|workspace| workspace["name"].as_str())
+        .expect("Sway must report one focused workspace")
+        .to_owned()
+}
+
+#[cfg(target_os = "linux")]
+fn workspace_for_pid(
+    node: &serde_json::Value,
+    pid: u32,
+    workspace: Option<&str>,
+) -> Option<String> {
+    let workspace = if node["type"].as_str() == Some("workspace") {
+        node["name"].as_str()
+    } else {
+        workspace
+    };
+    if node["pid"].as_u64() == Some(pid as u64) {
+        return workspace.map(str::to_owned);
+    }
+    node["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(node["floating_nodes"].as_array().into_iter().flatten())
+        .find_map(|child| workspace_for_pid(child, pid, workspace))
+}
+
+#[cfg(target_os = "linux")]
+fn switch_sway_workspace(name: &str) {
+    let output = Command::new("swaymsg")
+        .args(["workspace", name])
+        .stdin(Stdio::null())
+        .output()
+        .expect("switch Sway workspace");
+    assert!(
+        output.status.success(),
+        "could not switch to Sway workspace {name}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(focused_workspace(), name);
+}
+
+#[cfg(target_os = "linux")]
+fn response_has_screenshot_metadata(response: &ToolResponse) -> bool {
+    has_image(response)
+        || response.structured()["screenshot_png_b64"].is_string()
+        || response.structured()["screenshot_file_path"].is_string()
+        || response.structured()["screenshot_width"].is_number()
+        || response.structured()["screenshot_height"].is_number()
+}
+
+// ── per-platform harness launch → (pid, window_id) ──────────────────────────────
+//
+// Each `launch` records the harness window pids that already exist, spawns its
+// own instance, then resolves the window whose pid is NEW. This keeps the three
+// tests deterministic when run back-to-back (`--test-threads=1`): a prior test's
+// window can linger past its driver's teardown, and resolving by title alone
+// would race onto that stale instance.
+
+#[cfg(target_os = "windows")]
+fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
+    let exe = harness_app("harness-wpf", "CuaTestHarness.Wpf.exe");
+    launch_new_instance(driver, &exe, "CuaTestHarness")
+}
+
+#[cfg(target_os = "linux")]
+fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
+    let exe = std::env::var("HARNESS_GTK3_EXE")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| harness_app("harness-gtk3", "CuaTestHarness.Gtk3"));
+    launch_new_instance(driver, &exe, "CuaTestHarness GTK3")
+}
+
+#[cfg(target_os = "macos")]
+fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
+    let app = std::env::var("HARNESS_APPKIT_APP")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| harness_app("harness-appkit", "CuaTestHarness.AppKit.app"));
+    // Launch the binary inside the `.app` directly so the reaper owns the pid.
+    let exe = app.join("Contents/MacOS/CuaTestHarness.AppKit");
+    launch_new_instance(driver, &exe, "CuaTestHarness AppKit")
+}
+
+/// Spawn `exe` under the driver's reaper and resolve the window of the *new*
+/// instance (its pid was not among the harness windows before the spawn).
+fn launch_new_instance(
+    driver: &mut McpDriver,
+    exe: &std::path::Path,
+    title: &str,
+) -> Option<(u32, u64)> {
+    if !exe.exists() {
+        if strict() {
+            panic!("required capture harness is missing: {exe:?}");
+        }
+        eprintln!("[capture] optional harness not built: {exe:?}");
+        return None;
+    }
+    let before = harness_pids(driver, title);
+    let spawned = driver.reaper().spawn(
+        Command::new(exe)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
+    if let Err(error) = spawned {
+        if strict() {
+            panic!("failed to launch required capture harness {exe:?}: {error}");
+        }
+        return None;
+    }
+    resolve_new_window(driver, title, &before)
+}
+
+/// The pids of all currently-open windows whose title contains `title`.
+fn harness_pids(driver: &mut McpDriver, title: &str) -> std::collections::HashSet<u32> {
+    let mut pids = std::collections::HashSet::new();
+    let r = driver.call("list_windows", serde_json::json!({}));
+    if let Some(wins) = r.structured()["windows"].as_array() {
+        for w in wins {
+            if w["title"].as_str().unwrap_or("").contains(title) {
+                if let Some(pid) = w["pid"].as_u64() {
+                    pids.insert(pid as u32);
+                }
+            }
+        }
+    }
+    pids
+}
+
+/// Poll `list_windows` until a `title` window whose pid is NOT in `before`
+/// appears; returns (pid, window_id) and tracks the pid with the reaper.
+fn resolve_new_window(
+    driver: &mut McpDriver,
+    title: &str,
+    before: &std::collections::HashSet<u32>,
+) -> Option<(u32, u64)> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        let r = driver.call("list_windows", serde_json::json!({}));
+        if let Some(wins) = r.structured()["windows"].as_array() {
+            for w in wins {
+                if !w["title"].as_str().unwrap_or("").contains(title) {
+                    continue;
+                }
+                let pid = w["pid"].as_u64().unwrap_or(0) as u32;
+                let wid = w["window_id"].as_u64().unwrap_or(0);
+                if pid != 0 && wid != 0 && !before.contains(&pid) {
+                    driver.reaper().track_pid(pid);
+                    return Some((pid, wid));
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    }
+    if strict() {
+        panic!("required capture harness window {title:?} never appeared");
+    }
+    eprintln!("[capture] optional harness window {title:?} never appeared");
+    None
+}
+
+fn run_capture_case(
+    action: &str,
+    oracles: Vec<OracleKind>,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    let case = native_readonly_case(
+        capture_toolkit(),
+        action,
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+        oracles.clone(),
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("required capture driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        driver.start_behavior_recording();
+        test(pid, wid, &mut driver);
+        Observation::delivered(oracles, Evidence::default())
+    });
+}
+
+// ── tests ───────────────────────────────────────────────────────────────────────
+
+/// DEFAULT: get_window_state returns BOTH the tree AND a screenshot — grounding
+/// on both is the whole point.
+#[test]
+#[ignore]
+fn default_returns_tree_and_screenshot() {
+    run_capture_case(
+        "tree_and_screenshot",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let resp = snapshot_settled_default(driver, pid, wid);
+            assert!(
+                !resp.is_error(),
+                "get_window_state(default) errored: {}",
+                resp.text()
+            );
+
+            assert!(
+                tree_has_marker(&resp),
+                "default response is missing the required tree marker: {}",
+                resp.text().chars().take(160).collect::<String>()
+            );
+            assert!(
+                has_image(&resp),
+                "default response is missing its screenshot"
+            );
+            #[cfg(target_os = "linux")]
+            assert_eq!(
+                resp.structured()["screenshot_frame_valid"],
+                true,
+                "a delivered Linux window screenshot must identify its frame as valid"
+            );
+        },
+    );
+}
+
+/// `include_screenshot:false` is the perf opt-out: tree present, NO image. This
+/// is the only way to suppress the screenshot now (capture_mode no longer does).
+#[test]
+#[ignore]
+fn include_screenshot_false_returns_tree_only() {
+    run_capture_case(
+        "tree_only",
+        vec![OracleKind::AxState],
+        |pid, wid, driver| {
+            let resp = snapshot_settled_tree_only(driver, pid, wid);
+            assert!(
+                !resp.is_error(),
+                "get_window_state(include_screenshot:false) errored: {}",
+                resp.text()
+            );
+
+            assert!(
+                tree_has_marker(&resp),
+                "tree-only response is missing {TREE_MARKER:?}"
+            );
+            assert!(
+                !has_image(&resp),
+                "include_screenshot:false must NOT return an image content entry: {}",
+                resp.text().chars().take(160).collect::<String>()
+            );
+        },
+    );
+}
+
+/// `capture_mode` is DEPRECATED and ignored: passing `vision` (which used to
+/// suppress the tree) must STILL return both — proving the arg has no effect.
+#[test]
+#[ignore]
+fn deprecated_capture_mode_is_ignored() {
+    run_capture_case(
+        "deprecated_mode_ignored",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let resp = snapshot_settled(driver, pid, wid, "vision");
+            assert!(
+                !resp.is_error(),
+                "get_window_state(capture_mode=vision) errored: {}",
+                resp.text()
+            );
+
+            assert!(
+                tree_has_marker(&resp),
+                "deprecated capture_mode=vision suppressed the tree"
+            );
+            assert!(
+                has_image(&resp),
+                "deprecated capture_mode=vision suppressed the screenshot"
+            );
+        },
+    );
+}
+
+/// Representative #2962 topology: a real XWayland GTK fixture remains on an
+/// inactive Sway workspace while an unrelated Electron sentinel owns the
+/// active output. The source-built public driver must preserve the truthful
+/// AT-SPI tree but return the stable typed screenshot refusal without bytes,
+/// a file, desktop mutation, or fixture mutation.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn off_workspace_xwayland_capture_refuses_unbound_pixels() {
+    if std::env::var("CUA_E2E_WAYLAND_XWAYLAND_REGRESSION").as_deref() != Ok("1") {
+        return;
+    }
+    assert_eq!(
+        std::env::var("XDG_SESSION_TYPE").as_deref(),
+        Ok("wayland"),
+        "the XWayland regression must run inside a native Wayland session"
+    );
+    let xwayland_display = std::env::var("CUA_E2E_XWAYLAND_DISPLAY")
+        .expect("the regression runner must expose its private XWayland display");
+    std::env::set_var("DISPLAY", &xwayland_display);
+    println!(
+        "[xwayland-capture-preflight] source_sha={} session={} compositor={} sway={} xwayland=available",
+        std::env::var("CUA_E2E_SOURCE_SHA").unwrap_or_else(|_| "unknown".to_owned()),
+        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_owned()),
+        std::env::var("CUA_E2E_COMPOSITOR").unwrap_or_else(|_| "unknown".to_owned()),
+        sway_json(&["-t", "get_version"])["human_readable"].as_str().unwrap_or("unknown")
+    );
+    assert!(
+        std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_some(),
+        "the regression requires both Wayland and XWayland display sockets"
+    );
+
+    let case = native_readonly_case(
+        "gtk3-xwayland",
+        "off_workspace_surface_identity_refusal",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::Protocol,
+            OracleKind::AxState,
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        switch_sway_workspace("98");
+
+        let before = harness_pids(&mut driver, "CuaTestHarness GTK3");
+        let exe = std::env::var("HARNESS_GTK3_EXE")
+            .map(std::path::PathBuf::from)
+            .ok()
+            .filter(|path| path.exists())
+            .unwrap_or_else(|| harness_app("harness-gtk3", "CuaTestHarness.Gtk3"));
+        driver
+            .reaper()
+            .spawn(
+                Command::new(&exe)
+                    .env("GDK_BACKEND", "x11")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null()),
+            )
+            .unwrap_or_else(|error| panic!("launch real XWayland fixture {exe:?}: {error}"));
+        let (pid, wid) = resolve_new_window(&mut driver, "CuaTestHarness GTK3", &before)
+            .expect("resolve real XWayland fixture through public list_windows");
+        let sway_tree = sway_json(&["-t", "get_tree"]);
+        let target_workspace = workspace_for_pid(&sway_tree, pid, None);
+        assert_eq!(target_workspace.as_deref(), Some("98"));
+
+        let tree_before = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(
+            !tree_before.is_error(),
+            "tree-only precondition failed: {}",
+            tree_before.text()
+        );
+        assert!(tree_has_marker(&tree_before));
+        assert!(tree_before.tree_text().contains("counter=0"));
+
+        switch_sway_workspace("1");
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+        let active_workspace_before = focused_workspace();
+        let full_display = driver.call("get_desktop_state", serde_json::json!({}));
+        assert!(
+            !full_display.is_error() && has_image(&full_display),
+            "explicit active-output capture must remain available: {}",
+            full_display.text()
+        );
+
+        let output_dir = tempfile::Builder::new()
+            .prefix("cua-xwayland-refusal-")
+            .tempdir()
+            .expect("create refusal output directory");
+        let requested_path = output_dir.path().join("must-not-exist.png");
+        let ((first, second), mut passed) = sentinel
+            .observe_desktop(|| {
+                let first = driver.call(
+                    "get_window_state",
+                    serde_json::json!({"pid": pid as i64, "window_id": wid}),
+                );
+                let second = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "screenshot_out_file": requested_path
+                    }),
+                );
+                (first, second)
+            })
+            .unwrap_or_else(|error| panic!("capture refusal disturbed active workspace: {error}"));
+
+        for response in [&first, &second] {
+            assert!(
+                !response.is_error(),
+                "tree-bearing refusal must be usable: {}",
+                response.text()
+            );
+            assert!(
+                tree_has_marker(response),
+                "refusal lost truthful accessibility output"
+            );
+            assert_eq!(response.structured()["screenshot_frame_valid"], false);
+            assert_eq!(
+                response.structured()["screenshot_error"]["code"],
+                "surface_identity_unproven"
+            );
+            assert_eq!(response.structured()["screenshot_error"]["window_id"], wid);
+            assert!(
+                !response_has_screenshot_metadata(response),
+                "refusal leaked screenshot bytes, dimensions, or a path: {}",
+                response.raw
+            );
+        }
+        assert_eq!(
+            first.structured()["screenshot_error"]["code"],
+            second.structured()["screenshot_error"]["code"],
+            "the typed refusal must be stable across repeated calls"
+        );
+        assert!(
+            !requested_path.exists(),
+            "refusal wrote unbound active-workspace pixels"
+        );
+        assert_eq!(focused_workspace(), active_workspace_before);
+        assert_eq!(
+            workspace_for_pid(&sway_json(&["-t", "get_tree"]), pid, None).as_deref(),
+            Some("98")
+        );
+
+        let tree_after = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_after.tree_text().contains("counter=0"));
+        assert_eq!(tree_before.tree_text(), tree_after.tree_text());
+        passed.extend([
+            OracleKind::Protocol,
+            OracleKind::AxState,
+            OracleKind::FixtureState,
+        ]);
+        passed.sort();
+        passed.dedup();
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+/// Capturing an occluded background window is a read-only operation: it must
+/// return pixels without disturbing the user's foreground desktop.
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore]
+fn background_screenshot_preserves_desktop() {
+    let case = CaseSpec::delivered(
+        "windows-wpf-screenshot-px-background",
+        "wpf",
+        "wpf",
+        "screenshot",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::WindowsPrintWindow,
+        vec![
+            OracleKind::Pixels,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-wpf-screenshot-px-background")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("establish capture background posture before recording");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(
+                &mut driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+            )
+            .expect("re-establish capture background posture after recording setup");
+        let (response, mut passed) = sentinel
+            .observe_background(
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                || {
+                    driver.call(
+                        "get_window_state",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "capture_mode": "vision"
+                        }),
+                    )
+                },
+            )
+            .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
+        assert!(
+            !response.is_error(),
+            "background screenshot failed: {}",
+            response.text()
+        );
+        assert!(
+            has_image(&response),
+            "background screenshot returned no image"
+        );
+        for required in [
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(
+                passed.contains(&required),
+                "background screenshot omitted required {required:?} oracle"
+            );
+        }
+        passed.push(OracleKind::Pixels);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+// ── JPEG screenshots (macOS) ────────────────────────────────────────────────
+
+/// The structured `elements` entry for the marker button. On AppKit the
+/// marker is only the accessibility identifier, shown as `id=...` in the tree
+/// text, so find its `[N]` index there and join on `element_index`.
+#[cfg(target_os = "macos")]
+fn marker_element(resp: &ToolResponse) -> Option<&serde_json::Value> {
+    let index = element_index_by_id(resp.tree_text(), TREE_MARKER)?;
+    resp.structured()["elements"]
+        .as_array()?
+        .iter()
+        .find(|e| e["element_index"].as_u64() == Some(index))
+}
+
+/// A session label unique to one test invocation, so it never matches a
+/// tombstone left on the shared daemon by an earlier session.
+#[cfg(target_os = "macos")]
+fn jpeg_session(case: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("jpeg-capture-{case}-{}-{nanos}", std::process::id())
+}
+
+/// `get_window_state` with `extra` merged into the request, retried until the
+/// `btn-increment` element and a screenshot (inline or written to a file) are
+/// both present, or a bounded deadline passes.
+#[cfg(target_os = "macos")]
+fn snapshot_with(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    session: &str,
+    extra: serde_json::Value,
+) -> ToolResponse {
+    let mut args = serde_json::json!({
+        "pid": pid as i64,
+        "window_id": wid,
+        "session": session,
+        "tree_format": "both",
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        let shot = has_image(&resp)
+            || resp.structured()["screenshot_file_path"]
+                .as_str()
+                .is_some_and(|p| !p.is_empty());
+        if (marker_element(&resp).is_some() && shot) || Instant::now() >= deadline {
+            return resp;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn image_parts(resp: &ToolResponse) -> Vec<serde_json::Value> {
+    resp.raw["result"]["content"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|c| c["type"].as_str() == Some("image"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn assert_jpeg_at_screenshot_size(bytes: &[u8], resp: &ToolResponse) {
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG SOI marker");
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).unwrap();
+    let s = resp.structured();
+    assert_eq!(
+        (u64::from(decoded.width()), u64::from(decoded.height())),
+        (
+            s["screenshot_width"].as_u64().unwrap(),
+            s["screenshot_height"].as_u64().unwrap()
+        )
+    );
+}
+
+/// The `screenshot_frame` of the `btn-increment` element, as `[x, y, w, h]`.
+#[cfg(target_os = "macos")]
+fn marker_frames(resp: &ToolResponse) -> ([f64; 4], [f64; 4]) {
+    let text = resp.tree_text();
+    let element = marker_element(resp)
+        .unwrap_or_else(|| panic!("{TREE_MARKER} element not found in elements: {text}"))
+        .clone();
+    let get = |v: &serde_json::Value, keys: [&str; 4]| {
+        keys.map(|k| {
+            v[k].as_f64()
+                .unwrap_or_else(|| panic!("{k} is not a number: {v}"))
+        })
+    };
+    (
+        get(&element["frame"], ["x", "y", "w", "h"]),
+        get(&element["screenshot_frame"], ["x", "y", "w", "h"]),
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_keeps_pixel_mapping_and_mints_no_capture_id() {
+    run_capture_case(
+        "jpeg_pixel_mapping",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            use base64::Engine as _;
+            let session = jpeg_session("pixel-mapping");
+            let png = snapshot_with(driver, pid, wid, &session, serde_json::json!({}));
+            assert!(
+                marker_element(&png).is_some(),
+                "PNG read lacks {TREE_MARKER}"
+            );
+            assert!(!png.is_error(), "PNG read errored: {}", png.text());
+            let p = png.structured();
+            assert_eq!(p["screenshot_mime_type"], "image/png");
+            assert!(
+                p["capture_id"].as_str().is_some_and(|id| !id.is_empty()),
+                "a PNG read must mint a capture_id: {p}"
+            );
+
+            let jpeg = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &session,
+                serde_json::json!({ "screenshot_format": "jpeg" }),
+            );
+            assert!(
+                marker_element(&jpeg).is_some(),
+                "JPEG read lacks {TREE_MARKER}"
+            );
+            assert!(!jpeg.is_error(), "JPEG read errored: {}", jpeg.text());
+            let j = jpeg.structured();
+            let parts = image_parts(&jpeg);
+            assert_eq!(parts.len(), 1, "exactly one image part");
+            assert_eq!(parts[0]["mimeType"], "image/jpeg");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(parts[0]["data"].as_str().unwrap())
+                .unwrap();
+            assert_jpeg_at_screenshot_size(&bytes, &jpeg);
+            assert_eq!(j["screenshot_mime_type"], "image/jpeg");
+            assert!(j.get("capture_id").is_none(), "JPEG minted a capture_id");
+            assert!(j.get("snapshot_id").is_some(), "snapshot_id missing");
+
+            for key in [
+                "screenshot_width",
+                "screenshot_height",
+                "screenshot_scale",
+                "window_bounds",
+            ] {
+                assert!(!j[key].is_null(), "{key} missing");
+                assert_eq!(p[key], j[key], "{key} differs between PNG and JPEG");
+            }
+
+            let (png_frame, png_shot) = marker_frames(&png);
+            let (jpeg_frame, jpeg_shot) = marker_frames(&jpeg);
+            assert_eq!(png_shot, jpeg_shot, "screenshot_frame differs");
+            assert_eq!(png_frame, jpeg_frame, "frame differs");
+            let bounds = &j["window_bounds"];
+            let scale = j["screenshot_width"].as_f64().unwrap() / bounds["width"].as_f64().unwrap();
+            let (ox, oy) = (bounds["x"].as_f64().unwrap(), bounds["y"].as_f64().unwrap());
+            let [x, y, w, h] = jpeg_frame;
+            let expected = [
+                ((x - ox) * scale).round(),
+                ((y - oy) * scale).round(),
+                (w * scale).round(),
+                (h * scale).round(),
+            ];
+            assert_eq!(jpeg_shot, expected, "screenshot_frame mapping");
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_out_file_contains_jpeg() {
+    run_capture_case(
+        "jpeg_out_file",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shot.jpg");
+            let resp = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &jpeg_session("out-file"),
+                serde_json::json!({
+                    "screenshot_format": "jpeg",
+                    "screenshot_out_file": path.to_str().unwrap(),
+                }),
+            );
+            assert!(!resp.is_error(), "JPEG read errored: {}", resp.text());
+            assert!(
+                image_parts(&resp).is_empty(),
+                "out file must omit the image part"
+            );
+            let s = resp.structured();
+            assert_eq!(s["screenshot_file_path"], path.to_str().unwrap());
+            assert_jpeg_at_screenshot_size(&std::fs::read(&path).unwrap(), &resp);
+            assert_eq!(s["screenshot_mime_type"], "image/jpeg");
+            assert!(s.get("capture_id").is_none(), "JPEG minted a capture_id");
+        },
+    );
+}

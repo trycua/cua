@@ -13,19 +13,68 @@ use super::ToolState;
 /// Resolve the cursor identity from the current session. The removed
 /// `cursor_id` alias is intentionally not accepted by the new contract.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    session_cursor_key(
-        args.get("session").and_then(Value::as_str),
-        args.get("_session_id").and_then(Value::as_str),
-    )
+    use cua_driver_core::tool_args::ArgsExt;
+    for key in ["session", "_session_id"] {
+        if let Some(value) = args.opt_str(key) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    default_cursor_session()
 }
 
-pub(crate) fn session_cursor_key(session: Option<&str>, session_id: Option<&str>) -> String {
-    [session, session_id]
-        .into_iter()
-        .flatten()
-        .find(|value| !value.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(default_cursor_session)
+/// Place and reveal a named session's cursor before keyboard or text input.
+///
+/// `explicit` is the targeted element's screen centre when the action has
+/// one. Without it the cursor reuses its remembered position, then falls back
+/// to the target window's centre, so the first keyboard action of a session
+/// is visible. Anonymous calls keep their existing behavior. Geometry and
+/// overlay failures are observational and never affect the input result.
+pub(crate) async fn position_keyboard_cursor(
+    state: &ToolState,
+    args: &Value,
+    window_id: Option<u32>,
+    explicit: Option<(f64, f64)>,
+) {
+    let Some(cursor_key) = cursor_overlay::named_session_cursor_key(args) else {
+        return;
+    };
+    let remembered = state
+        .cursor_registry
+        .get(&cursor_key)
+        .and_then(|cursor| cursor.position.map(|position| (position.x, position.y)));
+    let window_center = match window_id {
+        Some(wid)
+            if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None)
+                .is_none() =>
+        {
+            tokio::task::spawn_blocking(move || {
+                let bounds = crate::windows::window_bounds_by_id(wid)?;
+                (bounds.width > 0.0 && bounds.height > 0.0).then_some((
+                    bounds.x + bounds.width / 2.0,
+                    bounds.y + bounds.height / 2.0,
+                ))
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+        _ => None,
+    };
+    let Some((x, y)) =
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+    else {
+        return;
+    };
+    if let Some(wid) = window_id {
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(u64::from(wid)),
+        );
+    }
+    crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), x, y).await;
+    state.cursor_registry.update_position(&cursor_key, x, y);
 }
 
 fn default_cursor_session() -> String {
@@ -130,6 +179,10 @@ impl Tool for SetAgentCursorMotionTool {
             None,
             number(args.get("turn_radius")),
         );
+        let motion = match motion.with_style_args(&args) {
+            Ok(motion) => motion,
+            Err(message) => return ToolResult::error(message),
+        };
         crate::cursor::overlay::send_command(
             session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
@@ -139,17 +192,7 @@ impl Tool for SetAgentCursorMotionTool {
         ))
         .with_structured(serde_json::json!({
             "session": session,
-            "motion": {
-                "start_handle": motion.start_handle,
-                "end_handle": motion.end_handle,
-                "arc_size": motion.arc_size,
-                "arc_flow": motion.arc_flow,
-                "spring": motion.spring,
-                "glide_duration_ms": motion.glide_duration_ms,
-                "dwell_after_click_ms": motion.dwell_after_click_ms,
-                "idle_hide_ms": motion.idle_hide_ms,
-                "turn_radius": motion.turn_radius
-            }
+            "motion": motion.output_json()
         }))
     }
 }
@@ -318,17 +361,7 @@ impl Tool for GetAgentCursorStateTool {
                     "frame": visual.frame(),
                     "preempted_count": visual.preempted_count
                 },
-                "motion": {
-                    "start_handle": motion.start_handle,
-                    "end_handle": motion.end_handle,
-                    "arc_size": motion.arc_size,
-                    "arc_flow": motion.arc_flow,
-                    "spring": motion.spring,
-                    "glide_duration_ms": motion.glide_duration_ms,
-                    "dwell_after_click_ms": motion.dwell_after_click_ms,
-                    "idle_hide_ms": motion.idle_hide_ms,
-                    "turn_radius": motion.turn_radius
-                }
+                "motion": motion.output_json()
             }),
         )
     }

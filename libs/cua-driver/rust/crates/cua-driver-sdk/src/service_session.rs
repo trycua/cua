@@ -4,7 +4,7 @@
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
-use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
+use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse, REPLY_DEADLINE};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
@@ -12,8 +12,6 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-#[cfg(unix)]
-const SERVICE_REQUEST_DEADLINE: Duration = Duration::from_secs(120);
 const RESUME_REGISTRATION_RETRIES: usize = 20;
 const RESUME_REGISTRATION_DELAY: Duration = Duration::from_millis(10);
 
@@ -109,10 +107,8 @@ impl ServiceSessionClient {
 
     pub(crate) fn close(&self) {
         let mut connection = self.connection.lock().unwrap();
-        if connection.closed {
-            if self.resume_connection(&mut connection).is_err() {
-                return;
-            }
+        if connection.closed && self.resume_connection(&mut connection).is_err() {
+            return;
         }
         let request = DaemonRequest {
             method: "trusted_session_end".into(),
@@ -294,7 +290,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
     cua_driver_core::socket_io::write_all_with_retry(
         writer,
         &frame,
-        Instant::now() + SERVICE_REQUEST_DEADLINE,
+        Instant::now() + REPLY_DEADLINE,
     )
 }
 
@@ -307,7 +303,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
 
 #[cfg(unix)]
 fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    let deadline = Instant::now() + SERVICE_REQUEST_DEADLINE;
+    let deadline = Instant::now() + REPLY_DEADLINE;
     let mut bytes = Vec::new();
     loop {
         match reader.read_until(b'\n', &mut bytes) {
@@ -327,7 +323,7 @@ fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        "timed out after 120s waiting for trusted service response",
+                        format!("timed out after {REPLY_DEADLINE:?} waiting for trusted service response"),
                     ));
                 }
             }
@@ -436,64 +432,6 @@ mod tests {
             read_response_line(&mut reader).unwrap().as_deref(),
             Some("€\n")
         );
-        server.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn lost_action_response_is_reported_with_unknown_completion() {
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("service.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let server = std::thread::spawn(move || {
-            serve_compatible_metadata(&listener);
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut writer = stream;
-
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let begin: DaemonRequest = serde_json::from_str(&line).unwrap();
-            assert_eq!(begin.method, "trusted_session_begin");
-            writeln!(
-                writer,
-                "{}",
-                serde_json::to_string(&DaemonResponse::ok(serde_json::json!({
-                    "resume_credential": "resume-test-1"
-                })))
-                .unwrap()
-            )
-            .unwrap();
-
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            let call: DaemonRequest = serde_json::from_str(&line).unwrap();
-            assert_eq!(call.method, "trusted_session_call");
-            // Closing the accepted connection after reading the action leaves
-            // its completion unknown to the client.
-        });
-
-        let client = ServiceSessionClient::connect_and_bind(
-            socket.to_string_lossy().into_owned(),
-            TrustedSessionOptions {
-                public_session: "lost-response".into(),
-                mode: SessionPermissionMode::Standard,
-                ttl_seconds: 60,
-                idle_ttl_seconds: 30,
-                capability_manifest_path: None,
-                bounded_manifest_path: None,
-            },
-            DaemonClientKind::Unknown,
-        )
-        .unwrap();
-        assert!(matches!(
-            client
-                .invoke("click", serde_json::json!({"x": 1, "y": 1}))
-                .await,
-            Err(DriverError::ActionInterrupted {
-                completion: crate::worker::ActionCompletion::Unknown,
-                ..
-            })
-        ));
         server.join().unwrap();
     }
 

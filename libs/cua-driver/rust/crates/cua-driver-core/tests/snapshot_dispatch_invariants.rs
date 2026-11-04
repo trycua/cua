@@ -1,17 +1,39 @@
 use cua_driver_core::authorization::PermissionMode;
-use cua_driver_core::element_cache::{
-    register_runtime_cache, retire_runtime_scope, ElementCacheCore, SnapshotPayload,
-};
 use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::session_authorization::{
     EffectiveAuthorizationContext, SessionAuthorizationRegistry, SessionModeCeiling,
+};
+use cua_driver_core::snapshot_store::{
+    register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,
 };
 use cua_driver_core::tool::{with_runtime_scope, Tool, ToolDef, ToolRegistry};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
+
+#[test]
+fn background_window_sources_delegate_without_space_queries_or_refiltering() {
+    let gate = include_str!("../../platform-macos/src/ax/exact_target.rs");
+    let start = gate.find("pub fn gather_background_facts(").unwrap();
+    let end = start + gate[start..].find("\n}\n").unwrap();
+    let gate = &gate[start..end];
+    assert!(gate.contains("all_windows_without_spaces()"));
+    assert!(!gate.contains("all_windows()"));
+
+    let detector = include_str!("../../platform-macos/src/window_change_detector.rs");
+    let start = detector
+        .find("fn host_windows() -> Vec<WindowInfo> {")
+        .unwrap();
+    let body = start + detector[start..].find('{').unwrap() + 1;
+    let end = body + detector[body..].find("\n}\n").unwrap();
+    let body: String = detector[body..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert_eq!(body, "windows::visible_windows_without_spaces()");
+}
 
 const PID: i32 = 732_347;
 const WINDOW: u64 = 17;
@@ -30,7 +52,7 @@ impl SnapshotPayload for Payload {
 }
 
 struct ProbeState {
-    cache: Arc<ElementCacheCore<Payload>>,
+    cache: Arc<SnapshotStore<Payload>>,
     capture_started: Notify,
     finish_capture: Notify,
     observed: Mutex<Vec<u64>>,
@@ -76,21 +98,12 @@ impl Tool for ProbeTool {
                 }]
             }));
         }
-        let resolved = match self.state.cache.resolve_element_args(
-            PID,
-            args["element_index"].as_u64().map(|index| index as usize),
-            args["element_token"].as_str(),
-            args["snapshot_id"].as_str(),
-            Some(WINDOW),
-            "click",
-        ) {
+        let resolved = match self.state.cache.resolve(PID, &args) {
             Ok(resolved) => resolved,
             Err(refusal) => return refusal,
         };
         let ResolvedElement::Element {
-            window_id: Some(_),
-            element: revision,
-            ..
+            element: revision, ..
         } = resolved
         else {
             return ToolResult::error("test requires a snapshot-bound target");
@@ -123,8 +136,8 @@ impl Fixture {
     fn new() -> Self {
         let context = context();
         let cache = with_runtime_scope(context.runtime_scope_key(), || {
-            let cache = Arc::new(ElementCacheCore::new());
-            register_runtime_cache(&cache);
+            let cache = Arc::new(SnapshotStore::new());
+            register_runtime_store(&cache);
             cache
         });
         let state = Arc::new(ProbeState {
@@ -241,7 +254,7 @@ async fn dispatch_stale_refusal_and_fresh_recovery_reach_the_expected_lookup() {
 }
 
 #[tokio::test]
-async fn dispatch_generation_refusal_precedes_native_payload_lookup() {
+async fn foreign_runtime_token_is_stale_before_native_payload_lookup() {
     let first = Fixture::new();
     let second = Fixture::new();
     let first_token = token(&first.read(1).await);
@@ -249,7 +262,7 @@ async fn dispatch_generation_refusal_precedes_native_payload_lookup() {
     let refused = second.click(&first_token).await;
     assert_eq!(
         refused.structured_content.as_ref().unwrap()["refusal"]["code"],
-        "generation_mismatch"
+        "stale_element_token"
     );
     assert!(second.state.observed.lock().unwrap().is_empty());
     first.click(&first_token).await;

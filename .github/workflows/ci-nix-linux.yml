@@ -4,6 +4,7 @@ name: "CI: Nix Linux Rust source"
 # desktop behavior is owned by the Rust E2E workflows.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "flake.nix"
       - "flake.lock"
@@ -14,6 +15,8 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "!libs/cua-driver/rust/crates/cursor-overlay/examples/export_gallery_frames.rs"
       - "libs/cua-driver/rust/crates/pip-preview/**"
@@ -33,6 +36,8 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "!libs/cua-driver/rust/crates/cursor-overlay/examples/export_gallery_frames.rs"
       - "libs/cua-driver/rust/crates/pip-preview/**"
@@ -46,11 +51,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-nix-linux-${{ github.workflow }}-${{ github.ref }}
+  group: ci-nix-linux-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
 
 jobs:
   rust-source:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Nix / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -59,24 +70,46 @@ jobs:
       matrix:
         include:
           - name: compositor build
-            attribute: cua-compositor-build
-          - name: driver package
-            attribute: cua-driver-build
+            attributes: cua-compositor-build
           - name: Rust unit tests
-            attribute: cua-driver-linux-rust-unit
-          - name: YAML policy VM
-            attribute: cua-driver-policy-yaml
-          - name: Rego policy VM
-            attribute: cua-driver-policy-rego
+            attributes: cua-driver-linux-rust-unit
+          # Both policy VMs boot the cua-driver package derivation. Building
+          # them in the same job as the package compiles the workspace once
+          # and reuses it from the local store, instead of once per job.
+          - name: driver package and policy VMs
+            attributes: >-
+              cua-driver-build
+              cua-driver-policy-yaml
+              cua-driver-policy-rego
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # nix-quick-install-action leaves /nix owned by the runner user, which
+      # the store cache below needs in order to restore into it.
       - name: Install Nix
-        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
-          extra_nix_config: |
+          nix_conf: |
             experimental-features = nix-command flakes
+      # Restores and saves the whole Nix store as ONE GitHub Actions cache
+      # entry per lane. The key covers only what decides the dependency build
+      # (flake, lockfiles, manifests, nix expressions), so source edits hit the
+      # exact key and rebuild only the workspace crates. A lockfile change
+      # falls back to the newest entry of the same lane and rebuilds the delta.
+      # magic-nix-cache pushed every derivation separately (about 970 for the
+      # vendored crates alone), tripped GitHub's cache rate limit (HTTP 418)
+      # and then served nothing. Pull requests read main's entries and write
+      # only to their own ref scope, so they cannot poison main.
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-${{ matrix.name }}-
       - name: Build ${{ matrix.name }}
-        run: >-
-          nix build
-          .#checks.x86_64-linux.${{ matrix.attribute }}
-          --no-link --print-build-logs --show-trace
+        env:
+          ATTRIBUTES: ${{ matrix.attributes }}
+        run: |
+          targets=()
+          for attribute in $ATTRIBUTES; do
+            targets+=(".#checks.x86_64-linux.${attribute}")
+          done
+          nix build "${targets[@]}" --no-link --print-build-logs --show-trace

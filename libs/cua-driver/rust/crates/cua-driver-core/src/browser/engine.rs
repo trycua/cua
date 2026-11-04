@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use indexmap::IndexMap;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -37,7 +38,7 @@ use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
 };
-use super::cdp_ws::{CdpConnection, CdpPool};
+use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -45,7 +46,7 @@ use super::platform::{
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
-use super::reconnect::ReconnectGates;
+use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
@@ -53,8 +54,8 @@ use super::semantic::{
     SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
-    format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
-    SnapshotRecord, TabRecord, TargetRecord,
+    format_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef, RefEntry,
+    SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -71,6 +72,9 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// Hard cap for decoded tab screenshots returned through MCP. This bounds a
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reply deadline for the best-effort `Page.enable` sent on a tab's first attach.
+const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -173,6 +177,47 @@ pub(super) fn unsupported_engine_refusal(
     }))
 }
 
+/// What an agent reads when a user's own browser is not attached yet. Agents
+/// read the old "requires explicit existing-profile approval" wording as a
+/// request for the user's approval and gave up, or fell back to desktop pointer
+/// tools that move the user's pointer (Bench v2 PR-02: 23 of 28 trials stopped
+/// here without calling browser_prepare). Name the call that attaches instead.
+const CONSUMER_PROFILE_NOT_ATTACHED: &str = "Cua is not attached to this browser window yet. \
+     Call browser_prepare with this pid and window_id and strategy {\"kind\":\"existing_profile\"} \
+     (detail.next_call has the exact arguments). It attaches the browser tools, or refuses \
+     with nothing changed and says why; any approval the host requires is handled there. \
+     Do not switch to desktop pointer tools for this page: they move the user's pointer.";
+
+/// Add the exact `browser_prepare` call to a not-yet-attached refusal.
+fn with_existing_profile_next_call(
+    mut refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+    window_id: u64,
+) -> BrowserRefusal {
+    if refusal.code != BrowserRefusalCode::BrowserConsentRequired {
+        return refusal;
+    }
+    let mut detail = match refusal.detail.take() {
+        Some(Value::Object(detail)) => detail,
+        _ => serde_json::Map::new(),
+    };
+    detail.insert(
+        "next_call".to_owned(),
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": pid,
+                "window_id": window_id,
+                "session": session,
+                "strategy": { "kind": "existing_profile" },
+            },
+        }),
+    );
+    refusal.detail = Some(Value::Object(detail));
+    refusal
+}
+
 fn endpoint_access_class(
     has_existing_profile_grant: bool,
     driver_owned: bool,
@@ -188,7 +233,7 @@ fn endpoint_access_class(
         BrowserProcessRole::EmbeddedApplication => Ok(EndpointAccessClass::EmbeddedApplication),
         BrowserProcessRole::StandaloneConsumer => Err(refuse(
             BrowserRefusalCode::BrowserConsentRequired,
-            "this standalone browser profile requires explicit existing-profile approval before Cua can inspect its DevTools endpoint",
+            CONSUMER_PROFILE_NOT_ATTACHED,
         )
         .with_detail(json!({
             "reason": "consumer_profile_endpoint_requires_grant",
@@ -206,10 +251,7 @@ fn endpoint_access_class(
     }
 }
 
-/// Everything revalidation proves before a mutation proceeds. The
-/// `record`/`tab` evidence rides along for future callers even though
-/// the v1 tools only need the attached connection.
-#[allow(dead_code)]
+/// Everything revalidation proves before a mutation proceeds.
 pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
@@ -271,6 +313,14 @@ fn viewport_point_to_screen(
 /// be misread as a capability gap.
 fn is_method_unsupported(error: &anyhow::Error) -> bool {
     error.to_string().contains("(-32601)")
+}
+
+/// Chromium's answer for a page target that lives in no browser window (an
+/// extension side panel, an offscreen document): `-32000 Browser window not
+/// found`. Such a target is not a tab of ANY native window.
+fn is_window_not_found(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("(-32000)") && message.contains("Browser window not found")
 }
 
 fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
@@ -572,8 +622,6 @@ pub(crate) enum FrameTreeError {
 pub(crate) struct AttachedChildFrame {
     pub session_id: String,
     pub target_id: String,
-    #[allow(dead_code)]
-    pub url: String,
 }
 
 pub(crate) enum AttachError {
@@ -608,19 +656,6 @@ impl BrowserEngine {
         )
     }
 
-    /// Create an engine using the runtime-owned broker shared by every
-    /// protected resource adapter.
-    pub fn new_with_approval_broker(
-        platform: Arc<dyn BrowserPlatform>,
-        approval_broker: Arc<crate::consent::ApprovalBroker>,
-    ) -> Arc<Self> {
-        Self::new_with_runtime_services(
-            platform,
-            approval_broker,
-            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
-        )
-    }
-
     pub fn new_with_runtime_services(
         platform: Arc<dyn BrowserPlatform>,
         approval_broker: Arc<crate::consent::ApprovalBroker>,
@@ -650,7 +685,6 @@ impl BrowserEngine {
                         let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
                         let mut requests = pending.remove(session_id).unwrap_or_default();
                         for grant in engine.existing_profile_grants.remove_session(session_id) {
-                            engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                             if grant.cleanup_remote_debugging {
                                 requests.push(ExistingProfileSetupRequest {
                                     pid: grant.pid,
@@ -664,9 +698,21 @@ impl BrowserEngine {
                             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                                 let engine = engine.clone();
                                 runtime.spawn(async move {
+                                    // A normal session end parks the already-consented
+                                    // socket for the next approved session, unless the
+                                    // driver is turning remote debugging back off.
+                                    let mode = if grant.cleanup_remote_debugging {
+                                        SharedSocketRelease::Close
+                                    } else {
+                                        SharedSocketRelease::Park
+                                    };
                                     engine
                                         .pool
-                                        .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                        .release_existing(
+                                            &grant.endpoint_ws_url,
+                                            grant.generation,
+                                            mode,
+                                        )
                                         .await;
                                     if let Some(protected) = grant.protected_consent.as_ref() {
                                         engine.approval_broker.revoke(protected).await;
@@ -719,7 +765,6 @@ impl BrowserEngine {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                self.pool.release_claim_marker(&grant.endpoint_ws_url);
                 if grant.cleanup_remote_debugging {
                     let request = ExistingProfileSetupRequest {
                         pid: grant.pid,
@@ -740,7 +785,11 @@ impl BrowserEngine {
                     }
                 }
                 self.pool
-                    .release_existing(&grant.endpoint_ws_url, grant.generation)
+                    .release_existing(
+                        &grant.endpoint_ws_url,
+                        grant.generation,
+                        SharedSocketRelease::Close,
+                    )
                     .await;
                 if let Some(protected) = grant.protected_consent.as_ref() {
                     self.approval_broker.revoke(protected).await;
@@ -763,7 +812,6 @@ impl BrowserEngine {
             .existing_profile_grants
             .revoke(session, transport_session, pid)
         {
-            self.pool.release_claim_marker(&grant.endpoint_ws_url);
             if grant.cleanup_remote_debugging {
                 let request = ExistingProfileSetupRequest {
                     pid: grant.pid,
@@ -784,7 +832,11 @@ impl BrowserEngine {
                 }
             }
             self.pool
-                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .release_existing(
+                    &grant.endpoint_ws_url,
+                    grant.generation,
+                    SharedSocketRelease::Close,
+                )
                 .await;
             if let Some(protected) = grant.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
@@ -835,7 +887,10 @@ impl BrowserEngine {
         // socket rather than opening another browser-level connection.
         let _leader = self
             .reconnect_gates
-            .lock(&grant.fingerprint, &grant.endpoint_ws_url)
+            .lock(ReconnectKey::new(
+                &grant.fingerprint,
+                &grant.endpoint_ws_url,
+            ))
             .await;
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
@@ -928,6 +983,7 @@ impl BrowserEngine {
                 result = &mut reconnect => result,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                     match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
+                        action: Default::default(),
                         pid,
                         window_id: grant.window_id,
                         attempt,
@@ -1163,6 +1219,12 @@ impl BrowserEngine {
                 // shape; every transient/vanished-target error fails the
                 // whole proof rather than shrinking it to a false unique set.
                 Err(error) if is_method_unsupported(&error) => None,
+                // A page target Chromium cannot map to any browser window (an
+                // extension side panel, an offscreen document) can never be the
+                // tab of the requested native window, so it is skipped: it enters
+                // neither the geometry correlation nor the title tie-break. Every
+                // other error still fails the whole proof.
+                Err(error) if is_window_not_found(&error) => continue,
                 Err(error) => {
                     return Err(route_err(
                         "Browser.getWindowForTarget failed while proving the native window",
@@ -1200,7 +1262,7 @@ impl BrowserEngine {
                     format!("cannot attach to tab target {cdp_target_id}: {e}"),
                 )
             })?;
-        attached
+        let cdp_session = attached
             .get("sessionId")
             .and_then(Value::as_str)
             .map(str::to_owned)
@@ -1209,7 +1271,39 @@ impl BrowserEngine {
                     BrowserRefusalCode::BrowserTabNotFound,
                     format!("attach to {cdp_target_id} returned no sessionId"),
                 )
-            })
+            })?;
+        self.subscribe_dialog_events(conn, &cdp_session, cdp_target_id)
+            .await;
+        Ok(cdp_session)
+    }
+
+    /// Chromium reports a JavaScript dialog only to sessions that enabled the
+    /// Page domain before it opened, so the first session attached to a tab
+    /// subscribes on behalf of every later caller; tab sessions stay attached
+    /// for the life of the connection. A renderer already blocked by a dialog
+    /// nobody has seen cannot answer `Page.enable`, hence the short deadline:
+    /// the subscription is best effort and `browser_dialog` retries it.
+    async fn subscribe_dialog_events(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+        cdp_target_id: &str,
+    ) {
+        if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
+            return;
+        }
+        conn.register_dialog_session(cdp_session, cdp_target_id);
+        let enabled = conn
+            .call_with_timeout(
+                Some(cdp_session),
+                "Page.enable",
+                json!({}),
+                DIALOG_SUBSCRIPTION_TIMEOUT,
+            )
+            .await;
+        if enabled.is_err() && conn.dialog_state(cdp_target_id).is_none() {
+            conn.unregister_dialog_session(cdp_session, cdp_target_id);
+        }
     }
 
     // ── Binding (get_browser_state, pid + window_id mode) ──────────────
@@ -1240,8 +1334,8 @@ impl BrowserEngine {
         let driver_owned = self.is_driver_owned_pid_for_session(session, pid)
             || transport_session
                 .is_some_and(|owner| self.is_driver_owned_pid_for_session(owner, pid));
-        let access_class =
-            endpoint_access_class(grant.is_some(), driver_owned, class.process_role)?;
+        let access_class = endpoint_access_class(grant.is_some(), driver_owned, class.process_role)
+            .map_err(|refusal| with_existing_profile_next_call(refusal, session, pid, window_id))?;
 
         let native = self.native_window_checked(pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
@@ -1325,7 +1419,7 @@ impl BrowserEngine {
         // target is only a window handle and must never be reported as active.
         let selected_cdp_target_id =
             selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id);
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
             Some(window_id) => c.cdp_window_id == Some(window_id),
             None => c.cdp_target_id == candidate.cdp_target_id,
@@ -1585,7 +1679,9 @@ impl BrowserEngine {
             .as_deref()
             .is_some_and(|context| context.capability_manifest().is_some())
         {
-            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
+            let live_url = self
+                .live_top_level_url(&conn, &cdp_session, &tab.cdp_target_id)
+                .await?;
             // A browser mutation admitted for a delegated session must use
             // that exact session's capability manifest. Falling back to the
             // process compatibility manifest would let a missing task-local
@@ -1610,19 +1706,38 @@ impl BrowserEngine {
         })
     }
 
+    /// The URL of the tab's live top-level document.
+    ///
+    /// The frame tree is the renderer's answer and the usual proof. While a
+    /// JavaScript dialog is open the renderer is blocked and `Page.getFrameTree`
+    /// never replies, so the browser process's own record of the target is
+    /// used instead: the document cannot navigate until the dialog is handled.
     async fn live_top_level_url(
         &self,
         conn: &CdpConnection,
         cdp_session: &str,
+        cdp_target_id: &str,
     ) -> Result<String, BrowserRefusal> {
-        let frame_tree = conn
-            .call(Some(cdp_session), "Page.getFrameTree", json!({}))
-            .await
-            .map_err(|error| {
-                route_err("could not prove the live top-level browser document", error)
-            })?;
-        frame_tree
-            .pointer("/frameTree/frame/url")
+        let (method, params, session, pointer) = if conn.dialog_state(cdp_target_id).is_some() {
+            (
+                "Target.getTargetInfo",
+                json!({ "targetId": cdp_target_id }),
+                None,
+                "/targetInfo/url",
+            )
+        } else {
+            (
+                "Page.getFrameTree",
+                json!({}),
+                Some(cdp_session),
+                "/frameTree/frame/url",
+            )
+        };
+        let reply = conn.call(session, method, params).await.map_err(|error| {
+            route_err("could not prove the live top-level browser document", error)
+        })?;
+        reply
+            .pointer(pointer)
             .and_then(Value::as_str)
             .filter(|url| !url.is_empty())
             .map(str::to_owned)
@@ -1644,7 +1759,11 @@ impl BrowserEngine {
             .revalidate_for_mutation(session, target_id, Some(tab_id))
             .await?;
         let live_url = self
-            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .live_top_level_url(
+                &validated.conn,
+                &validated.cdp_session,
+                &validated.tab.cdp_target_id,
+            )
             .await?;
         let live_origin = protected_live_origin_scope(&live_url)?;
         Ok((validated, live_origin))
@@ -1667,21 +1786,7 @@ impl BrowserEngine {
         // focusing its native window or invoking any CDP activation command.
         // Treat an unavailable or malformed proof as inactive: omitting
         // feedback is safer than drawing a cursor over another tab.
-        let tab_is_active = validated
-            .conn
-            .call(
-                Some(&validated.cdp_session),
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.visibilityState === 'visible'",
-                    "returnByValue": true,
-                    "awaitPromise": false,
-                }),
-            )
-            .await
-            .ok()
-            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
-            .unwrap_or(false);
+        let tab_is_active = tab_visibility_proven(&validated.conn, &validated.cdp_session).await;
 
         let screen_point = if cdp_session == validated.cdp_session {
             validated
@@ -1813,7 +1918,6 @@ impl BrowserEngine {
             out.push(AttachedChildFrame {
                 session_id: session_id.to_owned(),
                 target_id: target_id.to_owned(),
-                url: info["url"].as_str().unwrap_or("").to_owned(),
             });
         }
         Ok(out)
@@ -2555,10 +2659,11 @@ impl BrowserEngine {
                 OopifStatus::Unsupported
             };
             let next_offset = page.next_offset;
+            let title = document.document_title().unwrap_or(&tab.title).to_owned();
             let (outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
-                tab.title,
+                title,
                 page,
                 document.complete,
                 "continuation",
@@ -2627,6 +2732,12 @@ impl BrowserEngine {
             .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
             .await?;
         semantic.complete &= document_complete;
+        // The stored tab title is the bind-time one. Prefer the document's own
+        // title, then the browser's live target title.
+        let title = match semantic.document_title() {
+            Some(title) => title.to_owned(),
+            None => live_title(&conn, &tab.cdp_target_id, &tab.title).await,
+        };
 
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
@@ -2704,6 +2815,24 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
+        if !semantic.nodes.iter().any(|node| {
+            matches!(
+                node.visibility,
+                BrowserVisibility::InViewport
+                    | BrowserVisibility::NearViewport
+                    | BrowserVisibility::Offscreen
+            )
+        }) && !tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tab_visibility_proven(&conn, &cdp_session),
+        )
+        .await
+        .unwrap_or(false)
+        {
+            semantic.not_rendered_count = 1;
+            semantic.complete = false;
+        }
+
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2722,7 +2851,7 @@ impl BrowserEngine {
         let (outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
-            tab.title.clone(),
+            title.clone(),
             page,
             semantic.complete,
             scope,
@@ -2733,6 +2862,8 @@ impl BrowserEngine {
         self.store
             .update_target(session, target_id, |stored_target| {
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
+                    stored_tab.url = url.clone();
+                    stored_tab.title = title;
                     let mut continuations = HashMap::new();
                     if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
                         continuations.insert(
@@ -2763,6 +2894,22 @@ impl BrowserEngine {
             });
         Ok(outcome)
     }
+}
+
+async fn tab_visibility_proven(conn: &CdpConnection, cdp_session: &str) -> bool {
+    conn.call(
+        Some(cdp_session),
+        "Runtime.evaluate",
+        json!({
+            "expression": "document.visibilityState === 'visible'",
+            "returnByValue": true,
+            "awaitPromise": false,
+        }),
+    )
+    .await
+    .ok()
+    .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+    .unwrap_or(false)
 }
 
 /// Attribute names that make an element interactive-enough to ref.
@@ -2835,6 +2982,9 @@ fn collect_interactive(
                 .find(|kv| kv[0].eq_ignore_ascii_case(key))
                 .map(|kv| kv[1].as_str())
         };
+        let closed_select = name == "select"
+            && attr("multiple").is_none()
+            && attr("size").and_then(|size| size.trim().parse::<u32>().ok()) <= Some(1);
         let interactive = INTERACTIVE_TAGS.contains(&name.as_str())
             || INTERACTIVE_ATTRS.iter().any(|a| attr(a).is_some());
         if interactive {
@@ -2852,6 +3002,9 @@ fn collect_interactive(
                     in_root_frame,
                 });
             }
+        }
+        if closed_select {
+            return;
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
@@ -2876,6 +3029,27 @@ fn collect_interactive(
             .or_else(|| content_document.get("frameId"))
             .and_then(Value::as_str);
         collect_interactive(content_document, child_frame_id, false, out);
+    }
+}
+
+/// The page title as the browser reports it now (`Target.getTargetInfo`),
+/// or `fallback` (the title recorded at bind time) when it cannot say.
+async fn live_title(conn: &Arc<CdpConnection>, cdp_target_id: &str, fallback: &str) -> String {
+    match conn
+        .call(
+            None,
+            "Target.getTargetInfo",
+            json!({ "targetId": cdp_target_id }),
+        )
+        .await
+    {
+        Ok(info) => info
+            .pointer("/targetInfo/title")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| fallback.to_owned()),
+        Err(_) => fallback.to_owned(),
     }
 }
 
@@ -3066,6 +3240,36 @@ mod tests {
         let inner = out.iter().find(|e| e.backend_node_id == 30).unwrap();
         assert!(!inner.in_root_frame);
         assert_eq!(inner.frame_id.as_deref(), Some("F_IFRAME"));
+    }
+
+    #[test]
+    fn collector_refs_a_closed_select_without_its_options() {
+        let option = |backend: i64| {
+            json!({"nodeType": 1, "nodeName": "OPTION", "backendNodeId": backend,
+                   "attributes": ["value", format!("c{backend}")]})
+        };
+        let doc = json!({
+            "nodeType": 9,
+            "nodeName": "#document",
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 1,
+                 "attributes": ["name", "country"],
+                 "children": (100..250).map(option).collect::<Vec<_>>()},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 2,
+                 "attributes": ["name", "tags", "multiple", ""],
+                 "children": [option(300), option(301)]},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 3,
+                 "attributes": ["name", "list", "size", "4"],
+                 "children": [option(400)]},
+                {"nodeType": 1, "nodeName": "BUTTON", "backendNodeId": 4,
+                 "attributes": ["type", "submit"]}
+            ]
+        });
+        let mut out = Vec::new();
+        collect_interactive(&doc, Some("F_MAIN"), true, &mut out);
+        let backends: Vec<i64> = out.iter().map(|e| e.backend_node_id).collect();
+        assert_eq!(backends, vec![1, 2, 300, 301, 3, 400, 4]);
     }
 
     #[test]

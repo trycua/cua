@@ -85,8 +85,15 @@ fn released_cli_help_and_manifest_fields_remain_compatible() {
 
 #[test]
 fn prime_agent_connection_guidance_uses_the_skill_and_cli_path() {
+    // `mcp-config --client` installs the skill pack for that agent by default,
+    // so this run gets a throwaway home instead of the developer's own.
+    let home = tempfile::tempdir().expect("throwaway home");
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
         .args(["mcp-config", "--client", "prime-agent"])
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("CUA_DRIVER_RS_HOME", home.path().join("driver"))
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0")
         .output()
         .expect("run Prime Agent connection guidance");
 
@@ -216,8 +223,15 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
         );
     }
 
+    // A notification gets no response: the next message read must answer the
+    // following request, not the notification.
+    driver.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     driver.send(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
     let tools_list = driver.recv();
+    assert_eq!(
+        tools_list["id"], 2,
+        "notifications/initialized must not produce a response: {tools_list:?}"
+    );
     let expected_tools = &fixture["tools_list"];
     assert_eq!(
         tools_list["result"]["schema_version"],
@@ -285,6 +299,25 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
         assert!(
             tool_call["result"].get(field).is_some(),
             "tools/call result no longer contains {field}"
+        );
+    }
+
+    // Clients and gateway watchdogs send `ping` as a liveness probe and treat
+    // an error answer as a dead child, so it must return an empty result with
+    // or without `params` (#4001).
+    for (id, ping) in [
+        (5, json!({"jsonrpc": "2.0", "id": 5, "method": "ping"})),
+        (
+            6,
+            json!({"jsonrpc": "2.0", "id": 6, "method": "ping", "params": {}}),
+        ),
+    ] {
+        driver.send(&ping);
+        let pong = driver.recv();
+        assert_eq!(
+            pong,
+            json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+            "ping must answer with an empty result"
         );
     }
 }

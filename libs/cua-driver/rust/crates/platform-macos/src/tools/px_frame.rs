@@ -39,8 +39,9 @@ pub struct WindowPxFrame {
 
 impl WindowPxFrame {
     /// Window-local capture pixels → `(screen_x, screen_y, local_pt_x,
-    /// local_pt_y)`. The local-point pair is what
-    /// `CGEventSetWindowLocation` needs for background delivery.
+    /// local_pt_y)`. Background clicks use the local-point pair for
+    /// `CGEventSetWindowLocation` on macOS 27+, or the screen-point pair before,
+    /// for both SkyLight and public PID routes.
     pub fn to_screen(&self, cx: f64, cy: f64) -> (f64, f64, f64, f64) {
         let lx = cx / self.scale;
         let ly = cy / self.scale;

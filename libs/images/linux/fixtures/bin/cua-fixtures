@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Start/stop the baked-in conformance fixtures.
+#
+#   cua-fixtures start [grid|form|http|tone|avsync|all]   (default all)
+#   cua-fixtures stop  [grid|form|http|tone|avsync|all]
+#   cua-fixtures status
+#
+# GUI fixtures run inside the desktop session (DISPLAY, session bus, a11y
+# bridge) as the desktop user. Logs: $CUA_FIXTURE_LOG_DIR/<name>.jsonl
+# (default /tmp/cua-fixtures); stdout/stderr of each fixture goes to
+# <name>.out next to it.
+set -euo pipefail
+FIXTURES=/opt/cua/fixtures
+DESKTOP_USER="${CUA_DESKTOP_USER:-cua}"
+if [ "$(id -u)" = 0 ] && id -u "$DESKTOP_USER" >/dev/null 2>&1; then
+    exec runuser -u "$DESKTOP_USER" -- "$0" "$@"
+fi
+ENV_FILE="${CUA_DESKTOP_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
+if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; else export DISPLAY="${CUA_DISPLAY:-:1}"; fi
+LOG_DIR="${CUA_FIXTURE_LOG_DIR:-/tmp/cua-fixtures}"
+export CUA_FIXTURE_LOG_DIR="$LOG_DIR"
+mkdir -p "$LOG_DIR"
+
+script_for() {
+    case "$1" in
+        grid) echo "$FIXTURES/grid.py" ;;
+        form) echo "$FIXTURES/form.py" ;;
+        http) echo "$FIXTURES/http_server.py" ;;
+        tone) echo "$FIXTURES/tone.py" ;;
+        avsync) echo "$FIXTURES/avsync.py" ;;
+        *) echo "unknown fixture: $1" >&2; exit 2 ;;
+    esac
+}
+# `all` leaves avsync out: its flashing window would cover the others.
+names() { if [ "${1:-all}" = all ]; then echo grid form http tone; else echo "$1"; fi; }
+pid_of() { pgrep -u "$(id -u)" -f "python3 $(script_for "$1")" | head -1 || true; }
+
+start_one() {
+    local n="$1" pid
+    pid="$(pid_of "$n")"
+    if [ -n "$pid" ]; then echo "$n already running (pid $pid)"; return; fi
+    local before=0
+    [ -f "$LOG_DIR/$n.jsonl" ] && before="$(wc -l <"$LOG_DIR/$n.jsonl")"
+    CUA_FIXTURE_NAME="$n" setsid python3 "$(script_for "$n")" >"$LOG_DIR/$n.out" 2>&1 </dev/null &
+    # Wait for the fixture's own "ready" record.
+    for _ in $(seq 1 50); do
+        if tail -n "+$((before + 1))" "$LOG_DIR/$n.jsonl" 2>/dev/null | grep -q '"type": "ready"'; then
+            echo "$n started (pid $(pid_of "$n"))"; return
+        fi
+        sleep 0.2
+    done
+    echo "$n did not report ready; see $LOG_DIR/$n.out" >&2
+    cat "$LOG_DIR/$n.out" >&2 || true
+    return 1
+}
+
+stop_one() {
+    local pid; pid="$(pid_of "$1")"
+    [ -n "$pid" ] && kill "$pid" && echo "$1 stopped" || echo "$1 not running"
+}
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+    start) for n in $(names "${1:-all}"); do start_one "$n"; done ;;
+    stop) for n in $(names "${1:-all}"); do stop_one "$n"; done ;;
+    status) for n in grid form http tone avsync; do p="$(pid_of "$n")"; echo "$n ${p:-stopped}"; done ;;
+    *) echo "usage: cua-fixtures start|stop|status [grid|form|http|tone|avsync|all]" >&2; exit 2 ;;
+esac

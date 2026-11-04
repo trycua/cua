@@ -1,0 +1,48 @@
+[package]
+name = "cua-driver-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cua-driver-testkit = { path = "../crates/cua-driver-testkit" }
+
+# Detached from the main workspace on purpose: libfuzzer-sys must never enter
+# the shipped or `cargo test` dependency graph.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "mcp_request"
+path = "fuzz_targets/mcp_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tool_arguments"
+path = "fuzz_targets/tool_arguments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "typed_input_json"
+path = "fuzz_targets/typed_input_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "registry_invoke"
+path = "fuzz_targets/registry_invoke.rs"
+test = false
+doc = false
+bench = false

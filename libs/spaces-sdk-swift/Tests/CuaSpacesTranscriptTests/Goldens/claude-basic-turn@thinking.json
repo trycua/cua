@@ -1,0 +1,85 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 5
+      },
+      "type" : "rawText"
+    },
+    {
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 6,
+        "lastRow" : 6
+      },
+      "text" : "Read calc.py and add a multiply function to it. Keep it short.",
+      "type" : "userMessage"
+    },
+    {
+      "elapsedSeconds" : null,
+      "hint" : null,
+      "provenance" : "observed",
+      "rawLine" : "· Hashing…",
+      "region" : {
+        "firstRow" : 28,
+        "lastRow" : 28
+      },
+      "spinner" : "·",
+      "tokens" : null,
+      "type" : "agentRunning",
+      "verb" : "Hashing"
+    },
+    {
+      "lines" : [
+        "                                                                                   ○ low · /effort"
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 29,
+        "lastRow" : 29
+      },
+      "type" : "rawText"
+    },
+    {
+      "content" : "",
+      "cursorIsInside" : true,
+      "placeholder" : null,
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 30,
+        "lastRow" : 32
+      },
+      "type" : "composer"
+    },
+    {
+      "hint" : "shift+tab to cycle",
+      "mode" : "accept_edits",
+      "provenance" : "observed",
+      "rawText" : "⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents",
+      "region" : {
+        "firstRow" : 33,
+        "lastRow" : 33
+      },
+      "type" : "modeIndicator"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 8.1389999999999993,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

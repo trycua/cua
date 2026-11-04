@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSWindow Frame CuaSpacesWebUI</key>
+	<string>220 140 1280 800 0 0 1728 1079 </string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUHasLaunchedBefore</key>
+	<true/>
+	<key>SULastCheckTime</key>
+	<date>2026-10-06T09:12:44Z</date>
+	<key>SUUpdateGroupIdentifier</key>
+	<integer>3920114467</integer>
+	<key>WebUIBackgroundDark</key>
+	<string>#16181c</string>
+	<key>WebUINativeVideo</key>
+	<false/>
+	<key>NSNavPanelExpandedStateForSaveMode</key>
+	<data>
+	AAE=
+	</data>
+	<key>NSRecentDocuments</key>
+	<array>
+		<string>a &amp; b</string>
+		<dict/>
+	</array>
+</dict>
+</plist>

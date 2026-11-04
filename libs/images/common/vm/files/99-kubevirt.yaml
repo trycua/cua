@@ -1,0 +1,20 @@
+# Static netplan for KubeVirt VMs.
+# The cloud-image's auto-generated netplan (50-cloud-init.yaml) names a
+# specific interface like "ens2" that doesn't exist under KubeVirt's
+# masquerade (which produces enp1s0). Without DHCP, the interface stays
+# DOWN, systemd-networkd-wait-online times out, and no traffic reaches
+# the VM — including the masquerade-forwarded ports we declare in the
+# VirtualMachine spec.
+network:
+  version: 2
+  ethernets:
+    all-en:
+      match:
+        name: "en*"
+      dhcp4: true
+      dhcp-identifier: mac
+    all-eth:
+      match:
+        name: "eth*"
+      dhcp4: true
+      dhcp-identifier: mac

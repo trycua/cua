@@ -1,0 +1,57 @@
+[package]
+name = "cua-spacesd-doctor"
+description = "`cua-spacesd doctor`: checks a running guest against its image's claims (cua.env.v1 SystemService.Diagnose)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# The doctor is a client of the spacesd it checks (the same public contract
+# every SDK uses); cua-spacesd-server only for the Diagnoser hook trait.
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
+cua-proto = { path = "../../../cua/crates/cua-proto" }
+cua-spacesd-server = { path = "../cua-spacesd-server" }
+# Teleport receive checks: the same importers cua-spacesd links, run into a
+# throwaway home with faked host effects; the shared bundle format.
+cua-spacesd-teleport = { path = "../cua-spacesd-teleport" }
+cua-teleport-bundle = { path = "../../../cua/crates/cua-teleport-bundle" }
+# Hotspot check: the doctor is the egress peer.
+cua-hotspot = { path = "../../../cua/crates/cua-hotspot" }
+# Volume check: the doctor serves a throwaway volume to the guest mount.
+cua-volume = { path = "../../../cua/crates/cua-volume", features = ["nfs"] }
+cua-media-codec = { path = "../../../cua/crates/cua-media-codec", features = ["openh264", "opus"] }
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
+bytes.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
+hex.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+pbjson-types = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+regex = "1"
+sha2.workspace = true
+tokio = { workspace = true, features = ["process", "fs"] }
+tokio-tungstenite = "0.24"
+# The version cua-spacesd-client's `open_websocket` returns (hotspot peer socket).
+guest-tungstenite = { package = "tokio-tungstenite", version = "0.29", default-features = false }
+tonic = { workspace = true }
+tracing.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+# The volume test prints the driver's mount log (which export answered, the
+# portmapper calls).
+tracing-subscriber.workspace = true
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client", features = ["testing"] }
+
+# The volume test calls the Windows rename APIs directly.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_WNet", "Win32_Security", "Win32_Storage_FileSystem"] }

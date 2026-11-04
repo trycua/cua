@@ -11,10 +11,10 @@ use cua_driver_contract::{
     GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
     GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
     ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
-    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
-    VerifyStateOutput, WindowStateOutput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
+    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -22,12 +22,13 @@ use cua_driver_core::daemon::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 mod abi;
 mod activity_observer;
 mod authorization_host;
+mod cursor_motion;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
@@ -43,6 +44,7 @@ pub use authorization_host::{
     DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
     DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use cursor_motion::*;
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 pub use remote_mcp::{
@@ -52,6 +54,30 @@ pub use remote_mcp::{
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
+
+static PERCEPTION_CLIENT_RESOLVER: OnceLock<
+    Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+> = OnceLock::new();
+
+/// Configure the binary-owned resolver for optional installed perception.
+/// Every runtime consults it per `parse_visual_regions` request, so extension
+/// install, update, and removal take effect on a running Driver. Language SDKs
+/// without a binary host retain the typed unavailable tool.
+#[doc(hidden)]
+pub fn configure_perception_client_resolver(
+    resolver: Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+) {
+    let _ = PERCEPTION_CLIENT_RESOLVER.set(resolver);
+}
+
+pub(crate) fn configured_perception_client(
+) -> cua_driver_core::perception_client::PerceptionClientHandle {
+    use cua_driver_core::perception_client::{PerceptionClient, PerceptionClientHandle};
+    PERCEPTION_CLIENT_RESOLVER.get().map_or_else(
+        || PerceptionClientHandle::fixed(PerceptionClient::unavailable()),
+        |resolver| PerceptionClientHandle::live(resolver.clone()),
+    )
+}
 
 fn host_sessions_json_for_prefix(runtime_prefix: &str) -> Value {
     let sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
@@ -287,6 +313,18 @@ enum DriverBackend {
 }
 
 impl CuaDriver {
+    /// Trusted Rust-host lookup against the embedded registry. Unlike
+    /// `list_tools_json`, policy filtering does not hide registered tools.
+    #[doc(hidden)]
+    pub fn local_is_known_tool(&self, name: &str) -> Option<bool> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => Some(runtime.is_known_tool(name)),
+            DriverBackend::Daemon(_)
+            | DriverBackend::PrivateWorker(_)
+            | DriverBackend::Remote(_) => None,
+        }
+    }
+
     /// Trusted Rust-host access to the daemon-owned local history controller.
     /// This is intentionally absent from UniFFI and public agent protocols.
     #[doc(hidden)]
@@ -641,6 +679,7 @@ macro_rules! desktop_tool_methods {
             get_screen_size: GetScreenSizeInput,
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
+            parse_visual_regions: ParseVisualRegionsInput,
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
@@ -730,8 +769,15 @@ macro_rules! define_native_window_methods {
 
             pub async fn get_window_state(
                 &self,
-                input: GetWindowStateInput,
+                mut input: GetWindowStateInput,
             ) -> Result<WindowStateOutput, DriverError> {
+                // The typed snapshot is read by programs, not budgeted
+                // against a model context: keep the full response (both tree
+                // representations, platform walk limits) unless the caller
+                // picks a leaner shape.
+                if input.tree_format.is_none() && input.full_output.is_none() {
+                    input.full_output = Some(true);
+                }
                 self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
                     .await?
                     .window_state_success()
@@ -767,18 +813,7 @@ impl CuaDriver {
     /// `cua-driver` and never opens daemon IPC.
     #[uniffi::constructor]
     pub fn create(options: Option<DriverOptions>) -> Result<Arc<Self>, DriverError> {
-        cua_driver_core::authorization::validate_startup_authorization().map_err(|error| {
-            DriverError::Configuration {
-                reason: format!("authorization configuration is invalid: {error}"),
-            }
-        })?;
-        let options = options.unwrap_or_default();
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create(
-                options.claude_code_compatibility,
-            )?)),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        create_for_client(options, DaemonClientKind::Unknown)
     }
 
     /// Create a same-process runtime with an explicit immutable authorization
@@ -786,13 +821,7 @@ impl CuaDriver {
     /// agent tool. Existing `create()` callers remain unchanged.
     #[uniffi::constructor]
     pub fn create_configured(options: ConfiguredDriverOptions) -> Result<Arc<Self>, DriverError> {
-        let native_options = configured_driver_options_json(&options);
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_configured(
-                native_options,
-            )?)),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        create_configured_for_client(options, DaemonClientKind::Unknown)
     }
 
     /// Create a configured same-process runtime with an optional residual
@@ -806,17 +835,11 @@ impl CuaDriver {
         options: ConfiguredDriverOptions,
         host: Arc<dyn DriverAuthorizationHost>,
     ) -> Result<Arc<Self>, DriverError> {
-        let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(
-                NativeAbiDriver::create_configured_with_authorization_provider(
-                    configured_driver_options_json(&options),
-                    provider,
-                    None,
-                )?,
-            )),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        create_configured_with_authorization_host_for_client(
+            options,
+            host,
+            DaemonClientKind::Unknown,
+        )
     }
 
     /// Create a configured same-process runtime with a content-free activity
@@ -826,15 +849,11 @@ impl CuaDriver {
         options: ConfiguredDriverOptions,
         observer: Arc<dyn DriverActivityObserver>,
     ) -> Result<Arc<Self>, DriverError> {
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(
-                NativeAbiDriver::create_configured_with_activity_observer(
-                    configured_driver_options_json(&options),
-                    observer,
-                )?,
-            )),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        create_configured_with_activity_observer_for_client(
+            options,
+            observer,
+            DaemonClientKind::Unknown,
+        )
     }
 
     /// Create a configured same-process runtime with both residual
@@ -845,17 +864,12 @@ impl CuaDriver {
         host: Arc<dyn DriverAuthorizationHost>,
         observer: Arc<dyn DriverActivityObserver>,
     ) -> Result<Arc<Self>, DriverError> {
-        let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(
-                NativeAbiDriver::create_configured_with_authorization_provider(
-                    configured_driver_options_json(&options),
-                    provider,
-                    Some(observer),
-                )?,
-            )),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        create_configured_with_host_integrations_for_client(
+            options,
+            host,
+            observer,
+            DaemonClientKind::Unknown,
+        )
     }
 
     /// Language-package entry point for a configured protected-host runtime.
@@ -865,14 +879,7 @@ impl CuaDriver {
         host: Arc<dyn DriverAuthorizationHost>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create_configured_with_authorization_host(options, host)?;
-        let DriverBackend::Embedded(runtime) = &driver.backend else {
-            unreachable!("protected-host constructor always returns an embedded runtime")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(runtime.clone()),
-            client_kind: client_kind.into(),
-        }))
+        create_configured_with_authorization_host_for_client(options, host, client_kind.into())
     }
 
     /// Language-package entry point for a configured activity-observer runtime.
@@ -882,14 +889,7 @@ impl CuaDriver {
         observer: Arc<dyn DriverActivityObserver>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create_configured_with_activity_observer(options, observer)?;
-        let DriverBackend::Embedded(runtime) = &driver.backend else {
-            unreachable!("activity-observer constructor always returns an embedded runtime")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(runtime.clone()),
-            client_kind: client_kind.into(),
-        }))
+        create_configured_with_activity_observer_for_client(options, observer, client_kind.into())
     }
 
     /// Language-package entry point for both trusted host callbacks.
@@ -900,14 +900,12 @@ impl CuaDriver {
         observer: Arc<dyn DriverActivityObserver>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create_configured_with_host_integrations(options, host, observer)?;
-        let DriverBackend::Embedded(runtime) = &driver.backend else {
-            unreachable!("host-integration constructor always returns an embedded runtime")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(runtime.clone()),
-            client_kind: client_kind.into(),
-        }))
+        create_configured_with_host_integrations_for_client(
+            options,
+            host,
+            observer,
+            client_kind.into(),
+        )
     }
 
     /// Language-package entry point for an explicitly configured runtime.
@@ -916,14 +914,7 @@ impl CuaDriver {
         options: ConfiguredDriverOptions,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create_configured(options)?;
-        let DriverBackend::Embedded(runtime) = &driver.backend else {
-            unreachable!("create_configured always returns an embedded runtime")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(runtime.clone()),
-            client_kind: client_kind.into(),
-        }))
+        create_configured_for_client(options, client_kind.into())
     }
 
     /// Language-package entry point for the same-process runtime. The wrapper
@@ -933,30 +924,14 @@ impl CuaDriver {
         options: Option<DriverOptions>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::create(options)?;
-        let DriverBackend::Embedded(runtime) = &driver.backend else {
-            unreachable!("create always returns an embedded runtime")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(runtime.clone()),
-            client_kind: client_kind.into(),
-        }))
+        create_for_client(options, client_kind.into())
     }
 
     /// Connect to the default installed daemon or an explicitly selected socket.
     /// This is the temporary compatibility path for released socket clients.
     #[uniffi::constructor]
     pub fn connect(socket_path: Option<String>) -> Result<Arc<Self>, DriverError> {
-        let socket_path = socket_path.unwrap_or_else(|| socket_path_for_namespace("cua-driver"));
-        if socket_path.trim().is_empty() {
-            return Err(DriverError::Configuration {
-                reason: "socket_path must not be empty".into(),
-            });
-        }
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Daemon(DaemonBackend::new(socket_path)),
-            client_kind: DaemonClientKind::Unknown,
-        }))
+        connect_for_client(socket_path, DaemonClientKind::Unknown)
     }
 
     /// Language-package entry point that preserves the public `connect` API
@@ -966,14 +941,7 @@ impl CuaDriver {
         socket_path: Option<String>,
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
-        let driver = Self::connect(socket_path)?;
-        let DriverBackend::Daemon(daemon) = &driver.backend else {
-            unreachable!("connect always returns a daemon client")
-        };
-        Ok(Arc::new(Self {
-            backend: DriverBackend::Daemon(daemon.clone()),
-            client_kind: client_kind.into(),
-        }))
+        connect_for_client(socket_path, client_kind.into())
     }
 
     /// Create a process-isolated runtime owned by this SDK object.
@@ -1024,6 +992,106 @@ impl CuaDriver {
             DriverBackend::Remote(remote) => remote.is_available(),
         }
     }
+}
+
+fn create_for_client(
+    options: Option<DriverOptions>,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    cua_driver_core::authorization::validate_startup_authorization().map_err(|error| {
+        DriverError::Configuration {
+            reason: format!("authorization configuration is invalid: {error}"),
+        }
+    })?;
+    let options = options.unwrap_or_default();
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create(
+            options.claude_code_compatibility,
+        )?)),
+        client_kind,
+    }))
+}
+
+fn create_configured_for_client(
+    options: ConfiguredDriverOptions,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    let native_options = configured_driver_options_json(&options);
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_configured(
+            native_options,
+        )?)),
+        client_kind,
+    }))
+}
+
+fn create_configured_with_authorization_host_for_client(
+    options: ConfiguredDriverOptions,
+    host: Arc<dyn DriverAuthorizationHost>,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Embedded(Arc::new(
+            NativeAbiDriver::create_configured_with_authorization_provider(
+                configured_driver_options_json(&options),
+                provider,
+                None,
+            )?,
+        )),
+        client_kind,
+    }))
+}
+
+fn create_configured_with_activity_observer_for_client(
+    options: ConfiguredDriverOptions,
+    observer: Arc<dyn DriverActivityObserver>,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Embedded(Arc::new(
+            NativeAbiDriver::create_configured_with_activity_observer(
+                configured_driver_options_json(&options),
+                observer,
+            )?,
+        )),
+        client_kind,
+    }))
+}
+
+fn create_configured_with_host_integrations_for_client(
+    options: ConfiguredDriverOptions,
+    host: Arc<dyn DriverAuthorizationHost>,
+    observer: Arc<dyn DriverActivityObserver>,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    let provider = authorization_host::SdkDriverAuthorizationHost::new(host);
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Embedded(Arc::new(
+            NativeAbiDriver::create_configured_with_authorization_provider(
+                configured_driver_options_json(&options),
+                provider,
+                Some(observer),
+            )?,
+        )),
+        client_kind,
+    }))
+}
+
+fn connect_for_client(
+    socket_path: Option<String>,
+    client_kind: DaemonClientKind,
+) -> Result<Arc<CuaDriver>, DriverError> {
+    let socket_path = socket_path.unwrap_or_else(|| socket_path_for_namespace("cua-driver"));
+    if socket_path.trim().is_empty() {
+        return Err(DriverError::Configuration {
+            reason: "socket_path must not be empty".into(),
+        });
+    }
+    Ok(Arc::new(CuaDriver {
+        backend: DriverBackend::Daemon(DaemonBackend::new(socket_path)),
+        client_kind,
+    }))
 }
 
 fn create_private_worker_for_client(
@@ -1976,12 +2044,34 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
 #[cfg(test)]
+#[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connect_rejects_empty_socket_paths_for_every_client_kind() {
+        for path in ["", "  \t"] {
+            let results = [
+                CuaDriver::connect(Some(path.into())),
+                CuaDriver::connect_with_client_kind(Some(path.into()), SdkClientKind::Python),
+                CuaDriver::connect_with_client_kind(Some(path.into()), SdkClientKind::Typescript),
+            ];
+            for result in results {
+                match result {
+                    Err(DriverError::Configuration { reason }) => {
+                        assert_eq!(reason, "socket_path must not be empty");
+                    }
+                    Err(other) => panic!("unexpected error for {path:?}: {other:?}"),
+                    Ok(_) => panic!("empty socket path {path:?} was accepted"),
+                }
+            }
+        }
+    }
+
     mod native_windows;
     use super::*;
+    use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
     #[cfg(unix)]
@@ -2002,8 +2092,14 @@ mod tests {
 
     #[cfg(unix)]
     fn serve_once(response: Value) -> (tempfile::TempDir, String, std::thread::JoinHandle<Value>) {
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("driver.sock");
+        // Short path under /tmp: sun_path holds ~104 bytes on macOS and a CI
+        // TMPDIR can eat most of it. The listener is bound before returning,
+        // so the client needs no readiness wait.
+        let directory = tempfile::Builder::new()
+            .prefix("cd")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = directory.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = std::thread::spawn(move || {
             let (metadata_stream, _) = listener.accept().unwrap();
@@ -2062,7 +2158,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_observer_receives_only_content_free_authorization_metadata() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let observer = Arc::new(RecordingActivityObserver::default());
         let driver = CuaDriver::create_configured_with_activity_observer(
             ConfiguredDriverOptions {
@@ -2157,7 +2253,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn host_tool_inspection_does_not_acquire_runtime_ownership() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let inventory = CuaDriver::inspect_host_tools(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2181,7 +2277,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         assert_eq!(driver.execution_mode(), DriverExecutionMode::Embedded);
         assert!(driver.socket_path().is_empty());
@@ -2212,7 +2308,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_host_listing_spans_its_runtime_without_exposing_owner_keys() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let public = format!("host-listing-{}", uuid::Uuid::new_v4());
         driver
@@ -2220,6 +2316,7 @@ mod tests {
                 session: Some(public.clone()),
                 capture_scope: None,
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -2253,7 +2350,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_drains_an_already_admitted_call() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::try_create_for_host(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2307,7 +2404,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_enforces_authorization_before_platform_dispatch() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let result = driver
             .call_tool(
@@ -2335,7 +2432,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_runtimes_have_independent_sessions_and_shutdown() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let hook_baseline = cua_driver_core::session::session_end_hook_count();
         let first = configured_standard_driver();
         let second = CuaDriver::create_configured(ConfiguredDriverOptions {
@@ -2508,7 +2605,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_idle_ttl_reaches_the_lifecycle_contract() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
         let session = driver
             .create_trusted_session(TrustedSessionOptions {
@@ -2547,7 +2644,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorization_expiry_in_one_runtime_does_not_affect_another() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let expiring = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -2603,7 +2700,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_session_close_can_race_with_invoke_without_invalidating_the_handle() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
 
         for iteration in 0..64 {
@@ -2649,7 +2746,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_is_bound_in_memory_and_rejects_public_id_substitution() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -2769,6 +2866,7 @@ mod tests {
             .get_desktop_state(GetDesktopStateInput {
                 session: Some("run-1".into()),
                 screenshot_out_file: None,
+                max_image_dimension: None,
             })
             .await
             .unwrap();
@@ -2783,6 +2881,75 @@ mod tests {
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
         assert_eq!(request["client_kind"], "python_sdk");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn visual_parse_call_preserves_success_and_error_dtos() {
+        let mut output: Value = serde_json::from_str(include_str!(
+            "../../cua-driver-contract/tests/fixtures/parse-visual-regions-output-full-v1.json"
+        ))
+        .unwrap();
+        output["capture"]["capture_id"] = "capture-123".into();
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "parsed"}],
+                "structuredContent": output,
+                "isError": false
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver =
+            CuaDriver::connect_with_client_kind(Some(socket), SdkClientKind::Typescript).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        let structured = result.structured_json.as_deref().unwrap();
+        let decoded: ParseVisualRegionsOutput = serde_json::from_str(structured).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.schema, "cua.visual_regions_v1");
+        assert_eq!(decoded.capture.capture_id, "capture-123");
+        let request = server.join().unwrap();
+        assert_eq!(request["name"], "parse_visual_regions");
+        assert_eq!(
+            request["args"],
+            serde_json::json!({"capture_id": "capture-123", "options": {}})
+        );
+        assert_eq!(request["client_kind"], "typescript_sdk");
+
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "not installed"}],
+                "structuredContent": {
+                    "code": "not_installed",
+                    "message": "the optional cua-perception extension is not installed",
+                    "retryable": false
+                },
+                "isError": true
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver = CuaDriver::connect(Some(socket)).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("not_installed"));
+        let error: VisualParseError =
+            serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+        error.validate().unwrap();
+        assert!(!error.retryable);
+        assert_eq!(server.join().unwrap()["name"], "parse_visual_regions");
     }
 
     #[test]
@@ -2985,6 +3152,7 @@ mod tests {
                 session: Some("run-2".into()),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -3185,7 +3353,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn direct_macos_runtime_reports_cursor_overlay_facility_unavailable() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         // This test is about the unavailable host-owned cursor facility, not
         // protected input admission. Use an explicitly acknowledged
         // unrestricted runtime so the call reaches that platform invariant.

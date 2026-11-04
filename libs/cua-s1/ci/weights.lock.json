@@ -1,0 +1,102 @@
+{
+  "schema": "cua-s1/weights-lock/v1",
+  "description": "Pinned public Hugging Face artifacts for the weights-backed Cua-S1-4B smoke. Every listed file is downloaded at the pinned revision and verified by size and SHA-256; keep in sync with libs/cua-s1/README.md.",
+  "artifacts": [
+    {
+      "name": "Qwen3.5-4B",
+      "repo_id": "Qwen/Qwen3.5-4B",
+      "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "role": "base",
+      "files": {
+        ".gitattributes": {
+          "size": 1570,
+          "sha256": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930"
+        },
+        "LICENSE": {
+          "size": 11544,
+          "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+        },
+        "README.md": {
+          "size": 77661,
+          "sha256": "1406be1b6b8fd8a6545870da516912804756593628a1d0fb0a7965211e82a7bb"
+        },
+        "chat_template.jinja": {
+          "size": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+        },
+        "config.json": {
+          "size": 3161,
+          "sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670"
+        },
+        "merges.txt": {
+          "size": 3353259,
+          "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+        },
+        "model.safetensors-00001-of-00002.safetensors": {
+          "size": 5329398688,
+          "sha256": "26a93f066e1916adb13453dae5a0c707c0fbc71299ed98779571a907b8e74c61"
+        },
+        "model.safetensors-00002-of-00002.safetensors": {
+          "size": 3990429408,
+          "sha256": "cb544bd9bfae93dc59b0f22b292f5933573854a7f9b97835c67060d7d910e188"
+        },
+        "model.safetensors.index.json": {
+          "size": 76196,
+          "sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d"
+        },
+        "preprocessor_config.json": {
+          "size": 390,
+          "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+        },
+        "tokenizer.json": {
+          "size": 12807982,
+          "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+        },
+        "tokenizer_config.json": {
+          "size": 16710,
+          "sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8"
+        },
+        "video_preprocessor_config.json": {
+          "size": 385,
+          "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+        },
+        "vocab.json": {
+          "size": 6722759,
+          "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+        }
+      }
+    },
+    {
+      "name": "cua-s1-4b-0.2",
+      "repo_id": "cua-ai/cua-s1-4b-0.2",
+      "revision": "16818868b0cc7813808aae4e87b417657046ab79",
+      "role": "adapter",
+      "files": {
+        ".gitattributes": {
+          "size": 1519,
+          "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"
+        },
+        "README.md": {
+          "size": 1134,
+          "sha256": "0e89cb4aea205e08c13f8af7fbfdfd0854ba0f6c57602071238771d0e1f8c7cd"
+        },
+        "multimodal/adapter_config.json": {
+          "size": 1129,
+          "sha256": "f80edac43dd7605317ae8189613c75d13a029fa5d8a4870c04f1ba7097a8fab5"
+        },
+        "multimodal/adapter_model.safetensors": {
+          "size": 101665112,
+          "sha256": "38ecd5a9191a436c1739db29104517f0aff4c70d0736d9cd810d3d49cfd652ea"
+        },
+        "text/adapter_config.json": {
+          "size": 1091,
+          "sha256": "c246fce1fe1d44160ae5f246f9881dfeabb4fcd67fe4a777cef10a1dbcf16540"
+        },
+        "text/adapter_model.safetensors": {
+          "size": 84968408,
+          "sha256": "9b59c5aed96171a50b26526613766bbf44347a5c7af70f81efe6bcc6e9dbfb0e"
+        }
+      }
+    }
+  ]
+}

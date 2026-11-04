@@ -53,6 +53,38 @@ if(BUILD_TESTING)
     target_compile_options(cua_hyprland_foreground_route_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_foreground_route_test COMMAND cua_hyprland_foreground_route_test)
 
+    # Keyboard layout and foreground modifier tests compile real XKB keymaps.
+    # Set CUA_HYPRLAND_REQUIRE_XKBCOMMON in the environment to fail instead of
+    # skipping them when the xkbcommon development files are missing.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CUA_XKBCOMMON QUIET IMPORTED_TARGET xkbcommon)
+    endif()
+    if(NOT CUA_XKBCOMMON_FOUND AND DEFINED ENV{CUA_HYPRLAND_REQUIRE_XKBCOMMON})
+        message(FATAL_ERROR "xkbcommon development files are required for the keyboard tests")
+    endif()
+    if(CUA_XKBCOMMON_FOUND)
+        foreach(xkb_test IN ITEMS keymap_equivalence keyboard_layout)
+            add_executable(cua_hyprland_${xkb_test}_test tests/${xkb_test}_test.cpp)
+            target_compile_features(cua_hyprland_${xkb_test}_test PRIVATE cxx_std_26)
+            target_include_directories(cua_hyprland_${xkb_test}_test PRIVATE src)
+            target_compile_options(cua_hyprland_${xkb_test}_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+            target_link_libraries(cua_hyprland_${xkb_test}_test PRIVATE PkgConfig::CUA_XKBCOMMON)
+            add_test(NAME cua_hyprland_${xkb_test}_test COMMAND cua_hyprland_${xkb_test}_test)
+            set_tests_properties(cua_hyprland_${xkb_test}_test PROPERTIES SKIP_RETURN_CODE 77)
+        endforeach()
+    else()
+        message(STATUS "xkbcommon not found; keyboard layout tests are not built")
+    endif()
+    add_test(NAME cua_hyprland_foreground_modifiers_test
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tests/foreground_modifiers_test.py)
+    set_tests_properties(cua_hyprland_foreground_modifiers_test PROPERTIES
+        ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+    add_test(NAME cua_hyprland_agent_key_repeat_test
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tests/agent_key_repeat_test.py)
+    set_tests_properties(cua_hyprland_agent_key_repeat_test PROPERTIES
+        ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+
     add_executable(cua_hyprland_passive_pointer_target_test tests/passive_pointer_target_test.cpp)
     target_compile_features(cua_hyprland_passive_pointer_target_test PRIVATE cxx_std_26)
     target_include_directories(cua_hyprland_passive_pointer_target_test PRIVATE src)

@@ -160,7 +160,7 @@ async def test_android_local_cdp():
 
             # tunnel.forward context exited — forward rule removed
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
         assert name not in _ls_names()
 
 
@@ -199,7 +199,7 @@ async def main():
                 assert val == "v"
                 print("CDP localStorage round-trip: OK")
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
 
 
 if __name__ == "__main__":

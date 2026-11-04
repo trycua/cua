@@ -1,0 +1,3 @@
+# Cua Driver releases that must never be installed, baked, or certified.
+# One exact x.y.z version per line; text after "#" is the reason.
+0.28.3 # macOS CuaDriver.app published unsigned (notarization disabled); see #4109

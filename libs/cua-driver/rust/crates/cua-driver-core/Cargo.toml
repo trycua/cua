@@ -2,12 +2,20 @@
 name = "cua-driver-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 
 [features]
-default = ["yaml", "rego"]
+default = ["yaml", "rego", "script"]
 yaml = ["dep:regex"]
 rego = ["dep:regorus"]
+# `run_script` tool: an embedded QuickJS engine (rquickjs and quickjs-ng,
+# both MIT). Compiled in by default on every platform, and the tool is
+# offered unless the operator turns it off at runtime. Without this feature
+# the tool is not offered at all.
+script = ["dep:rquickjs"]
+# OS credential-store history key provider (Linux Secret Service, Windows Credential Manager).
+keyring = ["dep:keyring"]
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
@@ -38,6 +46,7 @@ futures-util = "0.3"
 uuid = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
+indexmap = "2"
 url = "2.5"
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }
@@ -46,19 +55,36 @@ coset = { workspace = true }
 ciborium = { workspace = true }
 time = { workspace = true }
 getrandom = { workspace = true }
+keyring = { version = "4.1.6", default-features = false, features = ["v1"], optional = true }
 fs2 = { workspace = true }
 hmac = { workspace = true }
 # Validate the raw wire payload; serde permits some shapes the schema rejects.
 jsonschema = { version = "0.46", default-features = false }
+# Private per-request working directory for the optional perception worker.
+tempfile = "3"
+rquickjs = { version = "0.14", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
-# during video recording. Same version as platform-windows uses to avoid
-# a duplicate crate version.
-[dev-dependencies]
-tempfile = "3"
-
+# during video recording, and by `perception_client::containment` for the
+# worker's Job Object. Same version as platform-windows uses to avoid a
+# duplicate crate version.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+# `fast_path_standalone` lets the std-only fast_path checks compile alone
+# with `rustc --test` (no workspace build needed); see fast_path/mod.rs.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fast_path_standalone)"] }

@@ -1,0 +1,68 @@
+---
+title: Connect a cloud
+description: 'For an AI agent: connect your user''s own AWS, Google Cloud, Hetzner or Modal account to Cua Spaces with a region and a budget.'
+---
+
+Your user wants Cua Spaces to create machines in their own cloud account. Cua
+does not rent machines: the Spaces run in that account and cost what that cloud
+charges. Ask your user three things before you run anything: which cloud (AWS,
+Google Cloud, Hetzner or Modal), which region, and a monthly budget in dollars.
+If they already said them in the prompt, repeat them back and wait for a yes.
+
+## You run on your user's computer
+
+1. Check what you can reach without creating anything. Use the cloud's name for
+   `<cloud>`: `aws`, `gcp`, `hetzner` or `modal`.
+
+   ```bash test="cli-shape" id="agent-cloud-test"
+   cua cloud test aws --region us-west-2
+   ```
+
+2. Connect it with the region, then set the budget. Cua stores only the profile,
+   region, project or environment names. Use `--profile` for a named AWS profile,
+   `--project` for Google Cloud and `--environment` for Modal.
+
+   ```bash test="cli-shape" id="agent-cloud-connect"
+   cua cloud connect aws --region us-west-2
+   cua cloud budget --monthly 200
+   ```
+
+3. Hetzner has no sign-in. Ask your user to put the project's Read & Write API
+   token in `HCLOUD_TOKEN` in their own terminal and run the connect command there.
+
+   ```bash test="cli-shape" id="agent-cloud-hetzner"
+   cua cloud connect hetzner --region fsn1
+   ```
+
+## You run in the cloud (hosted assistants)
+
+You can't reach your user's cloud credentials, and they are not yours to hold. Tell
+your user to run the commands above on their computer, or to press **Connect a
+cloud** in Cua Spaces. Don't ask them to send you keys.
+
+## Check it worked
+
+```bash test="cli-shape" id="agent-cloud-status"
+cua cloud status
+```
+
+The cloud should show as connected, with the account and region you chose and the
+budget under `cua cloud budget`. If a check fails, `cua cloud test` says which one
+(credentials, permissions, quota or region). Tell your user what it says. Do not
+fix permissions by granting broader access than the cloud's own CLI already has.
+
+## Don't
+
+- Paste, print, log or ask for cloud keys, tokens or passwords. They stay in the
+  cloud's own CLI, or in your user's terminal.
+- Create machines, buckets or users in the cloud yourself. Cua creates and tags
+  what it uses.
+- Pick a bigger region, instance or budget than your user named.
+- Touch anything in the account that Cua did not create.
+
+## What you get
+
+- Nothing new for yourself. Your user's Cua Spaces can now create Spaces there,
+  within the budget, and delete them after 8 hours by default (`--ttl-hours`).
+- `cua cloud status` and `cua cloud audit` show what Cua made and what it costs.
+- Your user can disconnect at any time with `cua cloud disconnect <cloud>`.

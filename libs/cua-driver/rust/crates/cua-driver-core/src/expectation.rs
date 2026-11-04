@@ -135,17 +135,12 @@ impl ObservationProvider for ToolObservationProvider {
 
         let state = self
             .get_window_state
-            .invoke(json!({
-                "pid": pid,
-                "window_id": window_id,
-                "include_screenshot": include_screenshot,
-                // Internal direct-tool flag: verification must not refresh the
-                // shared action index/token cache.
-                // Registry ingress removes underscore-prefixed arguments before
-                // public dispatch. Direct platform-tool invocation is the
-                // trusted in-process channel for this non-mutating mode.
-                "_observation_only": true,
-            }))
+            .invoke(window_state_observation_args(
+                pid,
+                window_id,
+                include_elements,
+                include_screenshot,
+            ))
             .await;
         if state.is_error == Some(true) {
             return Err(tool_error_text(&state, "get_window_state failed"));
@@ -179,6 +174,26 @@ impl ObservationProvider for ToolObservationProvider {
             visual_evidence,
         })
     }
+}
+
+fn window_state_observation_args(
+    pid: i64,
+    window_id: u64,
+    include_elements: bool,
+    include_screenshot: bool,
+) -> Value {
+    json!({
+        "pid": pid,
+        "window_id": window_id,
+        "include_accessibility_tree": include_elements,
+        "include_screenshot": include_screenshot,
+        // Internal direct-tool flag: verification must not refresh the
+        // shared action index/token cache.
+        // Registry ingress removes underscore-prefixed arguments before
+        // public dispatch. Direct platform-tool invocation is the
+        // trusted in-process channel for this non-mutating mode.
+        "_observation_only": true,
+    })
 }
 
 fn tool_error_text(result: &ToolResult, fallback: &str) -> String {
@@ -541,10 +556,23 @@ fn evaluate_element(
             None,
         );
     };
-    let matches: Vec<&Value> = elements
+    let all_matches: Vec<&Value> = elements
         .iter()
         .filter(|element| selector_matches(&predicate.selector, element))
         .collect();
+    // Observations may include display-only rows (static text, read-only
+    // values) next to the addressable controls. A control's visible caption
+    // is usually such a row, so a selector that matches a control keeps
+    // resolving to that control alone; display-only rows are only the target
+    // when no addressable element matches.
+    let (addressable, display_only): (Vec<&Value>, Vec<&Value>) = all_matches
+        .into_iter()
+        .partition(|element| element.get("display_only").and_then(Value::as_bool) != Some(true));
+    let matches = if addressable.is_empty() {
+        display_only
+    } else {
+        addressable
+    };
     if matches.is_empty() {
         let contains_untrusted_region = elements.iter().any(|element| {
             element.get("in_web_content").and_then(Value::as_bool) == Some(true)
@@ -732,6 +760,7 @@ fn project_element(element: &Value) -> Value {
         "value",
         "enabled",
         "selected",
+        "display_only",
         "frame",
     ] {
         if let Some(value) = element.get(key) {
@@ -802,6 +831,18 @@ mod tests {
     }
 
     #[test]
+    fn observation_args_request_only_needed_modalities() {
+        let screenshot_only = window_state_observation_args(42, 7, false, true);
+        assert_eq!(screenshot_only["include_accessibility_tree"], json!(false));
+        assert_eq!(screenshot_only["include_screenshot"], json!(true));
+        assert_eq!(screenshot_only["_observation_only"], json!(true));
+
+        let elements_only = window_state_observation_args(42, 7, true, false);
+        assert_eq!(elements_only["include_accessibility_tree"], json!(true));
+        assert_eq!(elements_only["include_screenshot"], json!(false));
+    }
+
+    #[test]
     fn evaluates_window_bounds_with_tolerance() {
         let predicates = vec![StatePredicate {
             window: Some(WindowPredicate {
@@ -845,6 +886,95 @@ mod tests {
             },
         );
         assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    fn observed(elements: Vec<Value>) -> ObservationSnapshot {
+        ObservationSnapshot {
+            window: Some(window()),
+            elements: Some(elements),
+            element_source_trusted: true,
+            elements_complete: false,
+        }
+    }
+
+    fn labelled(label: &str, value_equals: Option<&str>) -> StatePredicate {
+        StatePredicate {
+            window: None,
+            element: Some(ElementPredicate {
+                selector: ElementSelector {
+                    role: None,
+                    label_contains: Some(label.into()),
+                },
+                exists: Some(true),
+                value_equals: value_equals.map(Into::into),
+                enabled: None,
+                selected: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn label_less_display_text_value_is_readable() {
+        // #4526: a static text with no title exposes its content via AXValue;
+        // the platform reports it as a display-only row labelled by its value.
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "parent_index": 0
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn addressable_match_wins_over_its_display_only_caption() {
+        // The slider's caption is a separate display-only row carrying the
+        // same text. It must not turn a value read into a multi-match.
+        let outcomes = evaluate_predicates(
+            &[labelled("Volume", Some("8"))],
+            &observed(vec![
+                json!({
+                    "role": "AXStaticText",
+                    "label": "Volume",
+                    "display_only": true
+                }),
+                json!({
+                    "element_index": 1,
+                    "role": "AXSlider",
+                    "label": "Volume",
+                    "value": "8"
+                }),
+            ]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+        assert!(outcomes[0]
+            .observed_json
+            .as_deref()
+            .unwrap()
+            .contains("\"element_index\":1"));
+    }
+
+    #[test]
+    fn display_only_web_text_stays_untrusted() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "in_web_content": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(
+            outcomes[0].unknown_reason,
+            Some(UnknownReason::UntrustedSource)
+        );
     }
 
     #[test]

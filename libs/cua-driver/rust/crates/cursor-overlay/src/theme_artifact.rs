@@ -651,6 +651,36 @@ fn resolved_color(mut color: [u8; 4], tint: Option<[u8; 4]>) -> [u8; 4] {
     color
 }
 
+/// The theme's accent: the most colourful fill or stroke of its idle frame,
+/// with `tint` applied like the artwork. `None` for a theme drawn only in
+/// greys.
+pub(crate) fn theme_accent_rgba(theme: &CompiledTheme, tint: Option<[u8; 4]>) -> Option<[u8; 4]> {
+    let animation = theme.animation_for_action(CursorAction::Idle)?;
+    let frame = animation
+        .frames
+        .get(usize::from(animation.still_frame))
+        .or_else(|| animation.frames.first())?;
+    frame
+        .commands
+        .iter()
+        .flat_map(|command| {
+            command
+                .fill
+                .into_iter()
+                .chain(command.stroke.map(|s| s.color))
+        })
+        .filter(|color| color[3] > 0)
+        .map(|color| resolved_color(color, tint))
+        .map(|color| {
+            let max = color[..3].iter().max().copied().unwrap_or(0);
+            let min = color[..3].iter().min().copied().unwrap_or(0);
+            (max - min, color)
+        })
+        .filter(|(chroma, _)| *chroma >= 24)
+        .max_by_key(|(chroma, _)| *chroma)
+        .map(|(_, color)| color)
+}
+
 fn vector_paint(color: [u8; 4], opacity: f32, tint: Option<[u8; 4]>) -> Paint<'static> {
     let color = resolved_color(color, tint);
     let alpha = (f32::from(color[3]) / 255.0 * opacity.clamp(0.0, 1.0)).clamp(0.0, 1.0);
@@ -763,6 +793,9 @@ pub fn paint_compiled_theme(
 /// Paint a compiled theme, optionally replacing the embedded default's blue
 /// palette key with a stable per-session fill.
 ///
+/// The theme hotspot is drawn at `anchor_x/y`; heading and display scale
+/// pivot around it so the tip stays put while the artwork turns.
+///
 /// Custom themes pass `None` and retain their authored colors. Only the
 /// checked-in `cua.default` path passes a tint.
 #[allow(clippy::too_many_arguments)]
@@ -777,16 +810,47 @@ pub fn paint_compiled_theme_with_tint(
     alpha: f32,
     tint: Option<[u8; 4]>,
 ) {
+    paint_compiled_theme_with_float(
+        target,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        heading,
+        backing_scale,
+        alpha,
+        tint,
+        0.0,
+        0.0,
+    );
+}
+
+/// [`paint_compiled_theme_with_tint`] moved by the float of the agent
+/// cursor (`cursor.float`): `float_dx`, `float_dy` points (negative is up).
+/// The float tilt is part of `heading`. See [`crate::cursor_pose`].
+#[allow(clippy::too_many_arguments)]
+pub fn paint_compiled_theme_with_float(
+    target: &mut tiny_skia::Pixmap,
+    theme: &CompiledTheme,
+    visual: &CursorVisualState,
+    anchor_x: f32,
+    anchor_y: f32,
+    heading: f32,
+    backing_scale: f32,
+    alpha: f32,
+    tint: Option<[u8; 4]>,
+    float_dx: f32,
+    float_dy: f32,
+) {
     let scale = crate::theme::DISPLAY_SIZE * backing_scale / crate::theme::CANVAS_SIZE;
-    let (float_dx, float_dy, float_rotation) = if theme.id == crate::DEFAULT_THEME_ID {
-        crate::theme::shared_float_motion(visual)
-    } else {
-        (0.0, 0.0, 0.0)
-    };
-    let transform = Transform::from_translate(-64.0, -64.0)
-        .post_scale(scale, scale)
-        .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
-        .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
+    let transform =
+        Transform::from_translate(-f32::from(theme.hotspot[0]), -f32::from(theme.hotspot[1]))
+            .post_scale(scale, scale)
+            .post_rotate((heading - std::f32::consts::FRAC_PI_4).to_degrees())
+            .post_translate(
+                anchor_x + float_dx * backing_scale,
+                anchor_y + float_dy * backing_scale,
+            );
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(
@@ -924,15 +988,111 @@ mod tests {
         assert_eq!(embedded_default_theme().source_hash, expected);
     }
 
+    fn hotspot_theme(transforms: Vec<CompiledTransform>) -> CompiledTheme {
+        let frames = transforms
+            .into_iter()
+            .map(|transform| CompiledFrame {
+                commands: vec![CompiledDrawCommand {
+                    geometries: vec![CompiledGeometry::Ellipse {
+                        center: [55.0, 30.0],
+                        size: [8.0, 8.0],
+                    }],
+                    transform,
+                    opacity: 1.0,
+                    fill: Some([255, 0, 0, 255]),
+                    stroke: None,
+                }],
+            })
+            .collect();
+        let mut theme = minimal_theme();
+        theme.actions.insert(
+            "idle".into(),
+            CompiledAnimation {
+                still_frame: 0,
+                frames,
+            },
+        );
+        theme
+    }
+
+    fn marker_centroid(pixmap: &tiny_skia::Pixmap) -> (f32, f32) {
+        let (weight, x_sum, y_sum) = pixmap.data().chunks_exact(4).enumerate().fold(
+            (0.0, 0.0, 0.0),
+            |(weight, x_sum, y_sum), (index, pixel)| {
+                let alpha = f32::from(pixel[3]);
+                (
+                    weight + alpha,
+                    x_sum + (index % pixmap.width() as usize) as f32 * alpha,
+                    y_sum + (index / pixmap.width() as usize) as f32 * alpha,
+                )
+            },
+        );
+        assert!(weight > 0.0, "synthetic hotspot marker was not painted");
+        (x_sum / weight, y_sum / weight)
+    }
+
+    fn render_marker(
+        theme: &CompiledTheme,
+        heading: f32,
+        backing_scale: f32,
+        elapsed_secs: f64,
+    ) -> (f32, f32) {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        let visual = CursorVisualState {
+            elapsed_secs,
+            ..CursorVisualState::default()
+        };
+        paint_compiled_theme_with_tint(
+            &mut pixmap,
+            theme,
+            &visual,
+            128.0,
+            128.0,
+            heading,
+            backing_scale,
+            1.0,
+            None,
+        );
+        marker_centroid(&pixmap)
+    }
+
     #[test]
-    fn default_tint_preserves_white_and_replaces_blue() {
-        assert_eq!(
-            resolved_color([94, 192, 232, 255], Some([12, 34, 56, 255])),
-            [12, 34, 56, 255]
-        );
-        assert_eq!(
-            resolved_color([255, 255, 255, 255], Some([12, 34, 56, 255])),
-            [255, 255, 255, 255]
-        );
+    fn hotspot_stays_at_cursor_through_heading_scale_and_semantic_frames() {
+        let theme = hotspot_theme(vec![CompiledTransform::default(); 4]);
+        let headings = [
+            std::f32::consts::FRAC_PI_4,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        ];
+
+        for heading in headings {
+            for backing_scale in [1.0, 2.0] {
+                for frame in 0..4 {
+                    let elapsed_secs = f64::from(frame) / f64::from(FPS);
+                    let (x, y) = render_marker(&theme, heading, backing_scale, elapsed_secs);
+                    assert!(
+                        (x - 128.0).abs() <= 0.75 && (y - 128.0).abs() <= 0.75,
+                        "hotspot drifted to ({x:.2}, {y:.2}) at heading={heading}, scale={backing_scale}, frame={frame}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn authored_layer_translation_remains_relative_to_hotspot() {
+        let plain = hotspot_theme(vec![CompiledTransform::default()]);
+        let translated = hotspot_theme(vec![CompiledTransform {
+            position: [6.0, 2.0],
+            ..CompiledTransform::default()
+        }]);
+        let heading = std::f32::consts::FRAC_PI_4;
+        let backing_scale = 2.0;
+        let origin = render_marker(&plain, heading, backing_scale, 0.0);
+        let moved = render_marker(&translated, heading, backing_scale, 0.0);
+        let scale = crate::theme::DISPLAY_SIZE * backing_scale / CANVAS as f32;
+
+        assert!((moved.0 - origin.0 - 6.0 * scale).abs() <= 0.35);
+        assert!((moved.1 - origin.1 - 2.0 * scale).abs() <= 0.35);
     }
 }

@@ -1,0 +1,191 @@
+{
+  "version": "0.1.0",
+  "protocolVersion": 1,
+  "protocolRevision": 6,
+  "os": {
+    "family": "OS_FAMILY_LINUX",
+    "name": "Ubuntu",
+    "version": "24.04",
+    "kernel": "6.8.0-142-generic",
+    "prettyName": "Ubuntu 24.04.5 LTS"
+  },
+  "runtime": "RUNTIME_QEMU",
+  "runtimeDetail": "QEMU Virtual Machine",
+  "arch": "ARCHITECTURE_ARM64",
+  "displayServer": "DISPLAY_SERVER_X11",
+  "displays": [
+    {
+      "id": "0",
+      "name": "screen",
+      "primary": true,
+      "bounds": {
+        "width": 1280.0,
+        "height": 800.0
+      },
+      "nativeSize": {
+        "width": 1280,
+        "height": 800
+      },
+      "scaleFactor": 1.0
+    }
+  ],
+  "features": [
+    {
+      "name": "a11y",
+      "supported": true
+    },
+    {
+      "name": "audio.desktop",
+      "supported": true
+    },
+    {
+      "name": "audio.opus",
+      "supported": true
+    },
+    {
+      "name": "audio.per_app",
+      "supported": true,
+      "limitation": "per-app capture needs the app to play through PulseAudio/PipeWire; otherwise the desktop mix is sent with desktop_fallback"
+    },
+    {
+      "name": "audio.uplink",
+      "supported": true
+    },
+    {
+      "name": "background_input",
+      "supported": true,
+      "limitation": "background input uses XSendEvent, which GTK3/GTK4 and Chromium ignore: AUTO delivers to those with foreground XTest (CUA_ENV_AUTO_FOREGROUND=0 makes it fail instead) and BACKGROUND to them fails with WOULD_REQUIRE_ACTIVATION; use AccessibilityService.Act for true background"
+    },
+    {
+      "name": "clipboard.files",
+      "supported": true
+    },
+    {
+      "name": "clipboard.image",
+      "supported": true
+    },
+    {
+      "name": "clipboard.text",
+      "supported": true
+    },
+    {
+      "name": "desktop_stream",
+      "supported": true
+    },
+    {
+      "name": "driver",
+      "supported": true
+    },
+    {
+      "name": "fs_watch",
+      "supported": true
+    },
+    {
+      "name": "h264_hw",
+      "limitation": "no hardware H.264 encoder was found (NVENC, VA-API, QSV, AMF)"
+    },
+    {
+      "name": "h264_sw",
+      "supported": true
+    },
+    {
+      "name": "hotspot",
+      "supported": true
+    },
+    {
+      "name": "launch_app",
+      "supported": true
+    },
+    {
+      "name": "presence",
+      "supported": true
+    },
+    {
+      "name": "presence.cursor_shape",
+      "supported": true,
+      "attributes": {
+        "hit_test": "atspi",
+        "system": "xfixes",
+        "probe": "xtest"
+      }
+    },
+    {
+      "name": "pty",
+      "supported": true
+    },
+    {
+      "name": "quic_media",
+      "supported": true,
+      "attributes": {
+        "port": "3212"
+      }
+    },
+    {
+      "name": "teleport.chrome",
+      "supported": true
+    },
+    {
+      "name": "teleport.claude-code",
+      "supported": true
+    },
+    {
+      "name": "teleport.discord",
+      "supported": true
+    },
+    {
+      "name": "teleport.firefox",
+      "supported": true
+    },
+    {
+      "name": "teleport.slack",
+      "supported": true
+    },
+    {
+      "name": "teleport.steam",
+      "supported": true
+    },
+    {
+      "name": "teleport.unity-hub",
+      "supported": true
+    },
+    {
+      "name": "teleport.whatsapp",
+      "supported": true
+    },
+    {
+      "name": "teleport.wipe",
+      "supported": true
+    },
+    {
+      "name": "tunnel.forward",
+      "supported": true
+    },
+    {
+      "name": "window_stream",
+      "supported": true,
+      "attributes": {
+        "occlusion_free": "composite"
+      }
+    },
+    {
+      "name": "windows",
+      "supported": true
+    }
+  ],
+  "hostname": "cua-e2e-bench-web-d3cbe7",
+  "initialized": true,
+  "bootTime": "2026-09-28T01:00:40+00:00",
+  "sideChannels": {
+    "mediaWsPath": "/media",
+    "mediaQuicPort": 3212,
+    "tunnelWsPath": "/tunnel",
+    "filesHttpPath": "/files",
+    "mcpHttpPath": "/mcp"
+  },
+  "limits": {
+    "maxChunkBytes": 4194304,
+    "maxMessageBytes": 8388608,
+    "preferredChunkBytes": 1048576,
+    "defaultScrollbackBytes": "8388608"
+  }
+}

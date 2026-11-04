@@ -25,7 +25,7 @@
 //! namespace on every platform.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub use cua_driver_core::daemon::{
     is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
@@ -89,6 +89,65 @@ fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
                 tracing::warn!("service connection task panicked: {error}");
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct DaemonActivity(Arc<Mutex<DaemonActivityState>>);
+
+struct DaemonActivityState {
+    last_tool_activity: std::time::Instant,
+    active_tool_calls: usize,
+    shutting_down: bool,
+}
+
+pub(crate) struct DaemonToolCallGuard(DaemonActivity);
+
+impl DaemonActivity {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(DaemonActivityState {
+            last_tool_activity: std::time::Instant::now(),
+            active_tool_calls: 0,
+            shutting_down: false,
+        })))
+    }
+
+    pub(crate) fn begin_tool_call(&self) -> Option<DaemonToolCallGuard> {
+        let mut state = self.0.lock().unwrap();
+        if state.shutting_down {
+            return None;
+        }
+        state.active_tool_calls += 1;
+        state.last_tool_activity = std::time::Instant::now();
+        Some(DaemonToolCallGuard(self.clone()))
+    }
+
+    fn begin_shutdown_if_idle(
+        &self,
+        timeout: std::time::Duration,
+        now: std::time::Instant,
+    ) -> bool {
+        let mut state = self.0.lock().unwrap();
+        if !state.shutting_down
+            && idle_shutdown_due(
+                state.last_tool_activity,
+                state.active_tool_calls,
+                timeout,
+                now,
+            )
+        {
+            state.shutting_down = true;
+            return true;
+        }
+        false
+    }
+}
+
+impl Drop for DaemonToolCallGuard {
+    fn drop(&mut self) {
+        let mut state = self.0 .0.lock().unwrap();
+        state.active_tool_calls = state.active_tool_calls.saturating_sub(1);
+        state.last_tool_activity = std::time::Instant::now();
     }
 }
 
@@ -612,6 +671,46 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
 static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+const DEFAULT_MACOS_DAEMON_IDLE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(4 * 60 * 60);
+const IDLE_SHUTDOWN_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const IDLE_SHUTDOWN_SECONDS_ENV: &str = "CUA_DRIVER_IDLE_SHUTDOWN_SECONDS";
+
+pub(crate) fn configured_idle_shutdown_timeout(
+    embedded: bool,
+    external_listener: bool,
+    macos: bool,
+    override_seconds: Option<&str>,
+) -> Option<std::time::Duration> {
+    if embedded || external_listener {
+        return None;
+    }
+    match override_seconds {
+        Some(raw) => raw
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| *seconds > 0)
+            .map(std::time::Duration::from_secs),
+        None if macos => Some(DEFAULT_MACOS_DAEMON_IDLE_TIMEOUT),
+        None => None,
+    }
+}
+
+fn idle_shutdown_due(
+    last_tool_activity: std::time::Instant,
+    active_tool_calls: usize,
+    timeout: std::time::Duration,
+    now: std::time::Instant,
+) -> bool {
+    active_tool_calls == 0 && now.saturating_duration_since(last_tool_activity) >= timeout
+}
+
+fn idle_shutdown_reaper(interval: std::time::Duration) -> tokio::time::Interval {
+    let mut reaper = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    reaper.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    reaper
+}
+
 // Only the macOS first-launch gate sets it; elsewhere it stays false.
 #[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
@@ -945,6 +1044,22 @@ pub async fn run_serve(
     }
 
     let embedded = cua_driver_core::embedded_mode();
+    let mcp_http_port = crate::mcp_http::configured_port()?;
+    let driver_service_http_port = crate::driver_service_http::configured_port()?;
+    let external_listener = mcp_http_port.is_some() || driver_service_http_port.is_some();
+    let idle_timeout = configured_idle_shutdown_timeout(
+        embedded,
+        external_listener,
+        cfg!(target_os = "macos"),
+        std::env::var(IDLE_SHUTDOWN_SECONDS_ENV).ok().as_deref(),
+    );
+    if let Some(raw) = std::env::var(IDLE_SHUTDOWN_SECONDS_ENV).ok() {
+        if raw.parse::<u64>().is_err() {
+            eprintln!(
+                "ignoring invalid {IDLE_SHUTDOWN_SECONDS_ENV}; expected whole seconds (0 disables)"
+            );
+        }
+    }
     // Embedded endpoints are host-owned. The daemon must never unlink an
     // arbitrary pre-existing path between the host's safety check and bind.
     prepare_embedded_socket_path(socket_path, embedded)?;
@@ -981,14 +1096,25 @@ pub async fn run_serve(
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
-    if let Some(port) = crate::mcp_http::configured_port()? {
+    if let Some(port) = mcp_http_port {
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
-    let _envelope_http = match crate::driver_service_http::configured_port()? {
+    let _envelope_http = match driver_service_http_port {
         Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
         None => None,
     };
+
+    // A persistent MCP control socket only proves the client process is alive;
+    // it does not prove that a user is using CUA. Count actual tool calls and
+    // protect calls already in flight. Embedded and external HTTP listeners
+    // keep their own lifecycle and are excluded above. The MCP supervisor
+    // reconnects on the next request after this daemon exits.
+    let idle_check_interval = idle_timeout.map_or(IDLE_SHUTDOWN_CHECK_INTERVAL, |timeout| {
+        timeout.min(IDLE_SHUTDOWN_CHECK_INTERVAL)
+    });
+    let idle_activity = DaemonActivity::new();
+    let mut idle_reaper = idle_shutdown_reaper(idle_check_interval);
 
     loop {
         tokio::select! {
@@ -1005,6 +1131,7 @@ pub async fn run_serve(
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
                 let trusted_resume_registry = trusted_resume_registry.clone();
+                let idle_activity = idle_activity.clone();
 
                 connection_tasks.spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -1042,7 +1169,12 @@ pub async fn run_serve(
                             "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
                                 // Existing local-peer authentication already passed.
                                 // Registry and session lifetime belong to this stream.
-                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                let _ = crate::mcp_envelope::accept(
+                                    reg.clone(),
+                                    lines.into_inner(),
+                                    writer,
+                                    Some(idle_activity.clone()),
+                                ).await;
                                 return;
                             }
                             "metadata" => {
@@ -1160,6 +1292,16 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
+                                let Some(_activity) = idle_activity.begin_tool_call() else {
+                                    let resp = DaemonResponse::err(
+                                        "daemon is shutting down after inactivity; reconnect and retry",
+                                        75,
+                                    );
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                    continue;
+                                };
                                 let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1252,6 +1394,16 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "trusted_session_call" => {
+                                let Some(_activity) = idle_activity.begin_tool_call() else {
+                                    let resp = DaemonResponse::err(
+                                        "daemon is shutting down after inactivity; reconnect and retry",
+                                        75,
+                                    );
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                    continue;
+                                };
                                 let resp = match trusted_session.as_ref() {
                                     Some(connection) => {
                                         let name = req.name.unwrap_or_default();
@@ -1373,6 +1525,21 @@ pub async fn run_serve(
                         detach_trusted_connection(&trusted_resume_registry, connection).await;
                     }
                 });
+            }
+            _ = idle_reaper.tick(), if idle_timeout.is_some() => {
+                reap_finished_connections(&mut connection_tasks);
+                let now = std::time::Instant::now();
+                let timeout = idle_timeout.expect("enabled idle timer has a timeout");
+                if idle_activity.begin_shutdown_if_idle(timeout, now) {
+                    eprintln!(
+                        "Cua Driver daemon idle for {} seconds since the last tool call; shutting down cleanly.",
+                        timeout.as_secs()
+                    );
+                    let mut guard = shutdown_tx.lock().await;
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(());
+                    }
+                }
             }
             _ = &mut shutdown_rx => {
                 eprintln!("Cua Driver daemon shutting down.");
@@ -1850,7 +2017,12 @@ pub async fn run_serve(
                         match req.method.as_str() {
                             "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
                                 // Same transport-owned receiver as the Unix branch.
-                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                let _ = crate::mcp_envelope::accept(
+                                    reg.clone(),
+                                    lines.into_inner(),
+                                    writer,
+                                    None,
+                                ).await;
                                 return;
                             }
                             "metadata" => {
@@ -2572,6 +2744,115 @@ mod socket_tests {
 
         assert!(socket.exists());
         drop(first);
+    }
+}
+
+#[cfg(test)]
+mod idle_shutdown_tests {
+    use super::{
+        configured_idle_shutdown_timeout, idle_shutdown_due, idle_shutdown_reaper, DaemonActivity,
+    };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn standalone_macos_daemon_defaults_to_four_hours() {
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, false, true, None),
+            Some(Duration::from_secs(4 * 60 * 60))
+        );
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, false, false, None),
+            None
+        );
+    }
+
+    #[test]
+    fn embedded_and_external_listener_lifecycles_are_not_idle_stopped() {
+        assert_eq!(
+            configured_idle_shutdown_timeout(true, false, true, Some("1")),
+            None
+        );
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, true, true, Some("1")),
+            None
+        );
+    }
+
+    #[test]
+    fn seconds_override_can_shorten_or_disable_the_timeout() {
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, false, true, Some("12")),
+            Some(Duration::from_secs(12))
+        );
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, false, true, Some("0")),
+            None
+        );
+        assert_eq!(
+            configured_idle_shutdown_timeout(false, false, true, Some("bad")),
+            None
+        );
+    }
+
+    #[test]
+    fn live_control_connections_do_not_count_as_tool_activity() {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(30);
+        assert!(!idle_shutdown_due(
+            start,
+            0,
+            timeout,
+            start + timeout - Duration::from_secs(1)
+        ));
+        // A persistent MCP connection is not passed to this predicate, so it
+        // cannot pin the timer. Only a tool call still running protects it.
+        assert!(idle_shutdown_due(start, 0, timeout, start + timeout));
+        assert!(!idle_shutdown_due(start, 1, timeout, start + timeout));
+        assert!(!idle_shutdown_due(
+            start + timeout,
+            0,
+            timeout,
+            start + timeout + Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn a_tool_call_cannot_start_after_idle_shutdown_is_claimed() {
+        let activity = DaemonActivity::new();
+        let now = Instant::now();
+        assert!(activity.begin_shutdown_if_idle(Duration::ZERO, now));
+        assert!(activity.begin_tool_call().is_none());
+    }
+
+    #[test]
+    fn an_admitted_tool_call_prevents_idle_shutdown_until_its_guard_drops() {
+        let activity = DaemonActivity::new();
+        let now = Instant::now();
+        let call = activity.begin_tool_call().expect("call should be admitted");
+        assert!(!activity.begin_shutdown_if_idle(Duration::ZERO, now));
+        drop(call);
+        assert!(activity.begin_shutdown_if_idle(Duration::ZERO, Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn idle_reaper_keeps_its_deadline_when_other_select_arms_win() {
+        let interval = Duration::from_millis(20);
+        let started = Instant::now();
+        let mut reaper = idle_shutdown_reaper(interval);
+        let tick = tokio::time::timeout(Duration::from_millis(100), async {
+            for _ in 0..20 {
+                tokio::select! {
+                    _ = reaper.tick() => return,
+                    _ = tokio::time::sleep(Duration::from_millis(2)) => {}
+                }
+            }
+        })
+        .await;
+        assert!(
+            tick.is_ok(),
+            "periodic non-tool events must not restart the idle deadline"
+        );
+        assert!(started.elapsed() >= interval);
     }
 }
 

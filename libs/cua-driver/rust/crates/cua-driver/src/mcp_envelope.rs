@@ -152,6 +152,20 @@ where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin + Send + 'static,
 {
+    run_with_activity(sdk, service, reader, writer, None).await
+}
+
+async fn run_with_activity<R, W>(
+    sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+    service: Arc<Service>,
+    reader: &mut R,
+    writer: W,
+    activity: Option<crate::serve::DaemonActivity>,
+) -> anyhow::Result<()>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     let session = format!("mcp-typed-{}", uuid::Uuid::new_v4());
     // Declared first so receiver invalidation precedes task abort on every exit,
     // including cancellation of the enclosing transport future.
@@ -252,8 +266,31 @@ where
         let sdk = sdk.clone();
         let session = session.clone();
         let serial = legacy_serial.clone();
+        let activity = activity.clone();
+        let is_tool_activity =
+            request.method == "tools/call" || request.method == format!("{PREFIX}exchange");
         pending.insert(key.clone());
         tasks.spawn(async move {
+            let _activity = if is_tool_activity {
+                match activity.as_ref().map(|activity| activity.begin_tool_call()) {
+                    Some(Some(guard)) => Some(guard),
+                    Some(None) => {
+                        write_response(
+                            &writer,
+                            Response::error(
+                                id.clone(),
+                                -32000,
+                                "daemon is shutting down after inactivity; reconnect and retry",
+                            ),
+                        )
+                        .await?;
+                        return Ok::<_, anyhow::Error>(key);
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
             let response = if request.method.starts_with(PREFIX) {
                 typed_request(service, request).await
             } else {
@@ -321,6 +358,7 @@ pub(crate) async fn accept<R, W>(
     sdk: Arc<crate::sdk_adapter::SdkAdapter>,
     reader: R,
     mut writer: W,
+    activity: Option<crate::serve::DaemonActivity>,
 ) -> anyhow::Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -338,7 +376,7 @@ where
         .await?;
     writer.flush().await?;
     anyhow::ensure!(enabled, "MCP envelope stream is disabled");
-    run_with_service(sdk, service?, &mut { reader }, writer).await
+    run_with_activity(sdk, service?, &mut { reader }, writer, activity).await
 }
 
 pub(crate) async fn proxy(socket_path: &str) -> anyhow::Result<()> {

@@ -355,6 +355,10 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
 /// sessions, while `serve`, MCP, and direct SDK creation still fail closed
 /// before accepting desktop actions.
 fn inspect_tools_without_runtime() -> serde_json::Value {
+    inspect_tools_without_runtime_for(false)
+}
+
+fn inspect_tools_without_runtime_for(compatibility_mode: bool) -> serde_json::Value {
     cua_driver_sdk::CuaDriver::inspect_host_tools(cua_driver_sdk::DriverHostOptions {
         cursor: cursor_overlay::CursorConfig {
             enabled: false,
@@ -362,7 +366,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         },
         host_owns_permission_ux: false,
         host_bundle_id: None,
-        claude_code_compatibility: false,
+        claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: false,
         register_host_tools: Some(register_host_tools),
         authorization_host: None,
@@ -381,23 +385,91 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     // adapter repeats this check before reading stdin as defense in depth.
     cua_driver_core::authorization::validate_startup_authorization()?;
     cua_driver_core::policy::validate_configured_policy()?;
-    let cursor = cursor_overlay::CursorConfig::from_args();
-    // A plain stdio MCP process does not provide the required AppKit
-    // main-thread host adapter. Explicit direct mode on macOS must therefore
-    // expose facility_unavailable instead of initializing an overlay that can
-    // report success without a usable UI owner. Private-worker and app-service
-    // hosts keep the full facility.
-    #[cfg(target_os = "macos")]
-    let cursor = {
-        let mut cursor = cursor;
-        cursor.enabled = false;
-        cursor
-    };
-    let driver = build_driver(cursor, compatibility_mode, true)?;
+    let tools_list = inspect_tools_without_runtime_for(compatibility_mode);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(proxy::run_direct(driver))
+
+    // The host-facing process is a small MCP endpoint. It starts a separate
+    // native worker only when a real tool or typed-envelope request arrives,
+    // then stops that child after the idle deadline.
+    let worker_mode = std::env::var_os(proxy::DIRECT_WORKER_ENV).is_some();
+    let envelope_mode = mcp_envelope::configured()?;
+    if worker_mode {
+        let factory = move || {
+            let mut cursor = cursor_overlay::CursorConfig::from_args();
+            // A plain stdio MCP process does not provide the required AppKit
+            // main-thread host adapter. Explicit direct mode on macOS must
+            // expose facility_unavailable instead of initializing an overlay.
+            #[cfg(target_os = "macos")]
+            {
+                cursor.enabled = false;
+            }
+            build_driver(cursor, compatibility_mode, true).map_err(anyhow::Error::from)
+        };
+        runtime.block_on(proxy::run_direct(factory, tools_list))
+    } else {
+        let executable = std::env::current_exe()?;
+        let arguments = std::env::args_os().skip(1).collect();
+        runtime.block_on(proxy::run_mcp_idle_supervisor(
+            executable,
+            arguments,
+            tools_list,
+            proxy::DIRECT_WORKER_ENV,
+            true,
+            envelope_mode,
+        ))
+    }
+}
+
+fn run_mcp_service_proxy(
+    socket: Option<String>,
+    compatibility_mode: bool,
+    grants: &[String],
+    startup_started: std::time::Instant,
+) -> anyhow::Result<()> {
+    let envelope_mode = mcp_envelope::configured()?;
+    if cua_driver_core::embedded_mode()
+        || std::env::var_os(proxy::SERVICE_PROXY_WORKER_ENV).is_some()
+    {
+        // Embedded hosts own the daemon and its TCC identity. Preserve the
+        // eager endpoint check so metadata-only MCP startup cannot appear
+        // healthy while its required private daemon is missing.
+        return cli::run_mcp_via_daemon_proxy(
+            socket,
+            compatibility_mode,
+            grants,
+            |daemon, success| {
+                telemetry::capture_mcp_startup_completed(
+                    "daemon_proxy",
+                    daemon.telemetry_value(),
+                    success,
+                    startup_started.elapsed(),
+                )
+            },
+        );
+    }
+
+    telemetry::capture_mcp_startup_completed(
+        "mcp_idle_supervisor",
+        "deferred_daemon_launch",
+        true,
+        startup_started.elapsed(),
+    );
+    let executable = std::env::current_exe()?;
+    let arguments = std::env::args_os().skip(1).collect();
+    let tools_list = inspect_tools_without_runtime_for(compatibility_mode);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(proxy::run_mcp_idle_supervisor(
+        executable,
+        arguments,
+        tools_list,
+        proxy::SERVICE_PROXY_WORKER_ENV,
+        false,
+        envelope_mode,
+    ))
 }
 
 fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
@@ -903,19 +975,9 @@ fn main() {
                     }
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    &grants,
-                    |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    },
-                ),
+                Ok(false) => {
+                    run_mcp_service_proxy(socket, claude_code_compat, &grants, startup_started)
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
@@ -1214,19 +1276,9 @@ fn main() -> anyhow::Result<()> {
                     run_mcp_direct(claude_code_compat)
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    &grants,
-                    |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    },
-                ),
+                Ok(false) => {
+                    run_mcp_service_proxy(socket, claude_code_compat, &grants, startup_started)
+                }
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");

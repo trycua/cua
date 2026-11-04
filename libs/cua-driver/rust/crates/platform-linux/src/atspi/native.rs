@@ -2900,7 +2900,7 @@ async fn write_into_editable_acc(
     // A focus-free EditableText write is the strongest background route. Try it
     // before GrabFocus: WebKitGTK can invalidate the original proxy when focus
     // changes, and writing through that stale object then returns false.
-    if write_through_editable_proxies(&proxies, text).await? {
+    if write_through_editable_proxies(acc, &proxies, text).await? {
         return Ok(true);
     }
 
@@ -2923,10 +2923,11 @@ async fn write_into_editable_acc(
         dlog!("Target has no Component interface, skipping GrabFocus");
     }
 
-    write_through_editable_proxies(&proxies, text).await
+    write_through_editable_proxies(acc, &proxies, text).await
 }
 
 async fn write_through_editable_proxies(
+    acc: &AccessibleProxy<'_>,
     proxies: &atspi::proxy::proxy_ext::Proxies<'_>,
     text: &str,
 ) -> Result<bool> {
@@ -2939,7 +2940,7 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
-    let len = text.chars().count() as i32;
+    let len = editable_insert_length(toolkit_of(acc).await.as_deref(), text);
 
     if et.insert_text(off, text, len).await.unwrap_or(false) {
         return Ok(true);
@@ -2948,6 +2949,32 @@ async fn write_through_editable_proxies(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
+/// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
+/// the tail and a longer one appends uninitialized memory. GTK and the others
+/// read bytes, the unit the string travels in.
+fn editable_insert_length(toolkit: Option<&str>, text: &str) -> i32 {
+    let length = if toolkit.is_some_and(|name| name.trim().eq_ignore_ascii_case("qt")) {
+        text.encode_utf16().count()
+    } else {
+        text.len()
+    };
+    i32::try_from(length).unwrap_or(i32::MAX)
+}
+
+/// The toolkit behind an element, from its application's root object.
+async fn toolkit_of(acc: &AccessibleProxy<'_>) -> Option<String> {
+    let inner = acc.inner();
+    let application = atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .destination(inner.destination().to_owned())
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    call(application.toolkit_name()).await?.ok()
 }
 
 /// Write into the best editable exposed by the current AT-SPI tree without
@@ -5410,7 +5437,7 @@ async fn set_value_on(
             Ok(tp) => tp.caret_offset().await.unwrap_or(0),
             Err(_) => 0,
         };
-        let len = value.chars().count() as i32;
+        let len = editable_insert_length(toolkit_of(acc).await.as_deref(), value);
         if et.insert_text(off, value, len).await.unwrap_or(false) {
             commit_editable_write(&proxies).await;
             return Ok(());
@@ -8678,5 +8705,24 @@ mod token_scope_tests {
         )
         .is_ok());
         assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod editable_insert_length_tests {
+    use super::editable_insert_length;
+
+    #[test]
+    fn qt_gets_utf16_units_because_it_resizes_the_string_to_exactly_that() {
+        // Measured on Qt 6: 4 drops the last character, 8 appends garbage.
+        assert_eq!(editable_insert_length(Some("Qt"), "ñ🙂ab"), 5);
+        assert_eq!(editable_insert_length(Some("qt"), "ok"), 2);
+    }
+
+    #[test]
+    fn every_other_toolkit_gets_bytes() {
+        for toolkit in [Some("GTK"), Some("gail"), Some("Chromium"), None] {
+            assert_eq!(editable_insert_length(toolkit, "ñ🙂ab"), 8, "{toolkit:?}");
+        }
     }
 }

@@ -49,19 +49,21 @@ describe("the agent the box starts with", () => {
     const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "haiku" } };
     const s = resolveAgent(v, null)!;
     expect(s.harness).toBe("claude-code");
-    expect(agentLine(s)).toBe("Claude Code, personal");
+    expect(agentLine(s)).toBe("Claude Code");
     expect(s.model.id).toBe("haiku");
   });
 
   it("is the last pick while that app and account are still there, with its model", () => {
     const s = resolveAgent(view([claude]), { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "work", model: "sonnet" })!;
-    expect(agentLine(s)).toBe("Claude Code, work Max");
+    expect(agentLine(s)).toBe("Claude Code");
+    expect(s.account.line).toBe("work Max");
     expect(s.model.id).toBe("sonnet");
   });
 
   it("never uses a remembered account that is gone: the app's own choice stands in", () => {
     const s = resolveAgent(view([claude]), { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "removed", model: "sonnet" })!;
-    expect(agentLine(s)).toBe("Claude Code, personal");
+    expect(agentLine(s)).toBe("Claude Code");
+    expect(s.account.line).toBe("personal");
     // The model it remembered is kept while the account offers it.
     expect(s.model.id).toBe("sonnet");
   });

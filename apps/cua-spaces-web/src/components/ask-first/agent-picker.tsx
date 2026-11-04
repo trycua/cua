@@ -71,7 +71,7 @@ export function AgentPicker({
             "flex h-9 max-w-[22rem] items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]",
             !selected && "text-brand-strong",
           )}
-          aria-label={selected ? `Agent: ${agentLine(selected)}` : "Sign in to an agent"}
+          aria-label={selected ? `Agent: ${agentLine(selected)}, ${selected.account.line}` : "Sign in to an agent"}
         >
           {selected ? (
             <>

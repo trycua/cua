@@ -70,8 +70,8 @@ export function pickAccount(group: AgentGroup, account: AgentAccount, picked: Pi
   return { harness: group.harness, env: account.env, ...(account.slot ? { slot: account.slot } : {}), ...(keep ? { model: keep } : {}) };
 }
 
-/** The pick as the chip says it: the app and the account ("Claude Code, work Max"). */
-export const agentLine = (s: AgentSelection) => `${s.group.label}, ${s.account.line}`;
+/** The pick as the chip says it: just the app ("Claude Code"). The account is chosen inside the menu. */
+export const agentLine = (s: AgentSelection) => s.group.label;
 
 /** The pick to remember for a selection. */
 export const pickOf = (s: AgentSelection): PickedAgent => ({ harness: s.harness, model: s.model.id, env: s.account.env, ...(s.account.slot ? { slot: s.account.slot } : {}) });

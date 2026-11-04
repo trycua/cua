@@ -92,7 +92,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
     // The demo's Home was made for Claude Code (its label says so): the next request goes there.
     await useClaude();
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code, work Max"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
     // The tree is read from the host and the Home is found by its label.
     await new Promise((r) => setTimeout(r, 300));
     fireEvent.change(box, { target: { value: "run the tests" } });

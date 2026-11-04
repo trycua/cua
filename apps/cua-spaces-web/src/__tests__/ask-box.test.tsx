@@ -48,7 +48,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
   it("starts with the first connected app and its account (Codex, then Hermes, Claude Code, OpenCode) and only the agent and a repo to pick", async () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("OpenAI Codex, Signed in with ChatGPT"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("OpenAI Codex"));
     expect(q('[data-picker="repo"]')!.textContent).toContain("Add a repo");
     // No model chip and no separate coding app picker.
     expect(q('[data-picker="model"]')).toBeNull();
@@ -63,8 +63,8 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     const groups = [...document.querySelectorAll<HTMLElement>("[data-agent-group]")].map((g) => g.dataset.agentGroup);
     expect(groups).toEqual(["codex", "hermes", "claude-code", "opencode"]);
     const rows = (app: string) => [...document.querySelectorAll<HTMLElement>(`[data-agent-group="${app}"] [role="option"]`)].map((r) => r.textContent);
-    expect(rows("claude-code")).toEqual(["Signed in as ada@example.com (Claude Max)", "work Max", "side project Max"]);
-    expect(rows("codex")).toEqual(["Signed in with ChatGPT"]);
+    expect(rows("claude-code")).toEqual(["ada@example.com (Max)", "work Max", "side project Max"]);
+    expect(rows("codex")).toEqual(["ChatGPT"]);
     expect(q('[data-agent-sign-in="hermes"]')!.textContent).toBe("Sign in");
     expect(q('[data-agent-sign-in="opencode"]')!.textContent).toBe("Sign in");
     expect(q('[data-agent-sign-in="claude-code"]')).toBeNull();
@@ -84,14 +84,22 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
     });
-    expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code, work Max");
+    // The chip is the app alone; the account is the ticked row inside the menu.
+    expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code");
+    await openAgents();
+    expect(q('[data-agent-group="claude-code"] [aria-selected="true"]')!.textContent).toBe("work Max");
+    await act(async () => {
+      fireEvent.keyDown(q("[data-agent-menu]")!, { key: "Escape" });
+    });
     // The host keeps which account the app runs with, so a run uses the one shown.
     await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.use" && c.args.app === "claude-code" && c.args.env === "CLAUDE_CODE_OAUTH_TOKEN" && c.args.slot === "kwork")).toBe(true));
     cleanup();
     // A new launch: the choice is still there (the app and model here, the account from the host's store).
     await mountApp("/home", host);
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code, work Max"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await openAgents();
+    expect(q('[data-agent-group="claude-code"] [aria-selected="true"]')!.textContent).toBe("work Max");
   });
 
   it("opens an app's sign-ins from its chevron: the default, make default, rename and remove", async () => {

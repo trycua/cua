@@ -5720,6 +5720,37 @@
         "reachable"
       ]
     },
+    "SpaceService": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "restarts": {
+          "type": "number"
+        },
+        "lastEnd": {
+          "type": "string"
+        },
+        "probeError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command",
+        "state",
+        "restarts",
+        "lastEnd",
+        "probeError"
+      ]
+    },
     "SpaceSharingFacts": {
       "type": "object",
       "properties": {
@@ -6400,6 +6431,129 @@
         "update",
         "runsOnKeysOf",
         "event"
+      ]
+    },
+    "TreeBudget": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "set": {
+          "$ref": "#/$defs/TreeBudgetLimits"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxVcpus": {
+          "type": "number"
+        },
+        "maxMemoryMb": {
+          "type": "number"
+        },
+        "usdPerHour": {
+          "type": "number"
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "vcpus": {
+          "type": "number"
+        },
+        "memoryMb": {
+          "type": "number"
+        },
+        "usdPerHourUsed": {
+          "type": "number"
+        },
+        "usdSpent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "root",
+        "set",
+        "maxSpaces",
+        "maxVcpus",
+        "maxMemoryMb",
+        "usdPerHour",
+        "spaces",
+        "vcpus",
+        "memoryMb",
+        "usdPerHourUsed",
+        "usdSpent"
+      ]
+    },
+    "TreeBudgetLimits": {
+      "type": "object",
+      "properties": {
+        "maxSpaces": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxVcpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryMb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdPerHour": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "TreeNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": "number"
+        },
+        "children": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "children"
       ]
     },
     "UpdateState": {
@@ -8450,6 +8604,12 @@
         "earlierOmitted"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -8523,6 +8683,9 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "null"
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -9484,6 +9647,15 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "null"
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.completeOnboarding": {
       "type": "null"
     },
@@ -9866,6 +10038,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -11826,6 +12004,12 @@
         "methods"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -11899,6 +12083,10 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "object",
+      "properties": {}
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -13497,6 +13685,16 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "object",
+      "properties": {}
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.get": {
       "$ref": "#/$defs/WkSession"
     },
@@ -13811,6 +14009,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [

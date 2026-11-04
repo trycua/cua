@@ -80,7 +80,7 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "uniffi-bindgen-react-native": "0.31.0-3",
-    "@modelcontextprotocol/client": "2.1.0"
+    "@modelcontextprotocol/client": "2.2.0"
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-3",

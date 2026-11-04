@@ -2060,6 +2060,9 @@
         },
         "mobile": {
           "type": "boolean"
+        },
+        "warmPools": {
+          "type": "boolean"
         }
       }
     },

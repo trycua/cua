@@ -831,10 +831,10 @@ impl Persistent {
         entry: &str,
     ) -> Result<Delivered> {
         let picked_ms = super::phases::now_ms();
-        let (base, cold) = match self.current_turn(rec).await {
-            Some(Some(turn)) => (turn, false),
-            Some(None) => return Ok(Delivered::Busy),
-            None => (0, true),
+        let (base, cold, known) = match self.current_turn_info(rec).await {
+            Some((Some(turn), info)) => (turn, false, Some(info)),
+            Some((None, _)) => return Ok(Delivered::Busy),
+            None => (0, true, None),
         };
         let holder = Holder::new(&rec.name, rec.k(), rec.drive_epoch());
         let dispatch = || ClaimEntries {
@@ -899,12 +899,19 @@ impl Persistent {
                 "starting"
             }),
         );
-        let sent = Box::pin(self.send_session(rec, &framed, entry)).await;
+        let sent = Box::pin(self.send_session(rec, &framed, entry, known)).await;
         if sent.is_err() {
             self.set_stage(rec, None);
         }
         match sent {
             Ok(d) => {
+                super::phases::local(
+                    &d.run_id,
+                    "delivered",
+                    super::phases::now_ms().saturating_sub(posted_ms),
+                    d.started,
+                    &rec.harness,
+                );
                 if rec.brief.is_some() {
                     let run = d.run_id.clone();
                     let _ = self.update_in(rec, |r| r.briefed_run = Some(run));
@@ -1004,13 +1011,19 @@ impl Persistent {
     /// The turn of `rec`'s run when it can take a message: `None` (no
     /// run), `Some(None)` (mid turn), `Some(Some(turn))`.
     async fn current_turn(&self, rec: &AgentRecord) -> Option<Option<u32>> {
+        self.current_turn_info(rec).await.map(|(turn, _)| turn)
+    }
+
+    /// [`Self::current_turn`] with the status it was read from, so a
+    /// delivery that follows does not read it again.
+    async fn current_turn_info(&self, rec: &AgentRecord) -> Option<(Option<u32>, ag::RunInfo)> {
         let run = rec.run_id.as_ref()?;
         let agents = self.cached_agents(&rec.space).await.ok()?;
         match agents.status(run).await {
-            Ok(st) if st.status == RunStatus::Running => Some(None),
+            Ok(st) if st.status == RunStatus::Running => Some((None, st)),
             // A durable run being re-driven: its turn goes on.
-            Ok(st) if Persistent::redriving(rec, st.status) => Some(None),
-            Ok(st) => Some(Some(st.turn)),
+            Ok(st) if Persistent::redriving(rec, st.status) => Some((None, st)),
+            Ok(st) => Some((Some(st.turn), st)),
             Err(_) => None,
         }
     }

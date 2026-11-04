@@ -40,6 +40,7 @@
     "guides/keep-a-command-running",
     "guides/long-running-jobs",
     "guides/cua-ci",
+    "guides/warm-start",
     "---Keep it working---",
     "guides/troubleshoot",
     "guides/experiments",

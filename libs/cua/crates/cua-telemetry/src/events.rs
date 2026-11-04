@@ -225,8 +225,17 @@ pub fn teleport_app(id: &str) -> String {
     }
 }
 
-/// A cua-agents harness id, else `other`.
+/// A cua-agents harness id, else `other`. The short names a person or an
+/// agent types (`codex`, `claude`: `cua_agents::harness::harness` accepts
+/// them) and ids in another case count as the harness they name; before,
+/// they all reported `other`.
 pub fn harness(id: &str) -> &'static str {
+    let id = id.trim().to_ascii_lowercase();
+    let id = match id.as_str() {
+        "codex" => "openai-codex",
+        "claude" => "claude-code",
+        other => other,
+    };
     pick(schema::HARNESSES, id, "other")
 }
 

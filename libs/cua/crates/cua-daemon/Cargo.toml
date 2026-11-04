@@ -43,6 +43,8 @@ cua-contrib = { workspace = true, optional = true }
 cua-create-failure.workspace = true
 cua-vmm = { workspace = true, default-features = true }
 cua-image.workspace = true
+# The coding apps a warm-pool member gets before it is claimed (`warm-pools`).
+cua-agents.workspace = true
 # Disk accounting, cache GC and orphan reaping.
 cua-disk.workspace = true
 cua-spaces = { workspace = true, optional = true }

@@ -70,11 +70,16 @@ pub enum Case {
     /// Deleting leaves nothing: no Space, no process, no container, no
     /// network.
     Teardown,
+    /// A warm claim: a Space made from a member the daemon kept ready
+    /// answers with its own token, nothing else opens it (not the member's
+    /// pool secret), and it behaves as a cold one; a runtime without warm
+    /// claims says so and starts cold.
+    Warm,
 }
 
 impl Case {
     /// Every case, in the order the live run takes them.
-    pub const ALL: [Case; 9] = [
+    pub const ALL: [Case; 10] = [
         Case::Ready,
         Case::Policy,
         Case::Dns,
@@ -83,6 +88,7 @@ impl Case {
         Case::Children,
         Case::Agent,
         Case::Lifecycle,
+        Case::Warm,
         Case::Teardown,
     ];
 
@@ -98,6 +104,7 @@ impl Case {
             Case::Ready => "ready",
             Case::Lifecycle => "lifecycle",
             Case::Teardown => "teardown",
+            Case::Warm => "warm",
         }
     }
 
@@ -117,6 +124,9 @@ impl Case {
             Case::Ready => "time from create to a Space that answers",
             Case::Lifecycle => "stop and resume, and the declared pause, checkpoint and fork",
             Case::Teardown => "delete leaves no Space, process, container or network",
+            Case::Warm => {
+                "a Space claimed from a warm member answers with its own token and only that one, or the runtime says it starts cold"
+            }
         }
     }
 }
@@ -165,6 +175,15 @@ pub struct Capabilities {
     /// Guests the host cannot reach by address need the runtime's own
     /// forward (`true`), else the guest is dialed at its own address.
     pub forwarded: bool,
+    /// A member kept ready can be claimed by renaming it to a Space and
+    /// giving it that Space's token ([`crate::Runtime::claim`]). Without it
+    /// a pool is refused and Spaces start cold.
+    pub claim: bool,
+    /// A member answers calls made with its pool secret before it is
+    /// claimed (a container does), so its coding apps can be installed
+    /// ahead (the `warm-pools` experiment). Without it they go in after the
+    /// claim, as without a pool.
+    pub prepare: bool,
 }
 
 /// What `backend` declares. No wildcard: a new backend does not build
@@ -182,6 +201,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: true,
+            claim: true,
+            prepare: true,
         },
         BackendKind::Qemu => Capabilities {
             guests: &["linux", "windows", "android", "macos"],
@@ -192,6 +213,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: true,
+            claim: true,
+            prepare: false,
         },
         BackendKind::QemuDocker => Capabilities {
             guests: &[],
@@ -202,6 +225,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: true,
+            claim: false,
+            prepare: false,
         },
         BackendKind::Lume => Capabilities {
             guests: &["macos"],
@@ -212,6 +237,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: false,
+            claim: true,
+            prepare: false,
         },
         BackendKind::Firecracker => Capabilities {
             guests: &["linux"],
@@ -222,6 +249,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: true,
             nested_virt: true,
             forwarded: false,
+            claim: true,
+            prepare: false,
         },
         // Apple's runtime helper owns the VM: no pause, no snapshots.
         BackendKind::Containerization => Capabilities {
@@ -233,6 +262,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: false,
+            claim: true,
+            prepare: false,
         },
         BackendKind::Vz => Capabilities {
             guests: &["linux"],
@@ -243,6 +274,8 @@ pub fn capabilities(backend: BackendKind) -> Capabilities {
             kvm: false,
             nested_virt: false,
             forwarded: false,
+            claim: true,
+            prepare: false,
         },
     }
 }
@@ -275,6 +308,18 @@ pub struct Entry {
 
 const LINUX_CASES: &[Case] = &Case::ALL;
 const VM_CASES: &[Case] = &[
+    Case::Ready,
+    Case::Policy,
+    Case::Dns,
+    Case::Download,
+    Case::Lifecycle,
+    Case::Warm,
+    Case::Teardown,
+];
+/// A macOS VM is claimed only from a pool kept warm on purpose, and a Mac
+/// runs two of them: its warm start is covered by the Lume tests, not by a
+/// third guest in the live run.
+const MACOS_CASES: &[Case] = &[
     Case::Ready,
     Case::Policy,
     Case::Dns,
@@ -382,7 +427,7 @@ pub fn entries() -> &'static [Entry] {
             hosts: &["macos"],
             guest: "macos",
             needs: "an Apple silicon Mac with Lume and a macOS image",
-            cases: VM_CASES,
+            cases: MACOS_CASES,
             not_runnable: None,
         },
         Entry {
@@ -424,6 +469,9 @@ pub fn expect(entry: &Entry, case: Case, os: &str) -> Expect {
     }
     match case {
         Case::Policy => policy_expectation(entry.backend, os),
+        Case::Warm if !capabilities(entry.backend).claim => Expect::Refused(
+            "this runtime has no warm claims: a pool is refused and its Spaces start cold",
+        ),
         _ => Expect::Pass,
     }
 }
@@ -473,6 +521,8 @@ pub fn entries_json() -> Value {
                     "fork": c.fork,
                     "kvm": c.kvm,
                     "nested_virt": c.nested_virt,
+                    "claim": c.claim,
+                    "prepare": c.prepare,
                 },
                 "hosts": hosts,
             })
@@ -485,7 +535,7 @@ pub fn entries_json() -> Value {
 /// docs; a test keeps them in step).
 pub fn promises_table_markdown() -> String {
     let mut out = String::from(
-        "| Runtime | Guest | Default network | Pause | Checkpoint and fork | KVM |\n|---|---|---|---|---|---|\n",
+        "| Runtime | Guest | Default network | Pause | Checkpoint and fork | KVM | Warm start |\n|---|---|---|---|---|---|---|\n",
     );
     for e in entries().iter().filter(|e| e.not_runnable.is_none()) {
         let c = capabilities(e.backend);
@@ -501,14 +551,20 @@ pub fn promises_table_markdown() -> String {
             })
             .collect();
         let yes = |b: bool| if b { "yes" } else { "no" };
+        let warm = match (c.claim, c.prepare) {
+            (true, true) => "claim, apps ready ahead",
+            (true, false) => "claim",
+            _ => "no",
+        };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} |\n",
             e.id,
             e.guest,
             net.join(", "),
             yes(c.pause),
             yes(c.checkpoint && c.fork),
             yes(c.kvm),
+            warm,
         ));
     }
     out
@@ -708,5 +764,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A runtime that cannot claim says so in the matrix and is not asked
+    /// for a warm case; one that can, is. Every runnable Linux guest takes
+    /// the warm case; the macOS VM's is covered by its own tests.
+    #[test]
+    fn the_warm_case_follows_what_the_runtime_declares() {
+        for e in entries() {
+            let c = capabilities(e.backend);
+            // A member that can be prepared can be claimed.
+            assert!(!c.prepare || c.claim, "{}", e.id);
+            if e.cases.contains(&Case::Warm) {
+                assert!(
+                    c.claim,
+                    "{} is asked for warm claims but declares none",
+                    e.id
+                );
+                assert_eq!(expect(e, Case::Warm, "linux"), Expect::Pass, "{}", e.id);
+            }
+        }
+        assert!(entry("builtin-gvisor").unwrap().cases.contains(&Case::Warm));
+        assert!(capabilities(BackendKind::Container).prepare);
+        assert!(
+            !capabilities(BackendKind::Firecracker).prepare,
+            "paused members are unreachable until claimed"
+        );
+        assert!(matches!(
+            expect(entry("lume-macos-vm").unwrap(), Case::Warm, "macos"),
+            Expect::Refused(_)
+        ));
+        assert!(!capabilities(BackendKind::QemuDocker).claim);
     }
 }

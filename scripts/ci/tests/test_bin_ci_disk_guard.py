@@ -146,7 +146,7 @@ class Plan(unittest.TestCase):
 class EndToEnd(unittest.TestCase):
     def test_low_disk_skips_heavy_checks_and_quick_still_runs(self):
         env = {**os.environ, "CUA_CI_FAKE_FREE_GB": "13", "CUA_CI_ROOT": str(ci.ROOT)}
-        out = subprocess.run([sys.executable, str(ci.ROOT / "bin/ci"), "--full", "--only", "rust-clippy,rust-test", "--no-install"],
+        out = subprocess.run([sys.executable, str(ci.ROOT / "bin/ci"), "--full", "--only", "rust-clippy,rust-test", "--no-install", "--base", "HEAD"],
                              capture_output=True, text=True, env=env, cwd=str(ci.ROOT), timeout=300)
         text = out.stdout + out.stderr
         if "skipped: low disk" not in text and "no local check" not in text and "cargo not installed" not in text:

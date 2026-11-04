@@ -80,7 +80,7 @@ import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, Thr
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire } from "../protocol";
+import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -1329,6 +1329,39 @@ const NetworkEventShape = ref(
   obj<NetworkEventWire>()({ reason: str, dst: str, proto: optNull(str), count: num, lastUnix: optNull(num) }),
 );
 
+const TreeNodeShape = ref("TreeNode", obj<TreeNodeWire>()({ id: str, parent: optNull(str), depth: num, children: bool, home: optNull(str) }));
+const TreeBudgetLimitsShape = ref(
+  "TreeBudgetLimits",
+  obj<TreeBudgetLimitsWire>()({
+    maxSpaces: optNull(num),
+    maxVcpus: optNull(num),
+    maxMemoryMb: optNull(num),
+    usdPerHour: optNull(num),
+    usdTotal: optNull(num),
+  }),
+);
+const TreeBudgetShape = ref(
+  "TreeBudget",
+  obj<TreeBudgetWire>()({
+    root: str,
+    set: TreeBudgetLimitsShape,
+    maxSpaces: num,
+    maxVcpus: num,
+    maxMemoryMb: num,
+    usdPerHour: num,
+    usdTotal: optNull(num),
+    spaces: num,
+    vcpus: num,
+    memoryMb: num,
+    usdPerHourUsed: num,
+    usdSpent: num,
+  }),
+);
+const ServiceShape = ref(
+  "SpaceService",
+  obj<ServiceWire>()({ name: str, command: str, state: str, restarts: num, lastEnd: str, probeError: str }),
+);
+
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
   "spaces.create": SpaceRowShape,
@@ -1343,6 +1376,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "network.log": list(NetworkEventShape),
   "network.ackNotice": nul,
   "spaces.setAccess": nul,
+  "spaces.tree": list(TreeNodeShape),
+  "children.set": nul,
+  "budget.get": TreeBudgetShape,
+  "budget.set": TreeBudgetShape,
+  "services.list": list(ServiceShape),
+  "services.control": nul,
   "spaces.open": nul,
   "machines.list": list(MachineRowShape),
   "host.status": hostStatusOrNull,
@@ -1970,6 +2009,12 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "network.log": list(NetworkEventShape),
   "network.ackNotice": object({}),
   "spaces.setAccess": object({}),
+  "spaces.tree": list(TreeNodeShape),
+  "children.set": object({}),
+  "budget.get": TreeBudgetShape,
+  "budget.set": TreeBudgetShape,
+  "services.list": list(ServiceShape),
+  "services.control": object({}),
   // The page's wizard runs on `env`, and reads `local`.
   "spaces.createOptions": ref("WkCreateOptions", createOptions(true)),
   "spaces.create": WkSpaceShape,

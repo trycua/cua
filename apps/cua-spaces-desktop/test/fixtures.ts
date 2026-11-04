@@ -21,7 +21,21 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { BulkResult, LocalRuntimes, MachineHealthReport, NetworkEventJson, ShareLinkRow, ShareSettingsRow, SpaceNetworkJson, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type {
+  BulkResult,
+  LocalRuntimes,
+  MachineHealthReport,
+  NetworkEventJson,
+  ServiceJson,
+  ShareLinkRow,
+  ShareSettingsRow,
+  SpaceNetworkJson,
+  SpaceThumbnailData,
+  SpacesBackend,
+  TreeBudgetJson,
+  TreeBudgetLimitsJson,
+  TreeNodeJson,
+} from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -408,6 +422,33 @@ export class FixtureSpacesBackend implements SpacesBackend {
     return [...this.exitsNow];
   }
   async setAccess(_id: string, _clipboard: string | null, _volume: string | null) {}
+  async spaceTree(): Promise<TreeNodeJson[]> {
+    return [{ id: "local:aurora", parent: null, depth: 0, children: false, home: null }];
+  }
+  async setChildren(_id: string, _enabled: boolean) {}
+  async treeBudget(id: string): Promise<TreeBudgetJson> {
+    return {
+      root: id,
+      set: {},
+      maxSpaces: 8,
+      maxVcpus: 16,
+      maxMemoryMb: 32768,
+      usdPerHour: 5,
+      usdTotal: null,
+      spaces: 1,
+      vcpus: 2,
+      memoryMb: 4096,
+      usdPerHourUsed: 0,
+      usdSpent: 0,
+    };
+  }
+  async setTreeBudget(id: string, limits: TreeBudgetLimitsJson): Promise<TreeBudgetJson> {
+    return { ...(await this.treeBudget(id)), set: limits };
+  }
+  async services(_id: string): Promise<ServiceJson[]> {
+    return [];
+  }
+  async controlService(_id: string, _name: string, _action: string) {}
   async stopLink(id: string) {
     const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
     this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));

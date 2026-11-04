@@ -72,6 +72,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
+        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
@@ -334,8 +336,34 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             try await model.backend.ackNetworkNotice(id: try string(args, "spaceId"))
             return [String: Any]()
         case "spaces.setAccess":
+            let space = try string(args, "spaceId")
             let clipboard = args["clipboard"] as? String, volume = args["volume"] as? String
-            try await model.backend.setAccess(id: try string(args, "spaceId"), clipboard: clipboard, volume: volume)
+            // An agent home's grants (CUA-2630): the file this machine's daemon reads.
+            let grants = HomeGrants.parse(args["home"])
+            if let grants { try HomeGrants.write(home: HomeGrants.cuaHome(), space: space, grants) }
+            if grants != nil && clipboard == nil && volume == nil { return [String: Any]() }
+            try await model.backend.setAccess(id: space, clipboard: clipboard, volume: volume)
+            return [String: Any]()
+        case "spaces.tree":
+            return try await model.backend.spaceTree()
+        case "children.set":
+            guard let enabled = args["enabled"] as? Bool else { throw Failure.badArgs("enabled: boolean") }
+            try await model.backend.setChildren(id: try string(args, "spaceId"), enabled: enabled)
+            return [String: Any]()
+        case "budget.get":
+            return try await model.backend.treeBudget(id: try string(args, "spaceId"))
+        case "budget.set":
+            return try await model.backend.setTreeBudget(
+                id: try string(args, "spaceId"), limits: args["limits"] as? [String: Any] ?? [:])
+        case "services.list":
+            return try await model.backend.services(id: try string(args, "spaceId"))
+        case "services.control":
+            let action = try string(args, "action")
+            guard ["start", "stop", "restart", "remove"].contains(action) else {
+                throw Failure.badArgs("action: start, stop, restart or remove")
+            }
+            try await model.backend.controlService(
+                id: try string(args, "spaceId"), name: try string(args, "name"), action: action)
             return [String: Any]()
         case "spaces.setPower":
             let space = try space(args)
@@ -760,6 +788,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             CreateNetworks.shared.set(pendingId, word)
         }
         defer { CreateNetworks.shared.clear(pendingId) }
+        // An agent home: the spawn capability and its labels (CUA-2630).
+        let extras = CreateExtrasValue.parse(config)
+        if !extras.isEmpty { CreateExtras.shared.set(pendingId, extras) }
+        defer { CreateExtras.shared.clear(pendingId) }
         // The page sends the plan's OS (the pending row's icon).
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String

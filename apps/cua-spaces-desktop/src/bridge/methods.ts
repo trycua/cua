@@ -15,6 +15,7 @@ export const METHODS = [
   "spaces.createOptions", "spaces.create",
   "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
   "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
+  "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
   "agents.setup", "agents.configure", "agents.signIn",

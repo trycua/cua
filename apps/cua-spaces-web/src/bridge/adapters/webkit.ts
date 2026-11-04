@@ -43,6 +43,9 @@ import {
   type SettingsSnapshot,
   type SettingsValues,
   type NetworkEventWire,
+  type ServiceWire,
+  type TreeBudgetWire,
+  type TreeNodeWire,
   type SpaceNetworkWire,
 } from "../protocol";
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
@@ -623,6 +626,19 @@ export function createWebkitAdapter(
     },
     "spaces.setAccess": async (args) => {
       await request("spaces.setAccess", args);
+      return null;
+    },
+    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
+    "children.set": async (args) => {
+      await request("children.set", args);
+      return null;
+    },
+    "budget.get": ({ spaceId }) => request<TreeBudgetWire>("budget.get", { spaceId }),
+    "budget.set": (args) => request<TreeBudgetWire>("budget.set", args),
+    "services.list": ({ spaceId }) => request<ServiceWire[]>("services.list", { spaceId }),
+    "services.control": async (args) => {
+      await request("services.control", args);
       return null;
     },
     "spaces.open": async ({ spaceId }) => {

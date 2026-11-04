@@ -163,6 +163,16 @@ struct BridgeContractTests {
         func setAccess(id: String, clipboard: String?, volume: String?) async throws {
             try await inner.setAccess(id: id, clipboard: clipboard, volume: volume)
         }
+        func spaceTree() async throws -> [[String: Any]] { try await inner.spaceTree() }
+        func setChildren(id: String, enabled: Bool) async throws { try await inner.setChildren(id: id, enabled: enabled) }
+        func treeBudget(id: String) async throws -> [String: Any] { try await inner.treeBudget(id: id) }
+        func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+            try await inner.setTreeBudget(id: id, limits: limits)
+        }
+        func services(id: String) async throws -> [[String: Any]] { try await inner.services(id: id) }
+        func controlService(id: String, name: String, action: String) async throws {
+            try await inner.controlService(id: id, name: name, action: action)
+        }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -255,7 +265,10 @@ struct BridgeContractTests {
             ("network.get", ["spaceId": space]),
             ("network.set", ["spaceId": space, "network": "internet", "allow": [String](), "deny": [String]()]),
             ("network.log", ["spaceId": space]), ("network.ackNotice", ["spaceId": space]),
-            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]),
+            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]), ("spaces.tree", [:]),
+            ("children.set", ["spaceId": space, "enabled": true]),
+            ("budget.get", ["spaceId": space]), ("budget.set", ["spaceId": space, "limits": ["maxSpaces": 4]]),
+            ("services.list", ["spaceId": space]), ("services.control", ["spaceId": space, "name": "web", "action": "restart"]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("shares.settings.set", ["settings": ["landing": "auto", "relayFallback": true, "dailyCapMib": 2048, "defaultAllow": [String](), "approveAgentShares": true, "alwaysAllowSpaces": [String](), "edgeConsent": [String](), "usedToday": 0]]),
             ("cli.plan", [:]),

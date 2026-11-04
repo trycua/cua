@@ -635,6 +635,16 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func setAccess(id: String, clipboard: String?, volume: String?) async throws {
         try await b().setAccess(id: id, clipboard: clipboard, volume: volume)
     }
+    public func spaceTree() async throws -> [[String: Any]] { try await b().spaceTree() }
+    public func setChildren(id: String, enabled: Bool) async throws { try await b().setChildren(id: id, enabled: enabled) }
+    public func treeBudget(id: String) async throws -> [String: Any] { try await b().treeBudget(id: id) }
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        try await b().setTreeBudget(id: id, limits: limits)
+    }
+    public func services(id: String) async throws -> [[String: Any]] { try await b().services(id: id) }
+    public func controlService(id: String, name: String, action: String) async throws {
+        try await b().controlService(id: id, name: name, action: action)
+    }
     public func setPower(id: String, on: Bool) async throws { try await b().setPower(id: id, on: on) }
     public func streamProvider(id: String) async throws -> SpaceStreamSourceProviding {
         try await b().streamProvider(id: id)

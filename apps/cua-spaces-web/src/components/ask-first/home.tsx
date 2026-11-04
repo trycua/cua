@@ -4,19 +4,24 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
-import { modelsView, useAgentChats, useBridge, useSpaces, type AgentRunSummary } from "@/bridge";
+import { modelsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentRunSummary } from "@/bridge";
+import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
 import { currentWhere, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
 import { rememberModel, resolveModel, usePickedModel } from "@/lib/ask-first-model";
+import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
 import { agentName } from "./task-agents";
+import { AgentStatus } from "./agent-status";
+import { useAgentReadiness } from "./use-agent-readiness";
+import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
@@ -61,17 +66,26 @@ export function AskFirstHome() {
   const selected = resolveModel(models, picked);
   const { current: repo } = useRepos();
   const [text, setText] = useState("");
+  // With Child Spaces on (and this Home, the Ask first experiment), the job goes to the agent's Home Space, which
+  // makes the Spaces it needs on your computers when asked in plain words.
+  const children = useChildren();
+  const agentHome = Boolean(children);
+  const chosenAgent = selected?.harness ?? "claude-code";
+  const { data: machineRows } = useMachines();
+  const machines = useMemo(() => (machineRows ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current, online: m.online })), [machineRows]);
+  useKeepHomeWarm(chosenAgent, agentHome);
+  const readiness = useAgentReadiness(chosenAgent, agentHome, models, selected);
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
   // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
-  const pick = useWherePick(selected ? agentName(selected.harness) : "Your agent");
-  const where = currentWhere(pickedWhere, kinds, pickable);
+  const pick = useWherePick(agentName(chosenAgent));
+  const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : null), kinds, pickable);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
-    start({ prompt, agent: selected.harness, where: w, model: selected.model.id, repo });
+    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
     setText("");
   };
   const connect = () => void navigate({ to: "/settings/connections" });
@@ -103,24 +117,29 @@ export function AskFirstHome() {
           onWhereOpen={setWhereOpen}
           kinds={kinds}
           spaces={pickable}
+          machines={machines}
+          agentHome={agentHome}
+          hasHome={agentHome && reusableHome(chosenAgent, spaces, false, children?.homesOf(chosenAgent)) !== null}
           busy={false}
           onSubmit={() => submit()}
           compact={!first}
           autoFocus
         />
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={connect} />
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
-              {SUGGESTIONS.filter((s) => kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
+              {SUGGESTIONS.filter((s) => agentHome || kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
                 <button
                   type="button"
                   key={s.title}
                   data-home-card=""
                   onClick={() => {
                     setText(s.prompt);
-                    setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
+                    // Without an agent home the suggestion's kind of computer is made for it.
+                    if (!agentHome) setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
                   }}
                   className="flex flex-col gap-2 rounded-xl border bg-card/60 px-5 py-4 text-left transition-colors hover:bg-accent dark:bg-white/[0.02]"
                 >
@@ -131,7 +150,10 @@ export function AskFirstHome() {
               ))}
             </div>
             <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done.
+              <CuaKey size={24} />
+              {agentHome
+                ? "The agent works in Spaces of its own, so your computer stays untouched. Watch it live, step in any time, and throw them away when you're done."
+                : "A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done."}
             </p>
           </>
         ) : null}

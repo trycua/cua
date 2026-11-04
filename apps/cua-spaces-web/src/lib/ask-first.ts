@@ -44,6 +44,13 @@ export interface AskTask {
   transcript: TranscriptItem[] | null;
   /** The status the run last had, for a thrown-away task's line. */
   lastStatus: AgentRunStatus | null;
+  /**
+   * The Space is an agent home (CUA-2630): the root of this task's tree, where
+   * the agent decides where to run. Absent on tasks made before it.
+   */
+  home?: boolean;
+  /** Names the person gave as where to run (@mentions, "on my Mac"), for the thread's first line. */
+  named?: string[];
   /** It runs on this Mac itself (its own Space id is in `spaceId`): nothing to throw away. */
   onHost?: boolean;
   /** Started in its Space's thread: the job is the Space's first message, @mentioning the agent. */
@@ -214,8 +221,19 @@ export function taskTitle(prompt: string, max = 80): string {
   return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
 }
 
-/** Where the job runs, as picked: a new computer of a kind on this Mac, a Space you already have, or this Mac itself. */
-export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space } | { kind: "this-mac" };
+/**
+ * Where the job runs, as picked: a new computer of a kind on this Mac, a Space
+ * you already have, or this Mac itself. With the Child Spaces experiment on
+ * (agent homes, CUA-2630) the agent may also decide (`agent`: it starts in its
+ * own home Space and makes what the job needs) or be told one of your machines
+ * (`machine`).
+ */
+export type TaskWhere =
+  | { kind: "new"; os: SpaceOs }
+  | { kind: "space"; space: Space }
+  | { kind: "this-mac" }
+  | { kind: "agent"; fresh?: boolean }
+  | { kind: "machine"; machine: { id: string; name: string } };
 
 /**
  * What `agents.start` is pointed at. The core's `agent_start` only takes a
@@ -253,12 +271,15 @@ export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "ma
 }
 
 export function taskTarget(where: TaskWhere): TaskTarget {
+  // An agent home is a Linux Space made for the task (`useStartTask` decides whether it is a home).
+  if (where.kind === "agent" || where.kind === "machine") return { kind: "create", os: "linux" };
   if (where.kind === "new") return { kind: "create", os: where.os };
   if (where.kind === "this-mac" || where.space.id === THIS_MAC_ID) return { kind: "host" };
   return { kind: "space", spaceId: where.space.id };
 }
 
-export const whereOs = (where: TaskWhere): SpaceOs => (where.kind === "new" ? where.os : where.kind === "space" ? where.space.os : "macos");
+export const whereOs = (where: TaskWhere): SpaceOs =>
+  where.kind === "new" ? where.os : where.kind === "space" ? where.space.os : where.kind === "agent" || where.kind === "machine" ? "linux" : "macos";
 
 /** A kept task's target, for Try again: its computer if it has one (the row, when listed, decides), else a new one. */
 export function retryTarget(task: Pick<AskTask, "spaceId" | "os" | "onHost">): TaskTarget {
@@ -288,7 +309,7 @@ export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
 
 /** The pick if it's still offered, else the default (a picked Space that went away falls back). */
 export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[], spaces: readonly Space[]): TaskWhere {
-  if (picked?.kind === "this-mac") return picked;
+  if (picked?.kind === "this-mac" || picked?.kind === "agent" || picked?.kind === "machine") return picked;
   if (picked?.kind === "new" && kinds.some((k) => k.os === picked.os && !k.blocked)) return picked;
   if (picked?.kind === "space") {
     const row = spaces.find((s) => s.id === picked.space.id);
@@ -415,6 +436,16 @@ export const TASK_STATE_TEXT: Record<TaskState, string> = {
   thrown: "Done. Computer thrown away",
 };
 
+/** The same states for a task in an agent home: its Space is a home, not a computer made for the job. */
+export const TASK_STATE_TEXT_HOME: Partial<Record<TaskState, string>> = {
+  starting: "Getting its home ready",
+  kept: "Done. Home kept",
+  thrown: "Done. Home thrown away",
+};
+
+/** A task's state line. */
+export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string => (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
+
 /** Home's order: needs you first, then running, then the rest, newest first. */
 export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: T[]): T[] {
   const rank = (s: TaskState) => (s === "needs-you" || s === "stuck" ? 0 : s === "working" || s === "starting" ? 1 : 2);
@@ -424,10 +455,10 @@ export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: 
 /** The jobs offered on an empty Home: real dev work where a fresh computer matters. */
 export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: string }[] = [
   {
-    title: "Run my project's tests on a clean Linux computer",
-    detail: "Find out if it works on a computer that has never seen your code.",
+    title: "Run my project's tests on a clean Linux Space",
+    detail: "Find out if it works somewhere that has never seen your code.",
     os: "linux",
-    prompt: "Copy my project onto this machine, install what it needs and run its tests. Tell me what passed and what failed: ",
+    prompt: "Get my project, make a clean Linux Space for it, install what it needs and run its tests. Tell me what passed and what failed: ",
   },
   {
     title: "Try a pull request before merging",
@@ -437,8 +468,8 @@ export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: 
   },
   {
     title: "Check my site works on Safari",
-    detail: "It clicks through your pages on a Mac and shows you what looks wrong.",
+    detail: "It clicks through your pages on a macOS Space and shows you what looks wrong.",
     os: "macos",
-    prompt: "Open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
+    prompt: "Make a macOS Space, open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
   },
 ];

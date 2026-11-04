@@ -93,6 +93,12 @@ export const HOST_COVERAGE = {
   "network.log": { webkit: { methods: ["network.log"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
   "network.ackNotice": { webkit: { methods: ["network.ackNotice"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
   "spaces.setAccess": { webkit: { methods: ["spaces.setAccess"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "spaces.tree": { webkit: { methods: ["spaces.tree"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "children.set": { webkit: { methods: ["children.set"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "budget.get": { webkit: { methods: ["budget.get"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "budget.set": { webkit: { methods: ["budget.set"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "services.list": { webkit: { methods: ["services.list"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "services.control": { webkit: { methods: ["services.control"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
   "machines.list": {
     webkit: { methods: ["spaces.list", "machines.list"] },
     tauri: ["host_status", "list_hosts", "get_environment"],

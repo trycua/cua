@@ -9,8 +9,9 @@ import type { Native } from "../native/load";
 import type { AppCreateSpaceArgs, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
 import { RUNTIME_FIX_ACTIONS, type RuntimeFix, type RuntimeFixAction } from "../model/windows-runtime";
-import { createNetworks, kindOf, osOf, runtimeOf } from "../model/backend";
+import { createExtras, createExtrasOf, createNetworks, kindOf, osOf, runtimeOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
+import { cuaHomeOf, homeGrantsOf, writeHomeGrants } from "../model/home-grants";
 import { bool, string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type BridgeArgs, type Handlers } from "./host";
@@ -150,6 +151,9 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       // The New Space's Network choice goes with the create (by its id).
       const net = (config as BridgeArgs).network;
       if (typeof net === "string" && net) createNetworks.set(pendingId, net);
+      // An agent home: the spawn capability and its labels (CUA-2630).
+      const extras = createExtrasOf(config as BridgeArgs);
+      if (Object.keys(extras).length) createExtras.set(pendingId, extras);
       // The page sends the plan's OS (the pending row's icon).
       const os = (typeof args.os === "string" ? osOf(native, args.os) : undefined) ?? native.AppSpaceOs.Unknown;
       let id: string;
@@ -167,6 +171,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
         throw error;
       } finally {
         createNetworks.delete(pendingId);
+        createExtras.delete(pendingId);
       }
       const made = model.spaces.find((s) => s.id === id);
       // A create the first run started: "<Space> is ready", window or not.
@@ -223,8 +228,54 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     "spaces.setAccess": async (args) => {
       const b = model.backend;
       const word = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : null);
+      const [clipboard, volume] = [word("clipboard"), word("volume")];
+      // An agent home's grants (CUA-2630): the file this machine's daemon reads.
+      const home = homeGrantsOf(args.home);
+      if (home) await writeHomeGrants(cuaHomeOf(ctx.env), string(args, "spaceId"), home);
+      if (home && clipboard === null && volume === null) return {};
       if (!b.setAccess) throw Failure.unsupported("these settings");
-      await b.setAccess(string(args, "spaceId"), word("clipboard"), word("volume"));
+      await b.setAccess(string(args, "spaceId"), clipboard, volume);
+      return {};
+    },
+    // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+    "spaces.tree": async () => {
+      const b = model.backend;
+      return b.spaceTree ? await b.spaceTree() : [];
+    },
+    "children.set": async (args) => {
+      const b = model.backend;
+      if (!b.setChildren) throw Failure.unsupported("child Spaces");
+      await b.setChildren(string(args, "spaceId"), bool(args, "enabled"));
+      return {};
+    },
+    "budget.get": async (args) => {
+      const b = model.backend;
+      if (!b.treeBudget) throw Failure.unsupported("child Spaces");
+      return await b.treeBudget(string(args, "spaceId"));
+    },
+    "budget.set": async (args) => {
+      const b = model.backend;
+      if (!b.setTreeBudget) throw Failure.unsupported("child Spaces");
+      const l = (args.limits ?? {}) as Record<string, unknown>;
+      const n = (k: string) => (typeof l[k] === "number" && Number.isFinite(l[k]) && (l[k] as number) >= 0 ? (l[k] as number) : null);
+      return await b.setTreeBudget(string(args, "spaceId"), {
+        maxSpaces: n("maxSpaces"),
+        maxVcpus: n("maxVcpus"),
+        maxMemoryMb: n("maxMemoryMb"),
+        usdPerHour: n("usdPerHour"),
+        usdTotal: n("usdTotal"),
+      });
+    },
+    "services.list": async (args) => {
+      const b = model.backend;
+      return b.services ? await b.services(string(args, "spaceId")) : [];
+    },
+    "services.control": async (args) => {
+      const b = model.backend;
+      if (!b.controlService) throw Failure.unsupported("services");
+      const action = string(args, "action");
+      if (!["start", "stop", "restart", "remove"].includes(action)) throw Failure.badArgs(`action: start, stop, restart or remove`);
+      await b.controlService(string(args, "spaceId"), string(args, "name"), action);
       return {};
     },
     "spaces.cancelCreate": (args) => {

@@ -94,6 +94,17 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func exitsThroughThisMachine() async -> [String]
     /// `spaces.setAccess`: a Space's clipboard and/or Volume setting.
     func setAccess(id: String, clipboard: String?, volume: String?) async throws
+    /// `spaces.tree`: every Space's parent, depth and whether it may make
+    /// children (`Spaces.list_known`).
+    func spaceTree() async throws -> [[String: Any]]
+    /// `children.set`: lets a Space make child Spaces, or stops it.
+    func setChildren(id: String, enabled: Bool) async throws
+    /// `budget.get` / `budget.set`: a Space's tree's budget and use.
+    func treeBudget(id: String) async throws -> [String: Any]
+    func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any]
+    /// `services.list` / `services.control`: the commands a Space keeps running.
+    func services(id: String) async throws -> [[String: Any]]
+    func controlService(id: String, name: String, action: String) async throws
     /// Takes one of your machines (`relay:<machine>`) off the relay
     /// directory (`Spaces.relay_unregister`): Remove from account on the
     /// Machines page. The relay refuses one that is online.
@@ -426,6 +437,20 @@ public extension SpacesBackend {
     func setAccess(id: String, clipboard: String?, volume: String?) async throws {
         throw FixtureError(message: "These settings are not available here")
     }
+    func spaceTree() async throws -> [[String: Any]] { [] }
+    func setChildren(id: String, enabled: Bool) async throws {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func treeBudget(id: String) async throws -> [String: Any] {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func services(id: String) async throws -> [[String: Any]] { [] }
+    func controlService(id: String, name: String, action: String) async throws {
+        throw FixtureError(message: "Services are not available here")
+    }
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
     func usage(id: String) async -> AppSpaceUsage? { nil }
@@ -647,6 +672,11 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         if let word = CreateNetworks.shared.get(createId) {
             options.networkSettings = Self.networkSettings(word: word, allow: [], deny: [])
         }
+        // An agent home: the spawn capability and its `cua.home.*` labels (CUA-2630).
+        if let extras = CreateExtras.shared.get(createId) {
+            if extras.children { options.children = true }
+            if !extras.labels.isEmpty { options.labels = extras.labels }
+        }
         let result = try await cua.spaces().createWithProgress(
             options: options, listener: CreateListener(progress))
         return result.space?.id ?? result.pendingId ?? ""
@@ -802,6 +832,71 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     public func setAccess(id: String, clipboard: String?, volume: String?) async throws {
         if let clipboard { try await cua.spaces().setClipboard(space: id, clipboard: clipboard) }
         if let volume { try await cua.spaces().setVolume(space: id, volume: volume) }
+    }
+
+    public func spaceTree() async throws -> [[String: Any]] {
+        try await cua.spaces().listKnown().spaces.map { s in
+            // `home`: the agent an agent home (labelled `cua.home`) was made for, so a home is found again by its label.
+            let home: Any = s.labels["cua.home"] == "1" ? (s.labels["cua.home.agent"] ?? "") : NSNull()
+            return ["id": s.id, "parent": s.parent as Any, "depth": Int(s.depth), "children": s.children, "home": home]
+        }
+    }
+
+    public func setChildren(id: String, enabled: Bool) async throws {
+        try await cua.spaces().setChildren(space: id, enabled: enabled)
+    }
+
+    public func treeBudget(id: String) async throws -> [String: Any] {
+        Self.budgetJSON(try await cua.spaces().treeBudget(space: id))
+    }
+
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        let n = { (k: String) -> Double? in (limits[k] as? NSNumber).map(\.doubleValue).flatMap { $0 >= 0 && $0.isFinite ? $0 : nil } }
+        let l = CuaSDK.TreeBudgetLimits(
+            maxSpaces: n("maxSpaces").map { UInt32(min($0, Double(UInt32.max))) },
+            maxVcpus: n("maxVcpus").map { UInt32(min($0, Double(UInt32.max))) },
+            maxMemoryMb: n("maxMemoryMb").map { UInt64($0) },
+            usdPerHour: n("usdPerHour"),
+            usdTotal: n("usdTotal"))
+        return Self.budgetJSON(try await cua.spaces().setTreeBudget(space: id, limits: l))
+    }
+
+    public func services(id: String) async throws -> [[String: Any]] {
+        try await cua.spaces().space(space: id).keptServices().map { s in
+            [
+                "name": s.name, "command": s.command, "state": s.state, "restarts": Int(s.restarts),
+                "lastEnd": s.lastEnd, "probeError": s.probeError,
+            ]
+        }
+    }
+
+    public func controlService(id: String, name: String, action: String) async throws {
+        let space = try await cua.spaces().space(space: id)
+        switch action {
+        case "start": _ = try await space.startService(name: name)
+        case "stop": _ = try await space.stopService(name: name)
+        case "restart": _ = try await space.restartService(name: name)
+        case "remove": try await space.deleteService(name: name)
+        default: throw FixtureError(message: "No service action \(action)")
+        }
+    }
+
+    /// The SDK's `TreeBudget` as the web page's `budget.get` answers it.
+    static func budgetJSON(_ b: CuaSDK.TreeBudget) -> [String: Any] {
+        [
+            "root": b.root,
+            "set": [
+                "maxSpaces": b.set.maxSpaces.map { Int($0) } as Any,
+                "maxVcpus": b.set.maxVcpus.map { Int($0) } as Any,
+                "maxMemoryMb": b.set.maxMemoryMb.map { Int($0) } as Any,
+                "usdPerHour": b.set.usdPerHour as Any,
+                "usdTotal": b.set.usdTotal as Any,
+            ] as [String: Any],
+            "maxSpaces": Int(b.maxSpaces), "maxVcpus": Int(b.maxVcpus), "maxMemoryMb": Int(b.maxMemoryMb),
+            "usdPerHour": b.usdPerHour, "usdTotal": b.usdTotal as Any,
+            "spaces": Int(b.spaces), "vcpus": Int(b.vcpus), "memoryMb": Int(b.memoryMb),
+            "usdPerHourUsed": b.usdPerHourUsed, "usdSpent": b.usdSpent,
+        ]
     }
 
     /// The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
@@ -1344,7 +1439,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
     public func removeShareEdge() async throws -> [String] { [] }
 
-    // Network settings: canned answers in the page's shapes.
+    // Network, child Spaces and kept commands: canned answers in the page's shapes.
     public func network(id: String) async throws -> [String: Any] {
         ["preset": "internet", "localhostPorts": [Int](), "allLocalhostPorts": false, "allow": [String](), "deny": [String](),
          "customBase": "", "widenedBy": NSNull(), "summary": "Internet only", "widenings": [String](),
@@ -1353,6 +1448,20 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
     public func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String { "now" }
     public func setAccess(id: String, clipboard: String?, volume: String?) async throws {}
+    public func spaceTree() async throws -> [[String: Any]] {
+        await MainActor.run { fixtureRows.map { ["id": $0.id, "parent": NSNull(), "depth": 0, "children": false] as [String: Any] } }
+    }
+    public func setChildren(id: String, enabled: Bool) async throws {}
+    public func treeBudget(id: String) async throws -> [String: Any] {
+        ["root": id, "set": [String: Any](), "maxSpaces": 8, "maxVcpus": 16, "maxMemoryMb": 32768, "usdPerHour": 5.0,
+         "usdTotal": NSNull(), "spaces": 1, "vcpus": 2, "memoryMb": 4096, "usdPerHourUsed": 0.0, "usdSpent": 0.0]
+    }
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        var b = try await treeBudget(id: id)
+        b["set"] = limits
+        return b
+    }
+    public func controlService(id: String, name: String, action: String) async throws {}
     public var fixtureRows: [AppSpaceRow]
     public private(set) var created: [AppCreateSpaceArgs] = []
     public private(set) var added: [String] = []
@@ -1750,7 +1859,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 }
 
-/// The New Space's Network choice by create id, until its create is over
+/// The New Space's Network choice by create id, until its create runs
 /// (the web page sends it with `spaces.create`'s `config.network`).
 final class CreateNetworks: @unchecked Sendable {
     static let shared = CreateNetworks()
@@ -1770,5 +1879,46 @@ final class CreateNetworks: @unchecked Sendable {
     func clear(_ id: String) {
         lock.lock(); defer { lock.unlock() }
         words.removeValue(forKey: id)
+    }
+}
+
+/// What an agent home is created with besides the plan's fields (CUA-2630),
+/// by create id, until its create is over (the web page sends it with
+/// `spaces.create`'s `config.children` and `labels`).
+struct CreateExtrasValue: Equatable, Sendable {
+    var children = false
+    var labels: [String: String] = [:]
+
+    var isEmpty: Bool { !children && labels.isEmpty }
+
+    /// The extras in a `spaces.create` config; the wrong types are ignored and a label that is not text is dropped.
+    static func parse(_ config: [String: Any]) -> CreateExtrasValue {
+        var out = CreateExtrasValue()
+        out.children = config["children"] as? Bool == true
+        if let l = config["labels"] as? [String: Any] {
+            for (k, v) in l { if !k.isEmpty, let t = v as? String, !t.isEmpty { out.labels[k] = t } }
+        }
+        return out
+    }
+}
+
+final class CreateExtras: @unchecked Sendable {
+    static let shared = CreateExtras()
+    private let lock = NSLock()
+    private var values: [String: CreateExtrasValue] = [:]
+
+    func set(_ id: String, _ v: CreateExtrasValue) {
+        lock.lock(); defer { lock.unlock() }
+        values[id] = v
+    }
+
+    func get(_ id: String) -> CreateExtrasValue? {
+        lock.lock(); defer { lock.unlock() }
+        return values[id]
+    }
+
+    func clear(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        values.removeValue(forKey: id)
     }
 }

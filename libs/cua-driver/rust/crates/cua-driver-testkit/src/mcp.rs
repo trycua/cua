@@ -93,6 +93,15 @@ impl McpDriver {
         Self::spawn_internal(env, &[], Some(recording_label), false, true)
     }
 
+    /// Spawn a named overlay-enabled driver with environment variables scoped
+    /// to this child (e.g. `CUA_OVERLAY_DEBUG=1` for visual regression checks).
+    pub fn spawn_named_with_overlay_and_env(
+        recording_label: &str,
+        env: &[(&str, &str)],
+    ) -> Option<Self> {
+        Self::spawn_internal(env, &[], Some(recording_label), true, true)
+    }
+
     /// Spawn a transport proxy through an already-running installed daemon.
     ///
     /// Computer History admission is tied to the installed product path and

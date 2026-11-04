@@ -24,6 +24,7 @@ import gzip
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -304,6 +305,21 @@ def _build_image_wsl2(
 # ── Full build ──────────────────────────────────────────────────────────────
 
 
+def apply_windows_accel(cmd: list, environ) -> list:
+    """Add the accelerator to a QEMU command for a Windows host and return the new command.
+
+    WHPX hardware acceleration is used by default (a Windows install under software emulation takes
+    many hours). Older QEMU builds had MMIO emulation bugs with OVMF's pflash drives, so
+    CUA_QEMU_ACCEL=tcg forces software emulation if UEFI does not boot. Under WHPX the CPU model is
+    the host's: WHPX cannot run the qemu64 model with the extra feature flags.
+    """
+    accel = environ.get("CUA_QEMU_ACCEL", "whpx,kernel-irqchip=off")
+    out = list(cmd) + ["-accel", accel]
+    if accel.startswith("whpx") and "-cpu" in out:
+        out[out.index("-cpu") + 1] = "host"
+    return out
+
+
 def build_image(
     config: Optional[QEMUImageConfig] = None,
     *,
@@ -479,10 +495,8 @@ def build_image(
             proc_port=18000,
         )
 
-    # WHPX on Windows has MMIO emulation bugs with OVMF pflash drives,
-    # so we use TCG (software emulation) on Windows for UEFI builds.
     if _plat.system() == "Windows":
-        cmd += ["-accel", "tcg"]
+        cmd = apply_windows_accel(cmd, os.environ)
     elif shutil.which("kvm-ok"):
         r = subprocess.run(["kvm-ok"], capture_output=True)
         if r.returncode == 0:

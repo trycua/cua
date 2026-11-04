@@ -310,7 +310,7 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
-        codes: &["target_changed", "stale_target", "stale_geometry"],
+        codes: &["target_changed", "stale_target", "stale_observation"],
         build: |c| {
             RecoveryHint::new(
                 "The window changed since your last read, so nothing was sent. Read it again and aim from \

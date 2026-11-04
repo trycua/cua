@@ -66,14 +66,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "session.get", "session.signIn", "session.signOut",
         // The first run: the shared web onboarding asks whether it is due and
         // finishes it here, as the Electron shell's handlers do.
-        "onboarding.get", "onboarding.complete",
+        "onboarding.get", "onboarding.complete", "onboarding.reset",
         "spaces.list", "spaces.open",
         "spaces.createOptions", "spaces.create",
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
+        // A Space's network, clipboard and Volume settings (the SDK's).
+        "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure", "agents.signIn",
         "agents.status", "agents.connect", "agents.disconnect",
+        // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
+        "agents.recentThreads", "agents.threadHistory",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -82,6 +86,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
+        // Settings, Connections, GitHub: the daemon's github.* methods (WebUIBridge+Pages.swift).
+        "github.status", "github.rescan", "github.use", "github.enable",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
         // machine (WebUIBridge+Pages.swift).
@@ -127,9 +133,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
         // Links to things you run (WebUIBridge+Pages.swift).
-        "links.list", "links.create", "links.stop",
+        "links.list", "links.create", "links.stop", "links.approve", "links.deny",
+        "shares.settings.get", "shares.settings.set", "shares.edge.remove",
         // The bundled CLI on PATH (WebUIBridge+Cli.swift).
         "cli.plan", "cli.install",
+        // CI Runners: the bundled `cua ci app <op>` (WebUIBridge+CI.swift).
+        "ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log",
         // The Space thread and its agent members (WebUIBridge+Pages.swift).
         "thread.read", "thread.post", "thread.members", "thread.setRights",
         "thread.agentAdd", "thread.agentRemove",
@@ -294,6 +303,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "onboarding.get": return onboarding()
         case "onboarding.complete": return try completeOnboarding(args)
+        case "onboarding.reset":
+            // Settings, About, "Reset & Show": the first run is forgotten (`onboarding.json`);
+            // the page clears its own state and shows it from the first step.
+            model.onboarding.reset()
+            return onboarding()
 
         case "spaces.list": return spaces()
         case "spaces.open":
@@ -304,6 +318,25 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return NSNull()
         case "spaces.createOptions": return await createOptions()
         case "spaces.create": return try await create(args)
+        case "network.get":
+            return try await model.backend.network(id: try string(args, "spaceId"))
+        case "network.set":
+            let list = { (k: String) in (args[k] as? [String]) ?? [] }
+            let applied = try await model.backend.setNetwork(
+                id: try string(args, "spaceId"), word: try string(args, "network"),
+                allow: list("allow"), deny: list("deny"),
+                widen: args["widen"] as? Bool ?? false, tree: args["tree"] as? Bool ?? false,
+                via: args["via"] as? String)
+            return ["applied": applied]
+        case "network.log":
+            return try await model.backend.networkLog(id: try string(args, "spaceId"))
+        case "network.ackNotice":
+            try await model.backend.ackNetworkNotice(id: try string(args, "spaceId"))
+            return [String: Any]()
+        case "spaces.setAccess":
+            let clipboard = args["clipboard"] as? String, volume = args["volume"] as? String
+            try await model.backend.setAccess(id: try string(args, "spaceId"), clipboard: clipboard, volume: volume)
+            return [String: Any]()
         case "spaces.setPower":
             let space = try space(args)
             guard let on = args["on"] as? Bool else { throw Failure.badArgs("on: boolean") }
@@ -359,6 +392,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
              "agents.status", "agents.connect", "agents.disconnect", "agents.start", "agents.message",
              "agents.signInStart", "agents.signInWait":
             return try await agents(method, args)
+
+        case "agents.recentThreads", "agents.threadHistory":
+            return try await agentThreads(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":
@@ -483,6 +519,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routePage(method, args) { return result }
             if let result = try routeNudges(method, args) { return result }
             if let result = try await routeCli(method, args) { return result }
+            if let result = try await routeCi(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -604,7 +641,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func relayHostnames() -> [String: String] { model.relayHostnames }
 
     func settings() -> [String: Any] {
-        [
+        model.refreshDaemonExperiments()
+        return [
             "page": BridgeValue.encode(model.settingsPageWithStorage),
             "experiments": BridgeValue.encode(model.experimentsPage),
             // Settings → About's channel; null while this build has no updater.
@@ -717,6 +755,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard appCreatesIsPending(id: pendingId) else { throw Failure.badArgs("pendingId: pending:<id>") }
         guard let config = args["config"] as? [String: Any] else { throw Failure.badArgs("config: object") }
         let createArgs = try Self.createArgs(config, defaultOn: "local")
+        // The New Space's Network choice goes with the create (by its id).
+        if let word = config["network"] as? String, !word.isEmpty {
+            CreateNetworks.shared.set(pendingId, word)
+        }
+        defer { CreateNetworks.shared.clear(pendingId) }
         // The page sends the plan's OS (the pending row's icon).
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
@@ -805,7 +848,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
             return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
                                                  branch: text("branch"), model: text("model"),
-                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [])
+                                                 envFromHost: (args["envFromHost"] as? [String]) ?? [],
+                                                 cwd: text("cwd"), resumeSession: text("resumeSession"),
+                                                 resumeContext: text("resumeContext"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }

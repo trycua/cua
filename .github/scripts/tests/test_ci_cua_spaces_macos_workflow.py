@@ -35,11 +35,11 @@ CHECKS = {
 
 
 def run_text(job: str) -> str:
-    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job]["steps"])
+    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job].get("steps", []))
 
 
 def uses(job: str) -> list[str]:
-    return [step["uses"] for step in JOBS[job]["steps"] if "uses" in step]
+    return [step["uses"] for step in JOBS[job].get("steps", []) if "uses" in step]
 
 
 def test_every_swift_check_still_runs_in_exactly_one_job():
@@ -49,8 +49,11 @@ def test_every_swift_check_still_runs_in_exactly_one_job():
 
 
 def test_the_library_is_compiled_once_and_downloaded_by_the_rest():
+    # The build is the spaces-rust-slice action's (restore main's library or
+    # build it); no other job compiles it.
     builders = [n for n in JOBS if "cargo build" in run_text(n) and "cua-spaces-ffi" in run_text(n)]
-    assert builders == ["ffi"]
+    assert builders == []
+    assert [n for n in JOBS if "./.github/actions/spaces-rust-slice" in uses(n)] == ["ffi"]
     for name in SWIFT_JOBS:
         job = JOBS[name]
         assert job["needs"] == "ffi", name
@@ -84,23 +87,21 @@ def test_release_please_pull_requests_still_skip_the_macos_jobs():
     assert "release-please--branches--" in JOBS["core"]["if"]
 
 
-def test_ffi_takes_main_slice_only_by_restoring_it():
+def test_ffi_reuses_main_slice_or_builds_on_main_dependency_cache():
     steps = {s.get("id"): s for s in JOBS["ffi"]["steps"] if s.get("id")}
     slice_step = steps["slice"]
     assert slice_step["uses"] == "./.github/actions/spaces-rust-slice"
-    assert slice_step["with"] == {"triple": "aarch64-apple-darwin", "build": "false"}
+    # Default build: an exact key hit restores main's library; a miss builds
+    # with the producer's command on top of main's Swatinem dependency cache
+    # (never a separate `cargo build` of this job's own, which missed it).
+    assert slice_step["with"] == {"triple": "aarch64-apple-darwin"}
     assert JOBS["ffi"]["env"]["CUA_RELEASE_REPOSITORY"] == "${{ github.repository }}"
-    # Every compile step is for the miss path only.
-    for step in JOBS["ffi"]["steps"]:
-        if step.get("name") in ("Install Rust (toolchain from rust-toolchain.toml)", "Install protoc",
-                                "Build the Cua Spaces app library") or step.get("uses") == "./.github/actions/rust-cache":
-            assert step["if"] == "steps.slice.outputs.cache-hit != 'true'", step
-    copy = next(s for s in JOBS["ffi"]["steps"] if s.get("name") == "Use the restored library")
-    assert copy["if"] == "steps.slice.outputs.cache-hit == 'true'"
+    assert "./.github/actions/rust-cache" not in uses("ffi")
+    copy = next(s for s in JOBS["ffi"]["steps"] if s.get("name") == "Stage the library where the Swift jobs expect it")
     assert "target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib" in copy["run"]
 
 
-def test_only_ffi_saves_the_sccache_family_on_main():
+def test_only_the_bindings_job_restores_the_sccache_family():
     rust_cache = [s for s in JOBS["bindings"]["steps"] if s.get("uses") == "./.github/actions/rust-cache"]
     assert len(rust_cache) == 1 and rust_cache[0]["with"]["save-if"] == "false"
     for name in ("swift-tests", "app-bundle"):

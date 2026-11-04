@@ -48,6 +48,24 @@ export interface AskTask {
   onHost?: boolean;
   /** Started in its Space's thread: the job is the Space's first message, @mentioning the agent. */
   inSpace?: boolean;
+  /**
+   * A chat picked from "Pick up where you left off" (CUA-3319): the agent's
+   * own session on this Mac. Only this reference is kept; the earlier
+   * messages are read again from the agent's own store when the task opens,
+   * and nothing is posted to a Space thread, so the chat stays private to
+   * this device's user. The first message the person sends resumes it.
+   */
+  imported?: ImportedChat;
+}
+
+/** Which of the agent's own chats a task continues. */
+export interface ImportedChat {
+  /** The agent's session id. */
+  sessionId: string;
+  title: string;
+  /** The chat's folder: the run continues there. */
+  cwd: string | null;
+  lastActiveMs: number;
 }
 
 const KEY = "cua.askFirst.tasks";
@@ -121,6 +139,31 @@ export function addAskTask(t: Pick<AskTask, "prompt" | "agent" | "os"> & Partial
 
 export function updateAskTask(id: string, patch: Partial<AskTask> | ((t: AskTask) => Partial<AskTask>)): void {
   save(load().map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
+}
+
+/**
+ * A new Home task for one of the agent's own chats (Continue in Cua). Nothing
+ * runs: the task waits for the person's next message. Picking the same chat
+ * again opens the task already made for it.
+ */
+export function addImportedTask(chat: { agent: string; id: string; title: string; cwd: string | null; lastActiveMs: number }, now = Date.now()): AskTask {
+  const existing = load().find((t) => t.imported?.sessionId === chat.id && t.agent === chat.agent && !t.runId);
+  if (existing) return existing;
+  return addAskTask(
+    {
+      prompt: "",
+      agent: chat.agent,
+      os: "macos",
+      onHost: true,
+      imported: { sessionId: chat.id, title: chat.title, cwd: chat.cwd, lastActiveMs: chat.lastActiveMs },
+    },
+    now,
+  );
+}
+
+/** A task's title: what was asked, or the continued chat's own title. */
+export function askTaskTitle(t: Pick<AskTask, "prompt" | "imported">): string {
+  return t.prompt.trim() ? taskTitle(t.prompt) : (t.imported?.title ?? "");
 }
 
 /** Keeps the conversation with the task before its computer goes. */

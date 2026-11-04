@@ -24,6 +24,9 @@ use cua_proto::daemon::v1::{DaemonErrorInfo, DaemonErrorReason};
 use prost::Message;
 use std::path::PathBuf;
 
+/// Child Spaces: a Space makes and manages Spaces of its own.
+#[cfg(all(feature = "server", feature = "spaces"))]
+pub mod children;
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "byoc")]
@@ -34,6 +37,7 @@ pub mod doctor;
 /// Spaces).
 #[cfg(feature = "spaces")]
 pub mod extension;
+pub mod fd_guard;
 #[cfg(feature = "test-fixtures")]
 pub mod fixtures;
 pub mod guard;
@@ -55,13 +59,21 @@ mod runtime;
 pub mod server;
 pub mod share_types;
 pub mod shares;
-pub use share_types::{ShareAccess, ShareCheck, ShareInfo, ShareTarget};
+/// Routes of public TCP shares and the share settings (from `cua-share`).
+pub use cua_share::route as share_route;
+pub use share_types::{
+    ShareAccess, ShareCheck, ShareInfo, ShareSettingsInfo, ShareTarget, ShareTcp, ShareWaiting,
+    TcpShareOptions,
+};
 #[cfg(feature = "spaces")]
 pub mod share_hub;
 #[cfg(feature = "spaces")]
 mod share_link;
 #[cfg(feature = "server")]
 mod share_svc;
+/// VMs and containers failed Space creates left behind.
+#[cfg(feature = "spaces")]
+pub mod space_orphans;
 #[cfg(feature = "server")]
 mod spaces_svc;
 pub mod storage;
@@ -550,8 +562,22 @@ pub struct InstanceLock {
 pub struct InstanceHeld {
     /// The lock file.
     pub path: PathBuf,
-    /// The pid written in it.
+    /// The pid its holder wrote.
     pub pid: Option<u32>,
+}
+
+/// Where the holder of the lock at `lock` writes its pid. A Windows lock is
+/// mandatory: no other handle can read the locked file, so the pid goes in
+/// `daemon.lock.pid` beside it. Elsewhere the lock is advisory and the pid
+/// is in the lock file itself.
+fn instance_pid_path(lock: &std::path::Path) -> PathBuf {
+    if cfg!(windows) {
+        let mut p = lock.as_os_str().to_owned();
+        p.push(".pid");
+        PathBuf::from(p)
+    } else {
+        lock.to_path_buf()
+    }
 }
 
 impl std::fmt::Display for InstanceHeld {
@@ -580,17 +606,17 @@ impl InstanceLock {
         path: &std::path::Path,
         wait: std::time::Duration,
     ) -> std::result::Result<Self, InstanceHeld> {
-        use std::io::{Seek, Write};
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+        let pid_path = instance_pid_path(path);
         let held = || InstanceHeld {
             path: path.to_path_buf(),
-            pid: std::fs::read_to_string(path)
+            pid: std::fs::read_to_string(&pid_path)
                 .ok()
                 .and_then(|s| s.trim().parse().ok()),
         };
-        let mut file = match std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
@@ -618,10 +644,7 @@ impl InstanceLock {
                 }
             }
         }
-        let _ = file.set_len(0);
-        let _ = file.rewind();
-        let _ = write!(file, "{}", std::process::id());
-        let _ = file.flush();
+        let _ = std::fs::write(&pid_path, std::process::id().to_string());
         Ok(Self { _file: Some(file) })
     }
 }

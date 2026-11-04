@@ -5,7 +5,7 @@ import Virtualization
 private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
     guard let mode = NetworkMode.parse(value) else {
         throw ValidationError(
-            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', 'bridged:<interface>' or 'gateway:<socket path>'."
         )
     }
     return mode
@@ -23,6 +23,10 @@ struct RunVMRequest: Codable {
     /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
     /// always starting a VNC server.
     let vnc: String?
+    /// Guest ports to publish on host loopback ports over vsock (the VM
+    /// gets a virtio socket device; the guest needs Cua's vsock agent).
+    /// `get` reports the host ports under `forwards` once the agent answers.
+    var forwards: [UInt16]? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -133,7 +137,9 @@ struct CreateVMRequest: Codable {
         guard let network else {
             return .nat
         }
-        return try parseNetworkModeString(network)
+        let mode = try parseNetworkModeString(network)
+        try mode.checkStorable()
+        return mode
     }
 }
 

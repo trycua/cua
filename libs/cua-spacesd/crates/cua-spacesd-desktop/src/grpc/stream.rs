@@ -39,6 +39,8 @@ use cua_spacesd_server::TicketScope;
 pub(crate) struct Stream(pub Arc<DesktopState>);
 
 const DEFAULT_TICKET_TTL: Duration = Duration::from_secs(60);
+/// The longest a media session a phone opened lasts (the phone's viewer ticket).
+const PHONE_SESSION_MAX: Duration = Duration::from_secs(300);
 const MAX_TICKET_TTL: Duration = Duration::from_secs(600);
 /// A guest's media ticket (a relayed caller other than the owner) only has
 /// to last until the attach: kept short so it can't outlive a revoke for
@@ -434,6 +436,41 @@ impl StreamService for Stream {
             .map_err(join_error)?
             .map_err(status::media)?;
         let session_id = opened.session.id().to_owned();
+        // A session a phone opened ends the moment this computer stops
+        // answering phones or stops sharing the desktop it shows, and when the
+        // phone's ticket ends (five minutes: the viewer asks for a new one and
+        // opens a new session); a phone that opens one with its account
+        // credentials has the same five minutes.
+        let phone_caller = match (&relayed, viewer.as_deref()) {
+            (Some(a), _) if a.phone.is_some() => Some((
+                a.clone(),
+                Some(std::time::SystemTime::now() + PHONE_SESSION_MAX),
+            )),
+            (_, Some(grant)) if grant.phone => Some((
+                cua_spacesd_server::auth::RelayCaller::default(),
+                grant.expires_at,
+            )),
+            _ => None,
+        };
+        if let Some((phone_caller, until)) = phone_caller {
+            let (media, id, session) = (
+                self.0.media.clone(),
+                session_id.clone(),
+                opened.session.clone(),
+            );
+            self.0.ctx.auth().watch_phone(
+                phone_caller,
+                "/cua.env.v1.StreamService/OpenMedia",
+                until,
+                {
+                    let session = session.clone();
+                    move || session.is_closed()
+                },
+                move |_why| {
+                    media.close(&id, cua_media_protocol::v2::close_code::TARGET_GONE);
+                },
+            );
+        }
         let (ticket, expires_at) = self.0.ctx.mint_ticket_issued(
             TicketScope::Media,
             &session_id,

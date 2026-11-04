@@ -255,6 +255,10 @@ describe('app core parity flows (webview)', () => {
       'tips',
       'pro-banner',
       'connectors',
+      'github-connection',
+      'thread-cards',
+      'ci-runners',
+      'prepare',
     ]);
   });
 

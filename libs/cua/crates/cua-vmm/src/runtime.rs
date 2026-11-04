@@ -85,6 +85,31 @@ pub trait Runtime: Send + Sync {
         })
     }
 
+    /// Saves the filesystem of the running instance `name` as an image that
+    /// instances start from instead of the one they were made from (what is
+    /// installed in it stays), named `tag`, and returns it. Used by the warm
+    /// pool so a member prepared once is not prepared again: the next one
+    /// boots from this. `None`: this backend has no such image (its members
+    /// are prepared one by one, or not at all).
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = (name, tag);
+        Ok(None)
+    }
+
+    /// The image [`Runtime::save_prepared`] saved as `tag`, when the backend
+    /// still has it (a daemon that restarted finds what the last one saved).
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = tag;
+        Ok(None)
+    }
+
+    /// Deletes an image saved by [`Runtime::save_prepared`] (not an error
+    /// when it is gone).
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let _ = tag;
+        Ok(())
+    }
+
     /// Create a new stopped instance `new_name` from a stopped base, checkpoint
     /// or instance `source`, copy-on-write where the backend can.
     async fn fork(&self, source: &str, new_name: &str) -> Result<()>;
@@ -208,6 +233,30 @@ pub trait Runtime: Send + Sync {
         let _ = name;
         Ok(Default::default())
     }
+
+    /// What instance `name` tried to reach and its network rules refused
+    /// ([`crate::egress::NetworkEvent`]), most recent first. Empty where the
+    /// runtime does not count them.
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        let _ = name;
+        Ok(vec![])
+    }
+
+    /// Replaces instance `name`'s network settings ([`crate::network`]),
+    /// kept with it from now on (they win over a later start spec's). Says
+    /// whether the running guest is under them now or from its next start.
+    /// Runtimes that keep none refuse.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        let _ = (name, settings);
+        Err(VmmError::Unsupported {
+            backend: self.kind().as_str(),
+            op: "changing network settings (this runtime keeps none: create the Space again)",
+        })
+    }
 }
 
 /// Resolves an OCI reference to a local bootable disk (qcow2). Implemented by
@@ -304,6 +353,31 @@ pub trait RootfsResolver: Send + Sync {
         arch: Arch,
         creds: Option<&crate::RegistryCredentials>,
     ) -> Result<RootfsLayers>;
+
+    /// Pulls `reference` for `arch` the way [`Self::resolve_rootfs`] does (the
+    /// caller's credentials, else the host's own credential chain, through
+    /// the shared layer cache) and writes it to `out` as an OCI image layout
+    /// archive that keeps every blob as the registry served it (so every
+    /// digest holds), named `reference`. Returns the platform manifest's
+    /// digest (`sha256:...`).
+    ///
+    /// A runtime that has its own image store but no way to hold a
+    /// registry credential of Cua's (Apple's `container`: its logins live in
+    /// the user's keychain) loads the archive instead of pulling itself, so
+    /// every runtime pulls with the same credentials, mirrors and cache.
+    async fn pull_oci_archive(
+        &self,
+        reference: &str,
+        arch: Arch,
+        creds: Option<&crate::RegistryCredentials>,
+        out: &std::path::Path,
+    ) -> Result<String> {
+        let _ = (reference, arch, creds, out);
+        Err(crate::VmmError::Unsupported {
+            backend: "image resolver",
+            op: "OCI archives",
+        })
+    }
 }
 
 /// A checkpoint as files, for copying it to another host.

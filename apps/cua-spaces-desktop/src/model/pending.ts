@@ -16,7 +16,7 @@ import type {
   PresenceIdentity,
   TeleportLike,
 } from "../native/generated/index";
-import type { LiveSpacesBackend, SpacesBackend } from "./backend";
+import type { LiveSpacesBackend, ShareSettingsRow, SpacesBackend, TcpShareOptions } from "./backend";
 import type { AgentSetupRunning } from "./agents";
 import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
@@ -107,6 +107,33 @@ export class PendingSpacesBackend implements SpacesBackend {
   leave = async (ids: string[]) => (await this.b()).leave(ids);
   rename = async (id: string, name: string) => (await this.b()).rename(id, name);
   relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
+  network = async (id: string) => {
+    const b = await this.b();
+    if (!b.network) throw new Error("network settings are not available in this build");
+    return b.network(id);
+  };
+  setNetwork = async (id: string, word: string, allow: string[], deny: string[], widen: boolean, tree: boolean, via?: string) => {
+    const b = await this.b();
+    if (!b.setNetwork) throw new Error("network settings are not available in this build");
+    return b.setNetwork(id, word, allow, deny, widen, tree, via);
+  };
+  exitsThroughThisMachine = async () => {
+    const b = await this.b();
+    return b.exitsThroughThisMachine ? b.exitsThroughThisMachine() : [];
+  };
+  networkLog = async (id: string) => {
+    const b = await this.b();
+    return b.networkLog ? b.networkLog(id) : [];
+  };
+  ackNetworkNotice = async (id: string) => {
+    const b = await this.b();
+    await b.ackNetworkNotice?.(id);
+  };
+  setAccess = async (id: string, clipboard: string | null, volume: string | null) => {
+    const b = await this.b();
+    if (!b.setAccess) throw new Error("these settings are not available in this build");
+    await b.setAccess(id, clipboard, volume);
+  };
   machineHealth = async (machine: string | null) => (await this.b()).machineHealth(machine);
   setPower = async (id: string, on: boolean) => (await this.b()).setPower(id, on);
   localRuntimes = async () => (await this.b()).localRuntimes();
@@ -138,6 +165,36 @@ export class PendingSpacesBackend implements SpacesBackend {
   links = async () => (await this.b()).links();
   createLink = async (target: string, access: string | null, ttlSeconds: number | null, name: string | null) =>
     (await this.b()).createLink(target, access, ttlSeconds, name);
+  createTcpLink = async (target: string, service: string | null, ttlSeconds: number | null, name: string | null, options?: TcpShareOptions) => {
+    const b = await this.b();
+    if (!b.createTcpLink) throw new Error("Public TCP shares are not available here");
+    return b.createTcpLink(target, service, ttlSeconds, name, options);
+  };
+  approveLink = async (id: string, always: boolean) => {
+    const b = await this.b();
+    if (!b.approveLink) throw new Error("Public TCP shares are not available here");
+    return b.approveLink(id, always);
+  };
+  denyLink = async (id: string) => {
+    const b = await this.b();
+    if (!b.denyLink) throw new Error("Public TCP shares are not available here");
+    return b.denyLink(id);
+  };
+  shareSettings = async () => {
+    const b = await this.b();
+    if (!b.shareSettings) throw new Error("Public TCP shares are not available here");
+    return b.shareSettings();
+  };
+  setShareSettings = async (s: ShareSettingsRow) => {
+    const b = await this.b();
+    if (!b.setShareSettings) throw new Error("Public TCP shares are not available here");
+    return b.setShareSettings(s);
+  };
+  removeShareEdge = async () => {
+    const b = await this.b();
+    if (!b.removeShareEdge) throw new Error("Public TCP shares are not available here");
+    return b.removeShareEdge();
+  };
   stopLink = async (id: string) => (await this.b()).stopLink(id);
   tool = async (tool: string, args: Record<string, unknown>) => (await this.b()).tool(tool, args);
   teleportContext = async (id: string): Promise<{ teleport: TeleportLike; space: SpaceLike } | null> => (await this.b()).teleportContext(id);

@@ -552,6 +552,7 @@ pub(crate) fn shared_with(
         auth_time: None,
         mfa: false,
         orgs: Vec::new(),
+        azp: None,
     };
     let mut shared = Vec::new();
     for (record, role) in relay.directory.visible_to(&who) {

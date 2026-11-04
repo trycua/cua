@@ -160,4 +160,6 @@ def fixtures():
 def local_cua(tmp_path):
     import cua
 
-    return cua.embedded(state_dir=str(tmp_path / "state"))
+    # Its own Spaces registry too: the default is the real ~/.cua, which the
+    # cua-home guard refuses in a test (a fork's registration fails there).
+    return cua.embedded(state_dir=str(tmp_path / "state"), spaces_home=str(tmp_path / "spaces"))

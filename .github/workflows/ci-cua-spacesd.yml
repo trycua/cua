@@ -88,8 +88,14 @@ env:
   CUA_ENV_TEST_SANDBOX: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   changes:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: "cua-spacesd / changes"
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -270,7 +276,8 @@ jobs:
     name: Cua Volume mount (Windows NFS client)
     # Not shipped yet (renames fail in the Windows NFS client): run on
     # demand while the Windows mount is finished.
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:

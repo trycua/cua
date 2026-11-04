@@ -5,11 +5,12 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
-import { readSavedOnboarding } from "@/bridge/onboarding";
+import { useAgentKeys, useBridge, useFirstRun, useNewOnboarding, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
+import { NewFirstRun } from "@/components/first-run-new/first-run-new";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -21,6 +22,7 @@ import { KeySheet } from "@/components/agents/key-sheet";
 import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connected-apps";
 import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
+import { usePrepare } from "@/lib/prepare/store";
 
 export const Route = createFileRoute("/onboarding/")({
   // `?due=1` is a host opening the first run because it is not done (the Mac
@@ -29,12 +31,24 @@ export const Route = createFileRoute("/onboarding/")({
   // root route does for a host that opens the app at `/`. Every other way in
   // (the sidebar's "Finish setting up", Settings, the command palette) has
   // no `due` and always shows the first run.
-  validateSearch: (s: Record<string, unknown>): { due?: true } => (s.due === 1 || s.due === "1" || s.due === true ? { due: true as const } : {}),
-  beforeLoad: ({ search }) => {
-    if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
+  // `?fresh=1` is the Mac app's first launch on this computer: what the
+  // page kept from an earlier install (a "Skip for now", a half-done run) is
+  // forgotten, so a new user always sees the first run (CUA-3063).
+  validateSearch: (s: Record<string, unknown>): { due?: true; fresh?: true } => {
+    const on = (v: unknown) => v === 1 || v === "1" || v === true;
+    return { ...(on(s.due) ? { due: true as const } : {}), ...(on(s.fresh) ? { fresh: true as const } : {}) };
   },
-  component: OnboardingPage,
+  beforeLoad: ({ search }) => {
+    if (search.fresh) writeSavedOnboarding(null);
+    else if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
+  },
+  component: OnboardingRoute,
 });
+
+/** With the new setup on (Settings, Advanced, Labs), the new first run (CUA-3318); otherwise the first run every install has. */
+function OnboardingRoute() {
+  return useNewOnboarding() ? <NewFirstRun /> : <OnboardingPage />;
+}
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
@@ -46,8 +60,16 @@ export const Route = createFileRoute("/onboarding/")({
  * keycap art, as plain rows.
  */
 function OnboardingPage() {
-  const fr = useFirstRun();
   const navigate = useNavigate();
+  const prepare = usePrepare();
+  // The new setup (Labs): the last screen ends on Home, the prompt box and the suggestions, while the
+  // first Space keeps getting ready behind it (preparing started at launch). The clock for "setup
+  // finished to ready" starts here.
+  const openHome = () => {
+    prepare.driver?.onboardingDone();
+    void navigate({ to: "/home" });
+  };
+  const fr = useFirstRun(true, undefined, openHome);
   const { view } = fr;
 
   const leave = () => {
@@ -56,6 +78,7 @@ function OnboardingPage() {
   };
   const finish = async () => {
     try {
+      prepare.driver?.onboardingDone();
       await fr.finish();
       await navigate({ to: "/spaces" });
     } catch (e) {
@@ -84,7 +107,7 @@ function OnboardingPage() {
   }, [canGoBack, fr.back]);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] dark:bg-[#07080a]" data-step={view.step}>
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-w:40%] [--ob-art-h:min(58vh,560px,46vw)] [@media(min-width:1000px)]:[--ob-art-w:46%] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between pr-10 pl-[var(--ob-x)] pt-[calc(var(--titlebar-height)+12px)] pb-2">
@@ -93,9 +116,9 @@ function OnboardingPage() {
           {view.later}
         </button>
       </header>
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pl-[var(--ob-x)] [@media(min-width:720px)]:pr-[var(--ob-art-w)]">
         {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
-        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
+        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:719px)]:grow-[50]" />
         <div className="flex w-full max-w-[520px] shrink-0 flex-col">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
@@ -104,12 +127,19 @@ function OnboardingPage() {
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
-        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:999px)]:grow-[50]" />
+        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:719px)]:grow-[50]" />
       </div>
       <Dots view={view} />
     </div>
   );
 }
+
+/**
+ * Every page's action row (Set up and Not now, Continue, Sign in ...). It sticks to the bottom of the
+ * scrolling content area, so a short window never pushes it out of reach: the page's content scrolls
+ * above it. Back and Skip for now stay where they are.
+ */
+const ACTION_ROW = "sticky bottom-0 z-20 mt-8 flex flex-wrap items-center gap-3 bg-gradient-to-t from-[#F4F5F7] via-[#F4F5F7]/90 to-transparent pt-6 pb-4 dark:from-[#07080a] dark:via-[#07080a]/90";
 
 /** "Skip for now": a ghost pill, readable on the starfield, quieter than Continue. */
 const SKIP_PILL =
@@ -219,7 +249,7 @@ function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <div aria-hidden className="mb-4 h-7" />
       <Heading>{w.title}</Heading>
       <Lede>{w.lede}</Lede>
-      <div className="mt-8">
+      <div className={ACTION_ROW}>
         <Primary label={w.primary.label} onClick={() => void fr.act(w.primary.id)} />
       </div>
     </div>
@@ -255,7 +285,7 @@ const HEADLINE_APPS = [
 ];
 
 /**
- * "An agent on another machine": the other choice beside the coding apps found here. It opens the
+ * "An agent on another computer": the other choice beside the coding apps found here. It opens the
  * join sheet for this machine's own Space: one line to paste into whichever agent runs elsewhere.
  * Not offered before the machine has a Space to join.
  */
@@ -267,7 +297,7 @@ function OtherMachineRow() {
   return (
     <div className="flex min-h-12 items-center gap-3 py-2" data-first-run-other-machine="">
       <div className="min-w-0 flex-1">
-        <div className="text-[14px]">An agent on another machine</div>
+        <div className="text-[14px]">An agent on another computer</div>
         <div className="text-[13px] text-muted-foreground">Copy one line to paste into it.</div>
       </div>
       <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => setOpen(true)} data-first-run-other-machine-open="">
@@ -381,7 +411,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
             })}
             <OtherMachineRow />
           </Rows>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
+          <div className={ACTION_ROW}>
             <Primary label="Check again" onClick={() => void fr.act("recheck")} data-first-run-recheck="" />
             <Secondary label="Continue without one" onClick={() => void fr.act("skip")} />
           </div>
@@ -448,7 +478,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           })}
           <OtherMachineRow />
         </Rows>
-        <div className="mt-8 flex flex-wrap items-center gap-3">
+        <div className={ACTION_ROW}>
           {all || failed.length ? (
             <>
               <Primary label="Continue" onClick={() => void fr.act(c.primary.id)} />
@@ -599,7 +629,7 @@ function AdvancedConnect({ fr, view }: { fr: FirstRunHook; view: FirstRunView })
           {c.consent}
         </p>
       ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
         {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
         {c.mode ? (
@@ -676,7 +706,7 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         ))}
         {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
       </Rows>
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
         {d.secondary ? <Secondary label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} describedBy={d.note ? "first-run-devices-note" : undefined} /> : null}
       </div>
@@ -720,7 +750,7 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         {c.primary ? (
           <Primary label={c.busy ? "Installing…" : c.primary.label} onClick={() => !c.busy && void fr.act(c.primary!.id)} data-first-run-cli-primary={c.primary.id} />
         ) : null}
@@ -746,7 +776,7 @@ function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <p className="mt-4 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
         {p.note}
       </p>
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className={ACTION_ROW}>
         {p.primary ? <Primary label={p.primary.label} onClick={() => void fr.act(p.primary!.id)} data-first-run-permissions-primary={p.primary.id} /> : null}
         {p.secondary ? <Secondary label={p.secondary.label} onClick={() => void fr.act(p.secondary!.id)} data-first-run-permissions-secondary={p.secondary.id} /> : null}
       </div>
@@ -811,7 +841,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
-      <div className="mt-8 flex items-center gap-3">
+      <div className={ACTION_ROW}>
         <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}
         </Button>
@@ -920,7 +950,11 @@ function Backdrop() {
  * The keys beside the page: the agent's key, the blue key for this
  * computer (faded while it is checked or needs a fix) and, on step 2, a
  * small dashed outline for the optional extra Space that fills in while
- * one is being made.
+ * one is being made. They show at every width the Mac app's window allows
+ * (720 px and up): from 1000 px they take 46% of the window, below it 40%.
+ * The window keeps its last size, so a first run opened from "Finish
+ * setting up" is often narrower than 1000 px; the keys used to drop out
+ * there.
  */
 function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
   const agent = ["claude-code", "codex", "hermes", "openclaw"].includes(art.agent) ? art.agent.replace("claude-code", "claude") : "other";
@@ -928,7 +962,7 @@ function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
   // One fixed-ratio box, centred on the heading block and clamped to sit fully
   // inside the window, so the dashed outline is never cut at any size.
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] [@media(min-width:1000px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
+    <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[var(--ob-art-w)] [@media(min-width:720px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
       <div
         className="absolute left-1/2 aspect-[6/7] -translate-x-1/2"
         style={{ height: "var(--ob-art-h)", top: "clamp(64px, calc(45% - var(--ob-art-h) / 2), calc(100% - var(--ob-art-h) - 24px))" }}
@@ -937,20 +971,20 @@ function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
           src={`/onboarding/agent-${agent}.webp`}
           alt=""
           draggable={false}
-          className={cn("absolute w-[62%] transition-all duration-500", connect ? "top-[32%] left-[2%]" : "top-[36%] left-[6%]")}
+          className={cn("absolute w-[62%] transition-all duration-500 motion-reduce:transition-none", connect ? "top-[32%] left-[2%]" : "top-[36%] left-[6%]")}
         />
         <img
           src="/onboarding/cua.webp"
           alt=""
           draggable={false}
-          className={cn("absolute top-[4%] right-[2%] w-[44%] transition-all duration-500", art.computer === "faded" && "opacity-40 blur-[1px]")}
+          className={cn("absolute top-[4%] right-[2%] w-[44%] transition-all duration-500 motion-reduce:transition-none", art.computer === "faded" && "opacity-40 blur-[1px]")}
         />
         {art.extra !== "none" ? (
           <div className="absolute right-[8%] bottom-[2%] w-[27%]">
             {art.extra === "outline" ? (
               <SlotOutline />
             ) : (
-              <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity", art.extra === "filling" ? "animate-pulse opacity-40" : "opacity-95")} />
+              <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity motion-reduce:transition-none", art.extra === "filling" ? "animate-pulse opacity-40 motion-reduce:animate-none" : "opacity-95")} />
             )}
           </div>
         ) : null}

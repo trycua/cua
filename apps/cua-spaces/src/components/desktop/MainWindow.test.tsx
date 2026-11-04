@@ -60,7 +60,7 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    await screen.findByText("Just use this Mac to open my other machines");
+    await screen.findByText("Just use this Mac to open my other computers");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
     expect(await screen.findByRole("listbox", { name: "My machines" })).toBeInTheDocument();

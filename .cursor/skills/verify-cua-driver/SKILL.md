@@ -1,11 +1,21 @@
 ---
 name: verify-cua-driver
-description: Verify the Cua Driver daemon and CLI/MCP desktop tools against real fixture apps after driver changes, using Linux diagnostics, AX-first actions, side-effect checks, and retained evidence.
+description: Verify the Cua Driver daemon and CLI/MCP desktop tools against real fixture apps after driver changes - Linux X11/Wayland on a disposable desktop, macOS/AppKit in a disposable Lume guest - using AX-first actions, side-effect checks, and retained evidence.
 ---
 
 # Verify Cua Driver
 
 Read [the feature map](features/README.md) first. This verifies the daemon's desktop-tool surface, not the bench, and does not certify every mapped entry point by exercising one convenient path. Use only a disposable desktop: the foreground cells intentionally move focus and input.
+
+## Pick the lane
+
+| Change touches | Lane | Entry point |
+| --- | --- | --- |
+| Linux platform code, shared core/contract/SDK, this skill | Linux X11, plus Wayland for capture/input routes | `scripts/verify-linux.sh x11\|wayland` (below) |
+| `platform-macos`, AppKit/SwiftUI/TextEdit harnesses, `scripts/ci/macos/**`, `tests/runners/macos-lume/**` | macOS Lume guest | `scripts/verify-macos.sh` ([macOS lane](macos-lume.md)) |
+| Shared code with macOS behavior | both | both |
+
+Run every lane the change touches that the host can run, and name the lanes you skip in the report. Launch through Cleanup below cover Linux. The macOS lane keeps the same proof standards; its wrapper owns the worker VM, preflight and evidence collection.
 
 ## Launch
 
@@ -87,19 +97,26 @@ After session teardown, the helper invokes `scripts/check-evidence.sh` on the pr
 
 ## Helpers
 
-The shipped executable is:
+The shipped executables are:
 
 ```bash
 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build
 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
+.cursor/skills/verify-cua-driver/scripts/verify-macos.sh doctor
+.cursor/skills/verify-cua-driver/scripts/verify-macos.sh --source /abs/clean/checkout focus <cell>
+.cursor/skills/verify-cua-driver/scripts/verify-macos.sh --source /abs/clean/checkout full
 ```
 
-It reuses `scripts/ci/linux/run-rust-e2e.sh` through `CUA_E2E_INTERNAL_LANE=verify` and `CUA_E2E_ARTIFACT_DIR`; the runner is responsible for strict fixtures, preflight, recordings and report validation. Each desktop run is bounded to 1200 seconds internally. No bench code or second harness is involved.
+It reuses `scripts/ci/linux/run-rust-e2e.sh` through `CUA_E2E_INTERNAL_LANE=verify` and `CUA_E2E_ARTIFACT_DIR`; the runner is responsible for strict fixtures, preflight, recordings and report validation. Each desktop run is bounded to 1200 seconds internally. `verify-macos.sh` calls the Lume host's installed `lume-e2e` wrapper, which runs `run-all.sh` unchanged in the guest. No bench code or second harness is involved.
 
-## macOS and Windows: unverified
+## macOS
 
-macOS needs the installed TCC-authorized daemon (`libs/cua-driver/scripts/install-local.sh`, `cua-driver permissions grant`) and Accessibility/Screen Recording consent; its tests use the existing daemon proxy rather than Linux Xvfb. Windows needs an interactive desktop, native UIA and named-pipe transport; testkit uses Job Objects for ownership. Use their existing CI recipes and recording paths. Neither platform was run here; Linux's unrestricted testkit mode does not prove their production permission paths.
+Follow [the macOS lane](macos-lume.md). It runs the canonical `libs/cua-driver/tests/runners/macos-lume/run-all.sh` in a disposable clone of a granted Lume seed, through `scripts/verify-macos.sh`. Don't run AppKit E2E on a host desktop.
+
+## Windows: unverified
+
+Windows needs an interactive desktop, native UIA and named-pipe transport; testkit uses Job Objects for ownership. Use its existing CI recipe and recording paths. Linux's unrestricted testkit mode does not prove its production permission paths.
 
 ## Execution status and maintenance
 

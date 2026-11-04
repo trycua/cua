@@ -679,6 +679,8 @@ impl Spec {
     }
 }
 
+const SPACE_JOB_INSTRUCTIONS: &str = "Use this instead of space_bash for anything that takes more than a minute (builds, test suites, installs, waiting on CI). `start` returns a job id at once and the command keeps running when you stop, disconnect, or the Space's daemon restarts. Read it with `logs` (pass the returned `next_offset` as `offset` to read on; `follow_ms` waits for output) or `status`; stop it with `cancel`; `list` shows the Space's jobs. Pass `notify: true` to be woken: the Space's thread gets one message `JOB <id> <state> exit=<n> ...` with the end of the log, and as an agent member you receive it as your next turn, so you can end your turn instead of polling. `until` makes a job that waits for a file, a port, a command or a pull request's required checks; its end is the condition. Output is stdout and stderr together. Linux and macOS guests.";
+
 const SEND_FILE_INSTRUCTIONS: &str = "The same transfer the Cua Spaces pop-out's Teleport drop zone performs: files land in the Space user's ~/Downloads through the spacesd's TeleportService (chunked, resumable, every file verified by sha256 before it is published). A transfer that does not land, or lands corrupted, is an error and not a reported success.\n\nrespect_ignorefiles (default true) applies ONLY when `path` is a folder. It honors `.gitignore` and `.ignore` at the folder root and in every subdirectory (each scoped to its own subtree, so a nested ignore file overrides its parent), plus `.dockerignore` at the root only. All three use gitignore semantics: negation (`!`), directory-only patterns (`foo/`), anchoring, `*`/`?`/`[...]`, `**`, comments, last-matching-rule-wins. As in git, an excluded directory is pruned and `!` cannot re-include anything beneath it. `.git/` is always skipped and symlinks are never followed. For a single named file it has NO effect.";
 
 const LIST_TOOLS_INSTRUCTIONS: &str = "Lists the tools of an MCP service INSIDE the Space. `service` is any service the Space declares (an MCP server the image runs, reached over streamable HTTP; no spacesd needed) or `driver`, the spacesd's own cua-driver registry (screenshot, click, type, launch apps, accessibility, ...). The default is `driver`, or the only declared service of a Space without spacesd. With no `name`, returns a scannable overview; pass name=<substring> for full input schemas. Then invoke them with call_tool. The reply names every service the Space exposes.";
@@ -695,6 +697,29 @@ macro_rules! join_next_steps {
         "Next steps, in this order: 1. Set your display name and icon now with thread_join. 2. Keep watching the thread with thread_inbox (wait_ms 25000) in a loop, so you receive what people in the Space send you; answer each task with thread_post and reply_to its seq. 3. Reply with thread_post as yourself (pass the member credential from thread_join_redeem as `_member` on each call, so it posts as the agent and not as the person who signed in) and never @mention yourself, because a message that @mentions you gives you a task. 4. If you cannot loop (a CLI session that only runs when someone prompts it), say so in your first post and stay reachable the supported way: a scheduled poll that runs thread_inbox, or a wake hook."
     };
 }
+
+/// How an agent does work that takes a long time, in plain words. One text
+/// for the agent bridge, the join line and the bundled skill, so every way an
+/// agent learns about `space_job` teaches the same steps.
+macro_rules! long_work_steps {
+    () => {
+        "Long work (a build, a test suite, a wait on CI): never sit inside one call. Start it with space_job (action start, notify true, a name of a few words), post one line in the thread saying what you started, then end your turn. When it ends the thread gets `JOB <id> <state> exit=<n> ...` with the end of the log, and you receive it as your next task; read more with space_job logs (offset: the next_offset you were given). If you cannot be woken, poll with space_job logs and follow_ms instead of sleeping in space_bash."
+    };
+}
+
+/// [`long_work_steps!`] as a constant.
+pub const LONG_WORK_STEPS: &str = long_work_steps!();
+
+/// How agents that share work coordinate through a Space's thread, in plain
+/// words (the same text as [`LONG_WORK_STEPS`]: bridge, join line, skill).
+macro_rules! coordination_steps {
+    () => {
+        "Working with other agents (a parent Space and its child Spaces, or any agents in one Space): 1. Before you start, thread_read and note what others have claimed. 2. Post `CLAIM <what> | files: <paths or branch> | until: <when>` for what you will change. Do not edit files or branches another agent's live CLAIM covers: @mention the owner and wait for the reply. 3. A claim is live until its `until` passes or its owner posts DONE or RELEASE; once it has expired you may take it, and you say so in the thread. 4. Report with one structured line: `DONE <what> | <result> | next: <step>` or `BLOCKED <what> | needs: <thing> | from @who`. 5. Keep messages short, one @mention per request, and never your own name."
+    };
+}
+
+/// [`coordination_steps!`] as a constant.
+pub const COORDINATION_STEPS: &str = coordination_steps!();
 
 /// [`join_next_steps!`] as a constant.
 pub const JOIN_NEXT_STEPS: &str = join_next_steps!();
@@ -797,6 +822,42 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::CreateSpace>(),
         Spec {
             category: Category::Lifecycle,
+            result: "JSON: `settings` (preset, lists), `summary`, `widenings` (what it opens beyond internet), `enforcement` (`enforced`, `no_network`, `open`, `refused`), `point`, `note`, `parent`, `root`, `always_blocked`, `notice_pending`.",
+            errors: &["invalid_argument", "not_found"],
+            instructions: "Shows a Space's network: its preset (`internet` by default: the internet and its own tree, with this computer, the local network, cloud metadata and other trees blocked), what it opens beyond that, where the rules are enforced (outside the guest), or why it has no network (a runtime that can't protect it yet starts it without network), and what is always blocked. When a connection fails, check here before retrying: a blocked destination stays blocked.",
+            capabilities: &["space.network.read"],
+            annotations: Annotations::reading(),
+            sdk_symbol: "Spaces.network(space)",
+            rust_symbol: "Spaces::network_info",
+            ..Spec::new("network_show", "Show a Space's network: preset, what it opens, where it is enforced, what is always blocked.")
+        }
+        .with::<i::SpaceOnly>(),
+        Spec {
+            category: Category::Lifecycle,
+            result: "JSON array, most recent first: `reason` (`platform:metadata`, `default:host-loopback`, `default:lan`, `user:deny`, `default:none`, ...), `dst`, `proto`, `count`, `last_unix`.",
+            errors: &["wrong_provider", "not_found", "sandbox"],
+            instructions: "Lists what a Space on this computer tried to reach and its network blocked. When a connection from a Space fails or hangs, call this: if the destination is here, it is blocked on purpose (this computer, the local network, cloud metadata or another tree), and retrying won't help. Tell the user what was blocked in plain words; changing it is theirs to do.",
+            capabilities: &["space.network.read"],
+            annotations: Annotations::reading(),
+            sdk_symbol: "Spaces.network_log(space)",
+            rust_symbol: "Spaces::network_events",
+            ..Spec::new("network_log", "List what a Space tried to reach and its network blocked.")
+        }
+        .with::<i::SpaceOnly>(),
+        Spec {
+            category: Category::Lifecycle,
+            result: "JSON: `applied` (`now` or `next_start`) and `network` (as network_show).",
+            errors: &["invalid_argument", "wrong_provider", "not_found", "sandbox"],
+            instructions: "Changes a Space's network to `internet`, `none`, or `custom` (from internet) / `custom:none` with `allow` and `deny` (addresses or CIDRs). It can only tighten: anything that opens more than the Space has now (this computer's localhost, the local network, No protection, an allow beyond its preset) is refused; the user does that with `cua network set` or the app. A child stays within its parent's. tree=true gives its children the same settings. Applies at once where the runtime can, else at the Space's next start (`applied`).",
+            capabilities: &["space.network.write"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.set_network(space, settings, widen, tree)",
+            rust_symbol: "Spaces::set_network",
+            ..Spec::new("network_set", "Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do.")
+        }
+        .with::<i::NetworkSet>(),
+        Spec {
+            category: Category::Lifecycle,
             result: "Text: what was deleted (`Deleted <id> (...)`), or `Removed <id> (...)` for a Space added by address.",
             errors: &["sandbox"],
             instructions: "Deletes the sandbox of a Space that create_space made (cloud: metering stops; local: the instance is deleted; on one of your computers, on=\"host:...\": that computer deletes it and it leaves the relay) and forgets it. A Space in your cloud (list_spaces: cloud, cloud_place, cloud_delete) is deleted permanently through the records of the device that created it: cloud_delete \"here\" deletes it from this device; \"host:<computer>\" asks that host (it must be online, and only its owner may); \"elsewhere\" is refused with where it was created: delete it there, or remove_space. Another Space added by address (direct:, relay:) is only forgotten: cua did not create it. Any hotspot on the Space is stopped first. To forget a Space without deleting anything, use remove_space.",
@@ -857,6 +918,19 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("space_bash", "Run a shell command inside the Space.")
         }
         .with::<i::SpaceBash>(),
+        Spec {
+            category: Category::CommandsAndFiles,
+            result: "JSON. `start`: `job`, `state`, `log_command` and a `hint`. `status`, `logs`: `job`, `name`, `state` (`running`, `exited`, `cancelled`, `timed_out` or `lost`), `exit_code`, `signal`, `started_at` and `ended_at` (unix seconds), `elapsed_s`, `size` (log bytes), and for `logs` `offset`, `next_offset`, `text` and `more`. `cancel`: the final status. `list`: `jobs`.",
+            errors: &["not_found", "wrong_provider"],
+            instructions: SPACE_JOB_INSTRUCTIONS,
+            capabilities: &["space.exec", "space.exec.shell", "space.exec.jobs"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "Space.job(_:)",
+            rust_symbol: "Space::job",
+            notes: &["A job is a command that outlives the call, the connection and a restart of the Space's daemon; its state is files in the Space (`~/.cua/jobs/<id>`). Guests that are not Windows."],
+            ..Spec::new("space_job", "Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends.")
+        }
+        .with::<i::SpaceJob>(),
         Spec {
             category: Category::CommandsAndFiles,
             result: "Text: `wrote <path> (<n> bytes, sha256 <hex> verified in Space)`.",
@@ -1021,6 +1095,18 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("call_tool", "Call a service tool inside the Space.")
         }
         .with::<i::CallTool>(),
+        Spec {
+            category: Category::Services,
+            result: "JSON: `add`, `start`, `stop` and `restart` give the service (`name`, `command`, `state`, `pid`, `restarts`, `last_end`, `probe_error`, `restart`, `start_on_boot`, `log_path`); `list` gives `services`; `logs` gives `logs` (text); `remove` gives `removed`.",
+            errors: &["capability_missing", "invalid_argument", "not_found"],
+            instructions: "Keeps a command running in the Space: cua-spacesd starts it at once, starts it again by its `restart` policy when it ends (waiting longer after each quick failure, up to a minute), restarts it when its health check (`http`, `tcp` or `check`, one of them) fails 3 times in a row, starts it when the Space boots unless start_on_boot is false, and keeps its output in a log file in the Space (`logs`). `stop` keeps it stopped, across a reboot too, until `start`. `add` with a name that exists replaces it.",
+            capabilities: &["space.services.keep"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "space.keepRunning.service(_:)",
+            rust_symbol: "Space::keep_service",
+            ..Spec::new("space_service", "Keep a command running in the Space: restarts, health checks, start on boot, logs.")
+        }
+        .with::<i::SpaceService>(),
         // --- Agents ------------------------------------------------------------
         Spec {
             category: Category::Agents,
@@ -1114,6 +1200,28 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("agent_capabilities", "Report what the agent harnesses support.")
         }
         .with::<i::AgentCapabilities>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).",
+            errors: &["permission_denied"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user (never a relay caller or a Space's agent). Reads the coding agents' own stores on this computer read-only (Claude Code's projects folder, Codex's sessions, Hermes's state.db) and returns only each chat's title, folder and time; nothing is kept or sent anywhere. A store that is missing or unreadable adds nothing.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_threads\")",
+            rust_symbol: "cua_agent_threads::recent",
+            ..Spec::new("agent_threads", "List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreads>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `thread` (as in `agent_threads`), `messages` (oldest first, each `key`, `role` (`person` or `agent`), `text` (cut to 8 KiB), `ts_ms`, and `cut` when cut) and `earlier_omitted` (older messages left out).",
+            errors: &["permission_denied", "not_found", "invalid_argument"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user. Reads one chat from the agent's own store, read-only: what the person typed and the agent's replies, without tool calls, tool output, thinking or the agent's own injected instructions. Call it once the person picked the chat; continue it with agent_start's `resume_session`.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_thread_read\")",
+            rust_symbol: "cua_agent_threads::history",
+            ..Spec::new("agent_thread_read", "Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreadRead>(),
         // --- Persistent agents ----------------------------------------------------
         Spec {
             category: Category::PersistentAgents,
@@ -1529,7 +1637,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Hotspot,
             result: "JSON: the hotspot (`space`, `state`, `hotspot_id`, `socks_address`, `active_connections`, `bytes_out`, `bytes_in`, `served_here`).",
-            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. Runs until hotspot_stop, delete_space, or this server exiting.",
+            instructions: "Starts the Space's reverse-SOCKS hotspot (TunnelService.StartHotspot) and serves its egress from this computer, so the Space browses as this computer. With Secure Spaces on, only after the user says yes: pass confirm=true, and without it the call is refused; the Space's own network rules apply first (the internet only unless they allow more), and its system proxy is left alone unless set_system_proxy is true (apps use the hotspot through the returned socks_address). Runs until hotspot_stop, delete_space, or this server exiting.",
             capabilities: &["hotspot.control"],
             requires: &["hotspot"],
             annotations: Annotations::mutating(),
@@ -2173,7 +2281,7 @@ pub fn canonical(name: &str) -> &str {
 /// Tools only a person may call: no MCP server lists or runs them for an
 /// agent (the apps, the CLI and the SDK call them through the daemon).
 /// Their capabilities are never granted to an agent.
-pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve"];
+pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve", "agent_threads", "agent_thread_read"];
 
 /// Whether `name` is a tool only a person may call ([`PERSON_ONLY_TOOLS`]).
 pub fn person_only(name: &str) -> bool {
@@ -2215,6 +2323,22 @@ pub fn manifest_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persistent_agent_create_carries_brief_and_standby() {
+        let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
+            "agent": "claude-code", "name": "ada", "space": "s",
+            "brief": "standing", "standby": true
+        }))
+        .unwrap();
+        assert_eq!(m.brief.as_deref(), Some("standing"));
+        assert_eq!(m.standby, Some(true));
+        let manifest = manifest_json();
+        let tool = manifest
+            .find("\"standby\"")
+            .expect("standby is in the manifest");
+        assert!(manifest[tool..].contains("\"brief\"") || manifest.contains("\"brief\""));
+    }
 
     #[test]
     fn former_tool_names_resolve_but_are_not_published() {
@@ -2264,7 +2388,55 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 114);
+        assert_eq!(tools().len(), 121);
+    }
+
+    #[test]
+    fn the_agent_texts_teach_the_structure_not_a_task() {
+        for word in [
+            "CLAIM",
+            "files:",
+            "until",
+            "DONE",
+            "BLOCKED",
+            "RELEASE",
+            "thread_read",
+        ] {
+            assert!(COORDINATION_STEPS.contains(word), "coordination: {word}");
+        }
+        for word in [
+            "space_job",
+            "notify true",
+            "JOB <id>",
+            "next_offset",
+            "end your turn",
+        ] {
+            assert!(LONG_WORK_STEPS.contains(word), "long work: {word}");
+        }
+        // The bundled skill carries the same words as the bridge and the join result.
+        let skill = include_str!("../../../skills/cua-spaces/SKILL.md");
+        assert!(
+            skill.contains(COORDINATION_STEPS),
+            "SKILL.md drifted from COORDINATION_STEPS"
+        );
+        assert!(
+            skill.contains(LONG_WORK_STEPS),
+            "SKILL.md drifted from LONG_WORK_STEPS"
+        );
+        // Examples are examples: no text names a tool chain or a project.
+        for text in [COORDINATION_STEPS, LONG_WORK_STEPS] {
+            for fixed in [
+                "cargo",
+                "npm",
+                "pytest",
+                "make ",
+                "gradle",
+                "pnpm",
+                "xcodebuild",
+            ] {
+                assert!(!text.contains(fixed), "{fixed} is a task, not the protocol");
+            }
+        }
     }
 
     #[test]
@@ -2273,7 +2445,6 @@ mod tests {
             let t = tool(name).unwrap_or_else(|| panic!("{name} is not a contract tool"));
             assert!(person_only(name));
             assert!(t.instructions.contains("Only for a person"), "{name}");
-            assert!(!t.annotations.read_only, "{name}");
         }
         assert!(!person_only("cloud_connect"));
     }

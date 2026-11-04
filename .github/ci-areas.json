@@ -2,26 +2,16 @@
  "shared": [
   ".github/**",
   "*",
-  "**/Cargo.lock",
-  "**/rust-toolchain.toml",
-  "**/pnpm-lock.yaml",
-  "**/pnpm-workspace.yaml",
-  "**/package-lock.json",
   "**/uv.lock",
-  "libs/cua/Cargo.toml",
-  "libs/cua-driver/rust/Cargo.toml",
-  "libs/cua-spacesd/Cargo.toml",
-  "libs/cua-driver/rust/.cargo/**",
-  "libs/cua/.cargo/**",
-  "libs/cua/proto/**",
-  "libs/cua/crates/cua-proto/**",
-  "libs/cua-driver/rust/crates/cua-driver-core/**",
-  "libs/cua-driver/rust/crates/cua-driver-contract/**",
-  "libs/cua/crates/cua-sandbox-core/**",
   "scripts/ci/**",
   "flake.nix",
   "nix/**"
  ],
+ "inputs": {
+  "libs/cua/proto/**": [
+   "libs/cua/crates/cua-proto"
+  ]
+ },
  "areas": {
   "relay": {
    "paths": [
@@ -252,11 +242,25 @@
     "license-check.yml"
    ]
   },
-  "spaces-macos": {
+  "spaces-mobile": {
    "paths": [
-    "apps/cua-spaces-macos/**"
+    "apps/cua-spaces-mobile/**"
    ],
    "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-lockfiles.yml",
+    "ci-spdx-headers.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-macos": {
+   "paths": [
+    "apps/cua-spaces-macos/**",
+    "libs/spaces-app-swift/**",
+    "libs/spaces-notch-swift/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
     "ci-cua-spaces-macos.yml",
     "ci-cua-spaces-web.yml",
@@ -361,7 +365,8 @@
   "docs": {
    "paths": [
     "docs/**",
-    "skills/**"
+    "skills/**",
+    "scripts/docs-generators/**"
    ],
    "workflows": [
     "ci-check-docs-image-refs.yml",

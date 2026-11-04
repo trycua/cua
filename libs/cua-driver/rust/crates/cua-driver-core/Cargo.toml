@@ -46,6 +46,7 @@ futures-util = "0.3"
 uuid = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
+indexmap = "2"
 url = "2.5"
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }
@@ -79,3 +80,11 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+# `fast_path_standalone` lets the std-only fast_path checks compile alone
+# with `rustc --test` (no workspace build needed); see fast_path/mod.rs.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fast_path_standalone)"] }

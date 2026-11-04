@@ -27,7 +27,10 @@ use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::assertion::{TrustedKeys, JWKS_HEADER, OWNER_HEADER};
-use crate::{mux, ws::WsIo, CONNECT_PATH, HEARTBEAT_BYTE, MACHINE_ID_HEADER, VERSION_HEADER};
+use crate::{
+    mux, ws::WsIo, CONNECT_PATH, HEARTBEAT_BYTE, MACHINE_ID_HEADER, PHONE_SUPPORT_HEADER,
+    VERSION_HEADER,
+};
 
 /// What the relay told the machine about its account registration: the
 /// keys that sign principal assertions and the owning account. Empty for
@@ -97,6 +100,10 @@ pub struct JoinConfig {
     pub relay_token_file: Option<PathBuf>,
     /// Account registration details learned on the handshake.
     pub account: Arc<AccountLink>,
+    /// Tell the relay this machine serves phones (it enforces the phone class on
+    /// every call). A build that does not must say `false`: the relay then sends
+    /// it nothing of a phone's.
+    pub phone_support: bool,
 }
 
 impl JoinConfig {
@@ -118,6 +125,7 @@ impl JoinConfig {
             reconnect_spread: Duration::from_secs(5),
             relay_token_file: None,
             account: Arc::default(),
+            phone_support: true,
         }
     }
 }
@@ -268,6 +276,10 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
             headers.insert(http::header::AUTHORIZATION, auth);
             headers.insert(MACHINE_ID_HEADER, id);
             headers.insert(VERSION_HEADER, version);
+            // This build knows the phone class (the machine side enforces it).
+            if config.phone_support {
+                headers.insert(PHONE_SUPPORT_HEADER, http::HeaderValue::from_static("1"));
+            }
         }
         _ => return SessionEnd::Refused("invalid header value".into()),
     }

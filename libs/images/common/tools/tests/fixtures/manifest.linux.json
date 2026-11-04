@@ -93,6 +93,10 @@
   "features_not_applicable": [],
   "features_optional": [
     "hotspot",
+    "spawn",
+    "exit",
+    "host_ports",
+    "process.services",
     "relay_attach",
     "h264_hw",
     "audio.per_app",

@@ -93,12 +93,12 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    // Get _NET_CLIENT_LIST_STACKING (or fallback to _NET_CLIENT_LIST).
+    // Prefer _NET_CLIENT_LIST_STACKING; an unordered client list reports null z_index.
     let (windows, source) = get_window_list(&conn, root)?;
 
     let owners = OwnerResolver::new(&conn);
     let mut result = Vec::new();
-    for (z_index, xid) in windows.into_iter().enumerate() {
+    for xid in windows {
         let pid = owners.owner_pid(xid);
         if let Some(fp) = filter_pid {
             if pid != Some(fp) {
@@ -137,9 +137,10 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             app_name,
             title,
             is_on_screen,
-            // EWMH stacking lists are bottom-to-top, so the enumeration index
-            // already follows the shared "higher z_index is frontmost" contract.
-            z_index: Some(z_index),
+            // Stacking sources are bottom-to-top, so the position among the
+            // listed windows follows the shared "higher z_index is frontmost"
+            // contract and stays contiguous after filtering.
+            z_index: source.is_stacked().then_some(result.len()),
             x,
             y,
             width: w,
@@ -152,8 +153,17 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowSource {
+    /// Managed clients in bottom-to-top stacking order.
     ClientList,
+    /// `_NET_CLIENT_LIST`: managed clients in mapping order, not stacking order.
+    UnorderedClientList,
     RootChildren,
+}
+
+impl WindowSource {
+    fn is_stacked(self) -> bool {
+        self != WindowSource::UnorderedClientList
+    }
 }
 
 /// A window the window manager manages is listed even without a title: GTK
@@ -162,7 +172,7 @@ pub(crate) enum WindowSource {
 /// title is the only hint that a mapped root child is an application window
 /// rather than a popup or tooltip.
 fn window_is_listable(source: WindowSource, title: &str) -> bool {
-    source == WindowSource::ClientList || !title.trim().is_empty()
+    source != WindowSource::RootChildren || !title.trim().is_empty()
 }
 
 pub(crate) fn get_window_list(
@@ -170,8 +180,11 @@ pub(crate) fn get_window_list(
     root: Window,
 ) -> Result<(Vec<Window>, WindowSource)> {
     let mut ewmh = false;
-    let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
-    for name in &atom_names {
+    let atoms = [
+        ("_NET_CLIENT_LIST_STACKING", WindowSource::ClientList),
+        ("_NET_CLIENT_LIST", WindowSource::UnorderedClientList),
+    ];
+    for (name, source) in atoms {
         if let Ok(atom) = get_atom(conn, name) {
             if let Ok(reply) = conn
                 .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
@@ -183,7 +196,7 @@ pub(crate) fn get_window_list(
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
                 if client_list_property(reply.type_, windows.as_slice()).is_some() {
-                    return Ok((windows, WindowSource::ClientList));
+                    return Ok((windows, source));
                 }
             }
         }
@@ -355,6 +368,7 @@ pub fn set_window_frame(
 
     let requested = (x, y, width, height);
     let mut observed = None;
+    let deadline = crate::interaction::operation_deadline(std::time::Duration::from_millis(320));
     for _ in 0..8 {
         observed = list_windows(Some(pid))
             .into_iter()
@@ -365,7 +379,13 @@ pub fn set_window_frame(
         {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(
+            std::time::Duration::from_millis(40)
+                .min(deadline.saturating_duration_since(std::time::Instant::now())),
+        );
     }
     let confirmed = observed
         .as_ref()
@@ -949,11 +969,19 @@ mod tests {
     fn untitled_windows_are_listed_only_when_the_window_manager_manages_them() {
         assert!(window_is_listable(WindowSource::ClientList, ""));
         assert!(window_is_listable(WindowSource::ClientList, "Save Changes"));
+        assert!(window_is_listable(WindowSource::UnorderedClientList, ""));
         assert!(window_is_listable(
             WindowSource::RootChildren,
             "Save Changes"
         ));
         assert!(!window_is_listable(WindowSource::RootChildren, " "));
+    }
+
+    #[test]
+    fn only_the_unordered_client_list_lacks_stacking_order() {
+        assert!(WindowSource::ClientList.is_stacked());
+        assert!(WindowSource::RootChildren.is_stacked());
+        assert!(!WindowSource::UnorderedClientList.is_stacked());
     }
 
     #[test]

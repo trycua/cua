@@ -2169,17 +2169,123 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
     core::resources::warning_view(&core_of(&warning))
 }
 
-/// Reads the settings file (defaults when missing or damaged).
+/// Reads the settings file (defaults when missing or damaged). The
+/// experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+/// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
-    core::settings::load(std::path::Path::new(&path))
+    let mut settings = core::settings::load(std::path::Path::new(&path));
+    settings.experiments = sync_experiments_from_home(settings.experiments, &cua_home::cua_home());
+    settings
 }
 
-/// Writes the settings file.
+/// The experiments the daemon enforces ([`cua_spaces::experiments::Gate`])
+/// of `experiments`, with the switches `home` keeps laid over them: what
+/// `cua experiments enable` set wins over what the app's file remembers.
+fn sync_experiments_from_home(
+    mut experiments: AppExperiments,
+    home: &std::path::Path,
+) -> AppExperiments {
+    use cua_spaces::experiments::{Gate, switch};
+    if let Some(on) = switch(home, Gate::SecureSpaces) {
+        experiments.secure_spaces = on;
+    }
+    if let Some(on) = switch(home, Gate::ChildSpaces) {
+        experiments.child_spaces = on;
+    }
+    if let Some(on) = switch(home, Gate::AskFirst) {
+        experiments.ask_first = on;
+    }
+    if let Some(on) = switch(home, Gate::CiRunners) {
+        experiments.ci_runners = on;
+    }
+    if let Some(on) = switch(home, Gate::TcpShares) {
+        experiments.tcp_shares = on;
+    }
+    if let Some(on) = switch(home, Gate::Mobile) {
+        experiments.mobile = on;
+    }
+    if let Some(on) = switch(home, Gate::WarmPools) {
+        experiments.warm_pools = on;
+    }
+    experiments
+}
+
+/// Keeps the daemon's experiments of `experiments` in `home` (only a change
+/// is written).
+fn sync_experiments_to_home(
+    experiments: &AppExperiments,
+    home: &std::path::Path,
+) -> std::io::Result<()> {
+    use cua_spaces::experiments::{Gate, set_switch};
+    set_switch(home, Gate::SecureSpaces, experiments.secure_spaces)?;
+    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
+    set_switch(home, Gate::AskFirst, experiments.ask_first)?;
+    set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
+    set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
+    set_switch(home, Gate::Mobile, experiments.mobile)?;
+    set_switch(home, Gate::WarmPools, experiments.warm_pools)
+}
+
+/// Writes the settings file, and keeps the experiments the daemon enforces
+/// where it reads them (the cua home).
 #[uniffi::export]
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
-        .map_err(|e| CuaError::Internal(e.to_string()))
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    sync_experiments_to_home(&settings.experiments, &cua_home::cua_home())
+        .map_err(|e| CuaError::Internal(format!("keep the experiment switches: {e}")))
+}
+
+#[cfg(test)]
+mod experiment_sync_tests {
+    use super::*;
+
+    #[test]
+    fn the_daemon_switches_follow_the_cua_home_both_ways() {
+        let home = tempfile::tempdir().unwrap();
+        // Nothing kept: the app's own file decides.
+        let mine = AppExperiments {
+            child_spaces: true,
+            ci_runners: true,
+            ..Default::default()
+        };
+        assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
+        // What `cua experiments enable` set wins.
+        cua_spaces::experiments::set_switch(
+            home.path(),
+            cua_spaces::experiments::Gate::SecureSpaces,
+            true,
+        )
+        .unwrap();
+        let seen = sync_experiments_from_home(mine, home.path());
+        assert!(seen.secure_spaces && seen.child_spaces && seen.ci_runners);
+        // The app's switches land in the home for the daemon.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert_eq!(
+            cua_spaces::experiments::switch(
+                home.path(),
+                cua_spaces::experiments::Gate::ChildSpaces
+            ),
+            Some(true)
+        );
+        // Only the daemon's experiments are kept there.
+        let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.iter().all(|n| n == "secure-spaces"
+                || n == "child-spaces"
+                || n == "ask-first"
+                || n == "ci-runners"
+                || n == "tcp-shares"
+                || n == "mobile"
+                || n == "warm-pools"),
+            "{kept:?}"
+        );
+    }
 }
 
 /// The settings with the New UI as a launch of `version` shows it: the

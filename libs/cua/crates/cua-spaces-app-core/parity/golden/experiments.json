@@ -23,7 +23,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -41,14 +41,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -95,7 +95,21 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
       "wizard": {
@@ -141,7 +155,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -159,14 +173,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -233,7 +247,21 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -279,7 +307,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -297,14 +325,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -370,7 +398,21 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -413,7 +455,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -431,14 +473,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -491,7 +533,21 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -534,7 +590,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -552,14 +608,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -612,7 +668,21 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -655,7 +725,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces, agents and Cua Volume available after a restart.",
@@ -673,14 +743,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[x] Cua Volume ~Shared folder: files your agents can share across your machines. In Finder. (optional)"
+            "[x] Cua Volume ~Shared folder: files your agents can share across your computers. In Finder. (optional)"
           ],
           "usage": null
         },
@@ -733,7 +803,21 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -775,7 +859,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -793,14 +877,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -859,7 +943,21 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
       "wizard": {
@@ -901,7 +999,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -919,14 +1017,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -986,7 +1084,21 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
       "wizard": {
@@ -1030,7 +1142,7 @@
           "canBack": true,
           "canSkip": false,
           "choices": [],
-          "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+          "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
           "drive": null,
           "driveStorage": null,
           "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -1048,14 +1160,14 @@
           "step": "done",
           "summary": [
             "Shows in: Notch and menu bar",
-            "This machine: Opens your other machines"
+            "This computer: Opens your other computers"
           ],
           "title": "Almost done",
           "todos": [
             "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-            "[ ] Account ~Reach your machines from any machine. -> Sign in",
+            "[ ] Account ~Reach your computers from any computer. -> Sign in",
             "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-            "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+            "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
           ],
           "usage": null
         },
@@ -1114,7 +1226,21 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
+        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
+        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+        "- experiment:ci_runners toggle: CI runners {On|*Off}",
+        "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
+        "- experiment:tcp_shares toggle: Public TCP shares {On|*Off}",
+        "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
+        "- experiment:mobile toggle: Phone app {On|*Off}",
+        "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
+        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
       "wizard": {

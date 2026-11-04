@@ -72,6 +72,10 @@ pub struct Harness {
     pub sandbox_mcp: bool,
     /// Supported by the SDK: installed, driven and proven live.
     pub ready: bool,
+    /// Environment that lets the agent open a session without a real
+    /// credential (a value no model ever sees): what a warm-up session and a
+    /// measurement of start times run with. Empty: the first of `keys`.
+    pub placeholder: &'static [(&'static str, &'static str)],
     /// What is known not to work, published with its capabilities.
     pub notes: &'static [&'static str],
 }
@@ -97,6 +101,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("claude-code"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[("ANTHROPIC_API_KEY", "placeholder-not-a-key")],
         notes: &[],
     },
     Harness {
@@ -117,6 +122,10 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("codex"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[(
+            "CODEX_AUTH_JSON",
+            r#"{"OPENAI_API_KEY":"placeholder-not-a-key"}"#,
+        )],
         notes: &[],
     },
     Harness {
@@ -133,6 +142,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("gemini-cli"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[
             "Google stopped serving free Gemini CLI accounts on 2026-06-18; use a paid API key",
         ],
@@ -151,6 +161,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("antigravity"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[
             "runs Google's ACP server (the IDE's agent) headless; there is no interactive terminal CLI",
             "the server is proprietary and about 1 GB; its sha256 is pinned by cua (Google publishes none)",
@@ -173,6 +184,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("opencode"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[("OPENAI_API_KEY", "placeholder-not-a-key")],
         notes: &[],
     },
     Harness {
@@ -192,6 +204,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("goose"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[],
     },
     Harness {
@@ -211,6 +224,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("pi"),
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[],
         notes: &[
             "Pi has no MCP client (by design); MCP servers passed to a run are ignored",
             "driven through the community pi-acp adapter (MIT), not a first-party ACP server",
@@ -238,6 +252,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: None,
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[("OPENROUTER_API_KEY", "placeholder-not-a-key")],
         notes: &[
             "hermes-acp does not take ACP session MCP servers; configure MCP in HERMES_HOME's config.yaml",
             "installed from a pinned commit with uv sync --frozen (Hermes ships no wheel); needs git and Python 3.11 to 3.13 or uv's managed Python",
@@ -261,6 +276,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("openclaw"),
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[],
         notes: &[
             "openclaw acp (bridge mode) refuses per-session MCP servers; configure MCP on the OpenClaw gateway",
             "openclaw acp bridges to a Gateway; the run starts a loopback Gateway for itself",
@@ -285,6 +301,25 @@ impl Harness {
 
 /// Short names people and apps use for a harness, and the id they mean.
 const ALIASES: &[(&str, &str)] = &[("codex", "openai-codex"), ("claude", "claude-code")];
+
+impl Harness {
+    /// The environment a session of this harness opens with when no real
+    /// credential is available (see [`Harness::placeholder`]).
+    pub fn placeholder_env(&self) -> std::collections::BTreeMap<String, String> {
+        if self.placeholder.is_empty() {
+            return self
+                .keys
+                .first()
+                .map(|k| ((*k).to_string(), "placeholder-not-a-key".to_string()))
+                .into_iter()
+                .collect();
+        }
+        self.placeholder
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+}
 
 /// A harness by id (or by one of its short names: `codex`, `claude`).
 pub fn harness(id: &str) -> Option<&'static Harness> {
@@ -425,10 +460,10 @@ impl Harness {
 pub fn key_check(
     h: &Harness,
     env: &BTreeMap<String, String>,
-    custom_endpoint: bool,
+    endpoint: Option<&Endpoint>,
 ) -> Option<Value> {
-    if custom_endpoint {
-        return None;
+    if let Some(e) = endpoint {
+        return endpoint_key_check(h, env, e);
     }
     let (provider, url, candidates, skip_env, skip_file): (&str, &str, &[&str], &[&str], &[&str]) =
         match h.id {
@@ -477,6 +512,30 @@ pub fn key_check(
         "headers": headers,
         "skipIfEnv": skip_env,
         "skipIfFile": skip_file,
+    }))
+}
+
+/// The key check for a custom endpoint (`--base-url`): the same one read-only
+/// request, sent to the gateway instead of the provider. Only Claude Code on
+/// the Anthropic wire has a models list we can name; a gateway answers 401 in
+/// its own error shape, so any 401 with a JSON error counts (`anyAuthError`).
+fn endpoint_key_check(h: &Harness, env: &BTreeMap<String, String>, e: &Endpoint) -> Option<Value> {
+    if h.id != "claude-code" || e.wire.is_some_and(|w| w != Wire::Anthropic) {
+        return None;
+    }
+    let key = "ANTHROPIC_API_KEY";
+    if env.get(key).is_none_or(String::is_empty) {
+        return None;
+    }
+    let base = trim_v1(e.base_url.trim_end_matches('/'));
+    Some(json!({
+        "provider": "The model endpoint",
+        "url": format!("{base}/v1/models?limit=1"),
+        "keyEnv": key,
+        "headers": {"x-api-key": format!("${{{key}}}"), "anthropic-version": "2023-06-01"},
+        "skipIfEnv": [],
+        "skipIfFile": [],
+        "anyAuthError": true,
     }))
 }
 
@@ -568,13 +627,36 @@ pub fn memory_dir(h: &Harness) -> Option<&'static str> {
 /// (an explicit `home_dir`) keeps it in its own `.codex-sqlite` sibling.
 pub fn codex_sqlite_dir(home: &str) -> String {
     let home = home.trim_end_matches('/');
-    let marker = "/cua-volume/agents/";
-    match home.rsplit_once(marker) {
-        Some((guest_home, name)) if !name.contains('/') && !name.is_empty() => {
-            format!("{guest_home}/.cua/agents/codex-state/{name}")
+    // `cua-volume` in a Space; on a Mac the Volume is mounted at
+    // `~/Cua Volume`.
+    for marker in ["/cua-volume/agents/", "/Cua Volume/agents/"] {
+        if let Some((guest_home, name)) = home.rsplit_once(marker)
+            && !name.contains('/')
+            && !name.is_empty()
+        {
+            return format!("{guest_home}/.cua/agents/codex-state/{name}");
         }
-        _ => format!("{home}.codex-sqlite"),
     }
+    format!("{home}.codex-sqlite")
+}
+
+/// Where Codex's own home (`CODEX_HOME`) lives for the agent whose home is
+/// `home`, and whether that is guest-local disk.
+///
+/// In a Space it is the home's `codex/` on the Volume. A Mac's Volume is an
+/// NFS mount that cannot make symlinks, and Codex needs them (its sign-in
+/// link, `tmp/arg0`), so there `CODEX_HOME` is guest-local
+/// (`~/.cua/agents/codex-home/<name>`) and only its `memories/` is a link
+/// into the Volume's `codex/memories`.
+pub fn codex_home_dir(home: &str) -> (String, bool) {
+    let trimmed = home.trim_end_matches('/');
+    if let Some((guest_home, name)) = trimmed.rsplit_once("/Cua Volume/agents/")
+        && !name.contains('/')
+        && !name.is_empty()
+    {
+        return (format!("{guest_home}/.cua/agents/codex-home/{name}"), true);
+    }
+    (format!("{trimmed}/codex"), false)
 }
 
 /// [`launch`] for a persistent agent whose home is the guest directory
@@ -661,7 +743,7 @@ pub fn launch_with_config(
             // on; without one, a run-local CODEX_HOME holds only the provider
             // override.
             let codex_home = match home {
-                Some(h) => Some(format!("{h}/codex")),
+                Some(h) => Some(codex_home_dir(h).0),
                 None => base.as_ref().map(|_| format!("{run_dir}/codex-home")),
             };
             let mut toml = String::new();
@@ -695,6 +777,23 @@ pub fn launch_with_config(
                 env(&mut l, "CODEX_SQLITE_HOME", dir);
             }
             if let Some(dir) = codex_home {
+                if let Some((volume_codex, local)) = home.map(|h| {
+                    (
+                        format!("{}/codex", h.trim_end_matches('/')),
+                        codex_home_dir(h).1,
+                    )
+                }) && local
+                {
+                    // Memories stay on the Volume: a link from guest-local
+                    // disk to the Volume's folder (the link is local, so it
+                    // works where the Volume cannot make links).
+                    let mem = crate::quote(&format!("{volume_codex}/memories"));
+                    let link = crate::quote(&format!("{dir}/memories"));
+                    l.prelude.push(format!(
+                        "mkdir -p {d} {mem} && ln -sfn {mem} {link}",
+                        d = crate::quote(&dir)
+                    ));
+                }
                 let rel = match home {
                     Some(_) => format!("{dir}/config.toml"),
                     None => "codex-home/config.toml".into(),
@@ -1073,6 +1172,49 @@ mod tests {
             codex_sqlite_dir("/srv/agents/ada"),
             "/srv/agents/ada.codex-sqlite"
         );
+        // CODEX_HOME stays on the Volume in a Space; on a Mac it is
+        // guest-local, with memories linked to the Volume.
+        assert_eq!(
+            codex_home_dir("/home/cua/cua-volume/agents/ada"),
+            ("/home/cua/cua-volume/agents/ada/codex".to_string(), false)
+        );
+        assert_eq!(
+            codex_home_dir("/Users/ada/Cua Volume/agents/codex-2"),
+            (
+                "/Users/ada/.cua/agents/codex-home/codex-2".to_string(),
+                true
+            )
+        );
+        let x = launch_with_home(
+            harness("openai-codex").unwrap(),
+            None,
+            None,
+            "/r",
+            "/w",
+            Some("/Users/ada/Cua Volume/agents/codex-2"),
+        )
+        .unwrap();
+        assert!(x.env.contains(&(
+            "CODEX_HOME".to_string(),
+            "/Users/ada/.cua/agents/codex-home/codex-2".to_string()
+        )));
+        assert_eq!(
+            x.files[0].rel,
+            "/Users/ada/.cua/agents/codex-home/codex-2/config.toml"
+        );
+        assert!(
+            x.prelude
+                .iter()
+                .any(|p| p.contains("ln -sfn")
+                    && p.contains("Cua Volume/agents/codex-2/codex/memories")),
+            "{:?}",
+            x.prelude
+        );
+        // On a Mac the Volume is mounted at `~/Cua Volume`.
+        assert_eq!(
+            codex_sqlite_dir("/Users/ada/Cua Volume/agents/codex"),
+            "/Users/ada/.cua/agents/codex-state/codex"
+        );
         // Not the home's own `codex/` (CODEX_HOME), which is on the Volume.
         let home = "/home/cua/cua-volume/agents/ada";
         assert!(!codex_sqlite_dir(home).starts_with(home));
@@ -1244,7 +1386,7 @@ mod tests {
     fn a_key_check_names_the_providers_models_list_and_holds_no_secret() {
         let secret = "sk-ant-test-0123456789abcdef";
         let claude = harness("claude-code").unwrap();
-        let c = key_check(claude, &env(&[("ANTHROPIC_API_KEY", secret)]), false).unwrap();
+        let c = key_check(claude, &env(&[("ANTHROPIC_API_KEY", secret)]), None).unwrap();
         assert_eq!(c["provider"], "Anthropic");
         assert_eq!(c["url"], "https://api.anthropic.com/v1/models?limit=1");
         assert_eq!(c["keyEnv"], "ANTHROPIC_API_KEY");
@@ -1262,7 +1404,7 @@ mod tests {
         let c = key_check(
             codex,
             &env(&[("CODEX_API_KEY", "sk-test-0123456789")]),
-            false,
+            None,
         )
         .unwrap();
         assert_eq!(c["provider"], "OpenAI");
@@ -1278,18 +1420,30 @@ mod tests {
         let claude = harness("claude-code").unwrap();
         let codex = harness("openai-codex").unwrap();
         // No key, or an empty one: the runner has nothing to ask about.
-        assert!(key_check(claude, &env(&[]), false).is_none());
-        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "")]), false).is_none());
-        // A custom endpoint takes the key, not the provider.
-        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "k")]), true).is_none());
+        assert!(key_check(claude, &env(&[]), None).is_none());
+        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "")]), None).is_none());
+        // A custom endpoint takes the key, not the provider: the check goes
+        // to the gateway, and only for Claude Code on the Anthropic wire.
+        let ep = |wire| Endpoint {
+            base_url: "http://gw:4000/v1".into(),
+            wire,
+            model: None,
+        };
+        let k = env(&[("ANTHROPIC_API_KEY", "k")]);
+        let c = key_check(claude, &k, Some(&ep(None))).unwrap();
+        assert_eq!(c["url"], "http://gw:4000/v1/models?limit=1");
+        assert_eq!(c["anyAuthError"], true);
+        assert_eq!(c["skipIfEnv"], json!([]));
+        assert!(key_check(claude, &k, Some(&ep(Some(Wire::Gemini)))).is_none());
+        assert!(key_check(codex, &k, Some(&ep(None))).is_none());
         // Claude Code reads other credentials too; only the API key is checked.
-        assert!(key_check(claude, &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "t")]), false).is_none());
+        assert!(key_check(claude, &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "t")]), None).is_none());
         // Two keys for one harness: cua cannot tell which one it uses.
         assert!(
             key_check(
                 codex,
                 &env(&[("OPENAI_API_KEY", "a"), ("CODEX_API_KEY", "b")]),
-                false
+                None
             )
             .is_none()
         );
@@ -1303,7 +1457,7 @@ mod tests {
                 .iter()
                 .map(|k| (k.to_string(), "k".to_string()))
                 .collect();
-            assert!(key_check(h, &all, false).is_none(), "{}", h.id);
+            assert!(key_check(h, &all, None).is_none(), "{}", h.id);
         }
     }
 
@@ -1390,5 +1544,15 @@ mod tests {
         )
         .unwrap();
         assert!(l.files.is_empty());
+    }
+
+    #[test]
+    fn every_ready_harness_has_a_placeholder_to_open_a_session_with() {
+        for h in HARNESSES.iter().filter(|h| h.ready) {
+            let env = h.placeholder_env();
+            assert!(!env.is_empty(), "{}", h.id);
+            // Never a real-looking secret.
+            assert!(env.values().all(|v| v.contains("placeholder")), "{}", h.id);
+        }
     }
 }

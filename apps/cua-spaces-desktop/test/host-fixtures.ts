@@ -337,7 +337,7 @@ export const HOST_METHODS = [
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
   "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.choose", "settings.update",
-  "onboarding.get", "onboarding.complete",
+  "onboarding.get", "onboarding.complete", "onboarding.reset",
 ];
 
 /** The page's operations over them (the shared adapter test leaves them to it too). */
@@ -348,5 +348,5 @@ export const HOST_OPS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding", "session.resetOnboarding",
 ];

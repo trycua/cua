@@ -3,24 +3,43 @@
 Cua Driver ships one built-in cursor theme: `cua.default`. It is the default on
 macOS, Windows, and Linux and cannot be removed. By default the agent cursor is
 a plain, upright arrow: a colored pointer with a white outline over a soft,
-cursor-shaped glow in the same session color. The arrow stands upright like the
-system pointer, with its left edge vertical, and keeps that pose while it moves.
+cursor-shaped glow in the same session color. At rest the arrow stands upright like the
+system pointer, with its left edge vertical. While it moves, its tip points
+along the path (`cursor.rotate`, `heading` by default), and it is upright again
+before it arrives.
 The glow softly fades to transparent around the full pointer silhouette, while
 the white outline preserves a crisp boundary on light, dark, and similarly
 colored backgrounds. The anonymous/default cursor uses Cua blue. Named sessions
 receive a stable fill from the built-in session palette, so concurrent agents
 remain visually distinct.
 
-A resting cursor levitates: it rises about 4 pt and settles back on a
-four-second loop, straight up and down, so the arrow stays upright. The cursor
-fades out after its idle-hide delay. Turn the float off with
+The cursor floats on a slow four-second loop, at rest and while it travels
+(moves, click approaches, drags): it sways about 3.3 pt side to side, bobs
+about 3.9 pt up and down and tilts 2.5° either way with the bob. The float has
+its own clock, so no move, click or action restarts it. Before every click,
+double click, drag start, drop, scroll and typing focus it eases to exactly
+zero, so the hotspot is precise and the arrow upright, then eases back in
+about half a second later. The tilt adds to the `cursor.rotate` heading.
+The cursor fades out after its idle-hide delay. Turn the float off with
 `cua-driver config set cursor.float off`; a resting cursor is then still, so
 the macOS, Windows, X11, and Wayland overlays stop rendering once activity
 settles.
 
+A soft halo sits behind the arrow body: a round glow about 28 pt across in the
+cursor's own color (the session color, or a custom theme's accent), about 11%
+opaque at the centre and fading to nothing at its edge. It moves, floats and
+turns with the arrow and has no click effect. Turn it off with
+`cua-driver config set cursor.halo off`.
+
+On GNOME, where the Shell helper draws the cursor inside the compositor, the
+helper plays the same planned path with the same float, halo and rotation
+(helper v11 and later). An older helper glides straight to the target
+without them.
+
 ### Extras
 
-Apart from the float, everything beyond the plain arrow is off by default. Each
+Apart from the float and the halo, everything beyond the plain arrow is off by
+default. Each
 extra is a saved setting in `~/.cua-driver/config.json` that applies at once to
 every cursor on screen. Turn one on with `cua-driver config set <key> on`, or
 with `set_config`:
@@ -28,8 +47,9 @@ with `set_config`:
 | Key | What it adds |
 | --- | --- |
 | `cursor.marks` | Action marks: a small cue next to the arrow while the agent observes, clicks, types, presses keys, scrolls, drags, manages apps, moves files, records, or makes system calls. Moves and clicks show the navigate and click marks. On macOS, a clicked element also gets a brief focus box. |
-| `cursor.float` | On by default. The resting float: a slow vertical bob on a four-second loop while the cursor rests, until the idle fade hides it. The arrow never tilts. |
-| `cursor.rotate` | Rotation: the arrow turns toward the direction it moves and settles upright on arrival. |
+| `cursor.float` | On by default. A slow sway, bob and slight tilt on a four-second loop, at rest (until the idle fade hides it) and while travelling. It is exactly zero for every click, drag start, drop, scroll and typing focus. |
+| `cursor.halo` | On by default. The soft glow behind the arrow body, in the cursor's color. |
+| `cursor.rotate` | `heading` by default: the tip points along the path. `lean`: the arrow tilts toward where it is going, at most 30° (15° while dragging). `off`: always upright. Both skip hops under 40 pt and are upright again before the cursor arrives, so clicks, typing and scrolling are always upright. `on` means `heading`. |
 | `cursor.motion.effects.glow` | A soft glow behind the pointer that grows with speed. |
 | `cursor.motion.effects.ripple` | A ring that expands from each click point. |
 | `cursor.motion.effects.squish` | The pointer shrinks briefly on each click and springs back. |
@@ -37,7 +57,7 @@ with `set_config`:
 The motion effects can also be set per session with `set_agent_cursor_motion`
 (see below). Every semantic mark inherits the float when both are on, so the
 pointer and mark move as one visual unit. Reduced-motion mode removes the
-float, rotation, and every motion effect, and keeps marks on their still frame.
+float, rotation, and every motion effect (the halo stays), and keeps marks on their still frame.
 With `cursor.marks` off, custom themes also paint only their `idle` animation.
 
 The badge below the pointer follows the `cursor.badges` setting, which applies

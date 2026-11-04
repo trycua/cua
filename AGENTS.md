@@ -65,6 +65,38 @@ that are easy to miss:
 - Tests that start VMs, containers, or host input are opt-in
   (off by default) and clean up what they create.
 
+## Before you push: `bin/ci`
+
+Run `bin/ci` before every push, and `bin/ci --fix` when it reports a failure
+it can repair (formatting, lockfiles, generated bindings and reference docs).
+It runs the CI checks your diff against `origin/main` affects and prints the
+exact fix command for each failure. `bin/ci --install-hook` runs it for you
+before every `git push`.
+
+- **Quick stage.** CI starts with a `quick` job that runs `bin/ci --quick`
+  (formatting, lockfiles, headers, lint). The heavy jobs wait for it, so a
+  failure there stops the run in about a minute.
+- **Agent pull requests need a sign-off.** After a green `bin/ci` on a clean
+  tree, push and run `bin/ci --signoff`. That sets the `local-ci` status on the
+  head commit. `ci-gate` reports an agent PR without it (and blocks it once
+  `REQUIRE_LOCAL_CI` is on): "Run bin/ci and bin/ci --signoff on this head
+  commit." Sign off again after every new commit.
+
+Reviewers of an agent PR check, before approving, that the `local-ci` status is
+`success` on the current head commit (`gh api repos/trycua/cua/commits/<sha>/statuses`)
+and that the PR's `bin/ci` checklist item is ticked. No status, no approval.
+
+**Agents on shared hosts (the dev host that runs live VMs) use `bin/ci --quick`.**
+It runs only the cheap checks (formatting, lockfiles, headers, lint) and builds
+nothing. Heavy checks (cargo test, clippy, build, cross-target) go to CI or a
+VM. A full `bin/ci` is disk-guarded: it skips heavy steps below
+`CUA_CI_MIN_FREE_GB` (40) free, and stops cargo and exits 3 if the target dir
+passes `CUA_CI_MAX_TARGET_GB` (15) or free disk falls under 25 GB. The target
+dir is per run and deleted on exit unless you pass `--keep-target`.
+
+A green `bin/ci` does not replace CI: the end-to-end, image and native Windows
+lanes still run there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
+
 ## Cross-platform Cua Driver behavior
 
 Treat user-visible Cua Driver behavior as a cross-platform contract. Implement
@@ -137,6 +169,11 @@ Before declaring a pull request ready or merging it, inspect its final changed
 files and query its current GitHub title. Correct the title yourself when the
 scope or release impact changed during implementation, and wait for
 `CI: Release metadata` to pass. Do not leave title correction for a maintainer.
+
+When you add notes to a Release Please PR body, put them below its version
+heading (`## [x.y.z](...)`), never above it. Release Please reads the version
+from that heading; with text above it, it tags every component with the PR's
+version (#6350). `CI: Release metadata` and the release workflow both check this.
 
 ## Monorepo component release resolution
 

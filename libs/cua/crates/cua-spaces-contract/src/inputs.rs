@@ -213,9 +213,53 @@ pub struct CreateSpace {
     /// values up to 256. Not with `durable` or `reuse`.
     #[serde(default)]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
+    /// Its network: `internet` (default: the internet and its own tree;
+    /// this computer, the local network, cloud metadata and other trees are
+    /// blocked), `none`, or `custom` / `custom:none` with `allow` and
+    /// `deny`. Presets that open more (`localhost:<ports>`, `lan`,
+    /// `unprotected`) are the user's to choose: refused here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// Destinations to allow (addresses or CIDRs) on top of `network`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
+    /// Destinations to block (addresses, CIDRs or `all`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<Vec<String>>,
+    /// Create it as a child of this Space (id or name): it joins the
+    /// parent's tree, and its network is no more open than the parent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     /// Command, environment and services (see [`SpaceWorkload`]).
     #[serde(flatten)]
     pub workload: SpaceWorkload,
+}
+
+/// `network_set`: change a Space's network.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkSet {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `internet`, `none`, or `custom` / `custom:none` with `allow` and
+    /// `deny`. Opening more than the Space has now is the user's to do
+    /// (`cua network set`, or the app): refused here.
+    pub network: String,
+    /// Destinations to allow (addresses or CIDRs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
+    /// Destinations to block (addresses, CIDRs or `all`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<Vec<String>>,
+    /// Its child Spaces take the same settings (each within its parent's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<bool>,
+    /// Where its internet traffic leaves: `internet` (its own network) or
+    /// `space:<name>` (a Space of its tree). This computer and a SOCKS5
+    /// proxy are the user's to choose (`cua network set --via`). Unset:
+    /// the exit it has. A child keeps its parent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 /// A tool whose only argument is the Space.
@@ -266,6 +310,90 @@ pub struct SpaceBash {
     pub timeout: Option<u64>,
 }
 
+/// `space_job`: run a long command in the Space as a background job.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpaceJob {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `start` (begin a job), `status` (state and the end of its log),
+    /// `logs` (read the log from a byte offset), `cancel` (stop it) or
+    /// `list` (this Space's jobs, newest first).
+    pub action: String,
+    /// `start`: the command line, run with `/bin/sh -c` in the background. It
+    /// keeps running when you or your connection go away. Give this or
+    /// `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// `status`, `logs`, `cancel`: the job id `start` returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// `start`: a short label for the job ("unit tests"), shown in listings
+    /// and in the message that wakes you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `start`: the directory to run in. Default: the Space user's home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// `start`: environment variables for the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<BTreeMap<String, String>>,
+    /// `start`: seconds before the job is stopped. Default: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// `start`: wait for a condition instead of running `command`. The job
+    /// ends when the condition holds (exit 0), or after `timeout`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<JobUntil>,
+    /// `start`: wake me when the job ends. The Space's thread gets one
+    /// message with the job's result and the end of its log, addressed to
+    /// you when you are an agent member of the Space (so you can finish your
+    /// turn and sleep), and the person gets a notification. Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<bool>,
+    /// `start` with `notify`: the agent member to wake instead of you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake: Option<String>,
+    /// `logs`: the byte offset to read from (the `next_offset` of the
+    /// previous call). Without it: the last `limit` bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    /// `logs`: most bytes to return (default 16000, at most 262144).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    /// `logs`: when there is nothing new after `offset` and the job is
+    /// running, wait up to this many milliseconds (at most 25000) for output
+    /// or for the job to end. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_ms: Option<u64>,
+}
+
+/// A condition a `space_job` waits for. Give exactly one of `file`, `port`,
+/// `command` or `pr_checks`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct JobUntil {
+    /// Wait for this path to exist in the Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Wait for this TCP port to accept connections (on `host`, default
+    /// 127.0.0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// With `port`: the host. Default 127.0.0.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Wait for this shell command to exit 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Wait for a GitHub pull request's required checks to finish with `gh`
+    /// (signed in inside the Space): a number, a URL or `owner/repo#123`.
+    /// The job exits 0 when they pass and 1 when one fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_checks: Option<String>,
+    /// Seconds between checks (1 to 300). Default 5 (30 for `pr_checks`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+}
+
 /// `space_write`: write literal text to a file in the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpaceWrite {
@@ -275,6 +403,42 @@ pub struct SpaceWrite {
     pub path: String,
     /// The exact file contents.
     pub content: String,
+}
+
+/// `space_service`: keep a command running in a Space.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpaceService {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// `add` (or replace), `list`, `start`, `stop`, `restart`, `remove` or
+    /// `logs`.
+    pub action: String,
+    /// Service name (every action but `list`): lowercase letters, digits,
+    /// `-`, `_` and `.`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `add`: the shell command line to keep running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// `add`: when to start it again: `always` (default), `on-failure` or
+    /// `never`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<String>,
+    /// `add`: health check, a URL that answers 2xx or 3xx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<String>,
+    /// `add`: health check, `host:port` that accepts a connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<String>,
+    /// `add`: health check, a shell command that exits 0 when healthy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
+    /// `add`: start it when the Space boots (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_on_boot: Option<bool>,
+    /// `logs`: bytes from the end (default 64 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_bytes: Option<u64>,
 }
 
 /// `upload`: copy a host file or folder into the Space.
@@ -514,6 +678,17 @@ pub struct AgentStart {
     /// a one-off run whose state lives only in the Space.
     #[serde(default)]
     pub home: Option<String>,
+    /// Continue this session of the harness's own (an id from
+    /// `agent_threads`) instead of starting a new one: the harness reloads
+    /// it from its own store on this computer. Give `cwd` as the chat's
+    /// folder. Not with `home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, given to
+    /// the agent before the prompt only when the harness cannot reload the
+    /// session (up to 32 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_context: Option<String>,
 }
 
 /// `agent_message`: a follow-up in the same session.
@@ -533,6 +708,10 @@ pub struct AgentMessage {
     /// Interrupt a running turn first instead of queueing. Default false.
     #[serde(default)]
     pub force: Option<bool>,
+    /// A key of the caller's for this message: sending it again (after a
+    /// lost connection) returns the first answer and delivers nothing twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `agent_status`: one run's status, result and recent output.
@@ -607,6 +786,30 @@ pub struct AgentStop {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCapabilities {}
 
+/// `agent_threads`: the coding agents' own recent chats on this computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreads {
+    /// Harness ids to look at: `claude-code`, `openai-codex`, `hermes`.
+    /// Default: all three.
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// How many chats, newest first (1-50). Default 4.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// `agent_thread_read`: one of those chats, what was said in it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreadRead {
+    /// Its harness id (`claude-code`, `openai-codex`, `hermes`).
+    pub agent: String,
+    /// Its id, from `agent_threads`.
+    pub id: String,
+    /// The newest messages to return (1-5000). Default 200.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
 /// `agent_add` (formerly `persistent_agent_create`): a named agent whose memory outlives its runs.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PersistentAgentCreate {
@@ -622,6 +825,10 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Standing instructions: the first message each run takes carries them
+    /// in front of its text (the thread shows only the message).
+    #[serde(default)]
+    pub brief: Option<String>,
     /// A custom model endpoint base URL.
     #[serde(default)]
     pub base_url: Option<String>,
@@ -645,6 +852,11 @@ pub struct PersistentAgentCreate {
     /// Parallel sessions. Default 1.
     #[serde(default)]
     pub sessions: Option<u32>,
+    /// Keep a run open with its session ready, so a message starts its turn
+    /// at once (the agent is started in the background, and again if it
+    /// ends). Default false.
+    #[serde(default)]
+    pub standby: Option<bool>,
     /// A schedule: every N minutes (with `prompt`).
     #[serde(default)]
     pub every_minutes: Option<i64>,
@@ -853,6 +1065,20 @@ pub struct ThreadAnswerArg {
     /// A note for the agent.
     #[serde(default)]
     pub note: Option<String>,
+    /// `once` (default): this approval only. `space`: allow this kind of
+    /// request from this agent in this Space from now on; the daemon
+    /// answers the same request itself, and the grant can be taken back.
+    /// Only for an approval whose `scope_choices` lists it (an agent's own
+    /// request; never a push, a sign-in, a join or an ability request),
+    /// and never with `approve: false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// A key of the caller's for this answer. Sending the same answer
+    /// again after a lost connection returns the first one
+    /// (`replayed: true`) and never writes a second; a different decision
+    /// for an approval already answered is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `thread_post`: post to a Space's thread.
@@ -888,6 +1114,12 @@ pub struct ThreadPost {
     /// message is about.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ThreadViewArg>,
+    /// A key of the caller's for this post: the same key from the same
+    /// author again (a retry after a lost connection) returns the first
+    /// entry (`replayed: true`) and writes nothing. Kept on the entry as
+    /// `client_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// `thread_post`'s `view`: the Space's desktop or one of its windows.
@@ -1254,9 +1486,16 @@ pub struct HotspotStart {
     #[serde(default)]
     pub bypass: Option<Vec<String>>,
     /// Point the Space's system proxy (and `HTTP(S)_PROXY` for new processes)
-    /// at the hotspot. Default true.
+    /// at the hotspot. Default true; with Secure Spaces on, false: apps in the
+    /// Space use the hotspot only when they are told to (SOCKS5 at the
+    /// returned `socks_address`).
     #[serde(default)]
     pub set_system_proxy: Option<bool>,
+    /// The user said yes to sharing this computer's network with the Space.
+    /// With Secure Spaces on, required: without `true` the call is refused.
+    /// Ask the user first; never set it on your own.
+    #[serde(default)]
+    pub confirm: Option<bool>,
 }
 
 /// `hotspot_stop` / `hotspot_status`.

@@ -46,7 +46,14 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   platform-linux-off-linux:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: platform-linux compiles on macOS
     runs-on: macos-latest
     timeout-minutes: 20

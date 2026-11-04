@@ -287,6 +287,9 @@ fn the_sandbox_container_joins_an_account_relay() {
         expires: 0,
         ttl_secs: 0,
         shm_mb: 1024,
+        provider: "test",
+        net_guard: true,
+        share_slots: false,
     };
     // The files and the environment file cloud-init writes, as the VM's
     // first boot hands them to Docker (owned by the image's user).
@@ -400,6 +403,9 @@ fn a_cloud_vm_first_boot_joins_the_relay() {
         // The backstop still runs: the VM powers itself off within the hour.
         ttl_secs: 3600,
         shm_mb: 1024,
+        provider: "test",
+        net_guard: true,
+        share_slots: false,
     });
     let seed = cua_vmm::cloudinit::Seed {
         meta_data: format!("instance-id: {id}\nlocal-hostname: {id}\n"),

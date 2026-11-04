@@ -790,6 +790,26 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     );
 }
 
+#[test]
+fn a_skill_the_user_installed_another_way_is_not_outdated() {
+    let t = T::new();
+    let s = t.setup();
+    s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
+        .unwrap();
+    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    // Another installer replaced it with different content that cua never
+    // wrote: setup skips it without --force, so it can never match the
+    // bundled copy and must not keep the agent in "not set up".
+    std::fs::write(
+        dest.join("SKILL.md"),
+        "---\nname: cua-sandboxes\ndescription: newer from its own installer\n---\n",
+    )
+    .unwrap();
+    let st = s.detect().into_iter().find(|a| a.id == "cline").unwrap();
+    assert_eq!(st.skills_installed, ["cua-sandboxes"]);
+    assert!(st.skills_outdated.is_empty(), "{st:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {
@@ -1318,4 +1338,36 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     assert_eq!(t.read(&log).trim(), "login");
     let a = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
     assert!(a.installed && a.signed_in, "{a:?}");
+}
+
+/// Cua's own setup (its entry in a new `~/.claude.json`, its skills under
+/// `~/.claude/skills`) is no sign Claude Code is installed: the first run
+/// showed "Ready" on a Mac without it (CUA-3063).
+#[test]
+fn what_cua_writes_does_not_make_an_agent_installed() {
+    let t = T::new();
+    let s = t.setup();
+    let claude = |s: &AgentSetup| {
+        s.detect()
+            .into_iter()
+            .find(|a| a.id == "claude-code")
+            .unwrap()
+    };
+    assert!(!claude(&s).installed);
+    s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
+    s.install_skills(&ids(&["claude-code"]), &[], false)
+        .unwrap();
+    let after = claude(&s);
+    assert!(after.cua_configured, "{after:?}");
+    assert!(!after.installed, "{:?}", after.evidence);
+    // Codex: cua's config.toml alone is not Codex either.
+    s.configure_mcp(&ids(&["codex"]), &server()).unwrap();
+    let codex = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
+    assert!(!codex.installed, "{:?}", codex.evidence);
+    // What the agent writes itself does count.
+    t.write(".claude/settings.json", "{}");
+    assert!(claude(&s).installed);
+    let t = T::new();
+    t.write(".claude.json", "{\"numStartups\": 3}");
+    assert!(claude(&t.setup()).installed);
 }

@@ -76,6 +76,7 @@ impl Tool for ListWindowsTool {
             });
         }
         crate::windows::retain_ax_reachable(&mut windows, current_space_id);
+        crate::windows::normalize_z_indices(&mut windows);
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 
@@ -127,6 +128,21 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filtered_windows_receive_contiguous_zero_based_z_indices() {
+        let mut windows = vec![
+            window(1, 100, "A", "front", true),
+            window(2, 200, "B", "middle", true),
+            window(3, 100, "A", "back", true),
+        ];
+        windows.retain(|window| window.pid == 100);
+
+        crate::windows::normalize_z_indices(&mut windows);
+
+        let z: Vec<_> = windows.iter().map(|window| window.z_index).collect();
+        assert_eq!(z, [1, 0]);
+    }
 
     #[test]
     fn window_record_includes_observed_z_index() {

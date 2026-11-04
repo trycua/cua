@@ -310,6 +310,7 @@ pub(crate) async fn start_with_home(
             harness: a.agent.clone(),
             space: space.clone(),
             model: a.model.clone(),
+            brief: None,
             base_url: a.base_url.clone(),
             env_from_host: a.env_from_host.clone(),
             env: a.env.clone(),

@@ -616,7 +616,9 @@ impl FsBackend {
                     fs::copy(&path, &tmp)?;
                     let _ = fs::remove_file(&path);
                 }
-                File::open(&tmp)?.sync_all()?;
+                // Opened for writing: Windows refuses FlushFileBuffers on a
+                // read-only handle (Access is denied).
+                OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
                 fs::rename(&tmp, &dst).inspect_err(|_| {
                     let _ = fs::remove_file(&tmp);
                 })?;

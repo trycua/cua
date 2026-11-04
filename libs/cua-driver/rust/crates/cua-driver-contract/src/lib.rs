@@ -24,7 +24,9 @@ mod session;
 mod verification;
 mod visual;
 mod windows;
+pub mod witness;
 pub use windows::*;
+pub use witness::*;
 
 pub(crate) fn schema_settings() -> SchemaSettings {
     SchemaSettings::draft2020_12()

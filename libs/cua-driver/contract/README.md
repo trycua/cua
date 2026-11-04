@@ -137,3 +137,13 @@ SDK loader tests live in `python/tests/test_uniffi_loader.py` and
 deterministically regenerates both UniFFI binding sets, verifies parity against
 the live tool registry, and crosses the real Python and Node FFI loaders into a
 deterministic daemon-socket fixture.
+
+
+## Runtime conformance witness
+
+The generated manifest and live `tools/list` surface describe advertised
+contract shape. A separate experimental typed
+[`RuntimeWitnessV0`](../docs/runtime-conformance-witness-v0.md) records
+metadata-only evidence that one concrete build/platform actually exercised a
+small read-only probe set. It consumes the existing capability vocabulary and
+output validators; it is not another capability registry.

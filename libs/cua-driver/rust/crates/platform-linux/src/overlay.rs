@@ -4382,19 +4382,44 @@ mod tests {
                         .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, AREA, AREA, !0)?
                         .reply()?;
                     let (mut red, mut blue, mut other) = (0usize, 0usize, 0usize);
-                    for px in image.data.chunks_exact(4) {
+                    let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+                    for (i, px) in image.data.chunks_exact(4).enumerate() {
                         match (px[0], px[1], px[2]) {
-                            (255, 255, 255) => {}
+                            (255, 255, 255) => continue,
                             (0, 0, 255) => red += 1,
                             (255, 0, 0) => blue += 1,
                             _ => other += 1,
                         }
+                        let (x, y) = (i % usize::from(AREA), i / usize::from(AREA));
+                        (left, top) = (left.min(x), top.min(y));
+                        (right, bottom) = (right.max(x + 1), bottom.max(y + 1));
                     }
-                    let whole = usize::from(SIDE) * usize::from(SIDE);
-                    let frame_ok = (red, blue, other) == (whole, 0, 0)
-                        || (red, blue, other) == (0, whole, 0)
-                        // Before the first frame is presented.
-                        || (red, blue, other) == (0, 0, 0);
+                    // picom fetches a window's damage, then paints that
+                    // region from the window's live contents. A frame
+                    // presented in between shows clipped to an earlier
+                    // frame's damage until the next repaint: lag, not a
+                    // tear. The square moves down and right every frame, so
+                    // that read is one solid rectangle at the newest frame's
+                    // origin in the newest frame's colour. An earlier
+                    // frame's pixels inside the newest frame's shape fill the
+                    // same rectangle in the other colour: half presented.
+                    let solid = || {
+                        (red == 0 || blue == 0)
+                            && right - left <= usize::from(SIDE)
+                            && bottom - top <= usize::from(SIDE)
+                            && (right - left) * (bottom - top) == red + blue
+                    };
+                    // Frame n is at (8 + 3s, 8 + s), s = n % 100, red when n
+                    // is even.
+                    let newest_frame = || {
+                        top.checked_sub(8).is_some_and(|step| {
+                            step < 100 && left == 8 + step * 3 && (step % 2 == 0) == (red > 0)
+                        })
+                    };
+                    let whole = red + blue == usize::from(SIDE) * usize::from(SIDE);
+                    let frame_ok = other == 0
+                        && (red + blue == 0
+                            || solid() && newest_frame() && (with_compositor || whole));
                     if !frame_ok {
                         torn.push(format!("red {red}, blue {blue}, other {other}"));
                     }
@@ -4438,7 +4463,7 @@ mod tests {
         conn.sync()?;
         // Let the observer read the final frame at least once.
         let settled = reads.load(Ordering::SeqCst) + 2;
-        while reads.load(Ordering::SeqCst) < settled {
+        while reads.load(Ordering::SeqCst) < settled && !observer.is_finished() {
             std::thread::yield_now();
         }
         done.store(true, Ordering::SeqCst);

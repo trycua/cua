@@ -36,4 +36,4 @@ Setup logs survived cleanup. Doctor, preflight and both click cells did not run:
 - Disposable driver HOME/XDG state, disabled overlay/permissions gate and testkit unrestricted GUI authorization/approval bypass.
 - Fixture control only establishes sentinel posture; it does not set the target action result.
 
-These do not certify production admission, interactive consent, physical GPU capture or arbitrary app compatibility. Wayland, macOS and Windows remain unverified.
+These do not certify production admission, interactive consent, physical GPU capture or arbitrary app compatibility. Wayland and Windows remain unverified here; macOS runs in its own [Lume lane](macos-lume.md).

@@ -295,7 +295,7 @@ pub(crate) async fn browser_protected_resource_scope(
     engine: &BrowserEngine,
     args: &Value,
     tool_name: &str,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
     let session = args
         .get("session")
         .and_then(Value::as_str)
@@ -316,8 +316,7 @@ pub(crate) async fn browser_protected_resource_scope(
         .unwrap_or_else(|| session.to_owned());
     let (validated, live_origin) = engine
         .attest_protected_tab(&runtime_session, target_id, tab_id)
-        .await
-        .map_err(|error| error.message)?;
+        .await?;
     let target = validated.record;
     let tab = validated.tab;
     let requested_origin = if tool_name == "browser_navigate" {
@@ -497,7 +496,7 @@ impl Tool for GetBrowserStateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "private_observation"
             && args.get("target_id").and_then(Value::as_str).is_some()
         {
@@ -1056,7 +1055,7 @@ impl Tool for BrowserNavigateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
         } else {
@@ -1213,7 +1212,7 @@ impl Tool for BrowserClickTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_click").await
         } else {
@@ -1878,7 +1877,7 @@ impl Tool for BrowserTypeTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_type").await
         } else {
@@ -2472,7 +2471,7 @@ impl Tool for BrowserSelectTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_select").await
         } else {
@@ -2671,7 +2670,7 @@ impl Tool for BrowserDialogTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if matches!(
             adapter_id,
             "private_observation" | "browser_consequential_action"

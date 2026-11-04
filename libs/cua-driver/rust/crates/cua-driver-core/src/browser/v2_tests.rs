@@ -2756,6 +2756,48 @@ async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_te
 }
 
 #[tokio::test]
+async fn a_stale_binding_keeps_its_refusal_code_through_scope_attestation() {
+    use crate::authorization::PermissionMode;
+    use crate::session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling};
+
+    let f = fixture().await;
+    let mut registry = crate::tool::ToolRegistry::new_with_protected_consent_provider(Some(
+        Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        }),
+    ));
+    super::tools::register_browser_tools(&f.engine, &mut registry);
+    let ceiling = SessionModeCeiling::for_trusted_sessions(
+        [PermissionMode::Standard],
+        false,
+        std::time::Duration::from_secs(60),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let context = SessionAuthorizationRegistry::with_ceiling(ceiling)
+        .compatibility_context(PermissionMode::Standard, None)
+        .unwrap();
+    let args = json!({
+        "target_id": "bt-gone",
+        "tab_id": "tab-gone",
+        "ref": "p1:0",
+        "session": SESSION,
+    });
+
+    for tool in ["get_browser_state", "browser_click"] {
+        let result = registry
+            .invoke_with_context(tool, args.clone(), context.clone())
+            .await;
+        let refusal = &result.structured_content.unwrap()["refusal"];
+        assert_eq!(refusal["code"], "browser_binding_stale", "{tool}");
+        assert!(
+            refusal["message"].as_str().unwrap().contains("bt-gone"),
+            "{tool}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn click_routes_oopif_refs_through_the_contained_child_session() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;

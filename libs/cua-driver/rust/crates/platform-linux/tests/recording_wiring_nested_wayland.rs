@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #![cfg(target_os = "linux")]
 
 use std::os::unix::fs::PermissionsExt;

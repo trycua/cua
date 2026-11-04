@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use cua_driver_core::tool::ToolRegistry;
 use serde_json::{json, Value};
 

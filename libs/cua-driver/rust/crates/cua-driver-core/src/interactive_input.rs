@@ -227,7 +227,8 @@ pub fn denormalize(value: f64, extent: u32) -> i32 {
 /// one button that follow each other within an interval and within a few
 /// points of the previous press, as the operating system counts a physical
 /// mouse. Interactive batches carry no click count, so a native session that
-/// must stamp one on its events (macOS) counts the presses it receives with
+/// must stamp one on its events (macOS), or a gesture fold that must pass one
+/// to the `click` tool (Windows, Hyprland), counts the presses it receives with
 /// this. It performs no I/O: the caller passes each press's receipt time.
 #[derive(Debug, Clone)]
 pub struct ClickCounter {

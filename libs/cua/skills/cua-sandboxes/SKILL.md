@@ -132,3 +132,5 @@ From a terminal: `cua images ls --browser`, `cua sb create --browser
   would do.
 - Delete the sandboxes you created as soon as the task ends.
 - Report the sandbox name you used so the user can inspect or remove it.
+
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.

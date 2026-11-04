@@ -1,0 +1,133 @@
+#!/bin/sh
+# git-remote-cuarepo: Cua's repo cache as a git remote helper.
+#
+# Installed in a Space by the Cua daemon (never by the agent). The system git
+# config in the read-only cache mount rewrites the URL of a repo the daemon
+# holds a verified mirror of to `cuarepo::<key>::<url>`, so a plain
+# `git clone <url>` runs this helper. The helper only ever reads the mount.
+#
+#   fresh clone, mirror verified within the lease:  the mirror's packs are
+#     copied into the clone and git talks to `git upload-pack` on the mirror
+#     (no network).
+#   fresh clone otherwise: the mirror is an alternate while git runs the real
+#     `git remote-https`, so only what the remote has on top of the mirror is
+#     downloaded and the remote's own tip is what the clone gets; the mirror's
+#     packs are then copied into the clone and the alternate is removed
+#     (`--reference --dissociate`), so the clone never depends on the mirror.
+#   anything else (no mirror, a mirror that fails its checks, a repo that
+#     already has objects, push): plain `git remote-https`, byte for byte.
+#
+# Every step that fails falls back to the plain path.
+
+remote=$1
+spec=$2
+key=${spec%%::*}
+url=${spec#*::}
+root=${CUA_REPO_CACHE_ROOT:-/cua/repo-cache}
+log=${CUA_REPO_CACHE_LOG:-/tmp/.cua-repo-cache.log}
+lease=${CUA_REPO_CACHE_LEASE:-20}
+mirror=$root/m/$key.git
+started=$(date +%s 2>/dev/null || echo 0)
+
+plain() {
+  exec git remote-https "$remote" "$url"
+}
+
+note() {
+  printf '%s %s %s %s\n' "$(date +%s 2>/dev/null || echo 0)" "$1" "$key" "$2" >>"$log" 2>/dev/null || :
+}
+
+# Only a 16 hex digit key names a mirror.
+case $key in
+  *[!0-9a-f]*) plain ;;
+esac
+[ ${#key} -eq 16 ] || plain
+
+# A clone that is just starting: git's own directory has no objects yet.
+[ -n "$GIT_DIR" ] && [ -d "$GIT_DIR/objects" ] || plain
+[ -z "$(ls "$GIT_DIR/objects" 2>/dev/null | grep -v -E '^(info|pack)$')" ] || plain
+[ -z "$(ls "$GIT_DIR/objects/pack" 2>/dev/null)" ] || plain
+[ -f "$GIT_DIR/shallow" ] && plain
+
+# The daemon's verification stamp: the mirror's url, and the size of every
+# pack it verified. Anything missing or different: plain.
+[ -f "$root/m/$key.ok" ] && [ -d "$mirror/objects" ] || plain
+recorded=$(cat "$root/m/$key.url" 2>/dev/null)
+got=${url%/}
+got=${got%.git}
+got=${got%/}
+[ -n "$recorded" ] && [ "$got" = "$recorded" ] || plain
+packs=0
+while read -r size name; do
+  [ -n "$name" ] || continue
+  actual=$(wc -c <"$mirror/objects/pack/$name" 2>/dev/null) || plain
+  [ "$((actual + 0))" -eq "$size" ] 2>/dev/null || { note skipped 0; plain; }
+  packs=$((packs + 1))
+done <"$root/m/$key.ok"
+[ "$packs" -gt 0 ] || plain
+
+# From here the mirror is an alternate of the clone.
+mkdir -p "$GIT_DIR/objects/info" 2>/dev/null || plain
+printf '%s\n' "$mirror/objects" >"$GIT_DIR/objects/info/alternates" 2>/dev/null || plain
+
+# Copy the mirror's packs into the clone and let go of the alternate. A
+# shallow or filtered clone repacks instead (it must not take every object).
+dissociate() {
+  if [ -f "$GIT_DIR/shallow" ] || [ -f "$GIT_DIR/objects/info/promisor" ] || git -C "$GIT_DIR" config --get remote.origin.promisor >/dev/null 2>&1; then
+    git --git-dir="$GIT_DIR" repack -a -d -q 2>/dev/null && rm -f "$GIT_DIR/objects/info/alternates" && return 0
+    return 1
+  fi
+  dst=$GIT_DIR/objects/pack
+  mkdir -p "$dst" || return 1
+  ok=1
+  while read -r size name; do
+    [ -n "$name" ] || continue
+    base=${name%.pack}
+    if cp "$mirror/objects/pack/$base.pack" "$dst/tmp_cuarepo_$$_$base.pack" 2>/dev/null \
+      && cp "$mirror/objects/pack/$base.idx" "$dst/tmp_cuarepo_$$_$base.idx" 2>/dev/null; then
+      mv "$dst/tmp_cuarepo_$$_$base.pack" "$dst/$base.pack" && mv "$dst/tmp_cuarepo_$$_$base.idx" "$dst/$base.idx" || ok=0
+    else
+      ok=0
+    fi
+    rm -f "$dst/tmp_cuarepo_$$_$base.pack" "$dst/tmp_cuarepo_$$_$base.idx" 2>/dev/null
+  done <"$root/m/$key.ok"
+  [ $ok -eq 1 ] || return 1
+  rm -f "$GIT_DIR/objects/info/alternates"
+}
+
+finish() {
+  rc=$1
+  kind=$2
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$GIT_DIR/objects/info/alternates" 2>/dev/null
+    note failed 0
+    exit "$rc"
+  fi
+  if dissociate; then
+    now=$(date +%s 2>/dev/null || echo 0)
+    note "$kind" "$((now - started))"
+  else
+    # Could not copy (a full disk): the clone keeps the alternate, which
+    # works while the mount does.
+    note kept 0
+  fi
+  exit 0
+}
+
+fresh=$(cat "$root/m/$key.fresh" 2>/dev/null || echo 0)
+now=$(date +%s 2>/dev/null || echo 0)
+if [ "$((fresh + 0))" -le "$now" ] 2>/dev/null && [ "$((now - fresh))" -lt "$lease" ] 2>/dev/null; then
+  read -r _caps
+  printf 'connect\n\n'
+  read -r service
+  case $service in
+    "connect git-upload-pack"*) ;;
+    *) rm -f "$GIT_DIR/objects/info/alternates"; exit 1 ;;
+  esac
+  printf '\n'
+  git upload-pack "$mirror"
+  finish $? hit_lease
+fi
+
+git remote-https "$remote" "$url"
+finish $? hit_checked

@@ -45,9 +45,17 @@ export default defineConfig({
   // dependencies are found on first navigation and the dev server reloads the
   // page mid-run (parity flows then fail with "execution context destroyed").
   optimizeDeps: { entries: ["index.html", "src/**/*.{ts,tsx}", "!src/**/*.d.ts", "!src/**/__tests__/**", "!src/**/*.test.{ts,tsx}"] },
-  server: { port: 5174, strictPort: true },
+  // Compile the components when the dev server starts. A code-split route's
+  // first visit otherwise transforms its components on demand (Babel's React
+  // Compiler pass), which on a busy CI runner outlasts the parity flows' 5 s
+  // waits (#6081).
+  server: { port: 5174, strictPort: true, warmup: { clientFiles: ["./src/components/**/*.tsx"] } },
   preview: { port: 5174 },
-  build: { target: "es2023", sourcemap: true },
+  // Source maps: shown in a plain build (`pnpm dev`, local checks). Release CD
+  // sets CUA_SOURCEMAPS=1 to emit them hidden (no sourceMappingURL comment) in
+  // dist/**/*.map, uploads them to Sentry, then deletes them: the app never
+  // ships them (electron-builder's extraResources filter drops *.map too).
+  build: { target: "es2023", sourcemap: process.env.CUA_SOURCEMAPS === "1" ? "hidden" : false },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

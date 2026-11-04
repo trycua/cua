@@ -146,7 +146,12 @@ done
 echo "cua-spacesd answers GetCapabilities through the forward"
 
 echo "==> sealing and shutting down"
-gexec --timeout 300 seal.ps1 2>&1 | tee -a "$OUT/install.log" || true
+# The guest powers off right after answering, so gexec's own status is not
+# trusted; seal.ps1 prints "seal verified" only once every token and
+# per-machine secret is gone (it schedules the power-off only then).
+rm -f "$OUT/seal.log"
+gexec --timeout 300 seal.ps1 2>&1 | tee -a "$OUT/install.log" "$OUT/seal.log" || true
+grep -q '^seal verified' "$OUT/seal.log" || { echo "seal.ps1 did not verify the image clean (see $OUT/seal.log)" >&2; exit 1; }
 for _ in $(seq 1 120); do kill -0 "$QEMU_PID" 2>/dev/null || break; sleep 5; done
 if kill -0 "$QEMU_PID" 2>/dev/null; then echo "the guest did not power off" >&2; exit 1; fi
 wait "$QEMU_PID" 2>/dev/null || true

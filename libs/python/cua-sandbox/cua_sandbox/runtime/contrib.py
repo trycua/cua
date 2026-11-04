@@ -1,5 +1,5 @@
 """Provider locations: contrib platforms (``on="e2b"``, ``on="daytona"``,
-``on="modal"``) and your own cloud account (``on="aws"``, ``on="gcp"``,
+``on="modal"``) and your own cloud account (``on="aws"``, ``on="gcp"``, ``on="hetzner"``,
 ``on="modal"`` with the ``byoc`` build, connected with ``cua cloud connect``).
 
 Third-party platforms run the same registry images (``Image.from_registry``
@@ -38,6 +38,7 @@ _KNOWN = (
     "northflank",
     "aws",
     "gcp",
+    "hetzner",
 )
 
 

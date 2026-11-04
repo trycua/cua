@@ -160,10 +160,41 @@ pub fn default_host() -> Arc<dyn HostEffects> {
 /// Whether [`RealHost`] must refuse to act: always in this crate's unit tests,
 /// and whenever [`TEST_SANDBOX_ENV`] is `1`.
 pub fn host_effects_forbidden() -> bool {
-    cfg!(test)
-        || std::env::var(TEST_SANDBOX_ENV)
-            .map(|value| value == "1")
-            .unwrap_or(false)
+    cfg!(test) || test_sandbox_on()
+}
+
+/// `CUA_NO_UI` on (any value but empty or `0`): nothing may put a window, a
+/// dialog or a notification on this computer's screen.
+pub fn no_ui() -> bool {
+    no_ui_says(std::env::var("CUA_NO_UI").ok().as_deref())
+}
+
+/// What a `CUA_NO_UI` value means.
+pub fn no_ui_says(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Whether `kind` shows something to the person at this computer.
+pub fn is_ui(kind: EffectKind) -> bool {
+    matches!(
+        kind,
+        EffectKind::AppleScript | EffectKind::UserAuthorization
+    )
+}
+
+fn test_sandbox_on() -> bool {
+    std::env::var(TEST_SANDBOX_ENV)
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
+fn refused_no_ui(kind: EffectKind) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "host effect {kind:?} refused: CUA_NO_UI is set, nothing may show on this computer's screen"
+        ),
+    )
 }
 
 fn refused(kind: EffectKind) -> io::Error {
@@ -184,6 +215,9 @@ impl HostEffects for RealHost {
     fn run(&self, command: &HostCommand) -> io::Result<HostOutput> {
         if host_effects_forbidden() {
             return Err(refused(command.kind));
+        }
+        if no_ui() && is_ui(command.kind) {
+            return Err(refused_no_ui(command.kind));
         }
         real::run(command)
     }
@@ -534,6 +568,18 @@ mod real {
 
 #[cfg(test)]
 mod tests {
+    /// `CUA_NO_UI` makes the real host refuse what shows on the screen (and only that).
+    #[test]
+    fn no_ui_refuses_what_shows_on_the_screen() {
+        assert!(is_ui(EffectKind::AppleScript) && is_ui(EffectKind::UserAuthorization));
+        assert!(!is_ui(EffectKind::ProcessLookup) && !is_ui(EffectKind::KeychainRead));
+        assert!(no_ui_says(Some("1")) && no_ui_says(Some("yes")));
+        assert!(!no_ui_says(Some("0")) && !no_ui_says(Some("")) && !no_ui_says(None));
+        let e = refused_no_ui(EffectKind::AppleScript);
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert!(e.to_string().contains("CUA_NO_UI"));
+    }
+
     use super::*;
 
     /// The crate's own tests must never get a real host by default.

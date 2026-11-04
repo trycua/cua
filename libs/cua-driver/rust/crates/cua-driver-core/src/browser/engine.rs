@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use indexmap::IndexMap;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -71,6 +72,9 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// Hard cap for decoded tab screenshots returned through MCP. This bounds a
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reply deadline for the best-effort `Page.enable` sent on a tab's first attach.
+const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -247,10 +251,7 @@ fn endpoint_access_class(
     }
 }
 
-/// Everything revalidation proves before a mutation proceeds. The
-/// `record`/`tab` evidence rides along for future callers even though
-/// the v1 tools only need the attached connection.
-#[allow(dead_code)]
+/// Everything revalidation proves before a mutation proceeds.
 pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
@@ -621,8 +622,6 @@ pub(crate) enum FrameTreeError {
 pub(crate) struct AttachedChildFrame {
     pub session_id: String,
     pub target_id: String,
-    #[allow(dead_code)]
-    pub url: String,
 }
 
 pub(crate) enum AttachError {
@@ -653,19 +652,6 @@ impl BrowserEngine {
         Self::new_with_runtime_services(
             platform,
             Arc::new(crate::consent::ApprovalBroker::new(provider)),
-            Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
-        )
-    }
-
-    /// Create an engine using the runtime-owned broker shared by every
-    /// protected resource adapter.
-    pub fn new_with_approval_broker(
-        platform: Arc<dyn BrowserPlatform>,
-        approval_broker: Arc<crate::consent::ApprovalBroker>,
-    ) -> Arc<Self> {
-        Self::new_with_runtime_services(
-            platform,
-            approval_broker,
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
         )
     }
@@ -1276,7 +1262,7 @@ impl BrowserEngine {
                     format!("cannot attach to tab target {cdp_target_id}: {e}"),
                 )
             })?;
-        attached
+        let cdp_session = attached
             .get("sessionId")
             .and_then(Value::as_str)
             .map(str::to_owned)
@@ -1285,7 +1271,39 @@ impl BrowserEngine {
                     BrowserRefusalCode::BrowserTabNotFound,
                     format!("attach to {cdp_target_id} returned no sessionId"),
                 )
-            })
+            })?;
+        self.subscribe_dialog_events(conn, &cdp_session, cdp_target_id)
+            .await;
+        Ok(cdp_session)
+    }
+
+    /// Chromium reports a JavaScript dialog only to sessions that enabled the
+    /// Page domain before it opened, so the first session attached to a tab
+    /// subscribes on behalf of every later caller; tab sessions stay attached
+    /// for the life of the connection. A renderer already blocked by a dialog
+    /// nobody has seen cannot answer `Page.enable`, hence the short deadline:
+    /// the subscription is best effort and `browser_dialog` retries it.
+    pub(crate) async fn subscribe_dialog_events(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+        cdp_target_id: &str,
+    ) {
+        if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
+            return;
+        }
+        conn.register_dialog_session(cdp_session, cdp_target_id);
+        let enabled = conn
+            .call_with_timeout(
+                Some(cdp_session),
+                "Page.enable",
+                json!({}),
+                DIALOG_SUBSCRIPTION_TIMEOUT,
+            )
+            .await;
+        if enabled.is_err() && conn.dialog_state(cdp_target_id).is_none() {
+            conn.unregister_dialog_session(cdp_session, cdp_target_id);
+        }
     }
 
     // ── Binding (get_browser_state, pid + window_id mode) ──────────────
@@ -1401,7 +1419,7 @@ impl BrowserEngine {
         // target is only a window handle and must never be reported as active.
         let selected_cdp_target_id =
             selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id);
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
             Some(window_id) => c.cdp_window_id == Some(window_id),
             None => c.cdp_target_id == candidate.cdp_target_id,
@@ -1661,7 +1679,9 @@ impl BrowserEngine {
             .as_deref()
             .is_some_and(|context| context.capability_manifest().is_some())
         {
-            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
+            let live_url = self
+                .live_top_level_url(&conn, &cdp_session, &tab.cdp_target_id)
+                .await?;
             // A browser mutation admitted for a delegated session must use
             // that exact session's capability manifest. Falling back to the
             // process compatibility manifest would let a missing task-local
@@ -1686,19 +1706,38 @@ impl BrowserEngine {
         })
     }
 
+    /// The URL of the tab's live top-level document.
+    ///
+    /// The frame tree is the renderer's answer and the usual proof. While a
+    /// JavaScript dialog is open the renderer is blocked and `Page.getFrameTree`
+    /// never replies, so the browser process's own record of the target is
+    /// used instead: the document cannot navigate until the dialog is handled.
     async fn live_top_level_url(
         &self,
         conn: &CdpConnection,
         cdp_session: &str,
+        cdp_target_id: &str,
     ) -> Result<String, BrowserRefusal> {
-        let frame_tree = conn
-            .call(Some(cdp_session), "Page.getFrameTree", json!({}))
-            .await
-            .map_err(|error| {
-                route_err("could not prove the live top-level browser document", error)
-            })?;
-        frame_tree
-            .pointer("/frameTree/frame/url")
+        let (method, params, session, pointer) = if conn.dialog_state(cdp_target_id).is_some() {
+            (
+                "Target.getTargetInfo",
+                json!({ "targetId": cdp_target_id }),
+                None,
+                "/targetInfo/url",
+            )
+        } else {
+            (
+                "Page.getFrameTree",
+                json!({}),
+                Some(cdp_session),
+                "/frameTree/frame/url",
+            )
+        };
+        let reply = conn.call(session, method, params).await.map_err(|error| {
+            route_err("could not prove the live top-level browser document", error)
+        })?;
+        reply
+            .pointer(pointer)
             .and_then(Value::as_str)
             .filter(|url| !url.is_empty())
             .map(str::to_owned)
@@ -1720,7 +1759,11 @@ impl BrowserEngine {
             .revalidate_for_mutation(session, target_id, Some(tab_id))
             .await?;
         let live_url = self
-            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .live_top_level_url(
+                &validated.conn,
+                &validated.cdp_session,
+                &validated.tab.cdp_target_id,
+            )
             .await?;
         let live_origin = protected_live_origin_scope(&live_url)?;
         Ok((validated, live_origin))
@@ -1875,7 +1918,6 @@ impl BrowserEngine {
             out.push(AttachedChildFrame {
                 session_id: session_id.to_owned(),
                 target_id: target_id.to_owned(),
-                url: info["url"].as_str().unwrap_or("").to_owned(),
             });
         }
         Ok(out)

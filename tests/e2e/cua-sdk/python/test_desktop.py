@@ -35,7 +35,10 @@ class Desktop:
 @pytest.fixture(scope="module")
 def local_desktop(tmp_path_factory):
     e2e.require_image(e2e.desktop_image())
-    c = cua.embedded(state_dir=str(tmp_path_factory.mktemp("desk")))
+    c = cua.embedded(
+        state_dir=str(tmp_path_factory.mktemp("desk")),
+        spaces_home=str(tmp_path_factory.mktemp("desk-spaces")),
+    )
     token = secrets.token_hex(16)
     sb = e2e.run_async(
         c.sandboxes().create(

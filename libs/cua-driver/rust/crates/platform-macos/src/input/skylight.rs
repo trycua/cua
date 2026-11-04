@@ -653,10 +653,9 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp the event's screen-space `(x, y)` point via
-/// `CGEventSetWindowLocation`. Both the SkyLight and public PID routes receive
-/// this screen-space value; WindowServer derives the receiving window's local
-/// point during routing. Returns `true` when the SPI resolved.
+/// Stamp `(x, y)` via `CGEventSetWindowLocation`. Background clicks use the
+/// window-local point on macOS 27+, or the screen point on earlier releases,
+/// for both SkyLight and public PID routes. Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
@@ -682,15 +681,6 @@ pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) 
 /// Return the Skylight main connection ID for the current process.
 pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
-}
-
-/// Return the current active macOS Space (desktop) ID.
-///
-/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
-/// when the symbol is unavailable (future macOS version that removes it).
-pub fn get_active_space() -> Option<u64> {
-    let cid = main_connection_id()?;
-    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
 }
 
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {

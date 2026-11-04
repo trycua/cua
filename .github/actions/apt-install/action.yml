@@ -1,0 +1,80 @@
+name: "Install apt packages (cached)"
+description: >-
+  `apt-get install` on a hosted Ubuntu runner, with the downloaded .deb files
+  cached by actions/cache. The hosted runners' Ubuntu mirror sometimes serves
+  package files at about 50 kB/s while its indexes stay fast: 68 MB of build
+  dependencies then take 22 minutes and 147 MB take 49, which ran jobs into
+  their timeouts before any code compiled. With the cache, apt fetches only
+  the files it does not hold yet. The key is the sorted package list and the
+  runner image, falling back to an older image's entry (most files are
+  unchanged between images). The entry is saved right after the install, so
+  a job that fails later still leaves it for the rerun. Entries are 50 to
+  200 MB, so pull requests save their own as well.
+
+inputs:
+  packages:
+    description: "Packages to install, separated by spaces or newlines."
+    required: true
+  save:
+    description: "Set to 'false' to restore only."
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Plan the apt cache
+      id: plan
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -eu
+        pkgs="$(printf '%s' "$PACKAGES" | tr -s '[:space:]' '\n' | sed '/^$/d' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+        [ -n "$pkgs" ] || { echo "::error::apt-install: no packages given"; exit 1; }
+        sum="$(printf '%s' "$pkgs" | sha256sum | cut -c1-16)"
+        prefix="apt-v1-${ImageOS:-$RUNNER_OS}-$RUNNER_ARCH-$sum-"
+        # Outside the runner's home, which apt's _apt sandbox user cannot
+        # enter; owned by the runner so actions/cache can restore into it.
+        dir=/var/cache/cua-apt-archives
+        sudo mkdir -p "$dir"
+        sudo chown "$(id -u):$(id -g)" "$dir"
+        {
+          echo "packages=$pkgs"
+          echo "dir=$dir"
+          echo "prefix=$prefix"
+          echo "key=$prefix${ImageVersion:-unknown}"
+        } >> "$GITHUB_OUTPUT"
+    - name: Restore downloaded packages
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.plan.outputs.dir }}
+        key: ${{ steps.plan.outputs.key }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}
+    - name: Install packages
+      shell: bash
+      env:
+        DIR: ${{ steps.plan.outputs.dir }}
+        PACKAGES: ${{ steps.plan.outputs.packages }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$DIR/partial"
+        # apt downloads as its _apt sandbox user into partial/.
+        sudo chown _apt "$DIR/partial" 2>/dev/null || true
+        echo "restored $(find "$DIR" -maxdepth 1 -name '*.deb' | wc -l) package files"
+        opts=(-o "Dir::Cache::Archives=$DIR" -o APT::Keep-Downloaded-Packages=true
+          -o Acquire::Retries=3)
+        sudo apt-get update
+        # shellcheck disable=SC2086 # the list is split into packages on purpose
+        sudo apt-get install -y --no-install-recommends "${opts[@]}" $PACKAGES
+        # Drop files of versions the mirror no longer offers, so the entry
+        # does not grow across images.
+        sudo apt-get autoclean "${opts[@]}" >/dev/null
+        sudo rm -rf "$DIR/partial" "$DIR/lock"
+        sudo chown -R "$(id -u):$(id -g)" "$DIR"
+    - name: Save downloaded packages
+      if: inputs.save != 'false' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.plan.outputs.dir }}
+        key: ${{ steps.plan.outputs.key }}

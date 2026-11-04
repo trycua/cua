@@ -28,7 +28,7 @@ import { MainWindow } from "../components/desktop/MainWindow";
 import type { SpaceAgentRun } from "../model/agents";
 import type { RemoteWindow } from "../model/teleport";
 import type { TeleportBridge } from "../native/teleport";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import "../styles/tokens.css";
 import "../styles/app.css";
 import "../styles/desktop.css";
@@ -111,7 +111,7 @@ const teleport = {
   },
 } as unknown as TeleportBridge;
 
-const fleet = fakeFleetBridge({
+const bridge = fakeSpacesBridge({
   isNative: true,
   listSpaces: async () => [
     {
@@ -123,15 +123,15 @@ const fleet = fakeFleetBridge({
       os: "macos",
       reachable: true,
     },
-    { id: "cloud:aurora", name: "aurora", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
-    { id: "cloud:orion", name: "orion", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: false },
+    { id: "direct:aurora", name: "aurora", provider: "direct", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
+    { id: "direct:orion", name: "orion", provider: "direct", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: false },
   ],
   status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
 });
 
 const host = document.getElementById("root");
 if (host) {
-  createRoot(host).render(<MainWindow fleet={fleet} teleport={teleport} />);
+  createRoot(host).render(<MainWindow bridge={bridge} teleport={teleport} />);
   // Open the Space the way a user does, by clicking its row.
   const open = () => {
     const row = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]')).find((el) =>

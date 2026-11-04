@@ -1,7 +1,6 @@
 {
   "_doc": "Image refs that are not in libs/images/sandbox-images.json (or a bench lock), each with a reason. Checked by scripts/images/check-image-refs.py; an entry or path that matches nothing fails the gate, so this list only shrinks.",
   "exclude": [
-    "libs/fleet/**",
     "blog/**",
     "docs/changelog/**",
     "CHANGELOG*",
@@ -53,7 +52,8 @@
     "public.ecr.aws/example/*": "placeholder namespace in tests",
     "registry.example.com/*": "placeholder registry in tests",
     "123456789012.dkr.ecr.*": "placeholder AWS account in docs and tests (private ECR)",
-    "ghcr.io/acme-corp/*": "fictional private registry ref in the cua-telemetry privacy test (proves image refs are redacted)"
+    "ghcr.io/acme-corp/*": "fictional private registry ref in the cua-telemetry privacy test (proves image refs are redacted)",
+    "*-docker.pkg.dev/p/*": "placeholder GCP Artifact Registry project in tests (private registry refused without credentials)"
   },
   "refs": {
     "docker.io/trycua/cua-qemu-linux:latest": {
@@ -484,6 +484,7 @@
     "docker.io/trycua/xfce": "tag-safety guard list of repos never to re-tag",
     "ghcr.io/trycua/bench-demo": "synthetic bench image in the bench publisher tests",
     "ghcr.io/trycua/cua": "tag-safety guard list of repos never to re-tag",
+    "ghcr.io/trycua/cua-relay": "the relay image a public TCP share edge runs in the user's own cloud (a service, not a sandbox image)",
     "ghcr.io/trycua/cua-desktop-linux": "legacy name of ghcr.io/trycua/linux (frozen, read-only; see legacy)",
     "ghcr.io/trycua/localhost": "resolver test message (a host:port prefix is not a repo)",
     "ghcr.io/trycua/macos-sequoia-vanilla": "tag-safety guard list of repos never to re-tag",

@@ -15,7 +15,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 pub use cua_sdk::{self as cua, CuaError};
-use cua_sdk::{Cua, CuaConfig, ReadinessProbe, SandboxCreateOptions, SpacesdClient, SpacesdCommand};
+use cua_sdk::{
+    Cua, CuaConfig, ReadinessProbe, ReplayMode, SandboxCreateOptions, SpacesdClient, SpacesdCommand,
+};
 
 pub type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -55,12 +57,8 @@ pub fn host_arch() -> &'static str {
 }
 
 pub fn desktop_image() -> String {
-    std::env::var("CUA_E2E_DESKTOP_IMAGE").unwrap_or_else(|_| {
-        format!(
-            "cua-e2e-local/linux:docker-local-{}",
-            host_arch()
-        )
-    })
+    std::env::var("CUA_E2E_DESKTOP_IMAGE")
+        .unwrap_or_else(|_| format!("cua-e2e-local/linux:docker-local-{}", host_arch()))
 }
 
 pub fn plain_image(n: &str) -> String {
@@ -111,7 +109,10 @@ pub fn is_cloud_ended(e: &CuaError) -> bool {
 
 /// A cloud create (`on: "cloud"`, shaped further by `shape`) fails with the
 /// one `Unsupported` message; nothing is created.
-pub async fn assert_cloud_ended(c: &Arc<Cua>, shape: impl FnOnce(&mut SandboxCreateOptions)) -> Res {
+pub async fn assert_cloud_ended(
+    c: &Arc<Cua>,
+    shape: impl FnOnce(&mut SandboxCreateOptions),
+) -> Res {
     let mut o = opts("cloud");
     o.image = "registry.test/cua-e2e:fake".into();
     shape(&mut o);
@@ -119,7 +120,13 @@ pub async fn assert_cloud_ended(c: &Arc<Cua>, shape: impl FnOnce(&mut SandboxCre
         Err(e) => assert!(is_cloud_ended(&e), "{e}"),
         Ok(_) => panic!("a cloud create must fail: Cua Cloud has ended"),
     }
-    assert!(!c.sandboxes().list(None).await?.iter().any(|s| s.location == "cloud"));
+    assert!(
+        !c.sandboxes()
+            .list(None)
+            .await?
+            .iter()
+            .any(|s| s.location == "cloud")
+    );
     Ok(())
 }
 
@@ -129,11 +136,14 @@ pub fn lane_enabled(lane: &str) -> Option<String> {
         "hermetic" => binary("CUA_TEST_FIXTURES", "cua-test-fixtures")
             .is_none()
             .then(|| "cua-test-fixtures is not built".into()),
-        "container" => (!flag("CUA_E2E_CONTAINER")).then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
+        "container" => (!flag("CUA_E2E_CONTAINER"))
+            .then(|| "set CUA_E2E_CONTAINER=1 for the container lane".into()),
         "qemu" => (!flag("CUA_E2E_QEMU")).then(|| "set CUA_E2E_QEMU=1 for the QEMU lane".into()),
         "lume" => (!flag("CUA_E2E_LUME")).then(|| "set CUA_E2E_LUME=1 for the Lume lane".into()),
-        "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER"))
-            .then(|| "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite".into()),
+        "conformance" => (!flag("CUA_E2E_CONFORMANCE") || !flag("CUA_E2E_CONTAINER")).then(|| {
+            "set CUA_E2E_CONTAINER=1 CUA_E2E_CONFORMANCE=1 to run the spacesd conformance suite"
+                .into()
+        }),
         other => panic!("unknown lane {other}"),
     }
 }
@@ -288,6 +298,10 @@ pub fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        kill_on_disconnect: false,
+        scrollback_bytes: None,
     }
 }
 
@@ -543,6 +557,113 @@ impl Drop for Daemon {
     }
 }
 
+// ---------------------------------------------------------------- cua share
+
+pub const SHARE_MACHINE: &str = "0123456789abcdef0123456789abcdef";
+
+/// A real `cua daemon` that is a signed-in relay host, with the relay and the
+/// host's cua-spacesd stood in by fixtures/share_relay.py (the daemon's own
+/// side is not mocked). The relay's owner token is `owner`, another account's
+/// `other`; no token is anonymous.
+pub struct ShareDaemon {
+    pub socket: PathBuf,
+    pub relay_url: String,
+    home: PathBuf,
+    relay: std::process::Child,
+    daemon: std::process::Child,
+}
+
+impl ShareDaemon {
+    pub fn start() -> Res<Self> {
+        let bin = binary("CUA_CLI", "cua").ok_or("the cua CLI is not built")?;
+        let home = PathBuf::from(format!("/tmp/cua-share-{}-{}", run_id(), hex(3)));
+        std::fs::create_dir_all(home.join("host"))?;
+        std::fs::write(
+            home.join("credentials.json"),
+            r#"{"access_token":"owner","refresh_token":null,"expires_at":"2099-01-01T00:00:00Z","token_type":"Bearer"}"#,
+        )?;
+        let mut relay = Command::new("python3")
+            .arg(repo().join("tests/e2e/cua-sdk/fixtures/share_relay.py"))
+            .arg("--gateway")
+            .arg(home.join("share/gateway.sock"))
+            .args(["--machine-id", SHARE_MACHINE])
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(relay.stdout.take().ok_or("no relay stdout")?),
+            &mut line,
+        )?;
+        let relay_url = serde_json::from_str::<serde_json::Value>(&line)?["url"]
+            .as_str()
+            .ok_or("share_relay.py printed no url")?
+            .to_string();
+        std::fs::write(
+            home.join("host/config.json"),
+            serde_json::json!({"mode": "relay", "relay_url": relay_url, "name": "share-e2e",
+                "machine_id": SHARE_MACHINE, "runner": "process", "driver_bin": "/bin/true",
+                "share_desktop": false})
+            .to_string(),
+        )?;
+        std::fs::write(
+            home.join("host/host.json"),
+            r#"{"owner":"acct-owner","owner_email":"owner@example.com"}"#,
+        )?;
+        let socket = home.join("cua.sock");
+        let daemon = Command::new(bin)
+            .args(["daemon", "start", "--foreground", "--socket"])
+            .arg(&socket)
+            .env("CUA_HOME", &home)
+            .env("CUA_CREDENTIAL_STORE", "file")
+            .env("CUA_RELAY_URL", &relay_url)
+            .env("CUA_TELEMETRY", "0")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let me = ShareDaemon {
+            socket: socket.clone(),
+            relay_url,
+            home: home.clone(),
+            relay,
+            daemon,
+        };
+        for _ in 0..150 {
+            if socket.exists() && home.join("share/gateway.sock").exists() {
+                return Ok(me);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Err("daemon did not start".into())
+    }
+
+    pub fn client(&self) -> Arc<Cua> {
+        Cua::connect(Some(self.socket.display().to_string()), None).unwrap()
+    }
+
+    /// GET `url` with an optional bearer: (status, body).
+    pub fn get(&self, url: &str, bearer: Option<&str>) -> Res<(u16, String)> {
+        let rest = url.strip_prefix("http://").ok_or("not an http URL")?;
+        let (addr, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let auth = bearer.map(|b| format!("Bearer {b}"));
+        let headers: Vec<(&str, &str)> = auth.iter().map(|a| ("authorization", a.as_str())).collect();
+        http_request(addr, "GET", path, &headers, "")
+    }
+}
+
+impl Drop for ShareDaemon {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let _ = self.relay.kill();
+        let _ = self.relay.wait();
+        let _ = std::fs::remove_dir_all(&self.home);
+    }
+}
+
 // ---------------------------------------------------------------- env smoke
 
 pub fn is_png(b: &[u8]) -> bool {
@@ -565,17 +686,33 @@ pub async fn env_smoke(env: &SpacesdClient, desktop: bool, mock: bool) -> Res<se
     p.write_stdin(b"xyz".to_vec()).await?;
     p.close_stdin().await?;
     assert_eq!(p.wait().await?.stdout, b"xyz");
+    // kill_on_disconnect: letting go of the starting stream ends the process.
+    let mut c = cmd("cat", &[]);
+    c.stdin = true;
+    c.kill_on_disconnect = true;
+    c.tag = Some(format!("kod-rs-{}", run_id()));
+    let p = env.spawn(c.clone()).await?;
+    p.detach().await;
+    let ended = env
+        .attach(None, c.tag.clone(), ReplayMode::None)
+        .await?
+        .wait()
+        .await?;
+    assert!(
+        !ended.exit.success,
+        "kill_on_disconnect left it running: {ended:?}"
+    );
     let blob: Vec<u8> = (0..(1usize << 20)).map(|i| (i % 251) as u8).collect();
     let path = format!("/tmp/cua-e2e-{}/blob-rs.bin", run_id());
     let up = env.upload(path.clone(), blob.clone(), None).await?;
     assert_eq!(up.size, blob.len() as u64);
-    assert!(env.download(path).await? == blob);
+    assert!(env.download(path, None).await? == blob);
     assert!(matches!(
-        env.download("/definitely/not/here".into()).await,
+        env.download("/definitely/not/here".into(), None).await,
         Err(CuaError::NotFound(_))
     ));
     let health: serde_json::Value = serde_json::from_str(
-        &env.call_json("SystemService/Health".into(), "{}".into())
+        &env.call_json("SystemService/Health".into(), "{}".into(), None)
             .await?,
     )?;
     let mut keys: Vec<String> = health
@@ -611,7 +748,7 @@ pub async fn sh_ok(env: &SpacesdClient, line: &str) -> Res<String> {
 
 pub async fn fixture_log(env: &SpacesdClient, fixture: &str) -> Res<Vec<serde_json::Value>> {
     match env
-        .download(format!("/tmp/cua-fixtures/{fixture}.jsonl"))
+        .download(format!("/tmp/cua-fixtures/{fixture}.jsonl"), None)
         .await
     {
         Ok(b) => Ok(String::from_utf8_lossy(&b)

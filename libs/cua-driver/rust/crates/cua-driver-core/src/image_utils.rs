@@ -49,6 +49,183 @@ pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
     Ok(jpeg_bytes)
 }
 
+// ── Screenshot encoding ───────────────────────────────────────────────────
+
+/// Default JPEG quality for a screenshot requested as `jpeg`.
+pub const DEFAULT_JPEG_QUALITY: u8 = 85;
+
+/// Highest accepted JPEG quality, matching the `screenshot` tool's `quality`.
+pub const MAX_JPEG_QUALITY: u8 = 95;
+
+/// How a screenshot is encoded for the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenshotEncoding {
+    /// Lossless PNG with alpha (the default).
+    Png,
+    /// Baseline JPEG at `quality` (1 to [`MAX_JPEG_QUALITY`]); alpha is dropped.
+    Jpeg { quality: u8 },
+}
+
+impl ScreenshotEncoding {
+    /// The image's MIME type.
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg { .. } => "image/jpeg",
+        }
+    }
+
+    /// Resolve the encoding from a `format` (`"png"` or `"jpeg"`) and a JPEG
+    /// `quality` argument. Both omitted (or `null`) is PNG; a quality without
+    /// `"jpeg"` is refused rather than ignored. `Err` names the problem.
+    pub fn from_args(
+        format_name: &str,
+        format: Option<&serde_json::Value>,
+        quality_name: &str,
+        quality: Option<&serde_json::Value>,
+    ) -> std::result::Result<Self, String> {
+        use serde_json::Value;
+        let format = match format {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s == "png" => Some(false),
+            Some(Value::String(s)) if s == "jpeg" => Some(true),
+            Some(other) => {
+                return Err(format!(
+                    "{format_name} must be \"png\" or \"jpeg\", got {other}"
+                ))
+            }
+        };
+        let quality = match quality {
+            None | Some(Value::Null) => None,
+            Some(value) => match value.as_u64() {
+                Some(q) if (1..=u64::from(MAX_JPEG_QUALITY)).contains(&q) => Some(q as u8),
+                _ => {
+                    return Err(format!(
+                    "{quality_name} must be an integer from 1 to {MAX_JPEG_QUALITY}, got {value}"
+                ))
+                }
+            },
+        };
+        match (format, quality) {
+            (Some(true), quality) => Ok(Self::Jpeg {
+                quality: quality.unwrap_or(DEFAULT_JPEG_QUALITY),
+            }),
+            (_, Some(_)) => Err(format!(
+                "{quality_name} applies only with {format_name}: \"jpeg\""
+            )),
+            (_, None) => Ok(Self::Png),
+        }
+    }
+}
+
+/// Straight-alpha RGBA8 pixels, top-down and row-major.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RgbaFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// A capture as a backend produced it: raw pixels from an in-process
+/// capture, or PNG bytes from one that only writes files.
+///
+/// Keeping the pixels lets [`CapturedImage::encode`] resize and encode once,
+/// instead of encoding a PNG, decoding it again and re-encoding it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapturedImage {
+    Png(Vec<u8>),
+    Rgba(RgbaFrame),
+}
+
+impl CapturedImage {
+    /// True when the backend produced no image data.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Png(bytes) => bytes.is_empty(),
+            Self::Rgba(frame) => frame.rgba.is_empty(),
+        }
+    }
+
+    /// Pixel dimensions of the capture.
+    pub fn dimensions(&self) -> Result<(u32, u32)> {
+        match self {
+            Self::Png(bytes) => png_dimensions(bytes),
+            Self::Rgba(frame) => Ok((frame.width, frame.height)),
+        }
+    }
+
+    /// The capture as PNG bytes, identical to what the backend used to return.
+    pub fn into_png(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Png(bytes) => Ok(bytes),
+            Self::Rgba(frame) => encode_rgba_to_png(&frame.rgba, frame.width, frame.height),
+        }
+    }
+
+    /// Downscale so neither edge exceeds `max_dim` (`0`: no cap) and encode.
+    /// Returns the bytes and their dimensions.
+    ///
+    /// With [`ScreenshotEncoding::Png`] the bytes are identical to
+    /// `resize_png_if_needed(&self.into_png()?, max_dim)`: PNG is lossless, so
+    /// resizing the raw pixels gives the same image as resizing the decoded
+    /// PNG, and both encode through the same encoder.
+    pub fn encode(self, max_dim: u32, encoding: ScreenshotEncoding) -> Result<(Vec<u8>, u32, u32)> {
+        let RgbaFrame {
+            width: w,
+            height: h,
+            rgba,
+        } = match self {
+            Self::Png(bytes) => {
+                let png = resize_png_if_needed(&bytes, max_dim)?;
+                let (w, h) = png_dimensions(&png)?;
+                let out = match encoding {
+                    ScreenshotEncoding::Png => png,
+                    ScreenshotEncoding::Jpeg { quality } => png_bytes_to_jpeg(&png, quality)?,
+                };
+                return Ok((out, w, h));
+            }
+            Self::Rgba(frame) => frame,
+        };
+        if encoding == ScreenshotEncoding::Png && !needs_resize(w, h, max_dim) {
+            return Ok((encode_rgba_to_png(&rgba, w, h)?, w, h));
+        }
+        let buffer: ImageBuffer<image::Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, rgba)
+            .ok_or_else(|| anyhow!("invalid RGBA buffer for w={w} h={h}"))?;
+        let mut img = DynamicImage::ImageRgba8(buffer);
+        if needs_resize(w, h, max_dim) {
+            let (new_w, new_h) = resized_dimensions(w, h, max_dim);
+            img = img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3);
+        }
+        let (out_w, out_h) = (img.width(), img.height());
+        let mut out = Vec::new();
+        match encoding {
+            ScreenshotEncoding::Png => {
+                img.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
+            }
+            ScreenshotEncoding::Jpeg { quality } => {
+                let rgb = img.to_rgb8();
+                let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+                enc.encode(rgb.as_raw(), out_w, out_h, ColorType::Rgb8.into())?;
+            }
+        }
+        Ok((out, out_w, out_h))
+    }
+}
+
+/// Whether a `w`×`h` image exceeds a `max_dim` long edge (`0`: no cap).
+fn needs_resize(w: u32, h: u32, max_dim: u32) -> bool {
+    max_dim != 0 && (w > max_dim || h > max_dim)
+}
+
+/// Dimensions after scaling the long edge down to `max_dim`, aspect kept.
+fn resized_dimensions(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
+    let scale = (max_dim as f64) / (w.max(h) as f64);
+    (
+        (w as f64 * scale).round() as u32,
+        (h as f64 * scale).round() as u32,
+    )
+}
+
 // ── Downscale ─────────────────────────────────────────────────────────────
 
 /// The screenshot long-edge limits that apply to one capture.
@@ -93,12 +270,10 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
         return Ok(png_bytes.to_vec());
     }
     let (w, h) = png_dimensions(png_bytes)?;
-    if w <= max_dim && h <= max_dim {
+    if !needs_resize(w, h, max_dim) {
         return Ok(png_bytes.to_vec());
     }
-    let scale = (max_dim as f64) / (w.max(h) as f64);
-    let new_w = (w as f64 * scale).round() as u32;
-    let new_h = (h as f64 * scale).round() as u32;
+    let (new_w, new_h) = resized_dimensions(w, h, max_dim);
 
     let cursor = std::io::Cursor::new(png_bytes);
     let decoder = image::codecs::png::PngDecoder::new(cursor)?;
@@ -325,6 +500,97 @@ pub fn encode_bgra_to_png(bgra: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A frame with varied pixels and partial alpha, so resampling and
+    /// encoding differences would show.
+    fn gradient_frame(width: u32, height: u32) -> RgbaFrame {
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                rgba.extend_from_slice(&[
+                    (x * 7 % 256) as u8,
+                    (y * 13 % 256) as u8,
+                    ((x + y) * 3 % 256) as u8,
+                    if (x + y) % 5 == 0 { 128 } else { 255 },
+                ]);
+            }
+        }
+        RgbaFrame {
+            width,
+            height,
+            rgba,
+        }
+    }
+
+    #[test]
+    fn png_from_raw_pixels_is_byte_identical_to_the_png_round_trip() {
+        let frame = CapturedImage::Rgba(gradient_frame(300, 200));
+        let png = frame.clone().into_png().unwrap();
+        for max_dim in [0, 300, 1366, 120, 77] {
+            let (bytes, w, h) = frame
+                .clone()
+                .encode(max_dim, ScreenshotEncoding::Png)
+                .unwrap();
+            let expected = resize_png_if_needed(&png, max_dim).unwrap();
+            assert_eq!(bytes, expected, "max_dim {max_dim}");
+            assert_eq!((w, h), png_dimensions(&expected).unwrap());
+        }
+    }
+
+    #[test]
+    fn jpeg_keeps_the_resized_dimensions() {
+        for image in [
+            CapturedImage::Rgba(gradient_frame(300, 200)),
+            CapturedImage::Png(
+                CapturedImage::Rgba(gradient_frame(300, 200))
+                    .into_png()
+                    .unwrap(),
+            ),
+        ] {
+            let (bytes, w, h) = image
+                .encode(150, ScreenshotEncoding::Jpeg { quality: 80 })
+                .unwrap();
+            assert_eq!((w, h), (150, 100));
+            assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG SOI marker");
+            let decoded = image::load_from_memory_with_format(&bytes, ImageFormat::Jpeg).unwrap();
+            assert_eq!((decoded.width(), decoded.height()), (150, 100));
+        }
+    }
+
+    #[test]
+    fn screenshot_encoding_defaults_to_png_and_validates_quality() {
+        use serde_json::json;
+        let parse = |format: Option<serde_json::Value>, quality: Option<serde_json::Value>| {
+            ScreenshotEncoding::from_args("f", format.as_ref(), "q", quality.as_ref())
+        };
+        assert_eq!(parse(None, None), Ok(ScreenshotEncoding::Png));
+        assert_eq!(parse(Some(json!("png")), None), Ok(ScreenshotEncoding::Png));
+        assert_eq!(
+            parse(Some(json!("jpeg")), None),
+            Ok(ScreenshotEncoding::Jpeg {
+                quality: DEFAULT_JPEG_QUALITY
+            })
+        );
+        assert_eq!(
+            parse(Some(json!("jpeg")), Some(json!(60))),
+            Ok(ScreenshotEncoding::Jpeg { quality: 60 })
+        );
+        assert_eq!(
+            parse(Some(json!("webp")), None),
+            Err("f must be \"png\" or \"jpeg\", got \"webp\"".to_string())
+        );
+        assert_eq!(
+            parse(Some(json!("jpeg")), Some(json!(0))),
+            Err("q must be an integer from 1 to 95, got 0".to_string())
+        );
+        assert_eq!(
+            parse(Some(json!("jpeg")), Some(json!(96))),
+            Err("q must be an integer from 1 to 95, got 96".to_string())
+        );
+        let only_jpeg = Err("q applies only with f: \"jpeg\"".to_string());
+        assert_eq!(parse(None, Some(json!(60))), only_jpeg);
+        assert_eq!(parse(Some(json!("png")), Some(json!(60))), only_jpeg);
+    }
 
     #[test]
     fn image_dimension_override_wins_and_legacy_cap_folds_with_ceiling() {

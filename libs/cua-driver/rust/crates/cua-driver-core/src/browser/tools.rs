@@ -72,6 +72,11 @@ const DOM_CLICK_READBACK: &str = r#"function() {
 }"#;
 
 const DOM_CLICK_READBACK_DEADLINE: Duration = Duration::from_millis(400);
+/// The pre-click baseline gets a larger budget than the post-click polls: a
+/// loaded Windows Edge can take longer than 400 ms to answer the first
+/// `Runtime.callFunctionOn`, and a missed baseline turns a verifiable click
+/// into "readback unavailable" for the whole action.
+const DOM_CLICK_BASELINE_DEADLINE: Duration = Duration::from_millis(1_000);
 const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 
 struct DomClickObservation {
@@ -290,7 +295,7 @@ pub(crate) async fn browser_protected_resource_scope(
     engine: &BrowserEngine,
     args: &Value,
     tool_name: &str,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
     let session = args
         .get("session")
         .and_then(Value::as_str)
@@ -311,8 +316,7 @@ pub(crate) async fn browser_protected_resource_scope(
         .unwrap_or_else(|| session.to_owned());
     let (validated, live_origin) = engine
         .attest_protected_tab(&runtime_session, target_id, tab_id)
-        .await
-        .map_err(|error| error.message)?;
+        .await?;
     let target = validated.record;
     let tab = validated.tab;
     let requested_origin = if tool_name == "browser_navigate" {
@@ -492,7 +496,7 @@ impl Tool for GetBrowserStateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "private_observation"
             && args.get("target_id").and_then(Value::as_str).is_some()
         {
@@ -1051,7 +1055,7 @@ impl Tool for BrowserNavigateTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_navigate").await
         } else {
@@ -1210,7 +1214,7 @@ impl Tool for BrowserClickTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_click").await
         } else {
@@ -1297,7 +1301,10 @@ impl Tool for BrowserClickTool {
 
         // A page-owned dialog blocks the renderer, so any frame revalidation
         // below would wait out its timeout. Refuse before touching the page.
-        if let Some(open) = conn_dialog_state(&validated) {
+        if let Some(open) = validated
+            .conn
+            .dialog_state(validated.tab.cdp_target_id.as_str())
+        {
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserActionUnavailable,
                 format!(
@@ -1305,7 +1312,7 @@ impl Tool for BrowserClickTool {
                     open.kind
                 ),
             )
-            .with_detail(json!({ "dialog": dialog_block(Some(&open)) }))
+            .with_detail(json!({ "dialog": dialog_block(&open) }))
             .to_tool_result();
         }
 
@@ -1359,9 +1366,11 @@ impl Tool for BrowserClickTool {
             let backend = backend_node_id.expect("checked above");
             let cdp_target_id = validated.tab.cdp_target_id.as_str();
             // A handler that opens a page-owned dialog blocks the frame, and
-            // with it the reply to the click. Observe dialog events before
-            // dispatching so the click can return as soon as one opens.
-            ensure_dialog_observation(conn, validated.cdp_session.as_str(), cdp_target_id).await;
+            // with it the reply to the click. Retry the attach-time dialog
+            // subscription so the click can return as soon as one opens.
+            self.engine
+                .subscribe_dialog_events(conn, validated.cdp_session.as_str(), cdp_target_id)
+                .await;
             let resolved = match conn
                 .call(
                     Some(cdp),
@@ -1424,7 +1433,7 @@ impl Tool for BrowserClickTool {
                 }
             }
             let before =
-                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_READBACK_DEADLINE).await;
+                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
             let click = conn.call(
                 Some(cdp),
                 "Runtime.callFunctionOn",
@@ -1444,9 +1453,8 @@ impl Tool for BrowserClickTool {
                     }
                 }
             };
-            let dialog = conn.dialog_state(cdp_target_id);
-            return match outcome {
-                Ok(_) if dialog.is_none() => {
+            return match (outcome, conn.dialog_state(cdp_target_id)) {
+                (Ok(_), None) => {
                     let observation = observe_dom_click(conn, cdp, &object_id, before).await;
                     let text = match observation.effect {
                         ActionEffect::Confirmed => format!(
@@ -1470,34 +1478,15 @@ impl Tool for BrowserClickTool {
                     let action_record = dom_click_action_record(&observation);
                     ToolResult::text(text).with_action_record(action_record)
                 }
-                Ok(_) => {
-                    let text = match &dialog {
-                        Some(open) => format!(
-                            "dispatched synthetic DOM click on {} in {tab_id}; its handler opened \
-                             a {} dialog that is blocking the page. Inspect and resolve it with \
-                             browser_dialog (dialog_id {}) before any other action on this tab",
-                            ext_ref.as_deref().unwrap_or("?"),
-                            open.kind,
-                            dialog_capability_id(open.generation)
-                        ),
-                        None => format!(
-                            "dispatched synthetic DOM click on {} in {tab_id}; application effect not \
-                             verified (trust-gated controls may ignore untrusted events). Refresh page \
-                             state and verify the expected postcondition",
-                            ext_ref.as_deref().unwrap_or("?")
-                        ),
-                    };
-                    let escalation = if dialog.is_some() {
-                        json!({
-                            "recommended": "page",
-                            "reason": "the click opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
-                        })
-                    } else {
-                        json!({
-                            "recommended": "page",
-                            "reason": "synthetic DOM dispatch cannot prove control activation; refresh page state and verify the expected postcondition",
-                        })
-                    };
+                (Ok(_), Some(open)) => {
+                    let text = format!(
+                        "dispatched synthetic DOM click on {} in {tab_id}; its handler opened \
+                         a {} dialog that is blocking the page. Inspect and resolve it with \
+                         browser_dialog (dialog_id {}) before any other action on this tab",
+                        ext_ref.as_deref().unwrap_or("?"),
+                        open.kind,
+                        dialog_capability_id(open.generation)
+                    );
                     ToolResult::text(text).with_structured(json!({
                         "status": "ok",
                         "effect": "unverifiable",
@@ -1506,11 +1495,14 @@ impl Tool for BrowserClickTool {
                         "tab_id": tab_id,
                         "ref": ext_ref,
                         "frame": frame_kind,
-                        "dialog": dialog_block(dialog.as_ref()),
-                        "escalation": escalation,
+                        "dialog": dialog_block(&open),
+                        "escalation": {
+                            "recommended": "page",
+                            "reason": "the click opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
+                        },
                     }))
                 }
-                Err(e) => ToolResult::error(format!("DOM click failed: {e}")),
+                (Err(e), _) => ToolResult::error(format!("DOM click failed: {e}")),
             };
         }
 
@@ -1650,53 +1642,21 @@ impl Tool for BrowserClickTool {
     }
 }
 
-/// Center of the content quad from a `DOM.getBoxModel` result.
 /// The public id for one dialog generation, shared by `browser_click` and
 /// `browser_dialog` so a caller can hand the click's id straight back.
 fn dialog_capability_id(generation: u64) -> String {
     format!("dialog-{generation}")
 }
 
-/// Make sure a `Page.javascriptDialogOpening` on this tab is attributed to
-/// its target: register the tab session and enable Page events once. Best
-/// effort; a failure only means a dialog cannot be observed from here.
-async fn ensure_dialog_observation(conn: &CdpConnection, tab_session: &str, cdp_target_id: &str) {
-    if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
-        return;
-    }
-    // Register before Page.enable so an opening event delivered before the
-    // command reply is still attributed to the exact target.
-    conn.register_dialog_session(tab_session, cdp_target_id);
-    if conn
-        .call(Some(tab_session), "Page.enable", json!({}))
-        .await
-        .is_err()
-        && conn.dialog_state(cdp_target_id).is_none()
-    {
-        conn.unregister_dialog_session(tab_session, cdp_target_id);
-    }
+fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
+    json!({
+        "present": true,
+        "kind": dialog.kind,
+        "dialog_id": dialog_capability_id(dialog.generation),
+    })
 }
 
-/// The dialog currently blocking a validated tab, if any is known.
-fn conn_dialog_state(
-    validated: &super::engine::ValidatedTab,
-) -> Option<super::cdp_ws::CdpDialogState> {
-    validated
-        .conn
-        .dialog_state(validated.tab.cdp_target_id.as_str())
-}
-
-fn dialog_block(dialog: Option<&super::cdp_ws::CdpDialogState>) -> Value {
-    match dialog {
-        Some(dialog) => json!({
-            "present": true,
-            "kind": dialog.kind,
-            "dialog_id": dialog_capability_id(dialog.generation),
-        }),
-        None => json!({ "present": false }),
-    }
-}
-
+/// Center of the content quad from a `DOM.getBoxModel` result.
 fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let quad = box_model.get("model")?.get("content")?.as_array()?;
     if quad.len() < 8 {
@@ -1990,7 +1950,7 @@ impl Tool for BrowserTypeTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_type").await
         } else {
@@ -2584,7 +2544,7 @@ impl Tool for BrowserSelectTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_select").await
         } else {
@@ -2783,7 +2743,7 @@ impl Tool for BrowserDialogTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if matches!(
             adapter_id,
             "private_observation" | "browser_consequential_action"
@@ -3910,11 +3870,12 @@ mod tests {
     #[tokio::test]
     async fn heuristic_bindings_refuse_mutation() {
         use crate::browser::types::{BindingQuality, Rect};
+        use indexmap::IndexMap;
         use std::collections::HashMap;
 
         let e = engine();
         // Seed a heuristic binding directly into the store.
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         let tab_id = e.store.mint_tab_id();
         tabs.insert(
             tab_id.clone(),
@@ -3971,10 +3932,11 @@ mod tests {
     #[tokio::test]
     async fn stale_fingerprint_refuses_before_any_cdp_traffic() {
         use crate::browser::types::{BindingQuality, Rect};
+        use indexmap::IndexMap;
         use std::collections::HashMap;
 
         let e = engine();
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         let tab_id = e.store.mint_tab_id();
         tabs.insert(
             tab_id.clone(),
@@ -4031,7 +3993,6 @@ mod tests {
     #[tokio::test]
     async fn session_end_hook_drops_the_capability_namespace() {
         use crate::browser::types::{BindingQuality, Rect};
-        use std::collections::HashMap;
 
         let e = engine();
         let sid = "browser-store-cleanup-session-771";
@@ -4058,7 +4019,7 @@ mod tests {
                 cdp_target_id: "C".into(),
                 cdp_window_id: Some(1),
                 quality: BindingQuality::Exact,
-                tabs: HashMap::new(),
+                tabs: indexmap::IndexMap::new(),
             },
         );
         assert_eq!(e.store.target_count(sid), 1);

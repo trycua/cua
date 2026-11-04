@@ -25,7 +25,7 @@ RUN dpkg-query -W -f '${Package}\n' | sort >/tmp/rootfs-packages \
       linux-image-virtual initramfs-tools \
       systemd systemd-sysv systemd-resolved systemd-timesyncd udev dbus kmod \
       netplan.io cloud-init cloud-guest-utils openssh-server qemu-guest-agent \
-      iproute2 iputils-ping e2fsprogs sudo ca-certificates \
+      iproute2 nftables iputils-ping e2fsprogs sudo ca-certificates \
       && break; echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
       [ "$attempt" = 3 ] && exit 1; done \
  && rm -rf /var/lib/apt/lists/* \
@@ -36,6 +36,15 @@ RUN dpkg-query -W -f '${Package}\n' | sort >/tmp/rootfs-packages \
  && mkdir -p /etc/cua-image \
  && dpkg-query -W -f '${Package}\n' | sort | comm -13 /tmp/rootfs-packages - >/etc/cua-image/variant-packages \
  && rm -f /tmp/rootfs-packages
+
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # /etc/cua-image/variant-packages: what the VM layer added on top of the
 # rootfs. The doctor's fidelity package hash leaves them out, so the two
 # variants of one image compare equal unless shared packages differ.
@@ -44,6 +53,14 @@ COPY common/vm/files/99-kubevirt.yaml /etc/netplan/99-kubevirt.yaml
 COPY common/vm/files/fstab /etc/fstab
 COPY common/vm/files/99-cua-cloud.cfg /etc/cloud/cloud.cfg.d/99-cua-cloud.cfg
 
+# CVE-2026-98432 interim guard (IPv4 options dropped before TCP). Remove once
+# linux-image-virtual is at or above the fixed version for noble; see
+# docs/content/docs/spaces/guides/ip-options-guard.mdx.
+COPY common/vm/files/cua-ipopts/cua-ipopts-guard /opt/cua/bin/cua-ipopts-guard
+COPY common/vm/files/cua-ipopts/cua-ipopts.nft /etc/cua-image/cua-ipopts.nft
+COPY common/vm/files/cua-ipopts/cua-ipopts.service /etc/systemd/system/cua-ipopts.service
+COPY common/vm/files/cua-ipopts/90-cua-ipopts.conf /etc/sysctl.d/90-cua-ipopts.conf
+
 RUN chmod 600 /etc/netplan/99-kubevirt.yaml \
  && rm -f /etc/netplan/50-cloud-init.yaml /etc/ssh/ssh_host_* /var/lib/dbus/machine-id
 # (machine-id, hostname, resolv.conf and /.dockerenv are build-time bind mounts;
@@ -51,7 +68,8 @@ RUN chmod 600 /etc/netplan/99-kubevirt.yaml \
 
 # systemd owns the VM: enable the base services plus the image's own units, and
 # keep supervisord (the container PID 1) from also starting them.
-RUN systemctl enable systemd-networkd systemd-resolved ssh.socket qemu-guest-agent \
+RUN chmod 0755 /opt/cua/bin/cua-ipopts-guard \
+ && systemctl enable systemd-networkd systemd-resolved ssh.socket qemu-guest-agent cua-ipopts.service \
  && if systemctl list-unit-files supervisor.service >/dev/null 2>&1; then systemctl mask supervisor.service; fi \
  && if [ -f /etc/cua-image/vm-units ]; then \
       grep -v '^[[:space:]]*\(#\|$\)' /etc/cua-image/vm-units | xargs -r systemctl enable; \

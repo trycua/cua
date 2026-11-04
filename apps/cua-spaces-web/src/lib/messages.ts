@@ -16,6 +16,25 @@ export const MESSAGES: Record<string, string> = {
   "teleport.sensitive.history.label": "Browsing history",
   "teleport.sensitive.history.detail":
     "Sends the history of pages visited, and the bookmarks where the browser keeps them together.",
+  "spaces.power.suspend": "Suspend",
+  "spaces.power.resume": "Resume",
+  "spaces.power.turn_off": "Turn off",
+  "spaces.power.turn_on": "Turn on",
+  "spaces.status.failed": "Failed",
+  "spaces.status.cancelling": "Cancelling…",
+  "spaces.status.this_mac": "This Mac",
+  "spaces.status.running": "Running",
+  "spaces.status.local": "Local",
+  "spaces.status.approval": "Needs approval",
+  "spaces.status.suspended": "Suspended",
+  "spaces.status.starting": "Starting",
+  "spaces.status.deleting": "Deleting…",
+  "spaces.status.stopped": "Stopped",
+  "spaces.status.stopped_reason": "Stopped: {reason}",
+  "spaces.status.suspending": "Suspending…",
+  "spaces.status.resuming": "Resuming…",
+  "spaces.status.turning_off": "Turning off…",
+  "spaces.status.turning_on": "Turning on…",
 };
 
 /** A core message as text: its English with the variables filled in. */

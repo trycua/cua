@@ -116,6 +116,8 @@ resources:
 
 - Apps: `bundle_id` on macOS, an absolute `executable` on Windows and Linux.
   `terminate: driver_launched` only kills a process this runtime started.
+  `launch_app` needs `launch: true` on a matching entry, and the call must name
+  the app by that exact `bundle_id` or absolute path, not by display name.
 - Files: roots are compared by canonical path component; `recursive: false`
   allows direct children only.
 - `desktop.display: true` allows full-display capture and screen-coordinate

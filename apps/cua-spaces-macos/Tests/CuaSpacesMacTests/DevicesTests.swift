@@ -66,9 +66,9 @@ struct DevicesTests {
         await m.refresh()
         #expect(announced.count == 2, "a device asks once per launch")
         #expect(m.view.thisDevice.kind == .enrolled)
-        #expect(m.thisDeviceText(m.view.thisDevice) == "Enrolled until Feb 8, 2027")
+        #expect(m.thisDeviceText(m.view.thisDevice) == "Trusted until Feb 8, 2027")
         let studio = m.view.rows.first { $0.id == "dev_studio" }!
-        #expect(m.rowDetail(studio) == "Linux \u{b7} Enrolled \u{b7} re-verify in 12 days \u{b7} Last seen 3 hours ago")
+        #expect(m.rowDetail(studio) == "Linux, Trusted, check again in 12 days, last seen 3 hours ago")
         #expect(m.view.recent.first?.text == "MacBook Pro opened build-box")
     }
 
@@ -82,7 +82,7 @@ struct DevicesTests {
         #expect(presence.asked.isEmpty, "Approve needs the whole code")
         m.setCode("k7qxm2rp")
         await m.approve()
-        #expect(presence.asked == ["approve \u{201c}Work laptop\u{201d} for your Cua account"])
+        #expect(presence.asked == ["add \u{201c}Work laptop\u{201d} to your Cua account"])
         #expect(fixture.calls.isEmpty, "no presence, no relay call")
         #expect(m.approvalView?.error == "Approval was cancelled")
         #expect(m.approvalView?.busy == false)
@@ -123,7 +123,7 @@ struct DevicesTests {
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"])
         m.openApproval(deviceId: "dev_old", in: .settings)
-        #expect(m.approvalView?.denyLabel == "Not Now")
+        #expect(m.approvalView?.denyLabel == "Not now")
         await m.deny()
         #expect(fixture.calls == ["revoke:dev_work"], "Not Now calls nothing")
         #expect(m.approval == nil)
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Approve by ID")
+        #expect(m.approvalView?.approveLabel == "Add machine")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()
@@ -294,6 +294,37 @@ struct RelayUsageTests {
         #expect(notice.upgradeUrl?.hasSuffix("/buy/teams?from=plan_limit") == true)
         m.dismissRelayNotice()
         #expect(m.relayNotice == nil)
+    }
+
+    /// CUA-1881: a refused create shown is `cua_plan_limit_shown` at
+    /// `app_create`; Upgrade is `cua_upgrade_link_opened` and opens the page
+    /// with `?from=app_create`. With usage data off, nothing is recorded.
+    @Test func aRefusalShownAndItsUpgradeAreUsageEventsWithFrom() async throws {
+        let (m, _) = model(FixtureDevices())
+        let telemetry = FixtureTelemetry()
+        m.telemetry = telemetry
+        m.noteRefusal("relay: You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.", surface: "app_create")
+        let notice = try #require(m.relayNotice)
+        #expect(notice.kind == "sessions")
+        #expect(notice.plan == "free")
+        m.recordNoticeShown(notice)
+        let url = try #require(m.openUpgrade(notice))
+        #expect(url.absoluteString.hasSuffix("/buy/pro?from=app_create"))
+        #expect(telemetry.recorded == [
+            .planLimitShown(surface: "app_create", kind: "sessions", plan: "free"),
+            .upgradeLinkOpened(surface: "app_create", kind: "sessions", plan: "free"),
+        ])
+        // The plan card's link says where it was opened.
+        let card = try #require(m.openPlanLink("https://app.cua.ai/billing?from=app_plan_card"))
+        #expect(card.absoluteString == "https://app.cua.ai/billing?from=app_plan_card")
+        #expect(telemetry.recorded.contains(.upgradeLinkOpened(surface: "app_plan_card", kind: "none", plan: "unknown")))
+
+        let off = FixtureTelemetry()
+        off.current.enabled = false
+        m.telemetry = off
+        m.recordNoticeShown(notice)
+        _ = m.openUpgrade(notice)
+        #expect(off.recorded.isEmpty)
     }
 
     @Test func atEightyPercentOfHoursAFreePlanGetsAHeadsUpThatWaitsForLiveSessions() async throws {

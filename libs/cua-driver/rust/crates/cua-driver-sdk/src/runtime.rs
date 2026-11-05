@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private platform-runtime composition behind the public SDK boundary.
 //!
 //! This is deliberately not a second public interface. Both imported SDK

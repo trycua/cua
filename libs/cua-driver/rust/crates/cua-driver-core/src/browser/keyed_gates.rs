@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keyed async gates: callers with the same key serialize, and callers with
 //! different keys proceed independently.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure decision logic for scoping an AX walk to one requested CGWindowID.
 //!
 //! Split out of [`super::tree`] so the decision — which is where issue #2237's

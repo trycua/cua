@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Startup "new version available" banner.
 //!
 //! On the interactive entry points (`mcp`, `serve`, `doctor`) we resolve the

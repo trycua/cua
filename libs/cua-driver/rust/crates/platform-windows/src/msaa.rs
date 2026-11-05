@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MSAA (Microsoft Active Accessibility) tree walker.
 //!
 //! Fallback for SAL/VCL window classes (LibreOffice, OpenOffice) where the

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! UI Automation (UIA) tree walking for Windows.
 //!
 //! Produces the same Markdown format as the macOS AX tree:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background scroll through accessibility, for surfaces that drop
 //! background wheel events and keystrokes (Electron/Chromium on macOS).
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Other copies of Cua Driver.app that macOS knows about.
 //!
 //! A Mac can hold several copies of `CuaDriver.app`: an old release in

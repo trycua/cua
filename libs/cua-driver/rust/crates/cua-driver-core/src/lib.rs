@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent Driver core and dual-era MCP dispatch.
 //!
 //! Stdio supports legacy initialization and modern per-request negotiation.

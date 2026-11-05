@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The layer every Linux compositor adapter shares: the lock, identity,
 //! delivery, freshness, reach, motion and restore rules in [`policy`], the one
 //! foreground transaction entry point, the deadline rule, the focus

@@ -210,6 +210,16 @@ impl ServiceNames {
     /// even one inside this home (`~/.cua/host/` is not part of
     /// `~/.cua/envs/staging/host/`).
     pub fn owns(&self, content: &str) -> bool {
+        // On Windows `/` and `\` are one separator (`envs/staging` joins
+        // into a path with both), and case does not matter.
+        let norm = |s: &str| {
+            if cfg!(windows) {
+                s.replace('/', "\\").to_lowercase()
+            } else {
+                s.to_string()
+            }
+        };
+        let content = norm(content);
         let dir = self.host_dir.to_string_lossy();
         let sep = std::path::MAIN_SEPARATOR;
         [
@@ -218,7 +228,7 @@ impl ServiceNames {
             xml_escape(&format!("{dir}{sep}")),
         ]
         .iter()
-        .any(|needle| content.contains(needle.as_str()))
+        .any(|needle| content.contains(norm(needle).as_str()))
     }
 }
 
@@ -1379,7 +1389,13 @@ impl ServiceManager for WindowsTask {
             if self.task_is_ours() == Some(false) {
                 return Ok(());
             }
-            return run(Command::new("schtasks").args(["/End", "/TN", &self.task()])).map(drop);
+            let ended = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
+            // `/End` stops only the task's own process (conhost): cmd.exe
+            // and the driver under it keep running, holding the ports, so a
+            // setup again moved to other ports and its new driver never
+            // started (CUA-1749, CUA-3513).
+            self.kill_home_driver();
+            return ended.map(drop);
         }
         if let Ok(spec) = self.spec() {
             for pid in windows_procs::pids_of(&spec.program) {
@@ -1389,7 +1405,14 @@ impl ServiceManager for WindowsTask {
         Ok(())
     }
     fn uninstall(&self) -> Result<()> {
-        let program = self.spec().ok().map(|s| s.program);
+        // The logon entry's spec names the driver; the task has none, and
+        // runs this home's own (`<host>/bin`).
+        let program = Some(
+            self.spec()
+                .ok()
+                .map(|s| s.program)
+                .unwrap_or_else(|| self.home_driver()),
+        );
         if self.run_entry_installed() {
             let _ = self.stop();
         }
@@ -1504,7 +1527,10 @@ mod windows_procs {
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
         };
-        let want = program.to_string_lossy().to_lowercase();
+        // `envs/staging` joins into a Windows path with a forward slash;
+        // Windows reports the image with backslashes. Compare both with
+        // backslashes, so the staging home's driver is found (CUA-3512).
+        let want = program.to_string_lossy().replace('/', "\\").to_lowercase();
         let want_name = program
             .file_name()
             .map(|n| n.to_string_lossy().to_lowercase())
@@ -1533,7 +1559,10 @@ mod windows_procs {
                         let mut buf = [0u16; 1024];
                         let mut n = buf.len() as u32;
                         if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n) != 0
-                            && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == want
+                            && String::from_utf16_lossy(&buf[..n as usize])
+                                .replace('/', "\\")
+                                .to_lowercase()
+                                == want
                         {
                             out.push(e.th32ProcessID);
                         }
@@ -3114,6 +3143,11 @@ mod instance_tests {
             let staging_xml = windows_task_xml(&staging_spec, r"PC\Ada", &staging.windows_task());
             assert!(staging.owns(&staging_xml) && !prod.owns(&staging_xml));
             assert!(staging_xml.contains(r"<URI>\Cua\SpacesdHost-staging</URI>"));
+            // `envs/staging` joins with a forward slash; Windows writes and
+            // reports backslashes, in any case.
+            let joined = home(r"C:\Users\Ada\.cua\envs/staging");
+            assert!(joined.owns(r"C:\USERS\ada\.cua\envs\staging\host\driver.log"));
+            assert!(!joined.owns(r"C:\Users\Ada\.cua\host\driver.log"));
         }
     }
 

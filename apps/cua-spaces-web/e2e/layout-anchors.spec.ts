@@ -89,6 +89,13 @@ for (const [width, height] of SIZES) {
       await page.locator("[data-onboarding-later]").click();
       await measure("where");
       await primary.click();
+      // On a Mac host, Cua Spaces' permissions come next (CUA-3550): its button sits in the same pinned row.
+      await expect(root).toHaveAttribute("data-step", /^(permissions|agent)$/, { timeout: 30_000 });
+      if ((await root.getAttribute("data-step")) === "permissions") {
+        await page.locator("[data-new-run-permissions-next]").waitFor();
+        await measure("permissions", "[data-new-run-permissions-next]");
+        await primary.click();
+      }
       await page.locator("[data-new-run='agent']:not([data-state='looking'])").waitFor({ timeout: 30_000 });
       if (await primary.isDisabled()) await page.locator("[data-new-run-agent][role=checkbox]").first().click();
       await measure("agent");

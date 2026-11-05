@@ -32,6 +32,8 @@ extension WebUIBridge {
             throw Failure.unsupported("Open Cua Spaces on that computer to see its Cua Driver")
         }
         switch method {
+        case "driver.permissions":
+            return await appPermissions()
         case "driver.status":
             guard let driver = EmbeddedDriver.current() else { return NSNull() }
             return await driverStatus(driver)
@@ -101,6 +103,21 @@ extension WebUIBridge {
         }
     }
 
+    /// `AppPermissions`: Cua Spaces' own Screen Recording and Accessibility,
+    /// the grants Cua Driver uses (it runs as Cua Spaces' child, so macOS
+    /// never lists it on its own). Answered on any Mac, with or without a
+    /// driver, for the first run's permissions step, the Driver page and
+    /// This Mac. Once both are on, a running driver that still says no (it
+    /// keeps the Screen Recording answer it had at launch) starts again,
+    /// once.
+    func appPermissions() async -> [String: Any] {
+        let granted = await PermissionGuide.readGranted()
+        if granted.contains(.screenRecording), granted.contains(.accessibility), let driver = EmbeddedDriver.current() {
+            await restartDriverIfStale(driver, force: false)
+        }
+        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(granted: granted)]
+    }
+
     /// `DriverStatus`.
     func driverStatus(_ driver: EmbeddedDriver) async -> [String: Any] {
         let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
@@ -137,10 +154,8 @@ extension WebUIBridge {
             "update": NSNull(),
             "lastTest": orNull(DriverPageState.shared.lastTest),
             "lastError": orNull(lastError),
-            "permissions": [
-                ["id": "screen", "granted": screen, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .screenRecording))],
-                ["id": "accessibility", "granted": accessibility, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .accessibility))],
-            ],
+            "permissions": PermissionGuide.rows(granted: granted),
+            "appName": PermissionGuide.appName(),
             "activity": [Any](),
             "canPause": true,
         ]
@@ -200,7 +215,7 @@ extension WebUIBridge {
     /// The driver keeps the Screen Recording answer it had when it started:
     /// granted to Cua Spaces since, it still says no until it starts again.
     /// cua-spacesd starts it again within a second when it exits.
-    private func restartDriverIfStale(_ driver: EmbeddedDriver, force: Bool) async {
+    func restartDriverIfStale(_ driver: EmbeddedDriver, force: Bool) async {
         let state = DriverPageState.shared
         if !force, let last = state.lastRestart, Date().timeIntervalSince(last) < 60 { return }
         let stale: Int32? = await Task.detached { () -> Int32? in

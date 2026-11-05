@@ -13,9 +13,10 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 # composite actions it runs (the map and the reasons are in
 # .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
 # filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
-# label, every push to main and the nightly schedule reach it. Rust-internal
-# changes that leave the binding alone are covered by the full run on every
-# push to main and by the nightly schedule. Release-please branches skip both
+# label, every push to main and the nightly schedule reach it. A push to main
+# is scoped by the paths it changed, like a pull request (the macOS build is
+# 10x runner minutes); Rust-internal changes that leave the binding alone are
+# covered by the nightly full run. Release-please branches skip both
 # jobs as they always have. The TypeScript job keeps the trigger paths this
 # workflow had before; the scope job evaluates them too.
 
@@ -23,7 +24,8 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Drift check: the full build on main, whatever changed.
+  # The full build on main, whatever changed (a push builds only when it touches
+  # the sample or its dependencies).
   schedule:
     - cron: "53 5 * * *"
   workflow_dispatch:
@@ -138,6 +140,8 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # Fails when the dependency map no longer matches the Swift manifests.
@@ -147,6 +151,10 @@ jobs:
             # Both names of a renamed file: moving a dependency out of a mapped
             # directory is still a change to the dependency.
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
+          elif [[ "$EVENT" == push && "$BEFORE" =~ [1-9a-f] ]]; then
+            # Same for the commits a push to main brought in. A new branch (all-zero
+            # BEFORE) or a failed listing leaves `files` empty, which runs the full build.
+            files=$(gh api --paginate "repos/$REPO/compare/$BEFORE...$SHA?per_page=100" --jq '.files[] | .filename, (.previous_filename // empty)' || true)
           fi
           python3 .github/scripts/ci_swift_samples_scope.py scope openkoalabot <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 

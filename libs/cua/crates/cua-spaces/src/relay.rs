@@ -106,7 +106,7 @@ const LIVE_PROBE: std::time::Duration = std::time::Duration::from_secs(6);
 
 /// How long deleting one child Space through its computer may take when a
 /// computer is removed with its Spaces.
-const CHILD_DELETE: std::time::Duration = std::time::Duration::from_secs(60);
+const CHILD_DELETE: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// How long the account's default Space is kept before the relay is asked
 /// again (lists mark it from this).
@@ -330,7 +330,7 @@ impl crate::Spaces {
             .map(|m| format!("relay:{}", m.id))
             .collect();
         for child in children {
-            let done = tokio::time::timeout(CHILD_DELETE, self.delete(&child)).await;
+            let done = tokio::time::timeout(CHILD_DELETE, Box::pin(self.delete(&child))).await;
             match done {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {

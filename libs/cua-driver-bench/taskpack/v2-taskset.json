@@ -1,7 +1,7 @@
 {
   "schema": "cdb-taskset/1",
   "name": "v2",
-  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: the three multi-app tasks (CDB-G02 to CDB-G04, pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash) run on macOS, Linux and Windows; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run on macOS and Linux. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only).",
+  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: all ten run on macOS, Linux and Windows. The three multi-app tasks (CDB-G02 to CDB-G04) are pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run in BenchLab and its Linux and Windows ports. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only).",
   "limits": {
     "timeout_s": 360,
     "max_turns": 45
@@ -109,7 +109,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -136,7 +137,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -162,7 +164,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -188,7 +191,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -215,7 +219,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -242,7 +247,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [
@@ -269,7 +275,8 @@
       ],
       "os": [
         "macos",
-        "linux"
+        "linux",
+        "windows"
       ],
       "cross_os_candidate": null,
       "conditions": [

@@ -99,6 +99,35 @@ pub struct Observed {
     pub accessibility: Mutex<Vec<String>>,
     /// Screenshot requests.
     pub screenshots: Mutex<Vec<pb::ScreenshotRequest>>,
+    /// `(call, path, run_as)` of every `Stat`, `ListDir`, `MakeDir`, `Move`
+    /// (the source), `Remove` and `ReadFile`, in order.
+    pub fs_run_as: Mutex<Vec<(String, String, String)>>,
+}
+
+impl Observed {
+    /// The `run_as` of each recorded `call` on `path`.
+    pub fn run_as_of(&self, call: &str, path: &str) -> Vec<String> {
+        self.fs_run_as
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(c, p, _)| c == call && p == path)
+            .map(|(_, _, u)| u.clone())
+            .collect()
+    }
+}
+
+impl Svc {
+    /// Records a file call's `run_as`, then checks it.
+    fn run_as(&self, call: &str, path: &str, user: &str) -> Result<(), Status> {
+        self.0
+            .observed
+            .fs_run_as
+            .lock()
+            .unwrap()
+            .push((call.into(), path.into(), user.into()));
+        check_run_as(user)
+    }
 }
 
 /// What the mock records about a file besides its bytes: the user it was
@@ -1797,7 +1826,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::StatRequest>,
     ) -> Result<tonic::Response<pb::StatResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Stat", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let path = req.path;
         if self.0.is_dir(&path) {
@@ -1826,7 +1855,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::ListDirRequest>,
     ) -> Result<tonic::Response<pb::ListDirResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("ListDir", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let dir = req.path.trim_end_matches('/').to_string() + "/";
         // Entries at most `depth` levels below `dir` (0: no limit, the
@@ -1872,7 +1901,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::MakeDirRequest>,
     ) -> Result<tonic::Response<pb::MakeDirResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("MakeDir", &req.path, &req.run_as)?;
         let path = req.path.trim_end_matches('/').to_string();
         let created = !self.0.is_dir(&path);
         {
@@ -1905,7 +1934,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::MoveRequest>,
     ) -> Result<tonic::Response<pb::MoveResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Move", &req.source, &req.run_as)?;
         let mut files = self.0.files.lock().unwrap();
         let data = files.remove(&req.source).ok_or_else(|| {
             fs_err(
@@ -1933,7 +1962,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::RemoveRequest>,
     ) -> Result<tonic::Response<pb::RemoveResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Remove", &req.path, &req.run_as)?;
         let path = req.path.trim_end_matches('/').to_string();
         self.0.file_attrs.lock().unwrap().remove(&path);
         let removed = self.0.files.lock().unwrap().remove(&path);
@@ -2001,7 +2030,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::ReadFileRequest>,
     ) -> Result<tonic::Response<Self::ReadFileStream>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("ReadFile", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let data = self.0.file(&req.path).ok_or_else(|| {
             fs_err(

@@ -1046,3 +1046,59 @@ async fn set_timeout_zero_kills_before_it_answers() {
         "gone the moment set_timeout(0) answered"
     );
 }
+
+#[tokio::test]
+async fn root_file_calls_name_root_to_an_agent_that_switches_users() {
+    // The mock agent switches users by capability and is not root itself
+    // (as the Linux image's `cua` agent): a file call without `run_as` runs
+    // as the agent. envd acts with root's rights, so each call names root,
+    // including cua-spacesd's own calls a guest without GNU tools gets.
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let name = g.mock.created.lock().await[0].name.clone();
+    let st = g.mock.state(&name).await.unwrap();
+    st.put_file("/tmp/r/a", b"1".to_vec());
+    let call = |method: &str, body: Value| {
+        g.envd(&sb, &format!("filesystem.Filesystem/{method}"))
+            .header("content-type", "application/json")
+            .header("authorization", "Basic cm9vdDo=")
+            .body(body.to_string())
+            .send()
+    };
+    for (method, body) in [
+        ("Stat", json!({"path": "/tmp/r/a"})),
+        ("ListDir", json!({"path": "/tmp/r", "depth": 1})),
+        ("MakeDir", json!({"path": "/tmp/r/d"})),
+        (
+            "Move",
+            json!({"source": "/tmp/r/a", "destination": "/tmp/r/b"}),
+        ),
+        ("Remove", json!({"path": "/tmp/r/b"})),
+    ] {
+        let r = call(method, body).await.unwrap();
+        assert_eq!(r.status(), 200, "{method}: {}", r.text().await.unwrap());
+    }
+    st.put_file("/tmp/r/c", b"2".to_vec());
+    let r = g
+        .http
+        .get(format!("{}/files?path=/tmp/r/c&username=root", g.base))
+        .header("e2b-sandbox-id", sb["sandboxID"].as_str().unwrap())
+        .header("x-access-token", sb["envdAccessToken"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "2");
+    for (call, path) in [
+        ("Stat", "/tmp/r/a"),
+        ("ListDir", "/tmp/r"),
+        ("MakeDir", "/tmp/r/d"),
+        ("Move", "/tmp/r/a"),
+        ("Remove", "/tmp/r/b"),
+        ("ReadFile", "/tmp/r/c"),
+    ] {
+        let seen = st.observed.run_as_of(call, path);
+        assert!(!seen.is_empty(), "{call} {path} reached the agent");
+        assert!(seen.iter().all(|u| u == "root"), "{call} {path}: {seen:?}");
+    }
+}

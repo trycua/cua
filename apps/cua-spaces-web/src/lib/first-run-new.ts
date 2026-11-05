@@ -115,8 +115,28 @@ export interface ComputerRow {
   os: "macos" | "windows" | "linux" | null;
   sub: string;
   picked: boolean;
-  /** Offline: shown greyed, with no check circle, and it can't be picked. */
+  /** Offline or not sharing: shown greyed, with no check circle, and it can't be picked. */
   disabled: boolean;
+  /** Offline: with others offline too, it folds into one "N offline" row (`OfflineFold`). */
+  offline: boolean;
+}
+
+/** Offline computers folded into one row, so a long list never pushes Continue off the screen. */
+export interface OfflineFold {
+  /** "14 offline". */
+  label: string;
+  sub: string;
+  rows: ComputerRow[];
+}
+
+/** From this many offline computers on, they fold into one row; a single one is shown as itself. */
+export const OFFLINE_FOLD_AT = 2;
+
+/** The offline rows as one fold, or null when there are too few to fold. */
+export function offlineFold(rows: readonly ComputerRow[]): OfflineFold | null {
+  const off = rows.filter((r) => r.offline);
+  if (off.length < OFFLINE_FOLD_AT) return null;
+  return { label: `${off.length} offline`, sub: "They can be picked once they're back online.", rows: off };
 }
 
 export interface WhereView {
@@ -137,6 +157,8 @@ export interface WhereView {
   };
   /** Signed in: the account's other computers (empty: `emptyLine`). Signed out: null, and `signInLine` shows instead. */
   others: ComputerRow[] | null;
+  /** The offline ones among `others`, folded into one row (null: none, or only one, which shows as itself). */
+  offlineFold: OfflineFold | null;
   othersLabel: string;
   emptyLine: string;
   signInLine: { link: string; rest: string } | null;
@@ -189,7 +211,7 @@ export function otherComputers(input: Pick<WhereInput, "machines" | "picks" | "n
           ? "Not sharing"
           : `${os ? OS_WORD[os] : "Computer"} · ready`;
       const disabled = offline || Boolean(m.notSharing);
-      return { id: m.id, name: m.name, os, sub, picked: !disabled && input.picks.includes(m.id), disabled };
+      return { id: m.id, name: m.name, os, sub, picked: !disabled && input.picks.includes(m.id), disabled, offline };
     });
 }
 
@@ -228,6 +250,7 @@ export function whereView(input: WhereInput): WhereView {
       line: `Your agents can work on ${place} without an account. Add ${place} to an account when you want them on your other computers too.`,
       thisRow: { name: Place, status: "not added yet", tick: false, model: input.model, modelFirst: true, picked: thisPicked, action: { id: "add", label: "Add" } },
       others: null,
+      offlineFold: null,
       othersLabel: "Other computers in your account",
       emptyLine: "",
       signInLine: { link: "Sign in", rest: " to see your other computers." },
@@ -236,6 +259,7 @@ export function whereView(input: WhereInput): WhereView {
       continueEnabled: input.picks.length > 0,
     };
   }
+  const others = otherComputers(input);
   const status =
     input.thisState === "adding"
       ? "Adding to your account…"
@@ -256,7 +280,8 @@ export function whereView(input: WhereInput): WhereView {
       picked: thisPicked,
       action: input.thisState === "failed" ? { id: "retry-add", label: "Try again" } : null,
     },
-    others: otherComputers(input),
+    others,
+    offlineFold: offlineFold(others),
     othersLabel: "Other computers in your account",
     emptyLine: "None yet. Computers you or your team sign in on show up here.",
     signInLine: null,

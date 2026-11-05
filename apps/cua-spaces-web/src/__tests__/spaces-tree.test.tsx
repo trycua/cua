@@ -216,6 +216,30 @@ describe.skipIf(!wasmBuilt)("Home with Spaces as a tree (Labs)", () => {
     expect(q("[data-tree-fallback]")).toBeNull();
   });
 
+  it("the demo's computers share their desktops, so Home starts on the Mac mini when it is the default", { timeout: 30000 }, async () => {
+    on();
+    await mountApp("/home", host([]));
+    await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("Mac miniDefault"));
+    expect(q("[data-tree-fallback]")).toBeNull();
+  });
+
+  it("with the default offline, the next online computer is the one used, never contradicted by the line", { timeout: 30000 }, async () => {
+    on();
+    const resolved = {
+      space: "relay:mac-mini",
+      reason: "fallback",
+      defaultSpace: "relay:linux-box",
+      defaultOnline: false,
+      order: [step("relay:linux-box", "Linux box", false, "default"), step("relay:mac-mini", "Mac mini", true, "fallback"), step("relay:this-mac", "This Mac", true, "here")],
+    };
+    await mountApp("/home", host([], { offline: ["linux-box"], resolved }));
+    await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("Mac mini"));
+    const line = await found("[data-tree-fallback]");
+    expect(line.textContent).toContain("Linux box, your default, is offline. This runs on Mac mini, the next computer that can take it. If none can, it runs on This Mac.");
+    expect(line.textContent).not.toContain("no other computer is online");
+    expect(qa("[data-tree-fallback-step]").map((s) => s.textContent)).toEqual(["1Linux boxYour default. Offline now", "2Mac miniNext online computer. Used now", "3This MacLast resort"]);
+  });
+
   it("falls back to the next online computer when the default is offline, and says why", { timeout: 30000 }, async () => {
     on();
     const resolved = {
@@ -228,7 +252,7 @@ describe.skipIf(!wasmBuilt)("Home with Spaces as a tree (Labs)", () => {
     await mountApp("/home", host([], { offline: ["mac-mini"], resolved }));
     await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("Linux box"));
     const line = await found("[data-tree-fallback]");
-    expect(line.textContent).toContain("Mac mini, your default, is offline. This runs on Linux box, your next online computer. If none is online, it runs on This Mac.");
+    expect(line.textContent).toContain("Mac mini, your default, is offline. This runs on Linux box, the next computer that can take it. If none can, it runs on This Mac.");
     expect(qa("[data-tree-fallback-step]").map((s) => s.textContent)).toEqual(["1Mac miniYour default. Offline now", "2Linux boxNext online computer. Used now", "3This MacLast resort"]);
     expect(line.textContent).toContain("A new computer is never made unless you pick one.");
   });

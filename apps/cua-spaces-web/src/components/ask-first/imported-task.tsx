@@ -11,6 +11,7 @@ import { Timeline } from "@/components/agents/timeline";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { HOST_NOT_SHARED, hostSpaceId, updateAskTask, type AskTask } from "@/lib/ask-first";
+import { chatComputers } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark } from "./ask-box";
@@ -181,13 +182,15 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
 }
 
 /**
- * **Continue on**: where the chat carries on. This Mac today; the account's
- * other computers are listed but can't be picked yet, because the agent's
- * session lives on this Mac (continuing elsewhere is CUA-3331).
+ * **Continue on**: where the chat carries on. This Mac today; your other
+ * computers that could run it (online, each once, no browsers or phones) are
+ * listed but can't be picked yet, because the agent's session lives on this
+ * Mac (continuing elsewhere is CUA-3331). The menu opens above or below the
+ * box, whichever has room, and scrolls rather than leave the window.
  */
-function ContinueOn() {
+export function ContinueOn() {
   const { data: machines } = useMachines();
-  const others = (machines ?? []).filter((m) => !m.current);
+  const { computers: others, offline } = chatComputers(machines ?? []);
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger
@@ -198,8 +201,12 @@ function ContinueOn() {
         }
       />
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner sideOffset={6} align="end" className="z-50 outline-none">
-          <MenuPrimitive.Popup /* design-ok: a menu's popup, as Home's pickers */ className="glass w-[340px] origin-(--transform-origin) rounded-xl border p-2 text-popover-foreground shadow-float outline-none">
+        <MenuPrimitive.Positioner side="top" sideOffset={6} align="end" collisionPadding={12} className="z-50 outline-none">
+          <MenuPrimitive.Popup
+            /* design-ok: a menu's popup, as Home's pickers */
+            className="glass max-h-[min(480px,var(--available-height))] w-[340px] origin-(--transform-origin) overflow-y-auto overscroll-contain rounded-xl border p-2 text-popover-foreground shadow-float outline-none"
+            data-continue-on-menu=""
+          >
             <p className="px-3 pt-2 pb-1 text-[12px] font-medium text-muted-foreground">Continue on</p>
             <MenuPrimitive.Item className="flex min-h-12 cursor-default items-center gap-3 rounded-lg bg-foreground/[0.06] px-3 py-2 outline-none">
               <LaptopIcon className="size-4" />
@@ -218,6 +225,11 @@ function ContinueOn() {
                 </div>
               </MenuPrimitive.Item>
             ))}
+            {offline > 0 ? (
+              <p className="px-3 pt-2 pb-1 text-[12px] text-muted-foreground" data-continue-on-offline={offline}>
+                {offline === 1 ? "1 more computer is offline." : `${offline} more computers are offline.`}
+              </p>
+            ) : null}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>

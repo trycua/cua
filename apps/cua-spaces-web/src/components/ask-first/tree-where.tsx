@@ -55,6 +55,8 @@ function agentsLine(n: Pick<TreeNode, "running">): string | null {
 /** A row's second line in the picker. */
 export function pickerNote(n: TreeNode): string {
   if (!n.online) return n.status.replace(/, Default$/, "");
+  // Online, but no desktop to run a task in: it can't be picked, and "On now" would say it could.
+  if (!nodeWhere(n)) return "Online. Doesn't share its desktop";
   const agents = agentsLine(n);
   if (n.current) return agents ?? "Works on your own files and apps";
   if (n.kind === "computer" && n.people.length > 1) return agents ? `Shared with your team. ${agents}` : "Shared with your team";
@@ -231,7 +233,7 @@ export function TreeWherePicker({
   );
 }
 
-/** f2: the default is offline. One line says why, then the order tried. */
+/** f2: the default is offline or shares no desktop. One line says why, then the order tried. */
 export function FallbackLine({ fallback }: { fallback: NonNullable<TreeDefault["fallback"]> }) {
   return (
     <div data-tree-fallback="" className="flex flex-col gap-3 text-[14px]">
@@ -243,7 +245,7 @@ export function FallbackLine({ fallback }: { fallback: NonNullable<TreeDefault["
         <p className="mb-2 text-[13px] text-muted-foreground">Where a task goes</p>
         <ol className="flex flex-col gap-2">
           {fallback.steps.map((s, i) => (
-            <li key={`${s.name}:${i}`} className="flex items-center gap-3" data-tree-fallback-step={s.used ? "used" : s.online ? "online" : "offline"}>
+            <li key={`${s.name}:${i}`} className="flex items-center gap-3" data-tree-fallback-step={s.state}>
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06] text-[12px] text-muted-foreground">{i + 1}</span>
               {s.node ? <TreeIcon node={s.node} /> : null}
               <span className={cn(!s.online && "text-muted-foreground")}>{s.name}</span>

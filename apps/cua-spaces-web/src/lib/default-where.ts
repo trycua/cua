@@ -12,10 +12,13 @@
  * ask it resolves the same way over the tree (`resolveDefaultSpace`).
  */
 
-import { resolveDefaultSpace, type DefaultSpace, type SpacesSettings } from "@/bridge";
+import { resolveDefaultSpace, type DefaultSpace, type DefaultSpaceStep, type SpacesSettings } from "@/bridge";
 
 import type { NewKind, TaskWhere } from "./ask-first";
 import { defaultCandidates, findNode, type SpacesTree, type TreeNode } from "./spaces-tree";
+
+/** How a computer in "Where a task goes" stands: it runs the task, it could, it's online but has no desktop to run in, or it's offline. */
+export type WhereStepState = "used" | "ready" | "no-desktop" | "offline";
 
 /** One line of "Where a task goes" (f2). */
 export interface WhereStep {
@@ -24,6 +27,7 @@ export interface WhereStep {
   note: string;
   online: boolean;
   used: boolean;
+  state: WhereStepState;
   node: TreeNode | null;
 }
 
@@ -31,7 +35,7 @@ export interface TreeDefault {
   where: TaskWhere;
   /** The row it runs on; null: This Mac before it's in the tree. */
   node: TreeNode | null;
-  /** The default is offline: the line under Home's box and the order tried. Null otherwise. */
+  /** The default can't take the task (offline, or it shares no desktop): the line under Home's box and the order tried. Null otherwise. */
   fallback: { line: string; steps: WhereStep[] } | null;
 }
 
@@ -49,34 +53,85 @@ export function resolvedDefault(tree: SpacesTree, settings: SpacesSettings | nul
   return resolveDefaultSpace({ defaultSpace: def, fallback: settings?.fallback ?? [], fallbackOn: settings?.fallbackOn ?? true }, defaultCandidates(tree));
 }
 
+/** Why the default can't take a task. */
+export type DefaultProblem = "offline" | "no-desktop";
+
+/** The parts of the line under Home's box; `fallbackSentence` puts them together. */
+export interface FallbackParts {
+  /** The default's own name, never "your default". */
+  defaultName: string;
+  problem: DefaultProblem;
+  /** The computer it runs on instead; null: This Mac. */
+  usedName: string | null;
+  /** Another computer is online but shares no desktop to run in, so "no other computer is online" would be wrong. */
+  othersOnline: boolean;
+}
+
+const PROBLEM: Record<DefaultProblem, string> = { offline: "is offline", "no-desktop": "is online but doesn't share its desktop" };
+
+/** The line under Home's box, built from its parts so a name or a phrase is never said twice. */
+export function fallbackSentence({ defaultName, problem, usedName, othersOnline }: FallbackParts): string {
+  const why = `${defaultName}, your default, ${PROBLEM[problem]}`;
+  if (usedName) return `${why}. This runs on ${usedName}, the next computer that can take it. If none can, it runs on This Mac.`;
+  const others = othersOnline ? "no other computer can take it now" : "no other computer is online";
+  return `${why}, and ${others}. This runs on This Mac.`;
+}
+
+const stepNote = (role: string, state: WhereStepState): string => {
+  if (role === "here") return state === "used" ? "Last resort. Used now" : "Last resort";
+  if (role === "default") return state === "offline" ? "Your default. Offline now" : state === "no-desktop" ? "Your default. Doesn't share its desktop" : "Your default";
+  return state === "used" ? "Next online computer. Used now" : state === "ready" ? "Next to try" : state === "no-desktop" ? "Online, doesn't share its desktop" : "Offline now";
+};
+
 /**
- * Where a task goes unless you pick: the resolution's Space, as a place
- * to run. Anything that can't be run in (gone from the list, no desktop
- * to start in) goes to This Mac. Never a new computer.
+ * Where a task goes unless you pick: the resolution's Space, as a place to
+ * run. A computer that's online but shares no desktop can't take the task, so
+ * it's passed over for the next one in the order that can, then This Mac.
+ * Never a new computer. A saved default that's no longer in the tree (the
+ * computer was removed) counts as no default at all.
  */
 export function treeDefault(tree: SpacesTree, settings: SpacesSettings | null, resolved: DefaultSpace | null): TreeDefault {
   const r = resolvedDefault(tree, settings, resolved);
-  const picked = findNode(tree, r.space);
-  const where = picked ? (nodeWhere(picked) ?? ({ kind: "this-mac" } as const)) : ({ kind: "this-mac" } as const);
-  const node = where.kind === "this-mac" ? (tree.roots.find((n) => n.current) ?? null) : (picked ?? null);
-  const usedKey = node?.key ?? null;
-  const defOffline = r.defaultSpace !== null && r.defaultOnline === false;
-  if (!defOffline) return { where, node, fallback: null };
+  const here = tree.roots.find((n) => n.current) ?? null;
+  const defNode = r.defaultSpace ? (findNode(tree, r.defaultSpace) ?? null) : null;
 
-  const steps: WhereStep[] = r.order.map((o) => {
-    const n = findNode(tree, o.space) ?? null;
-    const used = o.role === "here" ? where.kind === "this-mac" : where.kind !== "this-mac" && n !== null && n.key === usedKey;
+  // The order with each computer's own row; computers no longer in the tree (removed since) are left out.
+  const order = r.order
+    .map((o) => ({ o, n: o.role === "here" ? here : (findNode(tree, o.space) ?? null) }))
+    .filter(({ o, n }) => o.role === "here" || n !== null);
+  const stateOf = (o: DefaultSpaceStep, n: TreeNode | null): Exclude<WhereStepState, "used"> => {
+    if (o.role === "here") return "ready";
+    if (!n || !o.online || !n.online) return "offline";
+    return nodeWhere(n) ? "ready" : "no-desktop";
+  };
+  const states = order.map(({ o, n }) => stateOf(o, n));
+
+  // Start from the resolution's pick (null: This Mac) and take the first that can run the task.
+  const pickedAt = r.space === null ? -1 : order.findIndex(({ o, n }) => o.role !== "here" && (o.space === r.space || n?.key === r.space || n?.settingsId === r.space));
+  const usedAt = pickedAt < 0 ? -1 : order.findIndex(({ o }, i) => i >= pickedAt && o.role !== "here" && states[i] === "ready");
+  const usedNode = usedAt >= 0 ? order[usedAt]!.n : null;
+  const usedWhere = usedNode ? nodeWhere(usedNode) : null;
+  const where: TaskWhere = usedWhere ?? { kind: "this-mac" };
+  const node = where.kind === "this-mac" ? here : usedNode;
+
+  const defIndex = order.findIndex(({ o }) => o.role === "default");
+  const defState = defIndex >= 0 ? states[defIndex]! : null;
+  // No line while the default takes the task, or there's no default that still exists (or it's This Mac).
+  if (!defNode || defNode.current || defState === null || defState === "ready") return { where, node, fallback: null };
+
+  const usedHere = where.kind === "this-mac";
+  const steps: WhereStep[] = order.map(({ o, n }, i) => {
+    const used = o.role === "here" ? usedHere : i === usedAt && !usedHere;
+    const state: WhereStepState = used ? "used" : states[i]!;
     const name = o.role === "here" ? "This Mac" : (n?.name ?? o.name);
-    const note =
-      o.role === "default" ? (o.online ? "Your default" : "Your default. Offline now") : o.role === "here" ? (used ? "Last resort. Used now" : "Last resort") : used ? "Next online computer. Used now" : o.online ? "Next to try" : "Offline now";
-    return { name, note, online: o.online, used, node: n };
+    return { name, note: stepNote(o.role, state), online: state !== "offline", used, state, node: n };
   });
-  const defName = steps.find((s) => s.note.startsWith("Your default"))?.name ?? findNode(tree, r.defaultSpace)?.name ?? "Your default";
-  const usedStep = steps.find((s) => s.used);
-  const line =
-    where.kind === "this-mac" || !usedStep
-      ? `${defName}, your default, is offline, and no other computer is online. This runs on This Mac.`
-      : `${defName}, your default, is offline. This runs on ${usedStep.name}, your next online computer. If none is online, it runs on This Mac.`;
+  const line = fallbackSentence({
+    defaultName: defNode.name,
+    problem: defState,
+    usedName: usedHere ? null : (usedNode?.name ?? null),
+    othersOnline: steps.some((s, i) => i !== defIndex && s.state === "no-desktop"),
+  });
   return { where, node, fallback: { line, steps } };
 }
 

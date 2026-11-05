@@ -496,6 +496,13 @@ Examples:
         /// with `--durable`.
         #[arg(long, value_name = "KEY=VALUE")]
         label: Vec<String>,
+        /// Keep it off your cua.ai account. By default a Space running on a
+        /// computer signed in and sharing is listed there, so your phone and
+        /// your other computers see and open it (`cua config set
+        /// relay.spaces off` turns that off for all of them). A child Space
+        /// follows its parent. Same as `--label cua.relay=off`.
+        #[arg(long)]
+        no_relay: bool,
         /// Its network: `internet` (the default: the internet and its own
         /// tree; this computer, your local network, cloud metadata and other
         /// trees are blocked), `none`, `localhost:5432,3000` (also this
@@ -1664,6 +1671,7 @@ pub async fn run_spaces_sdk(
             region,
             volumes,
             label,
+            no_relay,
             network,
             egress_deny,
             egress_allow,
@@ -1671,7 +1679,13 @@ pub async fn run_spaces_sdk(
             widen,
         } => {
             let volumes = parse_volumes(&volumes)?;
-            let labels = parse_labels(&label)?;
+            let mut labels = parse_labels(&label)?;
+            if no_relay {
+                labels.insert(
+                    cua_spaces::registry::RELAY_LABEL.to_string(),
+                    cua_spaces::registry::RelaySetting::Off.as_str().to_string(),
+                );
+            }
             // One shape for the network: a preset and the lists.
             let network_settings =
                 (network.is_some() || !egress_deny.is_empty() || !egress_allow.is_empty())
@@ -3959,10 +3973,14 @@ pub async fn run_spaces(
         resources: &resources,
         own_machine: spaces.this_relay_machine_id(),
     };
+    let on_account = spaces.relay_states(&list);
     if json {
         let mut rows = ls_json(&list);
         for (row, info) in rows.iter_mut().zip(&list) {
             columns.annotate(info, row);
+            if let (Some(o), Some(state)) = (row.as_object_mut(), on_account.get(&info.id)) {
+                o.insert("relay".into(), (*state).into());
+            }
         }
         let mut body = serde_json::json!({ "spaces": rows, "machines": hosts, "durable": durable,
                                           "relay_error": relay_error });
@@ -4005,6 +4023,20 @@ pub async fn run_spaces(
     }
     if let Some(e) = relay_error {
         line(out, format!("(relay computers unavailable: {e})"));
+    }
+    let stay_off: Vec<&str> = list
+        .iter()
+        .filter(|i| on_account.get(&i.id) == Some(&"off"))
+        .map(|i| i.shown_name())
+        .collect();
+    if !stay_off.is_empty() {
+        line(
+            out,
+            format!(
+                "(not on your cua.ai account, so your phone does not list {}: --no-relay, or `cua config set relay.spaces off`)",
+                stay_off.join(", ")
+            ),
+        );
     }
     if let Some(w) = columns.warning() {
         line(out, w);
@@ -4315,6 +4347,18 @@ mod tests {
         }
         // --widen only goes with --parent.
         assert!(parse_spaces(&["create", "linux", "--widen"]).is_err());
+    }
+
+    #[test]
+    fn no_relay_keeps_a_space_off_the_account() {
+        match parse_spaces(&["create", "linux", "--no-relay"]).unwrap() {
+            SpacesCmd::Create { no_relay, .. } => assert!(no_relay),
+            other => panic!("{other:?}"),
+        }
+        match parse_spaces(&["create", "linux"]).unwrap() {
+            SpacesCmd::Create { no_relay, .. } => assert!(!no_relay),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -5898,8 +5942,20 @@ mod tests {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn machines_rm_rechecks_after_confirmation() {
             let f = fx(&["old-laptop"]).await;
+            // It connects while the prompt is open, and answers a fresh
+            // connection through the relay (one that only the directory
+            // lists as connected is a ghost, which a remove may take).
+            let srv = cua_spacesd_client::testing::MockServer::start(
+                cua_spacesd_client::testing::MockAuth {
+                    token: None,
+                    gateway: None,
+                    prefix: None,
+                },
+            )
+            .await;
             let (r, _, asked) = rm(&f, "old-laptop", false, || {
                 f.relay.set_online(ID, true, "1.0");
+                f.relay.tunnel(ID, &srv.url());
                 true
             })
             .await;

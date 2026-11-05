@@ -37,6 +37,11 @@ does with them, and shows how Cua checks them.
   ready answers with its own token and nothing else opens it, not even the
   member's own secret, and it behaves as one that started cold. A runtime
   that cannot claim a member refuses a pool in plain words and starts cold.
+- **A running Space is on your account.** While the computer is signed in
+  and sharing, the Space is listed on your cua.ai account, so your phone and
+  your other computers see and open it, and it leaves the account when it
+  stops or is deleted. This is the same for a macOS VM, a QEMU VM, a
+  container and a microVM, and it needs no step of yours.
 - **Delete leaves nothing.** No Space, process, container or network remains.
 
 A runtime that cannot keep a promise refuses it at once, in plain words that

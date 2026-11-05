@@ -989,7 +989,7 @@ async fn dispatch(
         "relay_unregister_space" => {
             let a: i::RelayUnregisterSpace = args(tool, a)?;
             let unregistered = spaces
-                .relay_unregister_computer(&a.space, a.delete_spaces.unwrap_or(false))
+                .remove_computer(&a.space, a.delete_spaces.unwrap_or(false))
                 .await?;
             let space = spaces.resolve(&a.space)?.to_string();
             Ok(ToolOutcome::json(

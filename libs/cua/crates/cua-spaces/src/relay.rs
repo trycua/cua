@@ -301,9 +301,6 @@ impl crate::Spaces {
         }
         #[cfg(feature = "spaces-agents")]
         self.detach_attached_driver(machine_id).await;
-        if delete_spaces {
-            self.delete_children_through_computer(machine_id).await;
-        }
         match client
             .delete_machine(&token, machine_id, delete_spaces)
             .await
@@ -315,11 +312,27 @@ impl crate::Spaces {
         Ok(Some(m))
     }
 
+    /// Removes one of your computers from the relay. With `delete_spaces`
+    /// the Spaces it provides are deleted first, files included, through the
+    /// computer while it answers (best effort), and then their records go
+    /// with it; without, they stay on the account, detached. Returns false
+    /// when it was not on the relay.
+    ///
+    /// Kept apart from [`crate::Spaces::relay_unregister_computer`] (which
+    /// only changes what the relay forgets) because deleting a Space can
+    /// itself unregister a computer.
+    pub async fn remove_computer(&self, space: &str, delete_spaces: bool) -> crate::Result<bool> {
+        if delete_spaces && let Ok(crate::SpaceId::Relay { machine_id }) = self.resolve(space) {
+            self.delete_children_through_computer(&machine_id).await;
+        }
+        self.relay_unregister_computer(space, delete_spaces).await
+    }
+
     /// Deletes the Spaces `machine_id` provides, files included, through
     /// the computer while it answers. Best effort: one that cannot be
     /// reached is logged, and the relay forgets its record either way
     /// (`spaces=delete`).
-    async fn delete_children_through_computer(&self, machine_id: &str) {
+    pub(crate) async fn delete_children_through_computer(&self, machine_id: &str) {
         let children: Vec<String> = self
             .inner
             .relay_cache
@@ -330,7 +343,7 @@ impl crate::Spaces {
             .map(|m| format!("relay:{}", m.id))
             .collect();
         for child in children {
-            let done = tokio::time::timeout(CHILD_DELETE, Box::pin(self.delete(&child))).await;
+            let done = tokio::time::timeout(CHILD_DELETE, self.delete(&child)).await;
             match done {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {

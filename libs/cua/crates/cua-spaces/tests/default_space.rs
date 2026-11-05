@@ -123,7 +123,7 @@ async fn removing_a_computer_detaches_its_spaces_or_deletes_them() {
         // Both are offline in the fake: the computer goes, taking its
         // Spaces with it only when asked.
         assert!(
-            app.relay_unregister_computer(&format!("relay:{COMPUTER}"), delete_spaces)
+            app.remove_computer(&format!("relay:{COMPUTER}"), delete_spaces)
                 .await
                 .unwrap()
         );

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Enumerate running processes on Windows.
 //!
 //! Uses CreateToolhelp32Snapshot / Process32FirstW / Process32NextW (simpler

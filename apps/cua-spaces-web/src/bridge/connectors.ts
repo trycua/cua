@@ -454,7 +454,12 @@ export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: strin
 /* ---- Summoning agents in a Space ---------------------------------------------------- */
 
 export interface SummonMember {
+  /** What the Space calls it (`claude`): the handle the thread matches. */
   handle: string;
+  /** The host's name for it (`claude-8`), an alias only. */
+  key?: string;
+  /** Runs on this device's own sign-ins (a Home's agent): waking it checks them. */
+  mine?: boolean;
   harness: string;
   label: string;
 }
@@ -463,6 +468,8 @@ export interface SummonInput {
   members: SummonMember[];
   people: string[];
   canAdd: boolean;
+  /** Report an @mention of nobody in the Space (the thread's composer; not Ask first's job). */
+  reportUnknown?: boolean;
   connectors: ConnectorsInput;
 }
 
@@ -475,7 +482,7 @@ export interface SummonCandidate {
 }
 
 export interface CantWake {
-  reason: "not-connected" | "cant-add" | "failed";
+  reason: "not-connected" | "cant-add" | "failed" | "no-such-member";
   handle: string;
   harness: string;
   name: string;
@@ -506,7 +513,7 @@ export const queuedNote = (core: CoreClient, creating: boolean): LocalNote | nul
 export interface SummonStep {
   handle: string;
   harness: string;
-  action: "wake" | "add" | "blocked";
+  action: "wake" | "add" | "blocked" | "unknown";
   cantWake: CantWake | null;
 }
 

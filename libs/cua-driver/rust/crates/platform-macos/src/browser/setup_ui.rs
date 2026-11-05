@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact macOS setup for Chrome's per-instance remote-debugging toggle.
 
 use std::time::{Duration, Instant};

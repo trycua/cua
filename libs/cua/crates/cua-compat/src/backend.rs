@@ -618,6 +618,10 @@ impl CuaBackend {
                         // the hundred: a forkable VM's checkpoint shares
                         // its RAM with every fork. Other kinds ignore it.
                         forkable: Some(true),
+                        // Every call goes to cua-spacesd: the create waits
+                        // for it, also on a VM disk image, whose path does
+                        // not say it runs one.
+                        spacesd: Some(true),
                         wait: Some(true),
                         ..Default::default()
                     };

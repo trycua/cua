@@ -183,6 +183,25 @@ export {
 } from "./relay-usage";
 
 export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
+export {
+  pointerChange,
+  pointerSettings,
+  sinceText,
+  useDriver,
+  useDriverMachines,
+  DRIVER_POLL_MS,
+  POINTER_STYLES,
+  type DriverActivity,
+  type DriverApp,
+  type DriverConfig,
+  type DriverHook,
+  type DriverLiveTest,
+  type DriverMachine,
+  type DriverPermission,
+  type DriverStatus,
+  type DriverUpdate,
+  type PointerSettings,
+} from "./driver";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
 export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {

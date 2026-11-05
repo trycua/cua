@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Opt-in typed envelopes over an existing MCP transport, never an agent tool.
 //!
 //! One service registry belongs to one accepted transport. The existing receiver

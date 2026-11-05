@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux wire-argument compatibility, without any desktop input.
 //! Missing element tokens force the real handler to refuse before AT-SPI or
 //! keyboard delivery. This certifies argument admission, not value delivery.

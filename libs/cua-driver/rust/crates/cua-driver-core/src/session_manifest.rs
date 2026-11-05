@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable capability manifest loaded at trusted daemon startup.
 //!
 //! The agent may propose this file, but selecting and approving it is a

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows agent-cursor rendering and desktop-side-effect contract.
 
 #![cfg(target_os = "windows")]

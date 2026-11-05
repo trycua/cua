@@ -145,6 +145,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "thread.read", "thread.post", "thread.members", "thread.setRights",
         "thread.agentAdd", "thread.agentRemove",
         "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
+        // Cua Driver inside Cua Spaces: the embedded driver's page (WebUIBridge+Driver.swift).
+        "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
+        "driver.setup", "driver.setApp",
     ]
 
     let model: AppModel
@@ -548,6 +551,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try routeNudges(method, args) { return result }
             if let result = try await routeCli(method, args) { return result }
             if let result = try await routeCi(method, args) { return result }
+            if let result = try await routeDriver(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }

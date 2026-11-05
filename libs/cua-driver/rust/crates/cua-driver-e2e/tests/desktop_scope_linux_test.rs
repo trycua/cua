@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux **desktop-scope** (vision/foreground) modality through the SAME
 //! cua-driver interface as Windows/macOS: a strict desktop session plus a
 //! window-less screen-absolute `click` (no `pid`/`window_id`/`list_windows`).

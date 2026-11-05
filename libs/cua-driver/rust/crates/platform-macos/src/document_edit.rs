@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep a document's edited state in step with accessibility text writes.
 //!
 //! An `AXValue` write, or an `AXSelectedText` insert, changes an `NSTextView`'s

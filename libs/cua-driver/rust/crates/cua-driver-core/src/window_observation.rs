@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Host-chosen bound for the post-action window-change observation.
 //!
 //! After an input action, the macOS adapter and the Linux X11 foreground

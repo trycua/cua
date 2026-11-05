@@ -816,6 +816,33 @@ mod tests {
     }
 
     #[test]
+    fn a_read_back_niri_hangs_up_on_is_still_an_ipc_error() {
+        // niri handles the switch, then hangs up on the read-back.
+        let mut ipc = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    if matches!(lines.next(deadline), Ok(Some(_)))
+                        && lines.stream.write_all(b"{\"Ok\":\"Handled\"}\n").is_ok()
+                    {
+                        let _ = lines.next(deadline);
+                    }
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = restore_workspace(&mut ipc, 1, Instant::now() + Duration::from_millis(200))
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri IPC Workspaces failed: niri closed the IPC connection"
+        );
+    }
+
+    #[test]
     fn a_workspace_restore_check_the_deadline_cuts_off_names_the_workspace() {
         // The prior workspace is back, then the last check sees it
         // inactive again before niri goes quiet.

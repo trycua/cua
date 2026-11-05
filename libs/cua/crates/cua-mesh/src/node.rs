@@ -62,6 +62,12 @@ pub struct MeshConfig {
     pub stun: Vec<String>,
     /// Never use direct paths (tests; `CUA_MESH_RELAY_ONLY=1`).
     pub relay_only: bool,
+    /// Use paths on the local network (default; `CUA_MESH_LAN=0` turns it
+    /// off). Off for a node whose network refuses the local network (a
+    /// Space on the internet-only default): it neither pings nor
+    /// advertises local addresses, so that network sees nothing of the
+    /// mesh to block, and the relay and internet paths carry the traffic.
+    pub lan: bool,
     /// The mesh UDP port of the peers' QUIC media service: client forwards
     /// send media datagrams to it, and a machine serves it with
     /// [`Mesh::serve_udp`] on the same number. Default
@@ -105,6 +111,7 @@ impl MeshConfig {
             approved_path: None,
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
+            lan: !std::env::var("CUA_MESH_LAN").is_ok_and(|v| v == "0" || v == "off"),
             media_udp_port: MEDIA_UDP_PORT,
             reconnect_speedup: 1,
             connect_timeout: CONNECT_TIMEOUT,
@@ -364,6 +371,7 @@ impl Mesh {
         let engine = Engine::new(identity.clone(), cfg.listen_port, cfg.relay_only)
             .await
             .map_err(|e| Error::Io(format!("udp: {e}")))?;
+        engine.set_lan_allowed(cfg.lan);
         let prefer = crate::engine::Prefer::from_env();
         if prefer != crate::engine::Prefer::Auto {
             engine.set_prefer(prefer);
@@ -1014,6 +1022,12 @@ impl Mesh {
     /// Never use direct paths from now on (or again).
     pub fn set_relay_only(&self, on: bool) {
         self.inner.engine.set_relay_only(on);
+    }
+
+    /// Allows or forbids paths on the local network from now on (see
+    /// [`MeshConfig::lan`]); forbidding forgets the ones learned.
+    pub fn set_lan(&self, on: bool) {
+        self.inner.engine.set_lan_allowed(on);
     }
 
     /// Pins the path to every peer ([`crate::engine::Prefer`]); `auto`

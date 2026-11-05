@@ -8,13 +8,14 @@
 //! "not connected" while it works.
 #![cfg(unix)]
 
+mod common;
+
 use cua_agent_setup::{
     AgentSetup, ConnectionRow, ConnectionState, HostEnv, ImportState, ImportedSignIn, McpServer,
     McpState, Parts, ProblemAction, SignInCopy, SignInVault, SignedInState, StatusOptions,
     connection::ConnectParts,
 };
 use std::{
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Mutex,
     time::Duration,
@@ -166,8 +167,7 @@ impl World {
     fn script(&self, name: &str, body: &str) -> PathBuf {
         let p = self.bin.join(name);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, body).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&p, body);
         p
     }
 
@@ -917,8 +917,7 @@ fn a_second_agent_of_the_same_harness() {
     let second = w._dir.path().join("bin2");
     std::fs::create_dir_all(&second).unwrap();
     let p = second.join("codex");
-    std::fs::write(&p, agent_script("codex-cli 0.55.0", "")).unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&p, agent_script("codex-cli 0.55.0", ""));
     let mut env = w.env.clone();
     env.path.push(second.clone());
     let w2 = World { env, ..w };

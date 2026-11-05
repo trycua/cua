@@ -1,0 +1,16 @@
+{
+  "requests": [
+    {"id": "PR-2031", "part": "Stepper motor, NEMA 17", "requested_qty": 2, "approved_qty": 2, "requester": "Odile Fenwright", "status": "Approved", "submitted": "2026-09-14", "note": "For the plotter rebuild.", "logged": true},
+    {"id": "PR-2032", "part": "PLA filament 1 kg, black", "requested_qty": 3, "approved_qty": null, "requester": "Caspar Mbeki-Lund", "status": "Declined", "submitted": "2026-09-15", "note": "Declined: stock on the shelf covers this month.", "logged": false},
+    {"id": "PR-2033", "part": "Brass heat-set inserts M3 (pack of 100)", "requested_qty": 1, "approved_qty": 1, "requester": "Tamsin Achterberg", "status": "Approved", "submitted": "2026-09-17", "note": "", "logged": true},
+    {"id": "PR-2034", "part": "Bench power supply, 30 V 5 A", "requested_qty": 1, "approved_qty": null, "requester": "Rufus Okonjo-Hale", "status": "Pending", "submitted": "2026-09-19", "note": "Waiting for the electronics lead to compare models.", "logged": false},
+    {"id": "PR-2035", "part": "Silicone wire 22 AWG, red, 10 m", "requested_qty": 2, "approved_qty": 2, "requester": "Imke Dalgarno", "status": "Approved", "submitted": "2026-09-21", "note": "", "logged": false},
+    {"id": "PR-2036", "part": "Router bit set, 6 mm shank", "requested_qty": 1, "approved_qty": 1, "requester": "Odile Fenwright", "status": "Approved", "submitted": "2026-09-22", "note": "", "logged": true},
+    {"id": "PR-2037", "part": "Laser tube mirror, 25 mm", "requested_qty": 3, "approved_qty": 3, "requester": "Bastien Quarrie", "status": "Approved", "submitted": "2026-10-07", "note": "Resubmitted with the correct mirror size.", "logged": false},
+    {"id": "PR-2038", "part": "Sanding discs, 125 mm, mixed grit", "requested_qty": 5, "approved_qty": null, "requester": "Caspar Mbeki-Lund", "status": "Pending", "submitted": "2026-09-27", "note": "", "logged": false},
+    {"id": "PR-2039", "part": "Soldering tips, conical (set of 5)", "requested_qty": 6, "approved_qty": 4, "requester": "Tamsin Achterberg", "status": "Approved", "submitted": "2026-09-29", "note": "Approved for four sets; two sets are still in the drawer.", "logged": false},
+    {"id": "PR-2040", "part": "Quick-release bar clamps, 300 mm", "requested_qty": 2, "approved_qty": null, "requester": "Rufus Okonjo-Hale", "status": "Declined", "submitted": "2026-10-01", "note": "Declined: borrow from the woodshop rack.", "logged": false},
+    {"id": "PR-2041", "part": "Hot-melt glue sticks, 11 mm (1 kg)", "requested_qty": 2, "approved_qty": 2, "requester": "Imke Dalgarno", "status": "Approved", "submitted": "2026-10-03", "note": "", "logged": false},
+    {"id": "PR-2042", "part": "Acrylic sheet 3 mm, clear, 600 x 400 mm", "requested_qty": 6, "approved_qty": null, "requester": "Bastien Quarrie", "status": "Pending", "submitted": "2026-10-06", "note": "", "logged": false}
+  ]
+}

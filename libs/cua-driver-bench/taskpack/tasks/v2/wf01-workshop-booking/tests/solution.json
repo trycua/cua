@@ -1,0 +1,16 @@
+[
+  {"click": "input[name=course][value=bandsaw]"},
+  {"click": "#open-cal"},
+  {"click": "#next-month"},
+  {"click": "button[aria-label='Thursday 12 November 2026']"},
+  {"waitFor": "#slots button:nth-child(2)"},
+  {"click": "#slots button:nth-child(2)"},
+  {"click": "#more"},
+  {"click": "#member"},
+  {"type": "FH-30417"},
+  {"click": "#access"},
+  {"click": "#access-note"},
+  {"type": "Step-free access for one participant"},
+  {"click": "#submit", "after": 600},
+  {"assert": "!document.getElementById('confirmation').hidden"}
+]

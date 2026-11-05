@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:styles>
+  <style:style style:name="Standard" style:family="paragraph" style:class="text"/>
+  <style:style style:name="Text_20_body" style:display-name="Text body" style:family="paragraph" style:parent-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0.247cm"/></style:style>
+  <style:style style:name="Title" style:family="paragraph" style:parent-style-name="Standard" style:class="chapter"><style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.4cm"/><style:text-properties fo:font-size="22pt" fo:font-weight="bold"/></style:style>
+ </office:styles>
+ <office:body>
+  <office:text>
+   <text:p text:style-name="Title">Lichens of Skerrowen: A Field Guide for Walkers</text:p>
+   <text:p text:style-name="Text_20_body">This guide covers the lichens most often seen on the Isle of Skerrowen, from the salt-sprayed rocks of the west coast to the old hazel woods around Dunvarra. It was compiled by the Skerrowen Natural History Circle for walkers with a hand lens and a little patience.</text:p>
+   <text:p text:style-name="Text_20_body">Before You Set Out</text:p>
+   <text:p text:style-name="Text_20_body">Carry a ten-times hand lens, a notebook and a small mirror for the undersides of overhangs. Never scrape a lichen from its rock or bark: a photograph and a careful note are all the circle needs.</text:p>
+   <text:p text:style-name="Text_20_body">Reading the Thallus</text:p>
+   <text:p text:style-name="Text_20_body">The thallus is the body of the lichen. Note whether it is crusty and fixed tight to the surface, leafy with lobes you can lift with a fingernail, or shrubby and standing away from the bark.</text:p>
+   <text:p text:style-name="Text_20_body">Colour Under Wet and Dry Conditions</text:p>
+   <text:p text:style-name="Text_20_body">Many Skerrowen species change colour after rain. Record the weather of the last two days alongside every colour you write down.</text:p>
+   <text:p text:style-name="Text_20_body">The Western Shore</text:p>
+   <text:p text:style-name="Text_20_body">The splash zone below the cliffs at Port Ainsley supports bands of colour that can be seen from the cliff path: black nearest the sea, then orange, then grey-green above the reach of most waves.</text:p>
+   <text:p text:style-name="Text_20_body">Ember Crust (Pyrocrusta skerrowensis)</text:p>
+   <text:p text:style-name="Text_20_body">A bright orange crust in rounded patches up to a hand's width across. It grows thickest where seabirds rest and is the first lichen most visitors notice.</text:p>
+   <text:p text:style-name="Text_20_body">Tide-line Tar Spot (Tarrodiscus littoralis)</text:p>
+   <text:p text:style-name="Text_20_body">Looks like spilt tar on the lowest rocks. Run a dry finger over it: the lichen feels slightly rough, while true tar is smooth and sticky in the sun.</text:p>
+   <text:p text:style-name="Text_20_body">Moorland and Peat</text:p>
+   <text:p text:style-name="Text_20_body">On the high ground between Cronach and the Lough of Seven Stones the lichens grow among heather and on bare peat, often mixed with mosses.</text:p>
+   <text:p text:style-name="Text_20_body">Pale Antler (Cervicladia cronachensis)</text:p>
+   <text:p text:style-name="Text_20_body">A shrubby grey lichen with branched tips like small antlers, forming cushions up to ten centimetres tall. Deer graze it in hard winters.</text:p>
+   <text:p text:style-name="Text_20_body">Peat Pixie Cup (Turfiscypha minuta)</text:p>
+   <text:p text:style-name="Text_20_body">Tiny grey-green cups on short stalks, found on the cut faces of old peat banks. The cups often hold a drop of rain after a shower.</text:p>
+   <text:p text:style-name="Text_20_body">The Hazel Woods of Dunvarra</text:p>
+   <text:p text:style-name="Text_20_body">The damp, sheltered woods hold the island's richest lichen communities. Look at eye level on the smooth grey stems of the oldest hazels.</text:p>
+   <text:p text:style-name="Text_20_body">Script Lichen (Runographa dunvarrae)</text:p>
+   <text:p text:style-name="Text_20_body">Thin black marks on pale bark that look like a line of handwriting in an unknown alphabet. A hand lens shows each mark as a narrow slit.</text:p>
+   <text:p text:style-name="Text_20_body">Glen Netleaf (Pulmolobia hiberna)</text:p>
+   <text:p text:style-name="Text_20_body">Large leafy lobes with a network of ridges, bright green when wet and brown when dry. Its presence is a sign of clean air and very old woodland.</text:p>
+   <text:p text:style-name="Text_20_body">Recording Your Finds</text:p>
+   <text:p text:style-name="Text_20_body">Send each record with the date, the place name and a six-figure grid reference to the circle's recorder at the Dunvarra village hall. Records reach the island atlas each spring.</text:p>
+   <text:p text:style-name="Text_20_body">Thank you for walking gently and for adding to what we know about the island.</text:p>
+  </office:text>
+ </office:body>
+</office:document>

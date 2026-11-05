@@ -1,6 +1,6 @@
 # Bench v2 tasks
 
-The ten tasks of Bench v2, in schedule order (`bench_v2.V2_TASKS`). The method
+The ten tasks of Bench v2, in schedule order (`bench_v2.V2_TASKS`), then the 42-task set (below). The method
 and the reasons for each rule are in [`../../METHOD.md`](../../METHOD.md). Each
 task has a `PROVENANCE.md` in `probes/<ID>/`.
 
@@ -58,6 +58,51 @@ for manifest example argv; dry-run prints task-aware argv for every selected tas
 The existing evaluator-peek detector also flags `/__state`, retaining oracle and
 pack patterns. This is a policy/detection boundary, not endpoint authorization.
 All web content is self-written, FSL-1.1-MIT; provenance lives in each pack task.
+
+## The 42-task set (Amendment 18)
+
+`--task-set v2-42` runs the ten tasks above and 32 pack tasks written from scratch for this set, in schedule order
+grouped by category (`bench_v2.V2_42_TASKS`); `v2-new` selects only the 32. The manifest
+[`../../taskpack/v2-taskset.json`](../../taskpack/v2-taskset.json) lists every task with its category, apps,
+OS availability, conditions, health requirements and split; the bench README renders it as a table. Public tasks
+have a selector in `probes/<ID>/task.json` (`kind: cdb`, `pack_task: v2/...`, `split: public`) and their pack tree
+in [`../../taskpack/tasks/v2`](../../taskpack/tasks/v2). Held-out tasks are not in this repository: their
+selectors and trees live in a separate pack with the same layout, which the runner reads from
+`CDB_TASKPACK_HELDOUT`, and `-public` / `-heldout` task sets select one split.
+
+Every one of the 32 has 360 s, 45 turns, no coding tools and one category. Each task's brief, apps and checker are
+in its pack tree; `brief.md` is used as for the CDB-G tasks (the same two runner edits). The checkers read only
+final state and never the screen:
+
+* **Web apps and forms, precision, Chrome interruptions.** A small app served on 127.0.0.1 inside the VM by
+  `_kit/v2kit/serve.py` (no live site); the page saves its state and an event log in the workspace, and the checker
+  reads those. Chrome gets a fresh profile per trial. These selectors set `browser: true`.
+* **Documents and spreadsheets.** The checker reads the saved file (flat ODF, CSV or RTF) the agent saved through
+  the app; the brief names the format to keep.
+* **Native macOS apps.** The reset (`--apply-app-state`) sets Calendar, Reminders or Notes data through JavaScript
+  for Automation; the descriptor's `semantics.export` step reads it back into the workspace after the agent, and the
+  checker reads only the exported files. Finder tasks read file tags, comments, locks and names; image tasks read
+  the image file. The export step quits TextEdit and Preview with saving, so their autosave timing cannot change
+  the verdict.
+* **New interruptions** are real app UI, not simulations, and report the `interruption` diagnostic (shown,
+  exercised, handled, completed) like IR-01 to IR-04; `passed` needs safe handling and the task.
+
+Runner support for the set (`cdb_adapter.py`): native apps in a descriptor declare exact `process_names`, are
+allowed for the Codex host loop by those names, and are quit by name between trials in a disposable VM only; the
+optional export step runs as the bench user before the evaluator; a task's own diagnostics reach the row; and a
+failed export step or an evaluator without a result is a harness error, not a fail (see
+[`../../fairness/SPEC.md`](../../fairness/SPEC.md)). The preflight checks every selected task's tree digest and the
+shared `_kit` digest (`pins.json` `cdb_pack`, plus `pins.heldout.json` of the held-out pack).
+
+In the 42-task set a task whose manifest entry lists `conditions` runs only in those; MB-10, MB-11 and hover-only
+readouts run in the foreground condition only.
+
+**macOS VM for the set:** LibreOffice 26.2; TextEdit with window restoration off; the first-run screens of Calendar,
+Reminders, Notes and Preview dismissed; Automation consent, for the shell the runner starts from, to control
+Calendar, Reminders, Notes, Finder, TextEdit and Preview, and Calendar and Reminders data access. Check it with
+`python3 ../../fairness/cdb_fairness.py appleevents --launch Calendar Reminders Notes Finder TextEdit Preview`.
+Validate the set without a model with `taskpack/tasks/v2/_kit/devtools/vm_validate.py` (reset, export and evaluator
+on the untouched state, plus each native-app task's scripted solution).
 
 ## Conventions for every task
 
@@ -255,15 +300,3 @@ built with `xcrun swiftc -O tools/benchinput.swift -o <dir>/benchinput`.
 
 BenchLab has other modes, used by earlier pilot tasks that are not part of
 Bench v2 and are not in this repository.
-
-## Platforms, splits and the task manifest
-
-[`../../taskpack/v2-taskset.json`](../../taskpack/v2-taskset.json) lists every task with its category, apps, OS
-availability (the seven BenchLab tasks: macOS and Linux; CDB-G02 to CDB-G04: macOS, Linux and Windows), conditions,
-health requirements and split; the bench README renders it as a table. Selectors are in `probes/<ID>/task.json`.
-A task whose selector says `"split": "heldout"` is read from a separate pack with the same layout, named by
-`CDB_TASKPACK_HELDOUT` (selectors in `probes/`, trees in `tasks/`, digests in `pins.heldout.json`); `--task-set
-v2-public` / `v2-heldout` select one split. A pack task may declare native macOS apps (`kind: native`, exact
-`process_names`) and a `semantics.export` step that reads app data into the workspace after the agent and before the
-evaluator; the checker reads only the exported files. A task whose manifest entry lists `conditions` runs only in
-those when a set other than `v2` is selected, so `v2` reproduces earlier runs.

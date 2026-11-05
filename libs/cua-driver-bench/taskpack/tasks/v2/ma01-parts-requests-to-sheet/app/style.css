@@ -1,0 +1,22 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #eef0f3; color: #1f2328; }
+header { background: #5b3a6e; color: #fff; padding: 14px 28px; }
+header h1 { margin: 0; font-size: 22px; } header p { margin: 2px 0 0; opacity: .85; }
+main { padding: 16px 28px; max-width: 1080px; }
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.toolbar select { font: inherit; padding: 3px 6px; } #count { margin-left: auto; color: #555; }
+#list { list-style: none; padding: 0; margin: 0; }
+#list li { background: #fff; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.row { display: grid; grid-template-columns: 90px 1fr 110px 120px auto auto; gap: 10px; align-items: center; }
+.rid { font-weight: 600; } .date { color: #555; font-size: 13px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 13px; text-align: center; }
+.badge.Pending { background: #fff3c4; } .badge.Approved { background: #d6f0d8; } .badge.Declined { background: #f6d5d5; }
+.logged { color: #2f6b34; font-size: 13px; }
+.details { margin: 8px 0 0; display: grid; grid-template-columns: 170px 1fr; gap: 2px 10px; font-size: 14px; }
+.details dt { color: #555; } .details dd { margin: 0; }
+button { font: inherit; padding: 3px 10px; cursor: pointer; }
+.pager { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+#flash { background: #e3f1e0; padding: 8px 12px; border-radius: 6px; }
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+#backdrop[hidden] { display: none; }
+#dialog { background: #fff; border-radius: 8px; padding: 18px 22px; width: 420px; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; }

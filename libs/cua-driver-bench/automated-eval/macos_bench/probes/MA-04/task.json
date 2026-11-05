@@ -1,0 +1,20 @@
+{
+  "id": "MA-04",
+  "title": "Write a TextEdit note of unfilled food-bank shifts found in a filtered web rota",
+  "group": "V2X",
+  "category": "multi_app",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/ma04-shift-summary-note",
+  "split": "public",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": [
+    "multi_app",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

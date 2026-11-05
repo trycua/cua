@@ -1,0 +1,268 @@
+{
+  "shifts": [
+    {
+      "id": "SH-301",
+      "date": "2026-10-12",
+      "day": "Monday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "Ada Pemberton-Ochieng",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-302",
+      "date": "2026-10-12",
+      "day": "Monday",
+      "start": "09:30",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "Kofi Lindqvist",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-303",
+      "date": "2026-10-12",
+      "day": "Monday",
+      "start": "13:00",
+      "end": "16:00",
+      "role": "Packing",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-304",
+      "date": "2026-10-12",
+      "day": "Monday",
+      "start": "14:00",
+      "end": "17:00",
+      "role": "Delivery driver",
+      "volunteer": "Maren Oyelowo",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-305",
+      "date": "2026-10-13",
+      "day": "Tuesday",
+      "start": "08:30",
+      "end": "11:30",
+      "role": "Delivery driver",
+      "volunteer": "",
+      "cancelled": true,
+      "cancel_reason": "Van booked in for its service"
+    },
+    {
+      "id": "SH-306",
+      "date": "2026-10-13",
+      "day": "Tuesday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "Ptolemy Adeyemi-Clarke",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-307",
+      "date": "2026-10-13",
+      "day": "Tuesday",
+      "start": "09:30",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-308",
+      "date": "2026-10-13",
+      "day": "Tuesday",
+      "start": "13:00",
+      "end": "16:00",
+      "role": "Packing",
+      "volunteer": "Ruth Mbatha-Sorensen",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-309",
+      "date": "2026-10-14",
+      "day": "Wednesday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-310",
+      "date": "2026-10-14",
+      "day": "Wednesday",
+      "start": "09:30",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "Hilde Okonkwo",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-311",
+      "date": "2026-10-14",
+      "day": "Wednesday",
+      "start": "12:30",
+      "end": "15:30",
+      "role": "Packing",
+      "volunteer": "Ada Pemberton-Ochieng",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-312",
+      "date": "2026-10-14",
+      "day": "Wednesday",
+      "start": "14:00",
+      "end": "17:00",
+      "role": "Delivery driver",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-313",
+      "date": "2026-10-15",
+      "day": "Thursday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "Ptolemy Adeyemi-Clarke",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-314",
+      "date": "2026-10-15",
+      "day": "Thursday",
+      "start": "09:30",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "Kofi Lindqvist",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-315",
+      "date": "2026-10-15",
+      "day": "Thursday",
+      "start": "13:00",
+      "end": "16:00",
+      "role": "Packing",
+      "volunteer": "Ignatius Ferrante",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-316",
+      "date": "2026-10-15",
+      "day": "Thursday",
+      "start": "17:00",
+      "end": "19:30",
+      "role": "Front desk",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-317",
+      "date": "2026-10-16",
+      "day": "Friday",
+      "start": "08:30",
+      "end": "11:30",
+      "role": "Delivery driver",
+      "volunteer": "Maren Oyelowo",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-318",
+      "date": "2026-10-16",
+      "day": "Friday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "",
+      "cancelled": true,
+      "cancel_reason": "Supermarket collection moved to Thursday"
+    },
+    {
+      "id": "SH-319",
+      "date": "2026-10-16",
+      "day": "Friday",
+      "start": "09:30",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "Hilde Okonkwo",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-320",
+      "date": "2026-10-16",
+      "day": "Friday",
+      "start": "13:00",
+      "end": "16:00",
+      "role": "Packing",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-321",
+      "date": "2026-10-17",
+      "day": "Saturday",
+      "start": "09:00",
+      "end": "12:00",
+      "role": "Warehouse sorting",
+      "volunteer": "Ruth Mbatha-Sorensen",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-322",
+      "date": "2026-10-17",
+      "day": "Saturday",
+      "start": "10:00",
+      "end": "12:00",
+      "role": "Packing",
+      "volunteer": "Ignatius Ferrante",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-323",
+      "date": "2026-10-17",
+      "day": "Saturday",
+      "start": "10:00",
+      "end": "13:00",
+      "role": "Front desk",
+      "volunteer": "",
+      "cancelled": false,
+      "cancel_reason": ""
+    },
+    {
+      "id": "SH-324",
+      "date": "2026-10-17",
+      "day": "Saturday",
+      "start": "11:00",
+      "end": "14:00",
+      "role": "Delivery driver",
+      "volunteer": "Wendell Achterberg-Moyo",
+      "cancelled": false,
+      "cancel_reason": ""
+    }
+  ]
+}

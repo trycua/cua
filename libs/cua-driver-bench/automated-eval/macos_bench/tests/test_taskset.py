@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 
-"""The task manifest: manifest, selectors, splits, conditions, native apps, the export step, harness errors and the
+"""The 42-task set: manifest, selectors, splits, conditions, native apps, the export step, harness errors and the
 held-out pack (no GUI, no model, no VM)."""
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest import mock
 
@@ -27,50 +28,60 @@ TOOLS = HERE / "tools"
 
 
 class TaskSetTest(unittest.TestCase):
-    def test_manifest_is_the_ten_public_core_tasks(self) -> None:
+    def test_set_order_categories_and_balance(self) -> None:
+        self.assertEqual(len(v2.V2_42_TASKS), 42)
+        self.assertEqual(len(set(v2.V2_42_TASKS)), 42)
+        self.assertEqual(v2.V2_42_TASKS[:10], v2.V2_TASKS)
         manifest = v2.load_taskset()
-        self.assertEqual(tuple(e["id"] for e in manifest["tasks"]), v2.V2_TASKS)
-        self.assertTrue(all(e["split"] == "public" for e in manifest["tasks"]))
-        self.assertTrue(set(e["category"] for e in manifest["tasks"]) <= set(v2.CATEGORIES))
-
-    def test_platforms(self) -> None:
-        by_id = {e["id"]: e for e in v2.load_taskset()["tasks"]}
-        for tid in ("CDB-G02", "CDB-G03", "CDB-G04"):
-            self.assertEqual(by_id[tid]["os"], ["macos", "linux", "windows"], tid)
-        for tid in ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04"):
-            self.assertEqual(by_id[tid]["os"], ["macos", "linux"], tid)
-        self.assertIn("GnuCash", by_id["CDB-G03"]["apps"])
+        self.assertEqual(tuple(e["id"] for e in manifest["tasks"]), v2.V2_42_TASKS)
+        counts = Counter(e["category"] for e in manifest["tasks"])
+        self.assertEqual(set(counts), set(v2.CATEGORIES))
+        self.assertTrue(all(n >= 6 for n in counts.values()), counts)
+        self.assertEqual(sum(counts.values()), 42)
 
     def test_task_sets_and_splits(self) -> None:
         sets = v2.task_sets()
         self.assertEqual(sets["v2"], v2.V2_TASKS)
-        self.assertEqual(sets["v2-public"], v2.V2_TASKS)
-        self.assertEqual(sets["v2-heldout"], ())
+        self.assertEqual(len(sets["v2-new"]), 32)
         fake = {
             "tasks": [
-                {"id": t, "split": "heldout" if t in ("IR-03", "IR-04") else "public"}
-                for t in v2.V2_TASKS
+                {"id": t, "split": "heldout" if t in ("NA-02", "DS-03") else "public"}
+                for t in v2.V2_42_TASKS
             ]
         }
         split = v2.task_sets(fake)
-        self.assertEqual(split["v2-heldout"], ("IR-03", "IR-04"))
-        self.assertNotIn("IR-03", split["v2-public"])
-        self.assertEqual(v2.split_of("IR-03", fake), "heldout")
+        self.assertEqual(split["v2-42-heldout"], ("NA-02", "DS-03"))
+        self.assertNotIn("NA-02", split["v2-42-public"])
+        self.assertEqual(len(split["v2-new-public"]), 30)
+        self.assertEqual(v2.split_of("NA-02", fake), "heldout")
         self.assertEqual(v2.split_of("MB-09", fake), "public")
 
     def test_conditions(self) -> None:
-        specs = {"MB-11": {"conditions": ["foreground"]}, "MB-09": {}}
-        self.assertEqual(v2.tasks_for_condition(["MB-09", "MB-11"], "background", specs), ["MB-09"])
+        specs = {"PR-03": {"conditions": ["foreground"]}, "PR-01": {}}
+        self.assertEqual(v2.tasks_for_condition(["PR-01", "PR-03"], "background", specs), ["PR-01"])
         self.assertEqual(
-            v2.tasks_for_condition(["MB-09", "MB-11"], "foreground", specs), ["MB-09", "MB-11"]
+            v2.tasks_for_condition(["PR-01", "PR-03"], "foreground", specs), ["PR-01", "PR-03"]
         )
 
-    def test_core_tasks_have_selectors(self) -> None:
+    def test_every_new_task_has_a_selector_pack_tree_and_descriptor(self) -> None:
         tasks = rb.load_tasks(HERE / "probes")
-        for tid in v2.V2_TASKS:
+        manifest = v2.load_taskset()
+        for tid in v2.V2_NEW_TASKS:
             with self.subTest(task=tid):
-                self.assertIn(tid, tasks)
-                self.assertEqual(v2.validate_tasks({tid: rb.task_spec(tasks[tid])}, [tid]), [])
+                if v2.split_of(tid, manifest) == "heldout" and tid not in tasks:
+                    # Held-out selectors are only present with CDB_TASKPACK_HELDOUT set.
+                    self.assertFalse((HERE / "probes" / tid).exists())
+                    continue
+                spec = rb.task_spec(tasks[tid])
+                self.assertEqual(spec["kind"], "cdb")
+                self.assertFalse(spec["coding_tools"])
+                self.assertEqual((spec["timeout_s"], spec["max_turns"]), (360, 45))
+                self.assertEqual(v2.validate_tasks({tid: spec}, [tid]), [])
+                bundle = cdb_adapter.pack_tasks_root(spec) / spec["pack_task"]
+                self.assertTrue((bundle / "brief.md").is_file())
+                self.assertTrue((bundle / "evaluator" / "evaluate.py").is_file())
+                self.assertTrue(cdb_adapter.allowed_app_names(spec))
+                self.assertEqual(cdb_adapter.shared_kit(spec), (bundle.parent / "_kit").resolve())
 
     def test_taskset_tool_check_passes(self) -> None:
         done = subprocess.run(
@@ -78,10 +89,12 @@ class TaskSetTest(unittest.TestCase):
         )
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
-    def test_health_requirements(self) -> None:
+    def test_new_tasks_health_requirements(self) -> None:
         by_id = {e["id"]: e for e in v2.load_taskset()["tasks"]}
+        self.assertEqual(by_id["NA-01"]["health"]["automation_apps"], ["Calendar"])
         self.assertIn("node", by_id["CDB-G04"]["health"]["evaluator_tools"])
-        self.assertEqual(by_id["MB-11"]["conditions"], ["foreground"])
+        self.assertTrue(by_id["WF-01"]["health"]["ready_urls"])
+        self.assertEqual(by_id["PR-03"]["conditions"], ["foreground"])
 
 
 NATIVE = {
@@ -115,7 +128,7 @@ class NativeExportTest(unittest.TestCase):
             os.environ, {"CDB_TASKPACK": str(self.tmp), "CDB_EVAL_SUDO": "0"}
         )
         self.env.start()
-        self.spec = {"id": "SYN-01", "kind": "cdb", "pack_task": "v2/syn-native"}
+        self.spec = {"id": "NA-SYN", "kind": "cdb", "pack_task": "v2/syn-native"}
         self.artifacts = self.tmp / "artifacts"
         self.artifacts.mkdir()
 
@@ -190,10 +203,10 @@ class HeldOutPackTest(unittest.TestCase):
             (root / "tasks" / "v2" / "syn-held" / "platform" / "launch.macos.json").write_text(
                 json.dumps(NATIVE)
             )
-            (root / "probes" / "SYN-99").mkdir(parents=True)
+            (root / "probes" / "NA-99").mkdir(parents=True)
             selector = {
-                "id": "SYN-99",
-                "category": "multi_app",
+                "id": "NA-99",
+                "category": "native_apps",
                 "kind": "cdb",
                 "pack_task": "v2/syn-held",
                 "split": "heldout",
@@ -201,20 +214,20 @@ class HeldOutPackTest(unittest.TestCase):
                 "timeout_s": 360,
                 "max_turns": 45,
             }
-            (root / "probes" / "SYN-99" / "task.json").write_text(json.dumps(selector))
+            (root / "probes" / "NA-99" / "task.json").write_text(json.dumps(selector))
             (root / "pins.heldout.json").write_text(
                 json.dumps({"tree_sha256": {"v2/syn-held": "abc"}})
             )
             with mock.patch.dict(os.environ, {"CDB_TASKPACK_HELDOUT": str(root)}):
                 tasks = rb.load_tasks(HERE / "probes")
-                self.assertIn("SYN-99", tasks)
-                spec = rb.task_spec(tasks["SYN-99"])
+                self.assertIn("NA-99", tasks)
+                spec = rb.task_spec(tasks["NA-99"])
                 task = cdb_adapter.CdbTask(spec, root)
                 self.assertEqual(task.bundle, root / "tasks" / "v2" / "syn-held")
                 self.assertEqual(cdb_adapter.heldout_pins(), {"v2/syn-held": "abc"})
             with mock.patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("CDB_TASKPACK_HELDOUT", None)
-                self.assertNotIn("SYN-99", rb.load_tasks(HERE / "probes"))
+                self.assertNotIn("NA-99", rb.load_tasks(HERE / "probes"))
                 with self.assertRaisesRegex(RuntimeError, "CDB_TASKPACK_HELDOUT"):
                     cdb_adapter.pack_tasks_root(spec)
 

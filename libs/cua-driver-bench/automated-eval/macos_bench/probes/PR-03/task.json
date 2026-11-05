@@ -1,0 +1,24 @@
+{
+  "id": "PR-03",
+  "title": "Read exact values from a canvas bar chart's hover tooltip and report the peak week",
+  "group": "V2X",
+  "category": "precision",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/pr03-chart-hover-readout",
+  "split": "public",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": [
+    "precision",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true,
+  "conditions": [
+    "foreground"
+  ],
+  "coverage_caveat": "Values appear only in hover tooltips; report a setup without a hover or pointer-move tool separately (as MB-10)."
+}

@@ -1,0 +1,17 @@
+{
+  "profile": {
+    "member_no": "CG-2093",
+    "display_name": "Rosalind Achterberg",
+    "phone": "07700 900318",
+    "bike": "road",
+    "emergency_name": "Tomas Achterberg",
+    "emergency_relation": "Brother",
+    "emergency_phone": "07700 900742"
+  },
+  "preferences": {
+    "pace": "social",
+    "groups": ["thursday-evening"],
+    "newsletter": "weekly",
+    "leaderboard": false
+  }
+}

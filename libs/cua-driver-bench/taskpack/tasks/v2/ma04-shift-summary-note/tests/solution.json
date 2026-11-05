@@ -1,0 +1,17 @@
+[
+  {"waitFor": "#rows tr"},
+  {"assert": "document.getElementById('page-label').textContent === 'Page 1 of 4'"},
+  {"select": ["#day", "Monday"]},
+  {"assert": "[...document.querySelectorAll('#rows td.needed')].length === 1"},
+  {"select": ["#day", "Tuesday"]},
+  {"select": ["#day", "Wednesday"]},
+  {"select": ["#day", "Thursday"]},
+  {"select": ["#day", "Friday"]},
+  {"select": ["#day", "Saturday"]},
+  {"select": ["#day", "all"]},
+  {"click": "#next"},
+  {"click": "#next"},
+  {"click": "#next"},
+  {"assert": "document.getElementById('page-label').textContent === 'Page 4 of 4'"},
+  {"assert": "document.querySelectorAll('button[data-id]').length >= 1"}
+]

@@ -1,0 +1,17 @@
+{
+  "id": "IR-06",
+  "pack_task": "v2/ir06-club-profile-leave-guard",
+  "title": "Update a cycling club profile across two pages without losing unsaved edits",
+  "category": "interruptions",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

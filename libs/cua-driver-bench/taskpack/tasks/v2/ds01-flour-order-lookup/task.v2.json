@@ -1,0 +1,17 @@
+{
+  "id": "DS-01",
+  "pack_task": "v2/ds01-flour-order-lookup",
+  "title": "Look up flour rates and cost each order line in a co-operative's order sheet",
+  "category": "documents",
+  "gui_only": true,
+  "apps": [
+    "LibreOffice Calc"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

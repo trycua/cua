@@ -1,0 +1,20 @@
+{
+  "posts": [
+    {
+      "id": "QL-0412",
+      "title": "Road closure on Tanner's Row, 19 to 21 October",
+      "category": "notices",
+      "status": "published",
+      "published_on": "2026-10-06",
+      "body_html": "<p>Tanner's Row will be closed between the bakery and Pellow Street from <strong>Monday 19 October</strong> while the water board replaces a main.</p><ul><li>Buses will stop on Ferrier Lane instead</li><li>Pedestrian access stays open</li></ul><p>Questions go to the <a href=\"https://quarrylane.example/contact\">bulletin team</a>.</p>"
+    },
+    {
+      "id": "QL-0415",
+      "title": "Found: blue scooter by the allotment gate",
+      "category": "lost-found",
+      "status": "draft",
+      "published_on": "",
+      "body_html": "<p>A small blue scooter was left by the allotment gate on Thursday evening. It is now in the shed at number 14.</p>"
+    }
+  ]
+}

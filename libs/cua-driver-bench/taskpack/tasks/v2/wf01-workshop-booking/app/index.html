@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fernhollow Workshop · Book a training</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Fernhollow Workshop</h1><p>Members' tool-training bookings</p></header>
+<main>
+  <section id="upcoming" aria-labelledby="upcoming-h">
+    <h2 id="upcoming-h">Your upcoming bookings</h2>
+    <ul id="booking-list"></ul>
+  </section>
+  <form id="book" novalidate aria-labelledby="book-h">
+    <h2 id="book-h">Book a training session</h2>
+    <fieldset>
+      <legend>Course</legend>
+      <div class="cards" id="courses"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Date and session</legend>
+      <div class="date-row">
+        <input id="date" name="date" readonly placeholder="Choose a date" aria-label="Session date">
+        <button type="button" id="open-cal" aria-haspopup="dialog" aria-expanded="false">Pick a date</button>
+      </div>
+      <div id="calendar" role="dialog" aria-label="Choose a date" hidden>
+        <div class="cal-head">
+          <button type="button" id="prev-month" aria-label="Previous month">‹</button>
+          <span id="month-label" aria-live="polite"></span>
+          <button type="button" id="next-month" aria-label="Next month">›</button>
+        </div>
+        <div class="cal-grid" id="cal-grid" role="grid"></div>
+      </div>
+      <div id="slots" role="radiogroup" aria-label="Session time"></div>
+    </fieldset>
+    <fieldset>
+      <legend>People</legend>
+      <div class="stepper">
+        <button type="button" id="fewer" aria-label="Fewer participants">−</button>
+        <output id="count" aria-live="polite">1</output>
+        <button type="button" id="more" aria-label="More participants">+</button>
+        <span class="hint">participants (1 to 6)</span>
+      </div>
+      <label for="member">Member number</label>
+      <input id="member" name="member" placeholder="FH-00000" autocomplete="off">
+      <p class="error" id="member-error" hidden>Member numbers look like FH- followed by five digits.</p>
+      <label class="check"><input type="checkbox" id="access"> Accessibility needs</label>
+      <div id="access-box" hidden>
+        <label for="access-note">Tell us what you need</label>
+        <textarea id="access-note" rows="2"></textarea>
+      </div>
+    </fieldset>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <button type="submit" id="submit">Book session</button>
+  </form>
+  <p id="confirmation" role="status" hidden></p>
+</main>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

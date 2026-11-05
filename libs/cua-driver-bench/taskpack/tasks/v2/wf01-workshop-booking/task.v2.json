@@ -1,0 +1,17 @@
+{
+  "id": "WF-01",
+  "pack_task": "v2/wf01-workshop-booking",
+  "title": "Book a tool-training session on a community workshop's booking page",
+  "category": "web_forms",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

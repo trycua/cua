@@ -1,0 +1,17 @@
+{
+  "id": "PR-03",
+  "pack_task": "v2/pr03-chart-hover-readout",
+  "title": "Read exact values from a canvas bar chart's hover tooltip and report the peak week",
+  "category": "precision",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

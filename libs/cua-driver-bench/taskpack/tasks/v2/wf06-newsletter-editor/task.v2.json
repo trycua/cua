@@ -1,0 +1,17 @@
+{
+  "id": "WF-06",
+  "pack_task": "v2/wf06-newsletter-editor",
+  "title": "Save a formatted draft in a neighbourhood newsletter editor without publishing it",
+  "category": "web_forms",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

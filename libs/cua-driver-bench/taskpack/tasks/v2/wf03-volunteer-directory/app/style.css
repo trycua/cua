@@ -1,0 +1,26 @@
+body { font: 14px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #f6f3ef; color: #24211d; }
+header { background: #7a3b2e; color: #fff; padding: 12px 28px; }
+header h1 { margin: 0; font-size: 21px; } header p { margin: 2px 0 0; opacity: .85; }
+main { padding: 14px 28px; max-width: 1160px; }
+.tools { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.tools input { width: 240px; } input, select, button { font: inherit; } input, select { padding: 4px 6px; }
+#count { margin-left: auto; color: #6b625a; }
+table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid #ece6df; } th { background: #efe8e0; font-weight: 600; }
+td.inactive { color: #9a3b2e; } tr.off td { color: #8d857c; }
+.cell-actions { position: relative; width: 40px; }
+.menu-btn { border: 1px solid #c7bdb2; background: #fff; border-radius: 4px; padding: 0 8px; cursor: pointer; }
+[role=menu] { position: absolute; right: 8px; top: 26px; background: #fff; border: 1px solid #a99d90; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.2); z-index: 4; min-width: 150px; padding: 4px 0; }
+[role=menuitem] { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 12px; cursor: pointer; }
+[role=menuitem]:hover, [role=menuitem]:focus { background: #f1e6dc; }
+.pager { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+.pager button[aria-current=page] { background: #7a3b2e; color: #fff; border-color: #7a3b2e; }
+#page-label { margin-left: 8px; color: #6b625a; }
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 8; }
+.dialog { position: fixed; top: 160px; left: 50%; transform: translateX(-50%); width: 380px; background: #fff; border-radius: 8px; padding: 16px 20px; z-index: 9; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+.dialog h2 { margin: 0 0 8px; font-size: 17px; } .dialog select { width: 100%; margin-top: 4px; }
+.buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.primary { background: #7a3b2e; color: #fff; border: 0; border-radius: 5px; padding: 6px 16px; }
+.danger { background: #a3221a; color: #fff; border: 0; border-radius: 5px; padding: 6px 16px; }
+.error { color: #a40000; } .sr { position: absolute; left: -9999px; }
+#notice { color: #2f6b3a; min-height: 20px; }

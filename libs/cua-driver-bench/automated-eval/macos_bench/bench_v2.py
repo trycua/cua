@@ -35,6 +35,8 @@ BENCH_VERSION = 2
 CATEGORIES: dict[str, str] = {  # report order
     "multi_app": "Multi-app workflows",
     "web_forms": "Web apps & forms",
+    "native_apps": "Native macOS apps",  # the 42-task set
+    "documents": "Documents & spreadsheets",  # the 42-task set
     "precision": "Precision interactions",
     "interruptions": "Interruptions & recovery",
 }
@@ -53,14 +55,25 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
-# `../../taskpack/v2-taskset.json` lists every task with its category, OS availability, conditions and split (public,
-# or held out of this repository). `--task-set` selects a set; the default stays `v2`, so earlier runs reproduce.
+# The 42-task set: the ten tasks above, then 32 pack tasks written from scratch for it, in schedule order grouped by
+# category. Their pack trees are in ../../taskpack/tasks/v2/; ../../taskpack/v2-taskset.json lists them with their
+# category, OS availability and split (public, or held out of this repository). `--task-set` selects a set; the
+# default stays `v2`, so earlier runs reproduce.
+V2_NEW_TASKS: tuple[str, ...] = (
+    "MA-01", "MA-02", "MA-03", "MA-04",
+    "WF-01", "WF-02", "WF-03", "WF-04", "WF-05", "WF-06", "WF-07", "WF-08",
+    "NA-01", "NA-02", "NA-03", "NA-04", "NA-05", "NA-06", "NA-07",
+    "DS-01", "DS-02", "DS-03", "DS-04", "DS-05", "DS-06", "DS-07",
+    "PR-01", "PR-02", "PR-03",
+    "IR-05", "IR-06", "IR-07",
+)  # fmt: skip
+V2_42_TASKS: tuple[str, ...] = V2_TASKS + V2_NEW_TASKS
 TASKSET_FILE = Path(__file__).resolve().parents[2] / "taskpack" / "v2-taskset.json"
 SPLITS = ("public", "heldout")
 
 
 def load_taskset(path: Path | None = None) -> dict[str, Any]:
-    """The task manifest: one entry per task with `id`, `category`, `split` and `os`."""
+    """The 42-task manifest: one entry per task with `id`, `category`, `split` and `os`."""
     return json.loads((path or TASKSET_FILE).read_text("utf-8"))
 
 
@@ -76,9 +89,14 @@ def task_sets(taskset: dict[str, Any] | None = None) -> dict[str, tuple[str, ...
     """Named task sets for `--task-set`. `-public` and `-heldout` keep schedule order and only that split."""
     data = taskset or load_taskset()
     split = {e["id"]: e["split"] for e in data["tasks"]}
-    sets: dict[str, tuple[str, ...]] = {"v2": V2_TASKS}
-    for part in SPLITS:
-        sets[f"v2-{part}"] = tuple(t for t in V2_TASKS if split.get(t, "public") == part)
+    sets: dict[str, tuple[str, ...]] = {
+        "v2": V2_TASKS,
+        "v2-42": V2_42_TASKS,
+        "v2-new": V2_NEW_TASKS,
+    }
+    for name in ("v2-42", "v2-new"):
+        for part in SPLITS:
+            sets[f"{name}-{part}"] = tuple(t for t in sets[name] if split.get(t, "public") == part)
     return sets
 
 

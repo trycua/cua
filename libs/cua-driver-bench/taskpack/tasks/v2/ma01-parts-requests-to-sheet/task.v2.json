@@ -1,0 +1,18 @@
+{
+  "id": "MA-01",
+  "pack_task": "v2/ma01-parts-requests-to-sheet",
+  "title": "Log approved parts requests from a makerspace web app into a Calc purchase log",
+  "category": "multi_app",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome",
+    "LibreOffice Calc"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

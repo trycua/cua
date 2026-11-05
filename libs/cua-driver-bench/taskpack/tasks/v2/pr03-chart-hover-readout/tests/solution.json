@@ -1,0 +1,14 @@
+[
+  {"wait": 300},
+  {"hover": {"x": 357, "y": 361}},
+  {"assert": "document.getElementById('tooltip').textContent.endsWith('Returned by customers: 417')"},
+  {"hover": {"x": 586, "y": 361}},
+  {"assert": "document.getElementById('tooltip').textContent.endsWith('Returned by customers: 415')"},
+  {"hover": {"x": 739, "y": 361}},
+  {"assert": "document.getElementById('tooltip').textContent === 'Week 38 (14 Sep) · Returned by customers: 418'"},
+  {"select": ["#week", "W38"]},
+  {"click": "#count"},
+  {"type": "418"},
+  {"click": "#submit", "after": 600},
+  {"assert": "!document.getElementById('confirmation').hidden"}
+]

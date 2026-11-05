@@ -1,0 +1,25 @@
+body { font: 14px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #f2f0e6; color: #22261d; }
+header { background: #4f6b2a; color: #fff; padding: 12px 28px; }
+header h1 { margin: 0; font-size: 21px; } header p { margin: 2px 0 0; opacity: .85; }
+.steps { display: flex; gap: 24px; list-style: none; margin: 0; padding: 8px 28px; background: #e2e3cf; }
+.steps li { color: #6d7060; } .steps li.done { color: #4f6b2a; } .steps li[aria-current] { font-weight: 700; color: #22261d; }
+main { padding: 14px 28px; display: grid; grid-template-columns: 240px 1fr; gap: 26px; align-items: start; max-width: 1150px; }
+aside, form { background: #fff; border-radius: 8px; padding: 12px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+aside dl { margin: 0; } aside dt { font-size: 12px; color: #6d7060; margin-top: 6px; } aside dd { margin: 0; font-weight: 600; }
+form h2 { margin: 0 0 8px; font-size: 17px; }
+fieldset { border: 1px solid #d8d8c8; border-radius: 6px; padding: 8px 14px 12px; margin: 0 0 10px; }
+legend { font-weight: 600; padding: 0 4px; }
+.addr { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 18px; }
+.addr .f { display: flex; flex-direction: column; } .addr .wide { grid-column: span 2; }
+.addr label, .field { font-size: 13px; color: #44483c; margin-top: 4px; display: block; }
+input, select, textarea, button { font: inherit; } input, select, textarea { padding: 4px 6px; border: 1px solid #a9ab98; border-radius: 4px; }
+textarea { width: 96%; }
+.combo { position: relative; } .combo input { width: 95%; }
+[role=listbox] { position: absolute; top: 100%; left: 0; right: 0; margin: 2px 0 0; padding: 2px 0; list-style: none; background: #fff; border: 1px solid #888; border-radius: 4px; z-index: 5; box-shadow: 0 4px 12px rgba(0,0,0,.18); }
+[role=option] { padding: 4px 10px; cursor: pointer; } [role=option].active, [role=option]:hover { background: #e3ead4; }
+[role=option][aria-selected=true] { font-weight: 600; }
+.hint { font-size: 12px; color: #6d7060; } .error { color: #a40000; font-size: 13px; margin: 2px 0; }
+label.check { display: flex; gap: 6px; align-items: center; margin: 4px 0 10px; }
+#options label { display: block; padding: 3px 0; }
+.actions { margin-top: 12px; } #continue { background: #4f6b2a; color: #fff; border: 0; border-radius: 6px; padding: 8px 22px; cursor: pointer; }
+#confirmation { grid-column: 2; background: #e3f1e0; padding: 10px; border-radius: 6px; }

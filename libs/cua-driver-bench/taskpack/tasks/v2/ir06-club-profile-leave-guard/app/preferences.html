@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Coppergate Cycling Club · Riding preferences</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="preferences">
+<header>
+  <h1>Coppergate Cycling Club</h1>
+  <nav aria-label="Members' area"><a href="profile.html">Profile</a><a href="preferences.html" aria-current="page">Riding preferences</a></nav>
+</header>
+<main>
+  <form id="form" novalidate aria-labelledby="form-h">
+    <h2 id="form-h">Riding preferences</h2>
+    <fieldset>
+      <legend>Usual pace</legend>
+      <div class="radios" id="paces"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Ride groups</legend>
+      <p class="muted">Members get the route and meeting point for each group they are in.</p>
+      <div id="groups" class="switches"></div>
+    </fieldset>
+    <label for="newsletter">Club newsletter</label>
+    <select id="newsletter" name="newsletter">
+      <option value="weekly">Weekly news</option>
+      <option value="monthly">Monthly digest</option>
+      <option value="none">No newsletter</option>
+    </select>
+    <label class="check"><input type="checkbox" id="leaderboard" name="leaderboard"> Show me on the club leaderboard</label>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <div class="actions"><button type="submit" id="save">Save preferences</button><span id="status" role="status"></span></div>
+  </form>
+</main>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

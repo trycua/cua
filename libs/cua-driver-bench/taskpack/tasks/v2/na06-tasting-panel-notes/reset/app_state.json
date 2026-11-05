@@ -1,0 +1,35 @@
+{
+  "drop": [
+    "Tasting panel"
+  ],
+  "create": {
+    "Tasting panel": [
+      {
+        "name": "Panel members",
+        "body": "<div><b>Panel members</b></div><div>Five tasters, chair rotates each round.</div><div>Scores are out of 10.</div>"
+      },
+      {
+        "name": "Round 3 scores",
+        "body": "<div><b>Round 3 scores</b></div><div>Apple &amp; ginger: 7</div><div>Pear &amp; cardamom: 8</div><div>Plum &amp; star anise: 6</div>"
+      }
+    ]
+  },
+  "lines": {
+    "Panel members": [
+      "Panel members",
+      "Five tasters, chair rotates each round.",
+      "Scores are out of 10."
+    ],
+    "Round 3 scores": [
+      "Round 3 scores",
+      "Apple & ginger: 7",
+      "Pear & cardamom: 8",
+      "Plum & star anise: 6"
+    ]
+  },
+  "purge": [
+    "Round 4 shortlist",
+    "Round 3 scores",
+    "Panel members"
+  ]
+}

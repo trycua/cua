@@ -1,0 +1,19 @@
+{
+  "id": "DS-05",
+  "title": "Fill venue placeholders, add a footnote and bold a phrase in a festival programme",
+  "group": "V2X",
+  "category": "documents",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/ds05-festival-program-notes",
+  "split": "public",
+  "coding_tools": false,
+  "dimension_tags": [
+    "documents",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

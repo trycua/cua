@@ -1,0 +1,26 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #efece4; color: #222; }
+header { background: #5a4632; color: #fff; padding: 14px 28px; }
+header h1 { margin: 0; font-size: 22px; } header p { margin: 2px 0 0; opacity: .85; }
+main { padding: 18px 28px; display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+aside, section { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+h2 { margin: 0 0 10px; font-size: 18px; }
+#post-list { list-style: none; padding: 0; margin: 12px 0 0; }
+#post-list li { margin-bottom: 8px; }
+#post-list button { width: 100%; text-align: left; padding: 8px; background: #faf8f3; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; }
+#post-list button[aria-current="true"] { border-color: #5a4632; background: #f1e9dc; }
+.badge { display: block; font-size: 12px; color: #666; }
+label, .label { display: block; margin: 10px 0 4px; font-weight: 600; }
+input, select { font: inherit; padding: 5px 7px; width: 100%; box-sizing: border-box; }
+.toolbar { display: flex; gap: 6px; padding: 6px; border: 1px solid #bbb; border-bottom: 0; border-radius: 6px 6px 0 0; background: #f6f3ec; }
+.toolbar button { min-width: 44px; padding: 4px 8px; }
+#body { min-height: 260px; border: 1px solid #bbb; border-radius: 0 0 6px 6px; padding: 8px 12px; background: #fff; outline: none; }
+#body:focus { border-color: #5a4632; }
+.actions { display: flex; gap: 10px; margin-top: 14px; }
+button { font: inherit; cursor: pointer; }
+.primary { background: #5a4632; color: #fff; border: 0; padding: 6px 14px; border-radius: 5px; }
+.error { color: #a40000; } .hint { color: #666; margin: 0; font-size: 13px; }
+#status { color: #2d6a2d; min-height: 1.4em; }
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+.backdrop[hidden] { display: none; }
+.modal { background: #fff; padding: 16px 20px; border-radius: 8px; width: 380px; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
+.modal h3 { margin: 0 0 6px; }

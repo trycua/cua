@@ -1,0 +1,18 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #f6f1e7; color: #262018; }
+header { background: #8a4b1f; color: #fff; padding: 14px 28px; }
+header h1 { margin: 0; font-size: 22px; } header p { margin: 2px 0 0; opacity: .9; }
+main { padding: 16px 28px; max-width: 1000px; }
+.filters { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.filters select { font: inherit; padding: 3px 6px; } #count { margin-left: auto; color: #555; }
+table { border-collapse: collapse; width: 100%; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #eadfcf; }
+.needed { color: #a33a00; font-weight: 600; } .cancelled { color: #777; font-style: italic; }
+.sr { position: absolute; left: -9999px; }
+button { font: inherit; padding: 3px 10px; cursor: pointer; }
+.pager { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+#flash { background: #e3f1e0; padding: 8px 12px; border-radius: 6px; }
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+#backdrop[hidden] { display: none; }
+#assign { background: #fff; border-radius: 8px; padding: 16px 20px; width: 400px; }
+#assign h2 { margin: 0 0 6px; font-size: 18px; } #assign input { font: inherit; width: 100%; box-sizing: border-box; }
+.error { color: #a40000; } .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }

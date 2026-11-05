@@ -1,0 +1,1 @@
+Seed swap rules: one packet in, one packet out. Label every packet with variety and year.

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quarry Lane Bulletin · Editor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Quarry Lane Bulletin</h1><p>Neighbourhood newsletter editor</p></header>
+<main>
+  <aside aria-labelledby="posts-h">
+    <h2 id="posts-h">Posts</h2>
+    <button type="button" id="new-post">New post</button>
+    <ul id="post-list"></ul>
+  </aside>
+  <section id="editor-panel" aria-labelledby="editor-h">
+    <h2 id="editor-h">New post</h2>
+    <p id="editing-note" class="hint"></p>
+    <label for="title">Title</label>
+    <input id="title" autocomplete="off">
+    <label for="category">Category</label>
+    <select id="category">
+      <option value="">Choose a category</option>
+      <option value="events">Events</option>
+      <option value="notices">Notices</option>
+      <option value="volunteering">Volunteering</option>
+      <option value="lost-found">Lost and found</option>
+      <option value="planning">Planning applications</option>
+    </select>
+    <span class="label" id="body-label">Body</span>
+    <div class="toolbar" role="toolbar" aria-label="Formatting">
+      <button type="button" data-cmd="bold" aria-label="Bold" aria-pressed="false"><b>B</b></button>
+      <button type="button" data-cmd="italic" aria-label="Italic" aria-pressed="false"><i>I</i></button>
+      <button type="button" data-cmd="list" aria-label="Bulleted list">• List</button>
+      <button type="button" data-cmd="link" aria-label="Link">Link</button>
+    </div>
+    <div id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="body-label"></div>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <div class="actions">
+      <button type="button" id="save-draft">Save draft</button>
+      <button type="button" id="publish" class="primary">Publish</button>
+    </div>
+    <p id="status" role="status"></p>
+  </section>
+</main>
+<div id="link-modal" class="backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="link-h">
+    <h3 id="link-h">Insert link</h3>
+    <label for="link-text">Link text</label>
+    <input id="link-text" autocomplete="off">
+    <label for="link-href">Address</label>
+    <input id="link-href" autocomplete="off" placeholder="https://">
+    <p class="error" id="link-error" hidden></p>
+    <div class="actions">
+      <button type="button" id="link-cancel">Cancel</button>
+      <button type="button" id="link-insert" class="primary">Insert link</button>
+    </div>
+  </div>
+</div>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

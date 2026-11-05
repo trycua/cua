@@ -20,7 +20,7 @@ Mechanical adaptations, all recorded in TASKS.md:
   title as its name and its own bundle id (`com.trycua.cdbbench.<name>`). Same Electron binary, same app code,
   same arguments; only the bundle's name and id differ.
 
-The task manifest (`taskpack/v2-taskset.json`) also covers pack tasks under `tasks/v2/` that share `tasks/v2/_kit`. Their
+The 42-task set (`taskpack/v2-taskset.json`) adds pack tasks under `tasks/v2/` that share `tasks/v2/_kit`. Their
 descriptors may declare native macOS apps (`kind: native`, exact `process_names`, started with `open -a`) and an
 optional `semantics.export` step that reads app data (Calendar, Reminders, Notes, Finder metadata) into the
 workspace after the agent and before the evaluator. A task whose selector says `"split": "heldout"` is read from the

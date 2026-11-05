@@ -35,14 +35,17 @@ to that date.
 | `47fd21ff82d2ebfc732442872508673b46a828d6` | 2026-10-11 15:12 | A23.1: the Codex CLI model is GPT-6.1 Sol if accessible, else `gpt-6-astra` |
 | `ad49a3c1a8e373834fbe78ce53c82aeb4dd504be` | 2026-10-11 15:18 | A23: the Claude helper also runs under Codex CLI (`cx-claude-cu-helper`), the full 2 x 3 matrix |
 | `a1036e6aac3f17ce15256e88cae7f1410e5eddd6` | 2026-10-11 15:22 | A23.1: GPT-6.1 Sol (`gpt-6.1-sol`, effort low) for the Codex CLI setups |
+| `fea078ea021dc7394fa0112581bef8948b19b42a` | 2026-10-11 12:55 | Amendment 18: Bench v2 grows to 42 tasks (32 new pack tasks, two new categories), before any trial of the new tasks |
+| `382042ba01c5fa7f2001a7e3c04a92d0a54f2b3d` | 2026-10-11 15:56 | Amendment 24: 3 runs per task for the full run, and MB-11 in the foreground condition only |
+| `ed3b4a658a4551a994b27926d2e325448fed3cd0` | 2026-10-12 15:22 | Amendment 26: MB-10 and PR-03 in the foreground condition only |
 
 Smoke runs (Amendments 14 to 17) validate the harness and are never analysed.
 Amendments 1 to 13 cover Bench v1, which used different tasks and tools; Bench
 v2 results are never pooled with them.
 
-**Coming next, each registered before its first trial:** a larger Bench v2 task
-set, the final full run with the Amendment 20 and 23 setups, and a run on a sealed
-held-out task set.
+**Coming next, each registered before its first trial:** the final full run with the Amendment 20 and 23 setups, and a run on a sealed
+held-out task set. The larger task set (Amendment 18, the 42-task set) is
+registered; see [Tasks and categories](#tasks-and-categories).
 
 **Why a summary rather than the full text here.** The full pre-registration
 records operational details of Cua's own test infrastructure and setups that
@@ -98,6 +101,58 @@ three multi-app workflows (CDB-G02 to CDB-G04), three precision interactions
 category. A fourth category, Web apps & forms, has no task yet and is reported
 as "no tasks".
 
+**The 42-task set (Amendment 18).** A second registered list, `--task-set v2-42`,
+adds 32 pack tasks written from scratch on 11 Oct 2026 to the ten above and two
+categories: Native macOS apps (`native_apps`: Calendar, Reminders, Notes, Finder,
+Preview) and Documents & spreadsheets (`documents`: LibreOffice Calc, Writer and
+Impress, TextEdit). Reports list the six categories in the order multi_app,
+web_forms, native_apps, documents, precision, interruptions. The set, with each
+task's category, split, OS availability and conditions, is
+[`taskpack/v2-taskset.json`](taskpack/v2-taskset.json). Its new
+interruption tasks use the apps' own dialogs and prompts rather than simulated
+ones, and report the same interruption diagnostic. Native-app tasks reset and read the apps' data
+through JavaScript for Automation before the agent and in an export step after
+it; their checkers read only the exported files. Every checker is deterministic
+and state-based: `passed` needs every check, and an untouched start fails with
+score 0. Tasks may be held out of this repository (the manifest's `split`); a
+held-out task runs through the same code from a separate pack, and is described
+here only by category and count. The default list stays the ten tasks above, so
+earlier runs reproduce.
+
+**Similarity review, the release gate for new task text (Amendment 18).** No
+task text of the 42-task set is published before a similarity review passes.
+The review was done on 3 Nov 2026, before any of it was published, and covered
+all 42 tasks, public and held out: brief, fixture, setup and checker. Method:
+
+1. Every brief was compared with every task instruction in the public task
+   files of OSWorld, WindowsAgentArena, macOSWorld, AndroidWorld (its task
+   templates), WebArena, VisualWebArena and SheetCopilot, about 4,100 texts in
+   all, by TF-IDF cosine similarity over content words and by shared
+   five-word sequences.
+2. Each task's six closest matches, and every public task found by a search for
+   the task's core operation (for example freezing a header row, a lookup
+   formula, splitting names into columns, a recurring event, Finder tags,
+   speaker notes, resizing an image, entering an address), were read and
+   judged by hand.
+3. The names, places and figures in every brief and fixture were checked
+   against the same texts.
+4. Mind2Web (tasks on live websites), AgentBench (shell, database and game
+   environments), ScreenSpot (single-element grounding), OS-Copilot (evaluated
+   on GAIA and SheetCopilot) and WorkArena (ServiceNow) were compared through
+   their published task descriptions.
+
+Result: no task is a near-duplicate of a public benchmark task. The highest
+cosine similarity is 0.35, no brief shares more than two five-word sequences
+with any public instruction (stock phrases such as "do not change any other"),
+and the invented scenario names appear in none of them. Similarity is at most
+functional: a few tasks use an app operation that a public task also uses, with
+a different scenario, data, wording and checker. Among the public tasks these
+are DS-01 (a lookup formula), DS-02 (freezing and formatting a header row and a
+currency column), NA-03 (Finder tags), NA-06 (writing a note) and WF-04
+(entering an address); six held-out tasks are in the same position. These are
+recorded, not removed. Any task added or rewritten later goes through the same
+review before its text is published.
+
 The interruption tasks show a permission-style prompt, a notification-style
 banner, an unsaved-changes dialog or a cookie-consent overlay mid-task. Every
 brief ends with the same sentence asking the agent to handle anything that comes
@@ -111,6 +166,11 @@ and seed. They are reported side by side and never pooled.
 
 * **Foreground.** BenchSentinel, a small witness window, is frontmost and key at
   the start. The agent may take focus.
+* **Foreground only (Amendments 24 and 26).** In the 42-task set, MB-10,
+  MB-11 and the tasks marked `conditions: ["foreground"]` in the manifest run in
+  the foreground condition only: a native hover follows the real pointer and
+  macOS shows tooltips only for the active app, so no setup can do them in the
+  background.
 * **Background.** BenchSentinel runs as a 900 x 520 "User activity" window at
   (420, 340). It is made frontmost and key before the agent starts and, while
   armed, types one character a second into its own text field, but only while

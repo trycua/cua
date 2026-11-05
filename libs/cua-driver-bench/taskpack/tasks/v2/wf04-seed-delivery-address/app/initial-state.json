@@ -1,0 +1,18 @@
+{
+  "order": {
+    "id": "LSC-27-0318",
+    "member": "Joris Elzinga",
+    "member_no": "LG-4471",
+    "season": "Spring 2027 sowing",
+    "packets": 14,
+    "weight_kg": 6.2
+  },
+  "delivery": {
+    "status": "draft",
+    "shipping": {"name": "", "line1": "", "line2": "", "town": "", "region": "", "postcode": "", "country": ""},
+    "billing_same": true,
+    "billing": null,
+    "option": "hub",
+    "notes": "Please leave the parcel inside the open barn by the yard gate, not at the roadside."
+  }
+}

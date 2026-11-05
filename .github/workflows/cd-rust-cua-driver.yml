@@ -232,25 +232,60 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
-          # Freeze bullseye indexes and packages together: the live security
-          # mirror can advertise packages it no longer serves. HTTP bootstraps
-          # ca-certificates; APT still verifies Debian signatures and hashes.
+          # Debian 11 is past its support window, so bullseye indexes and packages
+          # are frozen on snapshot.debian.org (the live security mirror advertises
+          # packages it no longer serves). HTTP bootstraps ca-certificates; APT still
+          # verifies Debian signatures and hashes.
+          # snapshot.debian.org answers 504/503 under load. APT retries each fetch
+          # with timeouts, the shell retries the whole step with a backoff, and if
+          # the snapshot is still down we fall back to archive.debian.org, which
+          # holds the same final bullseye packages (the pin exists for
+          # reproducibility, not for different versions). Same retry policy as
+          # libs/cua-spacesd/packaging/release/debian-build-deps.sh.
+          mkdir -p /etc/apt/apt.conf.d
+          cat > /etc/apt/apt.conf.d/80-cua-retries <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          # PipeWire ScreenCast capture remains Nix/modern-build only because
+          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
+          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
+          # in these portable release binaries.
+          PACKAGES="git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev"
+          apt_retry() {
+            n=0
+            until "$@"; do
+              n=$((n + 1))
+              if [ "$n" -ge 3 ]; then return 1; fi
+              echo "apt step failed (attempt $n of 3); retrying in $((n * 20))s" >&2
+              sleep $((n * 20))
+            done
+          }
+          apt_bootstrap() {
+            # Ignore any additional image-provided sources for this bootstrap.
+            apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" update &&
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES
+          }
+          rm -f /etc/apt/sources.list.d/debian.sources
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
           EOF
-          # Ignore any additional image-provided sources for this bootstrap.
-          # snapshot.debian.org answers 504 under load; retry each fetch.
-          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 update
-          # PipeWire ScreenCast capture remains Nix/modern-build only because
-          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
-          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
-          # in these portable release binaries.
-          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 install -y --no-install-recommends \
-            git ca-certificates curl python3 build-essential pkg-config \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
-            libxkbcommon-dev
+          if apt_bootstrap; then
+            echo "apt mirror used: snapshot.debian.org 20260901T000000Z"
+          else
+            echo "::warning::snapshot.debian.org failed after retries; falling back to archive.debian.org"
+            rm -rf /var/lib/apt/lists/*
+            cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
+          deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+          EOF
+            apt_bootstrap
+            echo "apt mirror used: archive.debian.org (snapshot fallback)"
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.ref }}

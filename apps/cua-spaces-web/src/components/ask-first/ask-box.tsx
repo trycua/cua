@@ -28,7 +28,7 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 
 /** Where it runs is a Space: "New Space", then quieter "Linux on This Mac". */
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
-  if (where.kind === "agent") return { title: where.fresh ? "Agent decides, new Home" : "Agent decides", detail: null };
+  if (where.kind === "agent") return { title: where.reuse ? "Agent decides, existing Home" : "Agent decides", detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
   if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? thisComputerLabel()}` };
   return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
@@ -176,7 +176,7 @@ export function AskBox({
   machines?: NameableMachine[];
   /** The job goes to the agent's Home Space, which makes the Spaces it needs: no where picker until a place is named. */
   agentHome?: boolean;
-  /** The person already has a Home Space: the picker offers a fresh one. */
+  /** The person already has a Home Space: the picker offers to continue in it. */
   hasHome?: boolean;
   busy: boolean;
   onSubmit: () => void;
@@ -197,7 +197,7 @@ export function AskBox({
   const label = whereSpaceLabel(where);
   // With agent homes the agent decides where, so nothing about it shows until the person names a place: with @ in the
   // text, or by picking one (the "..." button then shows).
-  const placed = where.kind !== "agent" || Boolean(where.fresh);
+  const placed = where.kind !== "agent" || Boolean(where.reuse);
   const naming = placed || /(^|\s)@/.test(text);
   return (
     <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
@@ -346,7 +346,7 @@ export function WherePicker({
   machines?: NameableMachine[];
   /** Leads with "Let the agent decide". */
   agentHome?: boolean;
-  /** The person already has a Home Space (the next request reuses it): offers a fresh one. */
+  /** The person already has a Home Space: offers to continue in it (a request starts a new Home otherwise). */
   hasHome?: boolean;
   trigger: ReactElement;
   open?: boolean;
@@ -407,7 +407,7 @@ export function WherePicker({
           }
           title="Let the agent decide"
           note="It picks what the job needs, within your budget"
-          selected={where?.kind === "agent" && !where.fresh}
+          selected={where?.kind === "agent" && !where.reuse}
           onSelect={() => onWhere({ kind: "agent" })}
         />
       ) : null}
@@ -418,10 +418,10 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Let the agent decide, in a new Home"
-          note="Starts a fresh Home Space instead of reusing yours"
-          selected={where?.kind === "agent" && Boolean(where.fresh)}
-          onSelect={() => onWhere({ kind: "agent", fresh: true })}
+          title="Let the agent decide, in your existing Home"
+          note="Continues in the Home you already have instead of starting a new one"
+          selected={where?.kind === "agent" && Boolean(where.reuse)}
+          onSelect={() => onWhere({ kind: "agent", reuse: true })}
         />
       ) : null}
       {agentHome ? (

@@ -85,7 +85,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await waitFor(() => expect(askTasks()[0]).toMatchObject({ home: true, inSpace: true }));
   });
 
-  it("reuses the agent's Home when it already has one, with no second create", async () => {
+  it("starts a new Home for a Home message, and continues the existing one only when it is picked", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
@@ -95,13 +95,33 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
     // The tree is read from the host and the Home is found by its label.
     await new Promise((r) => setTimeout(r, 300));
+    // A plain Home message makes a new Home, even though the agent already has one.
     fireEvent.change(box, { target: { value: "run the tests" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
-    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/local%3Aagent-home-demo"));
+    await waitFor(() => expect(calls.some((c) => c.op === "spaces.create")).toBe(true));
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\/(?!local%3Aagent-home-demo)/));
+    // Picking "in your existing Home" continues it: no second create, the job goes to the existing Home.
+    await act(async () => {
+      await router.navigate({ to: "/home" });
+    });
+    calls.length = 0;
+    const box2 = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
+    fireEvent.change(box2, { target: { value: "run the tests on @" } });
+    await act(async () => {
+      fireEvent.click(await waitFor(() => q('[data-picker="where"]')!));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByText("Let the agent decide, in your existing Home"));
+    });
+    fireEvent.change(box2, { target: { value: "run the tests again" } });
+    await act(async () => {
+      fireEvent.keyDown(box2, { key: "Enter" });
+    });
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\/local%3A(home-run-the-tests|agent-home-demo)/));
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude run the tests")).toBe(true), { timeout: 15000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude run the tests again")).toBe(true), { timeout: 15000 });
   });
 
   it("names the Space's handle for the Home's agent, never the host's unique name for it", async () => {
@@ -112,7 +132,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       ...HOME,
       intercept: (op, args) => {
         calls.push({ op, args: args as Record<string, unknown> });
-        return op === "thread.members" && (args as { spaceId: string }).spaceId === "local:agent-home-demo" ? { members: [member] } : undefined;
+        return op === "thread.members" ? { members: [member] } : undefined;
       },
     });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
@@ -124,7 +144,8 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
-    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/local%3Aagent-home-demo"));
+    // A Home message makes a new Home; the handle is still the Space's own.
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\//));
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude hi")).toBe(true), { timeout: 15000 });
     // Adding the standby agent names the handle too (it is the same member), and nothing is posted to @claude-8.
     expect(calls.filter((c) => c.op === "thread.agentAdd").every((c) => c.args.name === "claude")).toBe(true);

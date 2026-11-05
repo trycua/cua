@@ -1759,6 +1759,17 @@ impl Spaces {
             .map_err(|e| Error::Cancelled(format!("the connect to this Space ended: {e}")))?
     }
 
+    /// Whether the registry remembers cua-spacesd answering for `id`: its
+    /// image runs one, so a connection without it is a Space still waking.
+    pub(crate) fn record_expects_spacesd(&self, id: &SpaceId) -> bool {
+        self.inner
+            .registry
+            .get(&id.to_string())
+            .ok()
+            .flatten()
+            .is_some_and(|r| !r.spacesd_version.is_empty() || !r.features.is_empty())
+    }
+
     /// The open connection to `key`, unless its route went stale or it can
     /// move to the mesh now (then it is dropped, to connect again).
     async fn cached_connection(&self, key: &str) -> Option<Space> {
@@ -2164,7 +2175,20 @@ impl Spaces {
         };
         let mut unavailable: Option<(String, String)> = None;
         let env = match options {
-            None => None,
+            None => {
+                // No spacesd port is published. For a Space this computer
+                // knows runs cua-spacesd (it answered before), that is a
+                // runtime still bringing the Space back (a restart
+                // publishes the ports a moment later), not an image
+                // without it: mark it so the next use dials again.
+                if matches!(id, SpaceId::Local { .. }) && self.record_expects_spacesd(id) {
+                    unavailable = Some((
+                        String::new(),
+                        "the Space's cua-spacesd port is not published yet".into(),
+                    ));
+                }
+                None
+            }
             Some(options) => match SpacesdClient::connect(options.probe_timeout(probe)).await {
                 Ok(env) => Some(env),
                 Err(cua_spacesd_client::Error::SpacesdNotAvailable { endpoint, reason }) => {

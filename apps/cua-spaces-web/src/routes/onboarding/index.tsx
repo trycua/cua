@@ -468,7 +468,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
               ? failed.length === 1
                 ? `Cua couldn\u2019t change ${failed[0]!.name}\u2019s settings, so ${failed[0]!.name} can\u2019t use Cua yet.`
                 : `Cua couldn\u2019t change their settings, so ${listNames(failed.map((a) => a.name))} can\u2019t use Cua yet.`
-              : "Then you can ask them for things like \u201cReproduce this bug on a fresh Windows machine.\u201d They create the Space, work in it and tell you what they found."}
+              : "Then you can ask them for things like \u201cReproduce this bug on a fresh Windows computer.\u201d They create the Space, work in it and tell you what they found."}
         </Lede>
         {waiting && readiness === "permissions" ? <AppPermissionList perms={perms} variant="settings" title="Allow Cua Driver" className="mt-6" /> : null}
         {waiting && readiness === "driver" ? (

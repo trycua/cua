@@ -31,8 +31,6 @@ import { useStartTask } from "./use-start-task";
 import { useThisMacTarget } from "./use-this-mac-target";
 import { useWhereOptions } from "./where-options";
 import { homeDefaultWhere } from "@/lib/this-mac-target";
-import { FallbackLine, useTreeWhere } from "./tree-where";
-import { currentTreeWhere } from "@/lib/default-where";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { usePrepare } from "@/lib/prepare/store";
@@ -95,11 +93,7 @@ export function AskFirstHome() {
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
   const pick = useWherePick(agentName(chosenAgent));
-  // Spaces as a tree (Labs): your default Space unless you pick, or the next online computer; never a new one.
-  // With agent homes the agent decides where, so the tree's default doesn't apply.
-  const treeWhere = useTreeWhere();
-  const tw = agentHome ? null : treeWhere;
-  const where = tw ? currentTreeWhere(pickedWhere, tw.def.where, kinds, tw.tree) : currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
+  const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
     // The default can be This Mac itself: it asks once, as picking it does.
@@ -130,7 +124,6 @@ export function AskFirstHome() {
     // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
     onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
   };
-  const fallback = tw && pickedWhere === null ? tw.def.fallback : null;
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -171,10 +164,8 @@ export function AskFirstHome() {
           onSubmit={() => submit()}
           compact={!first}
           autoFocus
-          tree={tw}
         />
         <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
-        {fallback ? <FallbackLine fallback={fallback} /> : null}
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
         {first ? (

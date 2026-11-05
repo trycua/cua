@@ -565,20 +565,20 @@ pub struct ListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
-/// The Spaces page's empty state and "Reaching N machines…" line, for
+/// The Spaces page's empty state and "Reaching N computers…" line, for
 /// every shell.
 pub fn list_view(input: ListViewInput) -> ListView {
     let reaching_line = if !input.loaded {
         Some("Loading Spaces…".to_string())
     } else if input.incomplete {
         Some(match input.reaching {
-            0 => "Reaching your machines…".to_string(),
-            1 => "Reaching 1 machine…".to_string(),
-            n => format!("Reaching {n} machines…"),
+            0 => "Reaching your computers…".to_string(),
+            1 => "Reaching 1 computer…".to_string(),
+            n => format!("Reaching {n} computers…"),
         })
     } else {
         None
@@ -616,16 +616,16 @@ mod tests {
             v(true, true, 6, 0),
             ListView {
                 empty: false,
-                reaching_line: Some("Reaching 6 machines…".into())
+                reaching_line: Some("Reaching 6 computers…".into())
             }
         );
         assert_eq!(
             v(true, true, 1, 2).reaching_line.as_deref(),
-            Some("Reaching 1 machine…")
+            Some("Reaching 1 computer…")
         );
         assert_eq!(
             v(true, true, 0, 0).reaching_line.as_deref(),
-            Some("Reaching your machines…")
+            Some("Reaching your computers…")
         );
         assert!(!v(true, true, 3, 0).empty);
         // Complete: empty only with no Space, and no line.

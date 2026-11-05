@@ -15,9 +15,9 @@ afterEach(cleanup);
 
 const rows = (n: number, what: string): HostAccessRow[] => Array.from({ length: n }, (_, i) => ({ text: `${what} ${i + 1}`, atMs: Date.now() - i * 60_000 }));
 
-/** The core's "This machine" page for a machine sharing over the relay, with long logs. */
+/** The core's "This computer" page for a machine sharing over the relay, with long logs. */
 const sharing: HostPanelView = {
-  title: "This machine",
+  title: "This computer",
   summary: "Sharing · Relay",
   configured: true,
   facts: [{ label: "Name", value: "Studio" }],

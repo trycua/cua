@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The Machines page (CUA-1673) on the real routes and the wasm core: the
-// list in groups with one line each, This Mac's switches editable and
-// another machine's read-only, Space rows that lead to the Space's page,
-// New Space here with the machine chosen, rename, Details, and Remove from
-// account (asked first). No Space actions on a machine.
+// Your computers (CUA-1673, CUA-3551) on the real routes and the wasm core:
+// the list opens each computer's page, This Mac's switches editable and
+// another computer's read-only, Space rows that lead to the Space's page,
+// New Space here with the computer chosen, rename, Details, and Remove from
+// account (asked first). No Space actions on a computer. The clouds you
+// connected are listed under your computers, each with its own page.
 
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
@@ -66,7 +67,7 @@ async function issuesView(name = "the mockup with issues"): Promise<MachinesView
 }
 
 function hostDrawn(view: MachinesView, calls: [string, unknown][]): TestHost {
-  const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
+  const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [], ...(m.id.startsWith("dev_") ? { device: true } : {}) }));
   return {
     failsCreates: false,
     listsGhost: false,
@@ -83,21 +84,46 @@ function hostDrawn(view: MachinesView, calls: [string, unknown][]): TestHost {
 }
 
 const detailOf = (name: string) => screen.findByRole("region", { name: `${name} details` });
-const select = (id: string) => act(() => (document.querySelector(`[data-machine-id="${id}"]`) as HTMLElement).click());
 
-describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => {
+/** The router of the app mounted last: a computer's page opens at its own address, as its row in the list opens it. */
+let shown: Awaited<ReturnType<typeof mountApp>> | null = null;
+async function mountAt(path: string, host: TestHost) {
+  shown = await mountApp(path, host);
+  return shown;
+}
+const select = (id: string) =>
+  act(async () => {
+    await shown!.router.navigate({ to: "/spaces/computer/$computerId", params: { computerId: id } });
+  });
+/** The element once it is drawn. */
+function found<T extends Element = HTMLElement>(sel: string): Promise<T> {
+  return waitFor(() => {
+    const el = document.querySelector<T>(sel);
+    if (!el) throw new Error(`nothing matches ${sel}`);
+    return el;
+  });
+}
+/** The list of your computers has drawn. */
+const listed = () => waitFor(() => expect(document.querySelector("[data-spaces-tree]")).not.toBeNull());
+
+describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wasm core)", () => {
   it("draws the core's page for the rows listed here, a machine that stopped sharing included", async () => {
     const calls: [string, unknown][] = [];
-    const { router, hooks } = await mountApp("/machines", stopped(calls));
+    const { router, hooks } = await mountAt("/spaces", stopped(calls));
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.machines.some((m) => m.id === "studio")).toBe(true));
-    await screen.findByText(new RegExp(`^${hooks.machines.view!.summary}`));
+    await listed();
 
-    const row = document.querySelector('[data-machine-id="studio"]') as HTMLElement;
-    expect(row.querySelector("[data-machine-line]")?.textContent).toBe("Not sharing");
+    const row = await waitFor(() => {
+      document.querySelector<HTMLElement>('[data-tree-offline-toggle][aria-expanded="false"]')?.click();
+      const el = document.querySelector<HTMLElement>('[data-machine-id="studio"]');
+      if (!el) throw new Error("no Studio row");
+      return el;
+    });
+    expect(row.querySelector("[data-tree-status]")?.textContent).toBe("Not sharing");
     // No subtitle of OS and connection, and no "Not set up for access".
     expect(document.body.textContent).not.toMatch(/Not set up for access|macOS · Cua relay/);
-    select("studio");
+    await select("studio");
     const detail = await detailOf("Studio");
     expect(detail.querySelector("[data-machine-status]")?.textContent).toContain("Not sharing");
     // Online, so the relay would only take it back: Remove says where.
@@ -110,41 +136,34 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
   it("matches the approved mockup: groups, switches, Space links, New Space here, rename, Details and Remove", async () => {
     const view = await mockupView();
     const calls: [string, unknown][] = [];
-    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    const { router } = await mountAt("/spaces", hostDrawn(view, calls));
     await router.load();
-    await screen.findByText(new RegExp(`^${view.summary}`));
+    await listed();
 
-    // Groups, with the old machines collapsed. The machines waiting to be added come first; a
-    // machine that is only signed in sits in the one list.
-    const groups = [...document.querySelectorAll("[data-machine-group]")].map((g) => g.getAttribute("data-machine-group"));
-    expect(groups).toEqual(["pending", "yours", "old", "team"]);
-    expect(document.body.textContent).not.toMatch(/Your devices|Signed-in device/);
-    const yours = document.querySelector<HTMLElement>('[data-machine-group="yours"]')!;
-    const lap = yours.querySelector<HTMLElement>('[data-machine-id="dev_lap"]')!;
-    expect(lap.hidden).toBe(false);
-    expect(lap.querySelector("[data-machine-line]")?.textContent).toBe("Signed in, not sharing");
-    const old = document.querySelector<HTMLElement>('[data-machine-id="old1"]')!;
-    expect(old.hidden).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: /Offline for 30\+ days/ }));
-    expect(old.hidden).toBe(false);
-    expect(screen.getByText("Remove old machines")).toBeTruthy();
-    expect(document.querySelector('[data-machine-id="this-mac"]')?.textContent).toContain("This Mac");
+    // The computers waiting to be added come first; the old ones fold into one offline row, with Remove old
+    // computers beside it.
+    expect(document.querySelector("[data-tree-pending]")).not.toBeNull();
+    expect(document.querySelector('[data-machine-id="old1"]')).toBeNull();
+    fireEvent.click(document.querySelector("[data-tree-offline-toggle]")!);
+    await waitFor(() => expect(document.querySelector('[data-machine-id="old1"]')).not.toBeNull());
+    expect(screen.getByText("Remove old computers")).toBeTruthy();
 
     // This Mac: its switches change here.
+    await select("this-mac");
     let detail = await detailOf("Ada's MacBook Pro");
     const switches = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-toggle] [role=switch]")];
     expect(switches().map((s) => s.getAttribute("aria-disabled") === "true" || s.hasAttribute("data-disabled"))).toEqual([false]);
-    // One switch on this Mac's page: its desktop. "Let other machines create Spaces here" is a Settings row.
+    // One switch on this Mac's page: its desktop. "Let other computers create Spaces here" is a Settings row.
     const labels = () => [...detail.querySelectorAll("[data-machine-toggle]")].map((t) => t.textContent);
-    expect(labels()).toEqual([expect.stringContaining("Let other machines control this desktop")]);
+    expect(labels()).toEqual([expect.stringContaining("Let other computers control this desktop")]);
     expect(detail.textContent).not.toContain("devices");
 
     // Another Mac: read-only, and where to change it.
-    select("studio");
+    await select("studio");
     detail = await detailOf("cua's Mac Studio");
     expect(switches().every((s) => s.hasAttribute("data-disabled"))).toBe(true);
-    // Every other machine shows both switches, read-only, in the owner's words.
-    expect(labels()).toEqual([expect.stringContaining("Let other machines create Spaces here"), expect.stringContaining("Let other machines control this desktop")]);
+    // Every other computer shows both switches, read-only, in the owner's words.
+    expect(labels()).toEqual([expect.stringContaining("Let other computers create Spaces here"), expect.stringContaining("Let other computers control this desktop")]);
     expect(detail.querySelector("[data-machine-toggles-note]")?.textContent).toBe("Change this on that Mac.");
     // No Space actions on a machine.
     expect(within(detail).queryByRole("button", { name: /^(Open|Start|Stop|Teleport)/ })).toBeNull();
@@ -152,11 +171,12 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     // Details, collapsed until opened.
     expect(detail.querySelector("[data-machine-details]")).toBeNull();
     fireEvent.click(detail.querySelector("[data-machine-details-toggle]")!);
-    expect(detail.querySelector("[data-machine-details]")?.textContent).toMatch(/OS.*macOS 26\.5\.2.*Connection.*via Cua relay.*Service.*Running/);
+    await waitFor(() => expect(document.querySelector("[data-machine-details]")?.textContent).toMatch(/OS.*macOS 26\.5\.2.*Connection.*via Cua relay.*Service.*Running/));
+    detail = await detailOf("cua's Mac Studio");
 
     // Rename saves on the relay machine.
     fireEvent.click(detail.querySelector("[data-machine-rename]")!);
-    const input = await waitFor(() => document.querySelector<HTMLInputElement>("[data-machine-rename-input]")!);
+    const input = await found<HTMLInputElement>("[data-machine-rename-input]");
     fireEvent.change(input, { target: { value: "Studio" } });
     fireEvent.submit(input.closest("form")!);
     await waitFor(() => expect(calls).toContainEqual(["machines.rename", { id: "studio", name: "Studio" }]));
@@ -172,7 +192,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     act(() => router.history.back());
 
     // A Space row leads to the Space's own page.
-    select("studio");
+    await select("studio");
     detail = await detailOf("cua's Mac Studio");
     fireEvent.click(detail.querySelector('[data-space-row="relay:studio/xm"]')!);
     await waitFor(() => expect(router.state.location.pathname).toBe(`/spaces/${encodeURIComponent("relay:studio/xm")}`));
@@ -188,10 +208,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
         ? (rows as MachineRow[]).map((m) => (m.id === "studio" ? { ...m, limits: [{ resource: "spaces", used: 2, limit: 6, reason: "" }] } : m))
         : rows;
     };
-    const { router } = await mountApp("/machines", h);
+    const { router } = await mountAt("/spaces", h);
     await router.load();
-    await screen.findByText(view.summary);
-    select("studio");
+    await listed();
+    await select("studio");
     const detail = await detailOf("cua's Mac Studio");
     const help = detail.querySelector('[data-machine-toggle-help="spaces"]');
     expect(help?.textContent).toBe("Spaces can be created here (up to 6)");
@@ -203,10 +223,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
   it("asks before removing a machine from the account; Cancel removes nothing", async () => {
     const view = await mockupView();
     const calls: [string, unknown][] = [];
-    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    const { router } = await mountAt("/spaces", hostDrawn(view, calls));
     await router.load();
-    await screen.findByText(view.summary);
-    select("byoc");
+    await listed();
+    await select("byoc");
     const detail = await detailOf("Cua BYOC tests");
     expect(detail.querySelector("[data-machine-notice]")?.textContent).toMatch(/offline/);
     const remove = detail.querySelector<HTMLButtonElement>('[data-machine-remove="byoc"]')!;
@@ -227,10 +247,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
   it("a team machine has no Remove and says its owner changes it", async () => {
     const view = await mockupView();
-    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    const { router } = await mountAt("/spaces", hostDrawn(view, []));
     await router.load();
-    await screen.findByText(view.summary);
-    select("team");
+    await listed();
+    await select("team");
     const detail = await detailOf("build-mini-01");
     expect(detail.querySelector("[data-machine-status]")?.textContent).toContain("Shared by your team");
     expect(detail.querySelector("[data-machine-toggles-note]")?.textContent).toBe("Its owner changes this on that Mac.");
@@ -238,21 +258,17 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(detail.querySelector("[data-machine-rename]")).toBeNull();
   });
 
-  it("shows a machine's issues with their fixes, tints its dot, and shows nothing for a healthy or offline machine", async () => {
+  it("shows a computer's issues with their fixes, and nothing for a healthy or offline computer", async () => {
     const view = await issuesView();
     const calls: [string, unknown][] = [];
-    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    const { router } = await mountAt("/spaces", hostDrawn(view, calls));
     await router.load();
-    await screen.findByText(view.summary);
-    // The page asks the machines for their health once it opens.
-    await waitFor(() => expect(calls.some(([op]) => op === "machines.checkHealth")).toBe(true));
+    await listed();
 
-    // The dots: red for This Mac, amber for the Mac Studio, none on the rest.
-    const tint = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-health]`)?.getAttribute("data-machine-health") ?? null;
-    expect([tint("this-mac"), tint("studio"), tint("byoc"), tint("old1")]).toEqual(["fail", "warn", null, null]);
-
-    // This Mac: Local Network (fail) and disk (warn), each with its fix.
+    // This Mac: Local Network (fail) and disk (warn), each with its fix. Its page asks for its health once it opens.
+    await select("this-mac");
     let detail = await detailOf("Ada's MacBook Pro");
+    await waitFor(() => expect(calls.some(([op]) => op === "machines.checkHealth")).toBe(true));
     const issues = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-issue]")];
     expect(issues().map((i) => [i.dataset.machineIssue, i.dataset.level])).toEqual([
       ["machine.local_network", "fail"],
@@ -266,7 +282,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(within(issues()[1]!).getByRole("button", { name: "Free disk space" })).toBeTruthy();
 
     // The Mac Studio: said there, with no buttons (its settings are on it).
-    select("studio");
+    await select("studio");
     detail = await detailOf("cua's Mac Studio");
     expect(issues().map((i) => i.textContent)).toEqual([
       "Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
@@ -276,7 +292,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
     // Healthy (the team machine) and offline (old checks not shown): no section.
     for (const [id, name] of [["team", "build-mini-01"], ["byoc", "Cua BYOC tests"]] as const) {
-      select(id);
+      await select(id);
       detail = await detailOf(name);
       expect(detail.querySelector("[data-machine-issues]")).toBeNull();
       expect(detail.textContent).not.toContain("Issues");
@@ -289,7 +305,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     mac.issues = [{ id: "service", level: "fail", text: "The Cua service isn’t running.", action: { label: "Restart service", hostAction: "resume-sharing" } }];
     mac.health = "fail";
     const calls: [string, unknown][] = [];
-    const { router } = await mountApp("/machines", hostDrawn(view, calls));
+    const { router } = await mountAt("/spaces/computer/this-mac", hostDrawn(view, calls));
     await router.load();
     const detail = await detailOf("Ada's MacBook Pro");
     fireEvent.click(within(detail).getByRole("button", { name: "Restart service" }));
@@ -298,11 +314,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
   it("a peer on a newer Cua is a plain note when this app is the newest release: no warning, no button", async () => {
     const view = await issuesView("the Mac Studio runs a newer Cua and this app is the newest");
-    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    const { router } = await mountAt("/spaces", hostDrawn(view, []));
     await router.load();
-    await screen.findByText(view.summary);
-    expect(document.querySelector('[data-machine-id="studio"] [data-machine-health]')?.getAttribute("data-machine-health")).toBe("warn");
-    select("studio");
+    await listed();
+    await select("studio");
     const detail = await detailOf("cua's Mac Studio");
     const note = detail.querySelector<HTMLElement>('[data-machine-issue="version"]')!;
     expect(note.dataset.level).toBe("info");
@@ -325,10 +340,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
       if (op === "agents.runs") return [];
       return base?.(op, args);
     };
-    const { router } = await mountApp("/machines", h);
+    const { router } = await mountAt("/spaces", h);
     await router.load();
-    await screen.findByText(view.summary);
-    select("studio");
+    await listed();
+    await select("studio");
     const detail = await detailOf("cua's Mac Studio");
     const row = detail.querySelector<HTMLElement>('[data-machine-issue="version"]')!;
     expect(row.dataset.level).toBe("warn");
@@ -341,10 +356,10 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const view = await issuesView();
     const studio = view.machines.find((m) => m.id === "studio")!;
     expect(studio.desktop?.label).toBe("Desktop");
-    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    const { router } = await mountAt("/spaces", hostDrawn(view, []));
     await router.load();
-    await screen.findByText(view.summary);
-    select("studio");
+    await listed();
+    await select("studio");
     const detail = await detailOf("cua's Mac Studio");
     const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];
     // The desktop first, then the Spaces: one row component, one look.
@@ -354,21 +369,19 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(rows[1]!.textContent).not.toContain("Desktop");
   });
 
-  it("reads a shared desktop in the row: desktop only, desktop with Spaces, Spaces only", async () => {
+  it("a computer sharing only its desktop lists just that desktop", async () => {
     const view = await issuesView("a machine sharing only its desktop");
-    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    const { router } = await mountAt("/spaces", hostDrawn(view, []));
     await router.load();
-    await screen.findByText(view.summary);
-    const line = (id: string) => document.querySelector(`[data-machine-id="${id}"] [data-machine-line]`)?.textContent;
-    expect([line("solo"), line("both"), line("spaces")]).toEqual(["Desktop shared", "Desktop and 2 Spaces", "1 Space running"]);
-    select("solo");
+    await listed();
+    await select("solo");
     const detail = await detailOf("solo");
     const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];
     expect(rows.map((r) => r.dataset.spaceRow)).toEqual(["relay:solo"]);
   });
 
-  it("draws the clouds: a group under the machines, each cloud's page, and Connect a cloud", async () => {
-    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
+  it("draws the clouds: a group under your computers, each cloud's page, and Connect a cloud", async () => {
+    const { router, hooks } = await mountAt("/spaces", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.map((r) => r.id)).toEqual(["aws", "hetzner"]));
     const group = document.querySelector("[data-cloud-group]")!;
@@ -392,10 +405,19 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect([...aws.querySelectorAll("[data-cloud-setting]")].map((s) => s.getAttribute("data-cloud-setting"))).toEqual(["region", "budget", "size", "access"]);
     expect(aws.querySelector("[data-cloud-issues]")).toBeNull();
 
-    // Connect a cloud: the picker, five rows, a read-only prompt.
-    act(() => (document.querySelector("[data-connect-a-cloud]") as HTMLElement).click());
-    const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
-    expect(sheet).not.toBeNull();
+    // Connect a cloud, under the clouds in the list: the picker, five rows, a read-only prompt.
+    await act(() => router.navigate({ to: "/spaces" }));
+    const connectRow = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-connect-a-cloud]");
+      if (!el) throw new Error("no Connect a cloud");
+      return el;
+    });
+    act(() => connectRow.click());
+    const sheet = await waitFor(() => {
+      const el = document.querySelector("[data-connect-cloud]");
+      if (!el) throw new Error("no Connect a cloud sheet");
+      return el;
+    });
     expect([...sheet.querySelectorAll("[data-cloud-row-title]")].map((r) => r.textContent)).toEqual(["AWS", "Google Cloud", "Microsoft Azure", "Hetzner", "Modal"]);
     expect([...sheet.querySelectorAll("[data-cloud-row-auth]")].map((r) => r.textContent)).toEqual(["OIDC", "Coming soon", "Coming soon", "API token", "API token"]);
     const prompt = sheet.querySelector<HTMLTextAreaElement>("[data-cloud-prompt]")!;
@@ -413,13 +435,13 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
       ["token", "hetzner", "Token refused", "Token refused", "new-token"],
       ["approval", "aws", "Waiting for approval", "Waiting for approval", "review"],
     ] as const) {
-      const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds } });
+      const { router, hooks } = await mountAt("/spaces", { failsCreates: false, listsGhost: false, demo: { clouds } });
       await router.load();
       await waitFor(() => expect(hooks.machines.view?.clouds?.pages.some((p) => p.id === cloud)).toBe(true));
+      await waitFor(() => expect(document.querySelector(`[data-cloud-id=${cloud}] [data-cloud-line]`)?.textContent).toBe(line));
       act(() => (document.querySelector(`[data-cloud-id=${cloud}]`) as HTMLElement).click());
       const page = await detailOf(cloud === "aws" ? "AWS" : "Hetzner");
       expect(page.querySelector("[data-cloud-status]")?.textContent).toBe(status);
-      expect(document.querySelector(`[data-cloud-id=${cloud}] [data-cloud-line]`)?.textContent).toBe(line);
       expect(page.querySelector(`[data-cloud-issue-action=${action}]`)).not.toBeNull();
       cleanup();
       resetNewSpaceSession();
@@ -428,7 +450,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
   it("approves what an agent set up from the review sheet", async () => {
     const calls: [string, unknown][] = [];
-    const { router, hooks } = await mountApp("/machines", {
+    const { router, hooks } = await mountAt("/spaces", {
       failsCreates: false,
       listsGhost: false,
       demo: { clouds: "approval" },
@@ -442,7 +464,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
     const page = await detailOf("AWS");
     act(() => (page.querySelector("[data-cloud-issue-action=review]") as HTMLElement).click());
-    const sheet = await waitFor(() => document.querySelector("[data-cloud-approval]")!);
+    const sheet = await found("[data-cloud-approval]");
     expect(sheet.textContent).toContain("Approve AWS for your agent?");
     act(() => (sheet.querySelector("[data-cloud-approve]") as HTMLElement).click());
     await waitFor(() => expect(calls).toEqual([["clouds.approve", { provider: "aws", approve: true }]]));
@@ -451,67 +473,8 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(document.querySelector("[data-cloud-approve]")).toBeNull());
   });
 
-  it("lists the clouds above your machines, in the order the core gives", async () => {
-    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
-    await router.load();
-    await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.length).toBe(2));
-    expect(hooks.machines.view!.order).toEqual(["clouds", "yours"]);
-    const sections = [...document.querySelectorAll("[data-cloud-group], [data-machine-group]")].map((s) => s.getAttribute("data-cloud-group") ?? s.getAttribute("data-machine-group"));
-    // What waits for you is first; the clouds come before the machines.
-    expect(sections).toEqual(["pending", "clouds", "yours"]);
-    // Even with no cloud connected, "Connect a cloud" comes before the machines (after what waits for you).
-    cleanup();
-    resetNewSpaceSession();
-    await mountApp("/machines", { failsCreates: false, listsGhost: false }).then(async ({ router: r }) => r.load());
-    await waitFor(() => expect(document.querySelector("[data-connect-a-cloud]")).not.toBeNull());
-    const groups = [...document.querySelectorAll("[data-cloud-group], [data-machine-group]")].filter((g) => g.getAttribute("data-machine-group") !== "pending");
-    expect(groups[0]?.getAttribute("data-cloud-group")).toBe("clouds");
-  });
-
-  it("scrolls the list and the detail pane on their own, under a header that stays put", async () => {
-    const { router } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected", manyMachines: true } });
-    await router.load();
-    await waitFor(() => expect(document.querySelectorAll("[data-machine-id]").length).toBeGreaterThan(15));
-    const list = document.querySelector<HTMLElement>("[data-machines-list-scroll]")!;
-    const detail = document.querySelector<HTMLElement>("[data-machines-detail-scroll]")!;
-    const split = document.querySelector<HTMLElement>("[data-machines-split]")!;
-    for (const pane of [list, detail]) {
-      expect(pane.className).toContain("overflow-y-auto");
-      expect(pane.className).toContain("min-h-0");
-    }
-    expect(list.contains(detail) || detail.contains(list)).toBe(false);
-    // Bounded: the split fills what the page leaves, and the page as a whole does not scroll.
-    expect(split.className).toContain("flex-1");
-    expect(split.className).toContain("min-h-0");
-    const page = document.querySelector<HTMLElement>("[data-page-contained]")!;
-    expect(page.className).toContain("overflow-hidden");
-    expect(page.className).not.toContain("overflow-y-auto");
-    // The header is outside both panes.
-    const header = document.querySelector("h1")!;
-    expect(list.contains(header) || detail.contains(header)).toBe(false);
-  });
-
-  it("keeps the selected row in view in the list", async () => {
-    const calls: string[] = [];
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
-      calls.push(`${this.getAttribute("data-machine-id") ?? "cloud:" + this.getAttribute("data-cloud-id")} ${JSON.stringify(arg)}`);
-    };
-    try {
-      const { router } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected", manyMachines: true } });
-      await router.load();
-      await waitFor(() => expect(document.querySelectorAll("[data-machine-id]").length).toBeGreaterThan(15));
-      select("build-13");
-      await waitFor(() => expect(calls).toContain('build-13 {"block":"nearest"}'));
-      act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
-      await waitFor(() => expect(calls).toContain('cloud:aws {"block":"nearest"}'));
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
-  });
-
   it("a CLI sign-in AWS link offers Switch to OIDC, which opens AWS's sheet filled from the link", async () => {
-    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "cli" } });
+    const { router, hooks } = await mountAt("/spaces", { failsCreates: false, listsGhost: false, demo: { clouds: "cli" } });
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.switchAuth?.label).toBe("Switch to OIDC"));
     act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
@@ -520,7 +483,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(page.querySelector("[data-cloud-issues]")).toBeNull();
     expect(page.querySelector("[data-cloud-setting=access]")?.textContent).toContain("The AWS CLI's sign-in on this machine");
     act(() => (page.querySelector("[data-cloud-switch=switch-oidc]") as HTMLElement).click());
-    const sheet = await waitFor(() => document.querySelector("[data-connect-cloud]")!);
+    const sheet = await found("[data-connect-cloud]");
     await waitFor(() => expect(sheet.querySelector("[data-cloud-title]")?.textContent).toContain("AWS"));
     // Filled from the CLI link: its region, budget and largest machine.
     await waitFor(() => expect(sheet.textContent).toContain("8 vCPU, 32 GB"));
@@ -529,14 +492,14 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     // An OIDC link offers nothing to switch.
     cleanup();
     resetNewSpaceSession();
-    const other = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
+    const other = await mountAt("/spaces", { failsCreates: false, listsGhost: false, demo: { clouds: "connected" } });
     await other.router.load();
     await waitFor(() => expect(other.hooks.machines.view?.clouds?.pages[0]?.id).toBe("aws"));
     expect(other.hooks.machines.view?.clouds?.pages[0]?.switchAuth).toBeNull();
   });
 
   it("a link revoked elsewhere shows the host's sentence with Reconnect", async () => {
-    const { router, hooks } = await mountApp("/machines", { failsCreates: false, listsGhost: false, demo: { clouds: "revoked" } });
+    const { router, hooks } = await mountAt("/spaces", { failsCreates: false, listsGhost: false, demo: { clouds: "revoked" } });
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.issues[0]?.id).toBe("link"));
     act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
@@ -549,7 +512,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
 
   it("an agent's raise of the limits shows who asked and what, and Deny keeps the old limits", async () => {
     const calls: [string, unknown][] = [];
-    const { router, hooks } = await mountApp("/machines", {
+    const { router, hooks } = await mountAt("/spaces", {
       failsCreates: false,
       listsGhost: false,
       demo: { clouds: "limits" },
@@ -563,7 +526,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     act(() => (document.querySelector("[data-cloud-id=aws]") as HTMLElement).click());
     const page = await detailOf("AWS");
     act(() => (page.querySelector("[data-cloud-issue-action=review]") as HTMLElement).click());
-    const sheet = await waitFor(() => document.querySelector("[data-cloud-approval]")!);
+    const sheet = await found("[data-cloud-approval]");
     expect(sheet.textContent).toContain("eval-runner asked to raise the limits on AWS");
     expect(sheet.textContent).toContain("$500");
     expect(sheet.textContent).toContain("8 vCPU, 32 GB");

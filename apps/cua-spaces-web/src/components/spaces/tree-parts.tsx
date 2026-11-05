@@ -64,7 +64,7 @@ function load(): ReadonlySet<string> {
   return cache;
 }
 
-/** Folds or unfolds a computer on the Spaces page (remembered on this device). */
+/** Folds or unfolds a computer on the Computers page (remembered on this device). */
 export function toggleCollapsed(key: string): void {
   const next = new Set(load());
   if (next.has(key)) next.delete(key);

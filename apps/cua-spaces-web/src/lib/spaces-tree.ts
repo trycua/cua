@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Spaces as a tree (CUA-3413, Labs `spaces_tree`): every computer you added
+ * Your computers as a tree (CUA-3413, CUA-3551): every computer you added
  * is a top row, and the Spaces made on it sit under it. One pure function
- * builds it for the sidebar, the Spaces page, Home's "in" picker and
+ * builds it for the sidebar, the Computers page, Home's "in" picker and
  * Settings, from what the app already has: the Spaces list (`Space.host`,
  * `provider`), the machines (`Machine.current`, `relayId`) and the agent
  * runs. Nothing new is stored; the default Space is the relay's
  * (`spaces.settings`).
  */
 
-import type { DefaultCandidate, Machine, Space, SpaceOs } from "@/bridge";
+import type { Machine, Space, SpaceOs } from "@/bridge";
 import { ownerLabel, peopleNames } from "@/lib/space-access";
 import { machineOs, reachable } from "@/lib/machines";
 import { plural } from "@/lib/plural";
@@ -279,7 +279,7 @@ export function treeRows(tree: Pick<SpacesTree, "roots">): TreeNode[] {
   return tree.roots.flatMap((r) => [r, ...r.children]);
 }
 
-/** The Spaces page's line under its title. */
+/** The Computers page's line under its title. */
 export function treeSummary(tree: SpacesTree): string {
   if (tree.offlineParent) {
     const p = tree.offlineParent;
@@ -292,24 +292,6 @@ export function treeSummary(tree: SpacesTree): string {
   const total = tree.computers + tree.spaces;
   const made = tree.spaces === 0 ? "" : ` and ${plural(tree.spaces, "Space")} made on ${tree.computers === 1 ? "it" : "them"}`;
   return `${plural(tree.computers, "computer")}${made}. ${total} in all, ${tree.online} online.`;
-}
-
-/**
- * The computers a task may go to, in the account's order, for the
- * resolution when the host can't ask the relay (`resolveDefaultSpace`):
- * the default first if it's a Space, then each computer, This Mac last.
- */
-export function defaultCandidates(tree: SpacesTree): DefaultCandidate[] {
-  const out: DefaultCandidate[] = [];
-  for (const n of treeRows(tree)) {
-    if (!n.settingsId) continue;
-    if (n.kind === "space" && !n.isDefault) continue;
-    out.push({ space: n.settingsId, name: n.name, online: n.online, here: n.current });
-  }
-  // This Mac before it is on the relay is still the last resort.
-  const here = tree.roots.find((r) => r.current);
-  if (here && !here.settingsId) out.push({ space: here.key, name: here.name, online: true, here: true });
-  return out;
 }
 
 /** A node by key. */

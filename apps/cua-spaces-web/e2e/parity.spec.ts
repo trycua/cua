@@ -46,7 +46,7 @@ const PATHS: Record<ParityScreen, string> = {
   "settings/advanced": "/settings/advanced",
   "settings/connected-apps": "/settings/connections",
   notifications: "/notifications",
-  machines: "/machines",
+  machines: "/spaces/computer/this-mac",
   agents: "/agents/all",
   volume: "/volume",
   onboarding: "/onboarding",
@@ -382,19 +382,28 @@ async function checkAgents(page: Page, cp: Of<"agents">): Promise<void> {
   await expect.poll(read, { message: "the core's agent rows" }).toEqual(cp.rows.map((r) => ({ name: r.name, detail: r.detail, state: r.state })));
 }
 
-/* ---- The Machines page --------------------------------------------------------- */
+/* ---- Your computers ------------------------------------------------------------ */
 
+/** Each computer once, in the list of your computers (offline ones unfolded) or under the other signed-in devices. */
 async function checkMachines(page: Page, cp: Of<"machines">): Promise<void> {
   await page.evaluate(([rows, now]) => window.__cuaParity!.showMachines(rows, now), [cp.rows, cp.now] as const);
-  const read = () =>
-    page.locator("[data-machine-id]").evaluateAll((els) =>
-      els.map((el) => ({
-        id: el.getAttribute("data-machine-id"),
-        name: el.querySelector(".font-medium")?.textContent ?? null,
-        online: el.getAttribute("data-online") === "true",
-      })),
+  await navigate(page, "/spaces");
+  const unfold = page.locator('[data-tree-offline-toggle][aria-expanded="false"]');
+  const read = async () => {
+    if (await unfold.count()) await unfold.click();
+    return page.locator("[data-machine-id]").evaluateAll((els) =>
+      els
+        .map((el) => ({
+          id: el.getAttribute("data-machine-id"),
+          name: el.getAttribute("data-machine-name"),
+          online: el.getAttribute("data-online") === "true",
+        }))
+        .sort((a, b) => (a.id ?? "").localeCompare(b.id ?? "")),
     );
-  await expect.poll(read, { message: "the core's machine rows" }).toEqual(cp.merged.map((m) => ({ id: m.id, name: m.name, online: m.online })));
+  };
+  const want = cp.merged.map((m) => ({ id: m.id, name: m.name, online: m.online })).sort((a, b) => a.id.localeCompare(b.id));
+  await expect.poll(read, { message: "the core's machine rows" }).toEqual(want);
+  await navigate(page, "/spaces/computer/this-mac");
 }
 
 /* ---- Usage events ------------------------------------------------------------- */

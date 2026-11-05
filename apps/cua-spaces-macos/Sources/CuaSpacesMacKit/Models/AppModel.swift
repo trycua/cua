@@ -562,7 +562,7 @@ public final class AppModel {
 
     /// Where "Add a computer" opens: the New UI's sheet (one row per way to
     /// add a computer, and Have a code? Enter it).
-    public static let addComputerRoute = MainUIRoute.path("/machines?add=1")
+    public static let addComputerRoute = MainUIRoute.path("/spaces?add=1")
     /// Agent runs seen in any Space (a Space's detail, the web UI's
     /// Agents page): the checklist's "Run an agent".
     public private(set) var agentRunsSeen = 0

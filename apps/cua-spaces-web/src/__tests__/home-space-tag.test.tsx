@@ -20,9 +20,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const spaceIds = () => [...document.querySelectorAll<HTMLElement>("[data-space-id]")].map((e) => e.getAttribute("data-space-id")!);
+const spaceIds = () => [...document.querySelectorAll<HTMLElement>('[data-tree-kind="space"][data-space-id]')].map((e) => e.getAttribute("data-space-id")!);
 
-describe.skipIf(!wasmBuilt)("the Home tag in the Spaces list", () => {
+describe.skipIf(!wasmBuilt)("the Home tag in the list of your computers", () => {
   it("shows beside the agent's home Space and nowhere else, and goes when the home is forgotten", async () => {
     await mountApp("/spaces", { failsCreates: false, listsGhost: false });
     const ids = await waitFor(() => {

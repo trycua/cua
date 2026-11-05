@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Files dropped from Finder on a Space's tile on the Spaces page go into
+// Files dropped from Finder on a Space's tile on Home go into
 // that Space, as a drop on its page's well does (real routes, wasm core,
 // the demo host): the tile says where they go while they are over it, what
-// the drop did shows in a toast, a stopped Space's tile refuses them, and an
-// app dropped on a tile opens Teleport at that app.
+// the drop did shows in a toast, and an app dropped on a tile opens Teleport
+// at that app.
 
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
+import { setFlagOverride } from "@/bridge/flags";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 afterEach(cleanup);
+beforeEach(() => setFlagOverride("spaces_ask_first_home", true));
+afterEach(() => setFlagOverride("spaces_ask_first_home", null));
 stubBrowserApis();
 
 const RUNNING = "relay:mac-mini/qa-windows";
@@ -41,7 +44,7 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
   it("says where the files go while over the tile, sends the dropped files into that Space, and reports it", async () => {
     const calls: [string, unknown][] = [];
     await mountApp(
-      "/spaces",
+      "/home",
       host(calls, {
         "spaces.droppedFiles": () => ["/Users/ada/notes.txt", "/Users/ada/plan.pdf"],
         "spaces.sendFiles": () => [
@@ -71,7 +74,7 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
   it("says why when the send fails", async () => {
     const calls: [string, unknown][] = [];
     await mountApp(
-      "/spaces",
+      "/home",
       host(calls, {
         "spaces.droppedFiles": () => ["/Users/ada/notes.txt"],
         "spaces.sendFiles": () => {
@@ -89,28 +92,9 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
     expect(document.body.textContent).toContain("the Space did not answer");
   });
 
-  it("refuses files on a Space that isn't running", async () => {
-    const calls: [string, unknown][] = [];
-    await mountApp("/spaces", host(calls));
-    const link = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>('[data-space-id][data-state="stopped"]');
-      if (!el) throw new Error("no stopped tile");
-      return el;
-    });
-    const tile = link.parentElement!;
-    const dt = transfer(["notes.txt"]);
-    fireEvent.dragOver(tile, { dataTransfer: dt });
-    expect(tile.getAttribute("data-tile-drop")).toBe("refuse");
-    expect(dt.dropEffect).toBe("none");
-    expect(tile.textContent).toContain("isn't running");
-    fireEvent.drop(tile, { dataTransfer: dt });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(calls.some(([op]) => op === "spaces.droppedFiles" || op === "spaces.sendFiles")).toBe(false);
-  });
-
   it("opens Teleport at an app dropped on a tile", async () => {
     const calls: [string, unknown][] = [];
-    await mountApp("/spaces", host(calls, { "spaces.droppedFiles": () => ["/Applications/Google Chrome.app"] }));
+    await mountApp("/home", host(calls, { "spaces.droppedFiles": () => ["/Applications/Google Chrome.app"] }));
     const tile = await tileOf(RUNNING);
     await waitFor(() => expect(tile.querySelector('[data-space-id]')?.getAttribute("data-state")).toBe("running"));
     const dt = transfer(["Google Chrome.app"]);

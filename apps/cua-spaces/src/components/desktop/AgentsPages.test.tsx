@@ -132,7 +132,7 @@ describe('AgentsPage', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Access to this machine' }));
     fireEvent.click(screen.getByRole('button', { name: 'Allow on this machine' }));
-    await waitFor(() => expect(screen.getByText('This machine')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('This computer')).toBeTruthy());
     expect(calls).toContain('computer_access_grant {"agent":"ada","machine":"relay:0123"}');
   });
 });

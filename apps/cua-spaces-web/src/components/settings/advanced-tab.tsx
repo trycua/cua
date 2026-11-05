@@ -50,7 +50,7 @@ export function AdvancedTab() {
       <Labs />
       <Sharing />
       {runtimes || autoConnect || overflow ? (
-        <SettingsGroup title="Which software runs Spaces on this machine">
+        <SettingsGroup title="Which software runs Spaces on this computer">
           {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
           {runtimes ? <RuntimeKindRows section={runtimes} onChoose={choose} /> : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
@@ -156,7 +156,6 @@ function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
   const newSetup = useFlag("spaces_new_onboarding");
-  const tree = useFlag("spaces_tree");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
@@ -181,14 +180,6 @@ function Labs() {
         description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
         onChoose={(_, option) => {
           setFlagOverride("spaces_new_onboarding", option === "on");
-          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
-        }}
-      />
-      <CoreSettingsRow
-        row={flagRow("spaces_tree", "Spaces as a tree", tree && askFirst)}
-        description="Your computers and the Spaces made on them in one list. New tasks run on your default Space. Turns on the new Home too. On this device only."
-        onChoose={(_, option) => {
-          setFlagOverride("spaces_tree", option === "on");
           if (option === "on") setFlagOverride("spaces_ask_first_home", true);
         }}
       />

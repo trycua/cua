@@ -2,12 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import { ArrowDownCircleIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
+import { BackLink } from "@/components/back-link";
 import { EmptyState, Page } from "@/components/page";
 import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
@@ -30,9 +31,9 @@ import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { thisComputerText } from "@/lib/host-labels";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { useSpaceVolumeError } from "@/lib/space-volume";
-import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
@@ -155,7 +156,7 @@ function SpaceDetailPage() {
             ? error.message
             : removedAccess
               ? `${removedAccess.owner ?? "The owner"} stopped sharing this Space with you.`
-              : "It may have been deleted, or it runs on a machine this app can't see."}
+              : "It may have been deleted, or it runs on a computer this app can't see."}
         </EmptyState>
       </Page>
     );
@@ -183,11 +184,10 @@ function SpaceDetailPage() {
   const sharedOwner = space.access && space.access.kind === "withMe" ? { name: ownerLabel(space.access) ?? "", email: space.access.ownerEmail } : null;
   const mayShare = space.access?.canShare !== false && !viewOnly;
   const shareAction = mayShare ? action("share") : undefined;
-  // Signed in, not enrolled: the access line's action opens Settings,
-  // Devices with the enroll sheet.
+  // Signed in, not enrolled: the access line's action opens this computer's page with the enroll sheet.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/machines" });
+    void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } });
   };
   const teleportApp = () => run("open Teleport for", () => teleport.open(space));
   const share = () => run("share", () => sharing.open(space, session?.signedIn ?? false));
@@ -563,18 +563,18 @@ function SpaceDetailPage() {
       {powerError}
 
       {detail.desktopNote ? (
-        // One of your machines that keeps its desktop private: why, in place
+        // One of your computers that keeps its desktop private: why, in place
         // of the desktop, then the Spaces it provides (no New Space button
         // beside the note).
         <MachineSpaces
           note={detail.desktopNote}
           listSpaces={Boolean(detail.newSpace)}
           spaces={hostedSpaces(spaces ?? [], space.id)}
-          // This machine's own screen: its switches live on its Machines page.
+          // This computer's own screen: its switches live on its page.
           action={
             detail.isHost ? (
-              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
-                Open Machines
+              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}>
+                Open {thisComputerLabel()}
               </Button>
             ) : null
           }
@@ -632,20 +632,6 @@ function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; lis
         </div>
       ) : null}
     </section>
-  );
-}
-
-function BackLink({ inline }: { inline?: boolean }) {
-  return (
-    <Link
-      to="/spaces"
-      className={cn(
-        "-ml-1 inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md pr-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
-        inline ? "mr-1" : "mb-4",
-      )}
-    >
-      <ChevronLeftIcon className="size-3.5" /> Spaces
-    </Link>
   );
 }
 
@@ -738,7 +724,7 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
   if (!local && mine.powerState === "running" && !mine.usage) return null;
   const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
   const host = hostResources(snapshot, machine);
-  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its machine");
+  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
   // The Spaces on the same computer, with the numbers it sent, for how it fits.
   const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
   const onComputer = spaces.flatMap((s) => {

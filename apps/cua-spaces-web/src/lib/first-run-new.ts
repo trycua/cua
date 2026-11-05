@@ -46,9 +46,9 @@ export interface NewRunSaved {
 
 export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", picks: ["this"], agent: null, addedInRun: false, separatePendingId: null, reached: 0 };
 
-/** "this Mac", "this PC", "this machine" (the app's THIS_MACHINE). */
+/** "this Mac", "this PC", "this computer" (the app's THIS_MACHINE). */
 export function placeName(os: string): string {
-  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this machine";
+  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -62,7 +62,7 @@ export function listNames(names: string[]): string {
 
 export const WELCOME = {
   title: "Bring all your computers under one account",
-  line: "Sign in on each Mac, PC or Linux machine you own. Then you, your team and your coding agents can use any of them from here.",
+  line: "Sign in on each Mac, PC or Linux computer you own. Then you, your team and your coding agents can use any of them from here.",
   primary: "Add this computer",
   skip: "Skip for now",
 } as const;

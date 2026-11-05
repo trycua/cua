@@ -694,7 +694,7 @@
     {
       "buttons": "Use my sign-in | Cancel | Reading your Claude Code sign-in…",
       "importSheet": "linux",
-      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this machine, or its sign-in couldn't be read. Pick one:",
+      "notFound": "No Claude Code sign-in found | Claude Code isn't signed in on this computer, or its sign-in couldn't be read. Pick one:",
       "options": [
         "login | Sign in with Claude Code | claude auth login | Try again",
         "token | Paste a token | - | Paste token",

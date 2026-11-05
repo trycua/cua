@@ -279,7 +279,7 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, useFlag, useNewOnboarding, useSpacesTree, type FlagName } from "./flags";
+export { flagOn, newOnboardingOn, setFlagOverride, useFlag, useNewOnboarding, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

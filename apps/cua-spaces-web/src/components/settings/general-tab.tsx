@@ -139,8 +139,8 @@ export function GeneralTab() {
 }
 
 /** What the switch says before this Mac is set up (the core's words once it is). */
-const SPACES_SWITCH = "Let other machines create Spaces here";
-const SPACES_HELP = "Your other machines can create Spaces here.";
+const SPACES_SWITCH = "Let other computers create Spaces here";
+const SPACES_HELP = "Your other computers can create Spaces here.";
 
 /**
  * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set

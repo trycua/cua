@@ -5316,7 +5316,7 @@ mod tests {
         assert_eq!(placement_options(&s, &e)[0].label, "This Mac");
         for (os, here, lower) in [
             (SpaceOs::Windows, "This PC", "this PC"),
-            (SpaceOs::Linux, "This machine", "this machine"),
+            (SpaceOs::Linux, "This computer", "this computer"),
         ] {
             let local = &placement_options_on(&s, &e, os)[0];
             assert_eq!(local.label, here);

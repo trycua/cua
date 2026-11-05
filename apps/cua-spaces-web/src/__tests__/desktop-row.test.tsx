@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// This Mac's desktop is a normal row of the Spaces list: "Not sharing" while its
-// switch is off, "Sharing" while it is on, both with the "Desktop" tag. Hover
-// shows Hide instead of power; "Show hidden" in the list's overflow brings it
-// back. It never counts as a Space (the empty state, the count, "N running"),
-// and Home's strip lists running Spaces first. Its page has no stream: it says
-// whether the desktop is shared and holds the switch.
+// This Mac's desktop is This Mac's own row in the list of your computers,
+// never counted as a Space, and Home's strip lists running Spaces first. Its
+// page has no stream: it says whether the desktop is shared and holds the
+// switch.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,58 +35,19 @@ const withDesktop = (shared: boolean, only = false) => ({
   },
 });
 
-const row = () => document.querySelector<HTMLElement>('[data-space-id="this-mac"]');
-const tile = () => row()?.parentElement ?? null;
 
 describe.skipIf(!wasmBuilt)("This Mac's desktop row", () => {
-  it("reads Not sharing with a Desktop tag, Hide in place of power, and Show hidden brings it back", async () => {
-    await mountApp("/spaces", withDesktop(false));
-    await waitFor(() => expect(row()).not.toBeNull());
-    expect(row()!.getAttribute("data-state")).toBe("stopped");
-    expect(row()!.textContent).toContain("Not sharing");
-    expect(row()!.querySelector("[data-desktop-tag]")?.textContent).toBe("Desktop");
-    expect(tile()!.querySelector("[data-tile-power]")).toBeNull();
-    expect(tile()!.querySelector("[data-select]")).toBeNull();
-
-    await act(async () => void fireEvent.click(tile()!.querySelector("[data-tile-hide]")!));
-    await waitFor(() => expect(row()).toBeNull());
-    await act(async () => void fireEvent.pointerDown(document.querySelector("[data-toolbar-menu='overflow']")!, { button: 0 }));
-    await act(async () => void fireEvent.click(document.querySelector("[data-toolbar-menu='overflow']")!));
-    const show = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>("[data-show-hidden]");
-      expect(el).not.toBeNull();
-      return el!;
-    });
-    await act(async () => void fireEvent.click(show));
-    await waitFor(() => expect(row()).not.toBeNull());
-  });
-
-  it("never counts as a Space: the count and the running number stay the same with it listed", async () => {
+  it("never counts as a Space: the line under Computers stays the same with it listed", async () => {
     const summary = () => document.querySelector("main header p, header p")?.textContent ?? "";
     await mountApp("/spaces", { failsCreates: false, listsGhost: false });
     const without = await waitFor(() => {
-      expect(summary()).toMatch(/\d+ Spaces? on [1-9]/);
+      expect(summary()).toMatch(/\d+ computers?/);
       return summary();
     });
     cleanup();
     await mountApp("/spaces", withDesktop(false));
-    await waitFor(() => expect(row()).not.toBeNull());
+    await waitFor(() => expect(document.querySelector("[data-spaces-tree]")).not.toBeNull());
     await waitFor(() => expect(summary()).toBe(without));
-  });
-
-  it("with no other Space and not sharing, the Spaces page is the normal empty state", async () => {
-    await mountApp("/spaces", withDesktop(false, true));
-    await waitFor(() => expect(document.querySelector("[data-empty-home]")).not.toBeNull());
-    expect(row()).toBeNull();
-    expect(document.querySelector("[data-space-list], [data-tile-picture]")).toBeNull();
-  });
-
-  it("with no other Space and sharing, the list holds the desktop row, running", async () => {
-    await mountApp("/spaces", withDesktop(true, true));
-    await waitFor(() => expect(row()).not.toBeNull());
-    expect(row()!.getAttribute("data-state")).toBe("running");
-    expect(row()!.textContent).toContain("Sharing");
-    expect(document.querySelector("[data-empty-home]")).toBeNull();
   });
 
   it("its page is a Space's page with the share prompt where the stream would be, and the chat beside it", async () => {
@@ -169,8 +128,8 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
     const firstOther = states.findIndex((s) => s !== "running");
     expect(states[0]).toBe("running");
     if (firstOther >= 0) expect(states.slice(firstOther).every((s) => s !== "running")).toBe(true);
-    // The sidebar names the page for what it lists.
-    expect(screen.getAllByText("Machines").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Computers")).toBeNull();
+    // The sidebar names the page for what it lists: your computers, with Machines part of it.
+    expect(screen.getAllByText("Computers").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Machines")).toBeNull();
   });
 });

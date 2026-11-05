@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! D-MAC-7 regression: recording must not multiply action latency.
 //!
 //! The platform application-state hook is process-global, so this file runs

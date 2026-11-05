@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform video-capture abstraction.
 //!
 //! The recording session calls into a single `VideoBackend` trait; the

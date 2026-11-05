@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Behaviour of the cursor hook once an embedder has registered one.
 //!
 //! Separate binary from `cursor_hook_inert.rs` because `set_cursor_hook_fn`

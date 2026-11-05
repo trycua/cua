@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background input injection for Linux via X11 XSendEvent.
 //!
 //! XSendEvent sends synthetic events directly to a window without changing

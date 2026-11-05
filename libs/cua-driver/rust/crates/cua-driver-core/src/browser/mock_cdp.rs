@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic in-process mock CDP endpoint for tests.
 //!
 //! A tiny scripted WebSocket server on a loopback port: each incoming

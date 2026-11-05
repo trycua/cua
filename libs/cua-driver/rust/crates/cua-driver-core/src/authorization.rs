@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable daemon permission-mode configuration.
 //!
 //! Capability policy answers whether an operation is inside the configured

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded, immutable screenshot storage for later coordinate-bound actions.
 //!
 //! This registry deliberately does not store accessibility elements or mirror

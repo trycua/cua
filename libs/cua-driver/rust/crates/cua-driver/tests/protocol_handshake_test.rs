@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP JSON-RPC tools/list roster and tool-error surface tests.
 //!
 //! The registered-tools roster and the unknown-tool / unknown-action error

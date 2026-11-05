@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Recording callbacks exposed to `cua_driver_core::recording`.
 //!
 //! Two hooks:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic semantic browser snapshots.
 //!
 //! The collector joins Chrome's accessibility tree with pierced DOM metadata

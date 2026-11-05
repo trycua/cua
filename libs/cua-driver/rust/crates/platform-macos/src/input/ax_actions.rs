@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;

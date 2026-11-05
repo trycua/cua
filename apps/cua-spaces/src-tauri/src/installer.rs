@@ -533,7 +533,11 @@ mod tests {
         let bin = d.path().join(".local/bin");
         std::fs::create_dir_all(&bin).unwrap();
         let driver = bin.join("cua-driver");
-        std::fs::write(&driver, "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            &driver,
+            "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+        )
+        .unwrap();
         std::fs::set_permissions(&driver, std::fs::Permissions::from_mode(0o755)).unwrap();
         let b = SdkAgentSetup::new(
             cua_agent_setup::AgentSetup::new(cua_agent_setup::HostEnv::isolated(d.path())),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver mcp-config --client <agent>` installs the skill pack for that
 //! agent by default, prints one line about it on stderr, and leaves the agent
 //! alone with `--no-skills`. Every run uses a throwaway home.

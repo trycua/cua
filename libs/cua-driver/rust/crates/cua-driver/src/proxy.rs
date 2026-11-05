@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stdio MCP adapters for direct SDK-owned and service-owned runtimes.
 //!
 //! The client side always sees a normal stdio server. Depending on platform

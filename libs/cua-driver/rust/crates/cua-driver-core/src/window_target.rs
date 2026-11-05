@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fail-closed resolution for actions addressed only by process id.
 
 use std::collections::HashSet;

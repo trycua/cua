@@ -257,30 +257,28 @@ async fn a_nat_rebinding_falls_back_and_finds_a_new_direct_path() {
         .await
         .unwrap();
     roundtrip(&mut s, 1024).await;
-    let before = wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
+    wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
 
-    // The client moves to a new port, as after a network change.
+    // The client moves to new ports, as after a network change.
     client.rebind().await.unwrap();
     roundtrip(&mut s, 128 * 1024).await;
-    let after = wait_path(&machine, &client.node_key(), true, Duration::from_secs(15)).await;
-    let Path::Direct(before) = before else {
-        unreachable!()
-    };
-    let _ = before;
-    let Path::Direct(after) = after else {
-        unreachable!()
-    };
-    let (v4, _) = client
-        .status()
-        .endpoints
-        .first()
-        .map(|e| (e.port(), ()))
-        .unwrap_or((0, ()));
-    assert_eq!(
-        after.port(),
-        v4,
-        "the machine follows the client's new port"
-    );
+    // The machine's direct path lands on one of the client's new ports. The
+    // IPv4 and IPv6 sockets can get different ports (Windows hands the IPv6
+    // one the next free port), and the machine's old path stays trusted for
+    // a moment, so poll for any new port rather than the first endpoint's.
+    let ports: Vec<u16> = client.status().endpoints.iter().map(|e| e.port()).collect();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let p = machine.path(&client.node_key()).expect("peer");
+        if matches!(p, Path::Direct(a) if ports.contains(&a.port())) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the machine follows the client's new ports {ports:?}: path stayed {p}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     roundtrip(&mut s, 128 * 1024).await;
 }
 

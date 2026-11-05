@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! End-to-end tests for the v2 DOM-ref slice against a deterministic
 //! mock CDP endpoint: composed shadow DOM, same-process iframes,
 //! capability-tested OOPIFs with containment, frame/document identity

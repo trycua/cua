@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fuzz target bodies for the transport-free MCP tool-call boundary.
 //!
 //! Each public `fn(&[u8])` here is one libFuzzer target (see `fuzz/`) and is

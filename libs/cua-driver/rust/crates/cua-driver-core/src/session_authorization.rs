@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable authorization contexts for shared-daemon sessions.
 //!
 //! Public session strings are lifecycle labels, not credentials. This module

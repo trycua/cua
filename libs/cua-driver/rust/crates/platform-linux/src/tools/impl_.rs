@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real Linux tool implementations (compiled only on Linux).
 
 use cua_driver_core::{

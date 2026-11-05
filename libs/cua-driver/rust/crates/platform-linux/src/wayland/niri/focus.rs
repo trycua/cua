@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keyboard focus on niri: focusing, confirming and restoring windows, and
 //! the save, focus and restore steps of the shared foreground transaction.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! SkyLight SPI bridge — Rust port of Swift's `SkyLightEventPost`.
 //!
 //! Two-layer story (matches Swift reference exactly):

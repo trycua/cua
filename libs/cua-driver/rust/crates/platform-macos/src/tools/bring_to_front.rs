@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `bring_to_front`.
 //!
 //! This is the explicit persistent-foreground escape hatch for focus-proxy

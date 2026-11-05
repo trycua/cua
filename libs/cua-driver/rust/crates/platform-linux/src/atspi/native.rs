@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native AT-SPI access over D-Bus via the `atspi` crate (zbus).
 //!
 //! Replaces the previous `python3 -c "import pyatspi; ..."` subprocess bridge:

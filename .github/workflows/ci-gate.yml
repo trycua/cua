@@ -79,13 +79,16 @@ jobs:
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
       # Pull requests from our agents must carry a `local-ci` commit status on the head commit, set by
-      # `bin/ci --signoff` after a green local `bin/ci`. An agent PR is one opened by the Cua Agents
-      # GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch of this
-      # repository. Community PRs are not asked for it. The status usually lands a few seconds after
-      # the push, so the gate polls for it for five minutes before it fails.
+      # `bin/ci --signoff` (or our Mac CI runner) after a green local `bin/ci`. An agent PR is one
+      # opened by the Cua Agents GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an
+      # `agent/` branch of this repository. Community PRs are not asked for it.
       # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
       # set to "true"; that variable is the one switch that makes a missing status block the merge.
-      - name: Require local sign-off on agent pull requests
+      # A sign-off can take 20-40 minutes (a queued run on the Mac runner), so it is checked twice:
+      # here, once and without waiting, so a `failure` fails the gate at once; and after the other
+      # workflows have finished (the last step), where a still-missing status is waited for.
+      - name: Check the local sign-off on agent pull requests (fail fast)
+        id: signoff
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -107,24 +110,20 @@ jobs:
           elif [[ ",$labels," == *,agent,* ]]; then why="labelled agent"
           elif [[ "$ref" == agent/* && "$head_repo" == "$GITHUB_REPOSITORY" ]]; then why="opened from the $ref branch"
           fi
-          if [[ -z "$why" ]]; then echo "Not an agent pull request: no local-ci status required."; exit 0; fi
-          echo "Agent pull request ($why): requiring a successful local-ci status on ${sha:0:10}."
-          # Report-only: look once. Blocking: wait up to five minutes for the status.
-          tries=1
-          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=20
-          for _ in $(seq 1 "$tries"); do
-            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
-            if [[ "$state" == success ]]; then echo "local-ci: success"; exit 0; fi
-            [[ "$state" == failure || "$state" == error ]] && break
-            sleep 15
-          done
-          msg="Run bin/ci and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
-          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
-            echo "::error title=local-ci missing::$msg"
-            exit 1
+          if [[ -z "$why" ]]; then
+            echo "Not an agent pull request: no local-ci status required."
+            echo "agent=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "::warning title=local-ci missing (report-only)::$msg"
-          echo "local-ci is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."
+          echo "Agent pull request ($why): requiring a successful local-ci status on ${sha:0:10}."
+          { echo "agent=true"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+          echo "local-ci on ${sha:0:10}: ${state:-not set yet}"
+          if [[ "$state" == failure || "$state" == error ]]; then
+            msg="local-ci reported $state on ${sha:0:10}. Fix the failing checks, push, and rerun bin/ci."
+            if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then echo "::error title=local-ci failed::$msg"; exit 1; fi
+            echo "::warning title=local-ci failed (report-only)::$msg"
+          fi
 
       - name: Wait for every other workflow on the pull request head
         env:
@@ -234,3 +233,32 @@ jobs:
           sleep 30
           done
           exit $failed
+
+      # Last step: the other workflows are done, so only the sign-off can still be missing. Wait for
+      # it (bounded, 75 minutes: a queued 20-40 minute run on the Mac runner plus slack). A `failure`
+      # or `error` fails at once. Report-only mode looks once and only warns.
+      - name: Require local sign-off on agent pull requests
+        if: steps.signoff.outputs.agent == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.signoff.outputs.sha }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          sha=$SHA
+          tries=1
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=75
+          for i in $(seq 1 "$tries"); do
+            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+            if [[ "$state" == success ]]; then echo "local-ci: success"; exit 0; fi
+            [[ "$state" == failure || "$state" == error ]] && break
+            (( i < tries )) && sleep 60
+          done
+          msg="Run bin/ci and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
+            echo "::error title=local-ci missing::$msg"
+            exit 1
+          fi
+          echo "::warning title=local-ci missing (report-only)::$msg"
+          echo "local-ci is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."

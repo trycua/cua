@@ -10,6 +10,13 @@ label is on (ci-gate.yml), so a hold also wins a race with this script.
     release_pr_automerge.py --repo trycua/cua                # all open release PRs
     release_pr_automerge.py --repo trycua/cua --pr 123       # one PR (pull_request_target)
     release_pr_automerge.py --repo trycua/cua --alert        # also alert on stale green PRs
+    release_pr_automerge.py --repo trycua/cua --guard .github/scripts/release_please_tag_guard.cjs
+
+--guard checks each PR body with the pinned release-please engine before auto-merge is
+switched on (NODE_PATH must hold release-please@17.3.0). Release Please tags from the
+merged body; text above the version heading makes it tag every component (#6350, 15 stray
+v0.20.0 releases). A body that fails is repaired when the fix is only moving the heading
+back to the top; otherwise auto-merge is switched off and the run fails.
 
 --alert posts one ReleasePRStuck alert to Alertmanager (same path as
 workflow_alerts.py) for each release PR whose ci-gate has been green for more than
@@ -26,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import workflow_alerts  # noqa: E402
@@ -34,6 +42,10 @@ BRANCH_PREFIX = "release-please--branches--"
 HOLD_LABEL = "hold"
 GATE_CHECK = "ci-gate"
 ALERTNAME = "ReleasePRStuck"
+
+
+class BadReleaseBody(Exception):
+    pass
 
 
 def is_release_pr(pr: dict, repo: str) -> bool:
@@ -89,6 +101,30 @@ def gh(*args: str) -> str:
     return done.stdout
 
 
+def body_guard(pr: dict, repo: str, guard: str) -> str | None:
+    """None when the PR body tags only its own component; otherwise why not.
+
+    Repairs the body in place when moving the version heading to the top is enough.
+    """
+    n = str(pr["number"])
+    view = gh("pr", "view", n, "--repo", repo, "--json", "number,title,headRefName,body,mergeCommit")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "pr.json")
+        with open(src, "w") as fh:
+            fh.write(view)
+        if subprocess.run(["node", guard, "check", src], capture_output=True).returncode == 0:
+            return None
+        fixed = subprocess.run(["node", guard, "repair", src], capture_output=True, text=True)
+        if fixed.returncode != 0:
+            return "#%s: body would tag other components and cannot be repaired" % n
+        out = os.path.join(tmp, "body.md")
+        with open(out, "w") as fh:
+            fh.write(fixed.stdout)
+        gh("pr", "edit", n, "--repo", repo, "--body-file", out)
+        print("#%s: moved the version heading back to the top of the body" % n)
+    return None
+
+
 FIELDS = "number,title,headRefName,headRepositoryOwner,isDraft,labels,autoMergeRequest,headRefOid"
 
 
@@ -100,8 +136,14 @@ def open_release_prs(repo: str, only: int | None) -> list[dict]:
     return [pr for pr in prs if is_release_pr(pr, repo)]
 
 
-def reconcile(pr: dict, repo: str) -> str:
+def reconcile(pr: dict, repo: str, guard: str | None = None) -> str:
     n = str(pr["number"])
+    if guard and not on_hold(pr):
+        problem = body_guard(pr, repo, guard)
+        if problem:
+            if pr.get("autoMergeRequest"):
+                gh("pr", "merge", n, "--repo", repo, "--disable-auto")
+            raise BadReleaseBody(problem)
     if on_hold(pr):
         if pr.get("autoMergeRequest"):
             gh("pr", "merge", n, "--repo", repo, "--disable-auto")
@@ -130,13 +172,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", required=True)
     ap.add_argument("--pr", type=int)
     ap.add_argument("--alert", action="store_true", help="post ReleasePRStuck alerts for stale green release PRs")
+    ap.add_argument("--guard", help="release_please_tag_guard.cjs: check each body before enabling auto-merge")
     ap.add_argument("--stale-hours", type=float, default=6.0)
     ap.add_argument("--dry-run", action="store_true", help="print the alerts instead of posting them")
     args = ap.parse_args(argv)
     now = dt.datetime.now(dt.timezone.utc)
     prs = open_release_prs(args.repo, args.pr)
+    failed = False
     for pr in prs:
-        print(reconcile(pr, args.repo))
+        try:
+            print(reconcile(pr, args.repo, args.guard))
+        except BadReleaseBody as bad:
+            print("::error::%s. Keep the version heading (## [x.y.z](...)) first after '---'; put added notes below it." % bad)
+            failed = True
     if not prs:
         print("no open release PRs")
     if args.alert:
@@ -145,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             print("ALERT " + alert["annotations"]["summary"])
         if not args.dry_run:
             workflow_alerts.post(alerts, workflow_alerts.ALERTMANAGER_URL)
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -88,7 +88,61 @@ class StaleGreen(unittest.TestCase):
         self.assertIsNone(rp.gate_green_since(runs))
 
 
+class BodyGuard(unittest.TestCase):
+    def run_guard(self, check_rc, repair_rc, pr_obj=None):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd[2])
+            rc = check_rc if cmd[2] == "check" else repair_rc
+            return mock.Mock(returncode=rc, stdout="fixed body")
+
+        with mock.patch.object(rp, "gh", return_value="{}") as gh, mock.patch.object(rp.subprocess, "run", fake_run):
+            try:
+                out = rp.reconcile(pr_obj or pr(3), "trycua/cua", "guard.cjs")
+            except rp.BadReleaseBody as bad:
+                out = bad
+        return out, calls, gh
+
+    def test_good_body_goes_on_to_auto_merge(self):
+        out, calls, gh = self.run_guard(0, 1)
+        self.assertEqual(calls, ["check"])
+        gh.assert_called_with("pr", "merge", "3", "--repo", "trycua/cua", "--auto", "--squash")
+
+    def test_misplaced_heading_is_repaired_then_merged(self):
+        out, calls, gh = self.run_guard(1, 0)
+        self.assertEqual(calls, ["check", "repair"])
+        edits = [c.args for c in gh.call_args_list if c.args[:2] == ("pr", "edit")]
+        self.assertEqual(len(edits), 1)
+        gh.assert_called_with("pr", "merge", "3", "--repo", "trycua/cua", "--auto", "--squash")
+
+    def test_unrepairable_body_never_auto_merges_and_switches_it_off(self):
+        out, calls, gh = self.run_guard(1, 1, pr(3, auto={"mergeMethod": "SQUASH"}))
+        self.assertIsInstance(out, rp.BadReleaseBody)
+        gh.assert_called_with("pr", "merge", "3", "--repo", "trycua/cua", "--disable-auto")
+        self.assertNotIn("--auto", gh.call_args.args)
+
+    def test_unrepairable_body_fails_the_run(self):
+        with mock.patch.object(rp, "open_release_prs", return_value=[pr(3)]), mock.patch.object(
+            rp, "reconcile", side_effect=rp.BadReleaseBody("bad")
+        ):
+            self.assertEqual(rp.main(["--repo", "trycua/cua", "--guard", "g.cjs"]), 1)
+
+    def test_hold_skips_the_guard(self):
+        with mock.patch.object(rp, "gh"), mock.patch.object(rp, "body_guard") as bg:
+            rp.reconcile(pr(labels=["hold"]), "trycua/cua", "guard.cjs")
+        bg.assert_not_called()
+
+
 class Wiring(unittest.TestCase):
+    def test_workflow_checks_bodies_on_every_edit(self):
+        text = (ROOT / ".github/workflows/release-pr-auto-merge.yml").read_text()
+        self.assertIn("synchronize, edited,", text)
+        self.assertIn("--guard .github/scripts/release_please_tag_guard.cjs", text)
+        self.assertIn("release-please@17.3.0", text)
+        self.assertIn("release-please-config.json", text)
+
+
     def test_ci_gate_fails_on_hold(self):
         text = (ROOT / ".github/workflows/ci-gate.yml").read_text()
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'hold')", text)

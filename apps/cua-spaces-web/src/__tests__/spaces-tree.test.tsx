@@ -34,6 +34,13 @@ afterEach(() => {
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
+/** Waits until `s` is in the page: waitFor retries only while its callback throws. */
+const found = (s: string) =>
+  waitFor(() => {
+    const el = q(s);
+    if (!el) throw new Error(`not yet in the page: ${s}`);
+    return el;
+  });
 type Call = [string, Record<string, unknown>];
 
 /** The demo host with the Linux box sharing its desktop; `offline` machines are offline; every change recorded. */
@@ -55,7 +62,11 @@ function host(calls: Call[], opts: { offline?: string[]; resolved?: DefaultSpace
   };
 }
 
-const on = () => setFlagOverride("spaces_tree", true);
+/** The switch on, with the "Ask first" Home it changes (Labs turns both on). */
+const on = () => {
+  setFlagOverride("spaces_tree", true);
+  setFlagOverride("spaces_ask_first_home", true);
+};
 
 describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
   it("off: the nav keeps Machines and the Spaces page is the grid", { timeout: 30000 }, async () => {
@@ -69,7 +80,6 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
 
   it("on: Machines leaves the nav, and each computer lists the Spaces made on it, This Mac first", { timeout: 30000 }, async () => {
     on();
-    setFlagOverride("spaces_ask_first_home", true);
     const { router } = await mountApp("/spaces", host([]));
     await router.load();
     await waitFor(() => expect(q("[data-spaces-tree]")).not.toBeNull());
@@ -96,7 +106,6 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
 
   it("greys out the Spaces of an offline computer: they wait for it", { timeout: 30000 }, async () => {
     on();
-    setFlagOverride("spaces_ask_first_home", true);
     await mountApp("/spaces", host([], { offline: ["linux-box"] }));
     await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')?.hasAttribute("data-dim")).toBe(true);
@@ -105,19 +114,18 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
 
   it("renames a Space by double-clicking its name: Enter saves, Esc cancels", { timeout: 30000 }, async () => {
     on();
-    setFlagOverride("spaces_ask_first_home", true);
     const calls: Call[] = [];
     await mountApp("/spaces", host(calls));
-    const name = await waitFor(() => q('[data-tree-name="relay:linux-box/ubuntu-build"]')!);
+    const name = await found('[data-tree-name="relay:linux-box/ubuntu-build"]');
     fireEvent.doubleClick(name);
-    const input = await waitFor(() => q("[data-tree-rename-input]") as HTMLInputElement);
+    const input = (await found("[data-tree-rename-input]")) as HTMLInputElement;
     expect(document.body.textContent).toContain("Renaming changes the name only.");
     fireEvent.change(input, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(q("[data-tree-rename-input]")).toBeNull();
     expect(calls).toEqual([]);
     fireEvent.doubleClick(q('[data-tree-name="relay:linux-box/ubuntu-build"]')!);
-    const again = await waitFor(() => q("[data-tree-rename-input]") as HTMLInputElement);
+    const again = (await found("[data-tree-rename-input]")) as HTMLInputElement;
     fireEvent.change(again, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(again, { key: "Enter" });
     await waitFor(() => expect(calls).toEqual([["spaces.rename", { spaceId: "relay:linux-box/ubuntu-build", name: "nightly-builds" }]]));
@@ -125,13 +133,12 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
 
   it("removes a computer: names each Space, deletes nothing unless the box is ticked", { timeout: 40000 }, async () => {
     on();
-    setFlagOverride("spaces_ask_first_home", true);
     const calls: Call[] = [];
     await mountApp("/spaces", host(calls, { offline: ["linux-box"] }));
     const open = async () => {
-      fireEvent.click(await waitFor(() => q('[data-tree-menu="relay:linux-box"]')!));
+      fireEvent.click(await found('[data-tree-menu="relay:linux-box"]'));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Remove Linux box" }));
-      return waitFor(() => q('[data-tree-remove="relay:linux-box"]')!);
+      return found('[data-tree-remove="relay:linux-box"]');
     };
     let dialog = await open();
     expect(within(dialog).getByText("Remove Linux box?")).toBeTruthy();
@@ -178,7 +185,7 @@ describe.skipIf(!wasmBuilt)("Home with Spaces as a tree (Labs)", () => {
     };
     await mountApp("/home", host([], { offline: ["mac-mini"], resolved }));
     await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("Linux box"));
-    const line = await waitFor(() => q("[data-tree-fallback]")!);
+    const line = await found("[data-tree-fallback]");
     expect(line.textContent).toContain("Mac mini, your default, is offline. This runs on Linux box, your next online computer. If none is online, it runs on This Mac.");
     expect(qa("[data-tree-fallback-step]").map((s) => s.textContent)).toEqual(["1Mac miniYour default. Offline now", "2Linux boxNext online computer. Used now", "3This MacLast resort"]);
     expect(line.textContent).toContain("A new computer is never made unless you pick one.");
@@ -199,7 +206,7 @@ describe.skipIf(!wasmBuilt)("Home with Spaces as a tree (Labs)", () => {
     on();
     const calls: Call[] = [];
     await mountApp("/home", host(calls));
-    fireEvent.click(await waitFor(() => q('[data-picker="where"]')!));
+    fireEvent.click(await found('[data-picker="where"]'));
     await waitFor(() => expect(q("[data-tree-where]")).not.toBeNull());
     expect(q("[data-tree-where-current]")).not.toBeNull();
     expect(q('[data-tree-where-row="relay:linux-box/ubuntu-build"]')).not.toBeNull();
@@ -230,9 +237,8 @@ describe.skipIf(!wasmBuilt)("Labs and Settings with Spaces as a tree", () => {
     expect(q("[data-default-space-group]")).toBeNull();
     cleanup();
     on();
-    setFlagOverride("spaces_ask_first_home", true);
     await mountApp("/settings/general", host([]));
-    const group = await waitFor(() => q("[data-default-space-group]")!);
+    const group = await found("[data-default-space-group]");
     expect(group.textContent).toContain("Default Space");
     expect(group.textContent).toContain("If it's offline");
     expect(group.textContent).toContain("Order to try");

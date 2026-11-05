@@ -33,12 +33,14 @@ export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS
   // The Space being prepared for Home's box is no Space of yours yet.
   const warming = useHiddenSpaceIds(core);
   const defaults = useSpacesDefault(on);
+  // The setting names the default; until it's read (or when it names none) the relay's own answer does.
+  const defaultSpace = defaults.settings?.defaultSpace ?? defaults.resolved?.defaultSpace ?? null;
   const tree = useMemo(
     () =>
       on && spaces && machines
-        ? buildSpacesTree({ spaces: spaces.filter((s) => !warming.has(s.id)), machines, defaultSpace: defaults.settings?.defaultSpace ?? null, running, me: session?.identity ?? null })
+        ? buildSpacesTree({ spaces: spaces.filter((s) => !warming.has(s.id)), machines, defaultSpace, running, me: session?.identity ?? null })
         : null,
-    [on, spaces, machines, warming, defaults.settings?.defaultSpace, running, session?.identity],
+    [on, spaces, machines, warming, defaultSpace, running, session?.identity],
   );
   return { on, tree, loaded: Boolean(spaces && machines && listStatus.loaded), defaults };
 }

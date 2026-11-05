@@ -342,6 +342,11 @@ pub struct SandboxImage {
     pub tier: Option<ImageTier>,
     /// Offered in pickers.
     pub published: bool,
+    /// `windows-iso`: nothing is pulled; the image is built on this computer
+    /// on first use (an unattended Windows install). Offered in pickers
+    /// though not published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_build: Option<String>,
     /// The guest's distribution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distro: Option<ImageDistro>,
@@ -444,7 +449,7 @@ fn base_catalog() -> &'static Catalog {
             .collect();
         let images: Vec<SandboxImage> = all
             .iter()
-            .filter(|i| i.published && offered.contains(&i.group.as_str()))
+            .filter(|i| (i.published || i.local_build.is_some()) && offered.contains(&i.group.as_str()))
             .cloned()
             .collect();
         let groups = file
@@ -497,6 +502,7 @@ fn with_external(base: &Catalog, runtimes: &[ExternalRuntimeInfo]) -> Catalog {
                 local: Some(LocalEngine::External(r.name.clone())),
                 tier: None,
                 published: true,
+                local_build: None,
                 distro: None,
                 arch: r.arch.clone(),
                 sizes: None,
@@ -684,7 +690,8 @@ pub fn validate_image_ref(text: &str) -> Option<String> {
         return Some("An image reference has no spaces.".into());
     }
     if let Some(e) = catalog().all.iter().find(|i| i.image_ref == r) {
-        return (!e.published).then(|| "This image is not published yet.".into());
+        return (!e.published && e.local_build.is_none())
+            .then(|| "This image is not published yet.".into());
     }
     let (name_tag, digest) = match r.split_once('@') {
         Some((n, d)) => (n, Some(d)),
@@ -2138,6 +2145,7 @@ fn image_of(state: &WizardState) -> SandboxImage {
             summary: String::new(),
             tier: None,
             published: false,
+            local_build: None,
             distro: None,
             arch: vec![],
             sizes: None,
@@ -4944,7 +4952,8 @@ mod tests {
 
     #[test]
     fn every_offered_image_has_sizes() {
-        for i in picker_images() {
+        // A local build has no published size: it is measured on first use.
+        for i in picker_images().iter().filter(|i| i.local_build.is_none()) {
             let s = i
                 .sizes
                 .as_ref()
@@ -5364,7 +5373,7 @@ mod tests {
     #[test]
     fn catalog_is_the_shared_image_list() {
         let images = picker_images();
-        assert!(images.iter().all(|i| i.published));
+        assert!(images.iter().all(|i| i.published || i.local_build.is_some()));
         assert_eq!(images[0].image_ref, "ghcr.io/trycua/linux:24.04");
         assert!(picker_groups().iter().all(|g| !g.images.is_empty()));
     }
@@ -6727,7 +6736,9 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|i| i["published"].as_bool() == Some(true))
+            .filter(|i| {
+                i["published"].as_bool() == Some(true) || i["local_build"].is_string()
+            })
             .filter_map(|i| i["ref"].as_str().map(str::to_string))
             .collect();
         for r in refs("slim").iter().chain(refs("").iter()) {
@@ -6793,11 +6804,19 @@ mod tests {
         // the text, nothing is highlighted; Down highlights the first match.
         s = act(&s, WizardAction::SetImageText { text: "win".into() });
         let v = view(&s, &env());
-        assert_eq!(rows(&v), ["ghcr.io/trycua/windows:2022"]);
+        assert_eq!(
+            rows(&v),
+            [
+                "ghcr.io/trycua/windows:2022",
+                "ghcr.io/trycua/windows:11",
+                "ghcr.io/trycua/windows:2025",
+                "ghcr.io/trycua/windows:2019",
+                "ghcr.io/trycua/windows:10"
+            ]
+        );
         assert!(pressed_os(&v).is_empty(), "typing unselects the OS");
         assert!(!v.image_field.groups[0].rows[0].highlighted);
         s = act(&s, WizardAction::MoveImageSuggestion { delta: 1 });
-        s = act(&s, WizardAction::MoveImageSuggestion { delta: 5 });
         s = act(&s, WizardAction::PickImageSuggestion);
         let v = view(&s, &env());
         assert_eq!(v.image.image_ref, "ghcr.io/trycua/windows:2022");

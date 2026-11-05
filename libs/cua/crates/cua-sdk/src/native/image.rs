@@ -245,7 +245,7 @@ mod tests {
         ));
         // Derived on the user's Mac (the developer tools image) counts as available.
         let published = |r: &str| {
-            cua_image::catalog::find(r).is_none_or(|e| e.published || e.derived_from.is_some())
+            cua_image::catalog::find(r).is_none_or(|e| e.published || e.derived_from.is_some() || e.local_build.is_some())
         };
         for (got, want) in [
             (

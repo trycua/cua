@@ -2876,6 +2876,17 @@ impl Tool for BrowserDialogTool {
                         "dialog_id": dialog_id, "kind": dialog.kind, "action": action
                     }))
             }
+            // The journal only mirrors Chromium, which can drop a dialog without
+            // reporting the close (a renderer crash). Its own answer wins.
+            Err(error) if error.to_string().contains("No dialog is showing") => {
+                conn.clear_dialog_state(cdp_target_id, dialog.generation);
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    "the dialog is no longer showing on the exact tab; refresh page state",
+                )
+                .with_detail(json!({ "dialog": { "present": false } }))
+                .to_tool_result()
+            }
             Err(error) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserActionUnavailable,
                 format!("the exact JavaScript dialog could not be resolved: {error}"),

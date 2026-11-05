@@ -112,7 +112,7 @@ export interface AgentMenuPrefs {
   seen: string[];
 }
 
-export type UpdateChannel = "stable" | "beta";
+export type UpdateChannel = "stable" | "nightly";
 
 /** A login item status as the switch shows it (`LoginItemStatus::is_on`);
  * null when unknown or when the system can't find the app. */

@@ -125,7 +125,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "volume.reveal": { path: "/Users/ada/Cua Volume/public" },
   "agents.setupDriver": { agents: ["codex"] },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},

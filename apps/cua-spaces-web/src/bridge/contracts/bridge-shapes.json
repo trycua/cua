@@ -28,7 +28,7 @@
         "channel": {
           "enum": [
             "stable",
-            "beta"
+            "nightly"
           ]
         },
         "lastCheck": {
@@ -5236,7 +5236,7 @@
             "updateChannel": {
               "enum": [
                 "stable",
-                "beta",
+                "nightly",
                 null
               ]
             },
@@ -8083,7 +8083,7 @@
         "updateChannel": {
           "enum": [
             "stable",
-            "beta",
+            "nightly",
             null
           ]
         },

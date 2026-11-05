@@ -538,8 +538,17 @@ the menu bar icon's up-arrow badge and Settings read the one `UpdatesModel`
 install" or "Restart to update" under it. Usage telemetry records `found`,
 `not_found`, `downloaded`, `installed` and `failed`.
 
-Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
-"Update to: Beta" (`AppSettings.updateChannel`) are offered.
+Channels (Settings, Advanced, Updates; `AppSettings.updateChannel`): Stable
+reads `SUFeedURL`, the appcast on the rolling `cua-spaces-latest` release.
+Nightly reads the nightly appcast on the rolling `cua-spaces-nightly` release
+(`feedURLString(for:)`, built by `nightly-cua-spaces.yml` from main every
+night) and installs only its `nightly` items. There are no betas any more:
+the settings file still stores Nightly as `beta`, so a release from before
+Nightly reads the file instead of starting over, and every build reads `beta`
+as Nightly. A prerelease's first launch starts on Nightly. Back on Stable, a
+nightly build stays until the next stable release passes it; Settings offers
+"Download Stable" to go back now. About shows a nightly's build day
+("Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026").
 
 After an update, the first launch (the settings file's `lastSeenVersion`
 changed) runs the bundled `cua agents update` (skill folders and MCP entries

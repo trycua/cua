@@ -218,7 +218,8 @@ speaks it as is:
   which `AppModel.choose` already handles. While the row is missing or
   disabled (login item not read yet, or not found) the value is `null`.
 - The update channel: `settings.get` sends `updateChannel` (`stable` or
-  `beta`, `UpdatesModel.channel`; null when the build has no updater, and
+  `nightly`, `UpdatesModel.channel`; the adapter reads an older host's `beta`
+  as `nightly`; null when the build has no updater, and
   the row stays hidden), and `settings.choose {row: "update-channel",
   option}` goes to `model.updates.choose(channel:)`.
 - `machines.list` carries `host` (the same record as `host.status`), which

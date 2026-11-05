@@ -241,7 +241,7 @@ ClawHub CLI. A real release is available only through the
 all of the following:
 
 1. Dispatch the workflow from `main`.
-2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
+2. Enter a version that matches both `rust/Cargo.toml` and the `metadata.version` field
    in `rust/Skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher

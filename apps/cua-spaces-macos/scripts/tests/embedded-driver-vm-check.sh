@@ -14,8 +14,8 @@
 # Checks (each prints ok/FAIL; exit 1 on any FAIL):
 #   1. Contents/Helpers has cua-driver and cua-cursor-theme, signed by the
 #      Cua team; Contents/MacOS has no cua-driver.
-#   2. With CUA_SPACESD_EMBEDDED_DRIVER=1, cua-spacesd starts
-#      `cua-driver serve --embedded` and is its parent process.
+#   2. cua-spacesd starts `cua-driver serve --embedded` (on by default) and
+#      is its parent process, also after the service restarts.
 #   3. The coding-agent route (`cua-driver mcp --embedded --socket ...`)
 #      answers initialize, check_permissions reports both permissions on,
 #      and move_cursor moves the agent cursor without moving the real
@@ -57,13 +57,9 @@ for f in cua-driver cua-cursor-theme; do
 done
 [ ! -e "$app/Contents/MacOS/cua-driver" ] && ok "no cua-driver in Contents/MacOS" || fail "cua-driver is in Contents/MacOS"
 
-# 2. Turn the embedded driver on in the service spec and restart the service.
+# 2. Restart the host service: the driver comes back as its child.
 [ -f "$spec" ] || { fail "no $spec (finish Set up in Cua Spaces first)"; exit 1; }
-cp "$spec" "$spec.before-embedded-check"
-# env is a list of [name, value] pairs.
-plutil -insert env.0 -json '["CUA_SPACESD_EMBEDDED_DRIVER","1"]' "$spec" 2>/dev/null ||
-  plutil -insert env -json '[["CUA_SPACESD_EMBEDDED_DRIVER","1"]]' "$spec"
-pkill -x cua-spacesd || true # the app's login item starts it again with the new spec
+pkill -x cua-spacesd || true # the app's login item starts it again
 driver_pid=""
 for _ in $(seq 1 30); do
   driver_pid="$(pgrep -f "^$helpers/cua-driver serve --embedded" | head -1)"
@@ -121,6 +117,5 @@ for db in "/Library/Application Support/com.apple.TCC/TCC.db" "$HOME/Library/App
   echo "$rows" | grep -qi "cuadriver\|com.trycua.driver" && fail "a CuaDriver entry is allowed in $db: $rows" || ok "no CuaDriver entry in $db"
 done
 
-mv "$spec.before-embedded-check" "$spec"
 echo "$fails check(s) failed"
 [ "$fails" = 0 ]

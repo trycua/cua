@@ -752,6 +752,91 @@ mod tests {
         );
     }
 
+    /// niri answering each request with the next of `replies`, then too
+    /// slow for any budget.
+    fn scripted(replies: Vec<Value>) -> Ipc<impl FnMut(Instant) -> Result<UnixStream>> {
+        let mut replies = Some(replies);
+        ipc_with(
+            move |_| {
+                let (client, server) = UnixStream::pair()?;
+                let replies = replies.take().unwrap_or_default();
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    for reply in replies {
+                        let deadline = Instant::now() + Duration::from_secs(2);
+                        if !matches!(lines.next(deadline), Ok(Some(_))) {
+                            return;
+                        }
+                        if lines
+                            .stream
+                            .write_all(format!("{reply}\n").as_bytes())
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        )
+    }
+
+    #[test]
+    fn a_workspace_read_back_the_deadline_cuts_off_still_refuses_as_unconfirmed() {
+        // niri reports workspace 1 unfocused once, then is too slow for the
+        // rest of the cleanup budget.
+        let mut ipc = scripted(vec![
+            json!({"Ok": "Handled"}),
+            json!({"Ok": {"Workspaces": [workspace(1, "winit", false, None), workspace(2, "winit", true, Some(7))]}}),
+        ]);
+        let error = restore_workspace(&mut ipc, 1, Instant::now() + Duration::from_millis(200))
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri did not confirm focus on workspace 1"
+        );
+    }
+
+    #[test]
+    fn a_workspace_restore_check_the_deadline_cuts_off_names_the_workspace() {
+        // The prior workspace is back, then the last check sees it
+        // inactive again before niri goes quiet.
+        let mut window = floating(7, 2, (100.0, 60.0), (300, 200));
+        window["is_focused"] = json!(true);
+        let target: IpcWindow = serde_json::from_value(window.clone()).unwrap();
+        let prior = json!([
+            workspace(1, "winit", true, None),
+            workspace(2, "winit", false, Some(7)),
+        ]);
+        let before: Vec<IpcWorkspace> = serde_json::from_value(prior.clone()).unwrap();
+        let switched = json!({"Ok": {"Workspaces": [
+            workspace(1, "winit", false, None),
+            workspace(2, "winit", true, Some(7)),
+        ]}});
+        let mut ipc = scripted(vec![
+            json!({"Ok": {"FocusedWindow": window}}),
+            switched.clone(),
+            switched.clone(),
+            json!({"Ok": "Handled"}),
+            json!({"Ok": {"Workspaces": prior}}),
+            switched,
+        ]);
+        let error = restore_focus(
+            &mut ipc,
+            None,
+            &before,
+            &target,
+            Instant::now() + Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri did not restore workspace 1 on output winit"
+        );
+    }
+
     #[test]
     fn a_window_focused_by_someone_else_during_input_keeps_focus() {
         let fake = focus_fixture();

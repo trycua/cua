@@ -114,8 +114,7 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
-                             startup: startup,
-                             appVersion: fixtures ? nil : info.version)
+                             startup: startup)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             // Local Network access is asked for before the first macOS
@@ -471,9 +470,7 @@ public enum AppEnvironment {
                 WebUIWindowController.show(model: model)
                 WebUIWindowController.startVideoHarness(model: model)
             case "new-space", "new-space-picker", "new-space-resources":
-                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: Your cloud's
-                // experiment on for this run, and "Run on" there).
-                if env["CUA_SPACES_WIZARD_ON"] == "yours" { model.settings.experiments.yourCloud = true }
+                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: "Run on" there).
                 WebUIWindowController.showNewSpace(model: model, on: env["CUA_SPACES_WIZARD_ON"])
             case "keyvault", "keyvault-waiting":
                 web(.keyvault)

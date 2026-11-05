@@ -12,7 +12,6 @@ import {
   normalizePairingCode,
   pairingLinkRelay,
   teamName,
-  useFlag,
   useJoinWithCode,
   useMachines,
   usePairingCode,
@@ -439,9 +438,8 @@ function Footer({
   const { openExternal } = useSession();
   const team = pairing.team;
   const limit = team?.phase === "failed" && team.upgradeUrl ? (team.kind ?? "other") : null;
-  // Behind `upsell_cards`: a team owner out of seats or computers gets the
-  // limit card (only an owner gets the checkout link) instead of Upgrade.
-  const cards = useFlag("upsell_cards");
+  // A team owner out of seats or computers gets the limit card (only an owner
+  // gets the checkout link) instead of Upgrade.
   const failedText = team?.phase === "failed" ? (team.error ?? "") : "";
   const cardReason: "seats" | "machines" | null = !limit
     ? null
@@ -450,7 +448,7 @@ function Footer({
       : limit === "machines" || /as many machines as it has seats/.test(failedText)
         ? "machines"
         : null;
-  const asCard = cards && cardReason !== null;
+  const asCard = cardReason !== null;
   const shownLimit = useRef<string | null>(null);
   useEffect(() => {
     if (!limit) shownLimit.current = null;

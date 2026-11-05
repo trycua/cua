@@ -123,19 +123,7 @@ pub fn app_space_detail_live(
     core::spaces::sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
 }
 
-/// [`app_space_detail_live`] without what Settings, Experiments hides (the
-/// Share button while Sharing is off).
-#[uniffi::export]
-pub fn app_space_detail_with(
-    space: AppSpace,
-    usage: Option<AppSpaceUsage>,
-    host_arch: Option<String>,
-    experiments: AppExperiments,
-) -> AppSpaceDetail {
-    core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
-}
-
-/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_space_detail_live`] as this device sees it: `access` (from
 /// [`app_machine_access_notice`]) greys out Connect on every Space reached
 /// through the relay while this device is not enrolled; one of your
 /// machines that does not share its desktop shows its note in place of the
@@ -145,14 +133,12 @@ pub fn app_space_detail_for(
     space: AppSpace,
     usage: Option<AppSpaceUsage>,
     host_arch: Option<String>,
-    experiments: AppExperiments,
     access: Option<AppMachineAccessNotice>,
 ) -> AppSpaceDetail {
     core::spaces::sidebar::detail_for(
         &space,
         usage.as_ref(),
         host_arch.as_deref(),
-        &experiments,
         access.as_ref(),
     )
 }
@@ -2294,14 +2280,6 @@ mod experiment_sync_tests {
             "{kept:?}"
         );
     }
-}
-
-/// The settings with the New UI as a launch of `version` shows it: the
-/// user's choice, else the default for the update channel and version
-/// (again after the channel changes).
-#[uniffi::export]
-pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
-    core::settings::resolve_new_ui(&settings, &version)
 }
 
 /// The update channel of an install's first launch, from the file's

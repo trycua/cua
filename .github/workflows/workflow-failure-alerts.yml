@@ -34,6 +34,9 @@ on:
       - "Release: Prepare component releases"
       - "Release: Auto-merge release PRs"
       - "Release: installer scripts feed"
+      - "e2b-bindings"
+      - "CI: Cua Driver desktop readiness (non-certifying)"
+      - "CI: Nix Linux Rust source"
     types: [completed]
   schedule:
     - cron: "*/15 * * * *"
@@ -70,6 +73,9 @@ jobs:
         Release: Prepare component releases=release
         Release: Auto-merge release PRs=release
         Release: installer scripts feed=release
+        e2b-bindings=ci
+        CI: Cua Driver desktop readiness (non-certifying)=ci
+        CI: Nix Linux Rust source=ci
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}
       ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}

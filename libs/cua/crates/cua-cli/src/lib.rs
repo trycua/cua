@@ -338,8 +338,8 @@ enum Command {
   cua computers
   cua computers --json")]
     Computers,
-    /// Your computers on the relay: remove one that is gone.
-    #[command(subcommand)]
+    /// Now `cua spaces` (kept for one release).
+    #[command(subcommand, hide = true)]
     Machines(host::MachinesCmd),
     /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
@@ -1767,6 +1767,22 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         _ => {}
     }
+    // `cua spaces rm <computer>`: one of your computers on the relay is
+    // taken off it (its Spaces detached); anything else is a registered
+    // Space, forgotten as before.
+    let rm = match &cli.command {
+        Command::Spaces(host::SpacesCmd::Rm {
+            space,
+            delete_spaces,
+            yes,
+        }) => Some((space.clone(), *delete_spaces, *yes)),
+        _ => None,
+    };
+    if let Some((space, delete_spaces, yes)) = rm
+        && owns_computer(&space).await
+    {
+        return remove_computer(cli, &space, delete_spaces, yes, json, out).await;
+    }
     match cli.command {
         Command::Run(a) => return jobs_cmd::run(a, json, out).await,
         Command::Jobs(a) => return jobs_cmd::jobs(a, json, out).await,
@@ -2008,32 +2024,20 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             return cloud_cmd::run(&cua, cmd, json, out).await;
         }
         Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
-            // Embedded: the row, the lookup and the device all use this
-            // process's relay, never a daemon's.
-            let rest = Cli {
-                command: Command::Spaces(host::SpacesCmd::Ls {
-                    relay: None,
-                    label: vec![],
-                    no_size: false,
-                    tree: false,
-                }),
-                embedded: true,
-                ..cli
-            };
-            let cua = open(&rest, false).await?;
+            eprintln!("`cua machines` is now `cua spaces`.");
+            return remove_computer(cli, &name, false, yes, json, out).await;
+        }
+        Command::Spaces(cmd @ host::SpacesCmd::Default { .. }) => {
+            let tokens: Option<Arc<dyn cua_host::AccountTokens>> =
+                match auth::session_token(&auth::Store::from_env()).await {
+                    Ok(Some(_)) => Some(Arc::new(host::SessionTokens)),
+                    _ => None,
+                };
             let home = util::cua_home();
-            host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
-            let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
-            return host::remove_machine(
-                &cua,
-                &auth,
-                &host::SessionTokens,
-                &name,
-                &|q| yes || (util::interactive() && util::confirm(q, false)),
-                json,
-                out,
-            )
-            .await;
+            let device = tokens
+                .as_ref()
+                .and_then(|_| devices_cmd::device_auth(&host::relay_url(None, &home)).ok());
+            return host::run_spaces_default(cmd, &home, tokens, device, json, out).await;
         }
         Command::Spaces(host::SpacesCmd::Ls { .. })
             if cli.daemon.is_none() && cua_daemon::client::spawn_channel().is_some() =>
@@ -2427,6 +2431,63 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::DumpDocs { .. } => unreachable!("handled above"),
     }
     Ok(0)
+}
+
+/// Whether `target` is one of your computers on the relay (signed in, one
+/// match, you own it): see [`host::owned_computer`].
+async fn owns_computer(target: &str) -> bool {
+    if auth::session_token(&auth::Store::from_env())
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        return false;
+    }
+    let home = util::cua_home();
+    match devices_cmd::device_auth(&host::relay_url(None, &home)) {
+        Ok(a) => host::owned_computer(&a, &host::SessionTokens, target).await,
+        Err(_) => false,
+    }
+}
+
+/// Takes one of your computers off the relay (`cua spaces rm <computer>`):
+/// its Spaces are detached, or with `delete_spaces` deleted too.
+async fn remove_computer(
+    cli: Cli,
+    name: &str,
+    delete_spaces: bool,
+    yes: bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    // Embedded: the row, the lookup and the device all use this process's
+    // relay, never a daemon's.
+    let rest = Cli {
+        command: Command::Spaces(host::SpacesCmd::Ls {
+            relay: None,
+            label: vec![],
+            no_size: false,
+            tree: false,
+        }),
+        embedded: true,
+        ..cli
+    };
+    let cua = open(&rest, false).await?;
+    let home = util::cua_home();
+    host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
+    let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
+    host::remove_machine(
+        &cua,
+        &auth,
+        &host::SessionTokens,
+        name,
+        delete_spaces,
+        &|q| yes || (util::interactive() && util::confirm(q, false)),
+        json,
+        out,
+    )
+    .await
 }
 
 /// `cua cloud add aws` (builds with AWS: the `byoc` feature).
@@ -3801,6 +3862,37 @@ mod tests {
         };
         assert!(name == "old-laptop" && yes);
         assert!(parse(&["machines", "ls"]).is_err());
+        // `cua spaces rm <computer>` and `cua spaces default` take the new flags.
+        let Command::Spaces(host::SpacesCmd::Rm {
+            space,
+            delete_spaces,
+            yes,
+        }) = parse(&["spaces", "rm", "old-laptop", "--delete-spaces", "-y"])
+            .unwrap()
+            .command
+        else {
+            panic!()
+        };
+        assert!(space == "old-laptop" && delete_spaces && yes);
+        let Command::Spaces(host::SpacesCmd::Default {
+            space,
+            fallback,
+            no_fallback,
+            ..
+        }) = parse(&["spaces", "default", "studio", "--fallback", "a,relay:b"])
+            .unwrap()
+            .command
+        else {
+            panic!()
+        };
+        assert_eq!(space.as_deref(), Some("studio"));
+        assert_eq!(fallback, Some(vec!["a".to_string(), "relay:b".to_string()]));
+        assert!(!no_fallback);
+        assert!(parse(&["spaces", "default", "--clear", "studio"]).is_err());
+        assert!(parse(&["spaces", "default", "--no-fallback", "--fallback", "a"]).is_err());
+        // The old name is hidden from help.
+        let help = Cli::command().render_help().to_string();
+        assert!(!help.contains("  machines "), "{help}");
         for sb in ["sb", "sandbox"] {
             let e = parse(&[sb, "runs", "--machines"]).unwrap_err();
             assert_eq!(

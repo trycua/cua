@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background keyboard injection via PostMessage.
 //!
 //! WM_CHAR — posts a character code; simpler and more reliable for text entry.

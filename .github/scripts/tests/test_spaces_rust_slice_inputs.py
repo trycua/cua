@@ -119,6 +119,8 @@ def test_the_files_outside_the_hashed_tree_are_derived_from_the_code(extra):
     assert "libs/cua-spacesd/VERSION" in extra
     # cua-agent-setup's build script embeds the skills; the hash drops libs/cua Markdown.
     assert "libs/cua/skills" in extra
+    # cua-cli's embed! macro includes the bench files, READMEs among them.
+    assert "libs/cua/bench" in extra
     # Cargo merges the repository's .cargo/config.toml into every build below it.
     assert ".cargo" in extra
     # Read only by unit tests (`#[cfg(test)]`, `#[test]`) or tests/: not in the library.
@@ -137,9 +139,10 @@ def test_the_files_outside_the_hashed_tree_are_derived_from_the_code(extra):
 @needs_toml
 def test_nothing_inside_libs_cua_is_left_out_unless_the_build_reads_it(extra):
     # The skills (embedded by cua-agent-setup) and the proto directory (the
-    # contract the build compiles) hold Markdown the hash would otherwise drop.
+    # contract the build compiles) hold Markdown the hash would otherwise drop,
+    # and so do the bench files cua-cli embeds.
     inside = [p for p in extra if p.startswith("libs/cua/")]
-    assert inside == ["libs/cua/proto", "libs/cua/skills"]
+    assert inside == ["libs/cua/bench", "libs/cua/proto", "libs/cua/skills"]
 
 
 # ------------------------------------------------------------------ the key
@@ -304,6 +307,16 @@ def test_a_read_in_ordinary_code_counts_and_one_in_a_test_module_does_not(tmp_pa
         'const OUT: &str = include_str!(concat!(env!("OUT_DIR"), "/generated.rs"));\n'
     )
     assert reads_of(tmp_path, {"src/lib.rs": src}) == {"a.json", "crate/d.bin"}
+
+
+def test_a_concat_with_a_macro_variable_reads_the_whole_prefix_directory(tmp_path):
+    # cua-cli embeds the bench files this way, Markdown included.
+    src = (
+        "macro_rules! embed {\n"
+        '    ($($p:literal),*) => { &[$(include_str!(concat!("../../bench/", $p))),*] };\n'
+        "}\n"
+    )
+    assert reads_of(tmp_path, {"src/lib.rs": src}) == {"bench"}
 
 
 def test_text_that_only_looks_like_code_is_not_a_read_or_a_test_boundary(tmp_path):

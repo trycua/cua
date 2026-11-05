@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -26,7 +29,7 @@ fn with_cursor_motion_properties(mut schema: Value) -> Value {
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
         properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
-    schema
+    cua_driver_core::fast_path::wire::with_config_property(schema)
 }
 
 fn def() -> &'static ToolDef {
@@ -122,6 +125,11 @@ impl Tool for SetConfigTool {
             Err(message) => return ToolResult::error(message),
         };
 
+        let fast_path = match cua_driver_core::fast_path::wire::apply_config_args(&args) {
+            Ok(mode) => mode,
+            Err(message) => return ToolResult::error(message),
+        };
+
         let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
             Some(dim) => match u32::try_from(dim) {
                 Ok(d) => Some(d),
@@ -195,6 +203,12 @@ impl Tool for SetConfigTool {
                 motion_keys.join(", ")
             ));
         }
+        if let Some(mode) = fast_path {
+            pip_note.push_str(&format!(
+                " — fast_path={} (applies now, not saved)",
+                mode.as_str()
+            ));
+        }
         for key in badge_key.into_iter().chain(option_keys) {
             pip_note.push_str(&format!(" — saved {key} (applies now)"));
         }
@@ -211,6 +225,7 @@ impl Tool for SetConfigTool {
             "version": env!("CARGO_PKG_VERSION"),
             "platform": "macos",
             "max_image_dimension": effective_dim,
+            "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }
 }

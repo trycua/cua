@@ -10,6 +10,7 @@
 // Electron's IPC.
 import { aboutMethods } from "./about";
 import { agentKeysMethods } from "./agent-keys";
+import { githubMethods } from "./github";
 import { agentsMethods, agentsSignature } from "./agents";
 import { appMethods } from "./app";
 import { checklistMethods } from "./checklist";
@@ -24,14 +25,18 @@ import { joinMethods } from "./join-with-code";
 import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
+import { driverMethods } from "./driver";
 import { notificationsMethods } from "./notifications";
 import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
 import { linksMethods } from "./links";
 import { cliMethods } from "./cli";
+import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
+import { agentThreadsMethods } from "./agent-threads";
 import { relayUsageMethods } from "./relay-usage";
+import { spacesSettingsMethods } from "./spaces-settings";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
@@ -54,6 +59,7 @@ export const AREAS = [
   machinesMethods,
   agentsMethods,
   agentKeysMethods,
+  githubMethods,
   cloudsMethods,
   teleportMethods,
   sharingMethods,
@@ -74,12 +80,16 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  spacesSettingsMethods,
   nudgesMethods,
   resourcesMethods,
   checklistMethods,
   linksMethods,
   cliMethods,
+  ciMethods,
   threadMethods,
+  agentThreadsMethods,
+  driverMethods,
   presenceMethods,
 ];
 

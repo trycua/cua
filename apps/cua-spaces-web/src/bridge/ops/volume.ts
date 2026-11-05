@@ -132,6 +132,13 @@ export function readExperiments(raw: string | undefined): Experiments {
       yourCloud: stored.yourCloud !== false,
       sharing: stored.sharing !== false,
       webUi: stored.webUi === true,
+      secureSpaces: stored.secureSpaces === true,
+      childSpaces: stored.childSpaces === true,
+      askFirst: stored.askFirst === true,
+      ciRunners: stored.ciRunners === true,
+      tcpShares: stored.tcpShares === true,
+      mobile: stored.mobile === true,
+      warmPools: stored.warmPools === true,
     };
   } catch {
     return NO_EXPERIMENTS;

@@ -51,8 +51,14 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30
@@ -78,6 +84,9 @@ jobs:
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib
+      - name: Run cua-driver-testkit unit tests on macOS
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-testkit --lib
       - name: Run macOS protocol schema and status pid-file contracts
         working-directory: libs/cua-driver/rust
         env:

@@ -94,7 +94,7 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     await waitFor(() => expect(q("[data-connector-on]")?.textContent).toMatch(/^On \S+/));
   });
 
-  it("the first run offers An agent on another machine, which opens the join sheet", async () => {
+  it("the first run offers An agent on another computer, which opens the join sheet", async () => {
     await mountApp("/onboarding?demo=fresh", { failsCreates: false, listsGhost: false });
     const skip = await screen.findByRole("button", { name: "Get started" });
     fireEvent.click(skip);
@@ -105,7 +105,7 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
       if (!r) throw new Error("not on the connect step yet");
       return r;
     }, { timeout: 8000 });
-    expect(row.textContent).toContain("An agent on another machine");
+    expect(row.textContent).toContain("An agent on another computer");
     fireEvent.click(q("[data-first-run-other-machine-open]")!);
     await waitFor(() => expect(q('[data-add-agent="connect"]')).not.toBeNull());
   });

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

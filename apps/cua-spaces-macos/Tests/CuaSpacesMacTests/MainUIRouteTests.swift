@@ -21,7 +21,7 @@ struct MainUIRouteTests {
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
         return m
     }
 
@@ -189,14 +189,15 @@ struct MainUIRouteTests {
         }
     }
 
-    /// A prerelease's first launch starts on the Beta channel; a release's
-    /// on Stable; a later launch keeps the channel.
-    @Test func aBetasFirstLaunchIsOnBeta() {
+    /// A prerelease's first launch (a nightly, or a beta from before
+    /// Nightly) starts on Nightly; a release's on Stable; a later launch
+    /// keeps the channel.
+    @Test func aPrereleasesFirstLaunchIsOnNightly() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("settings.json").path
         UpdateRefresh.record(settingsPath: path, version: "0.8.1-beta.1", build: "1", onboarded: false)
-        #expect(appSettingsLoad(path: path).updateChannel == .beta)
+        #expect(appSettingsLoad(path: path).updateChannel == .nightly)
         // A later launch keeps the channel the user set.
         var s = appSettingsLoad(path: path)
         s.updateChannel = .stable

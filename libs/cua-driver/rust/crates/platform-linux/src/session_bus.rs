@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session D-Bus address auto-discovery for out-of-session daemons.
 //!
 //! AT-SPI is reached entirely over the **session** bus (see [`crate::a11y`] and

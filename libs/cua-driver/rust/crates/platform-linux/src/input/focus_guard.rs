@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background non-invasiveness safety net for X11.
 //!
 //! A `delivery_mode:"background"` action must leave the user's desktop as it
@@ -283,6 +286,47 @@ impl X {
         }
         let _ = self.conn.flush();
     }
+}
+
+/// The X requests the core-focus bounce makes.
+trait FocusRequests {
+    type Pending<'a>
+    where
+        Self: 'a;
+    fn request_focus(&self, window: Window, revert_to: InputFocus) -> Option<Self::Pending<'_>>;
+    fn succeeded(&self, pending: Self::Pending<'_>) -> bool;
+    fn focused_window(&self) -> Window;
+}
+
+impl FocusRequests for X {
+    type Pending<'a> = x11rb::cookie::VoidCookie<'a, RustConnection>;
+
+    fn request_focus(&self, window: Window, revert_to: InputFocus) -> Option<Self::Pending<'_>> {
+        self.conn
+            .set_input_focus(revert_to, window, x11rb::CURRENT_TIME)
+            .ok()
+    }
+
+    fn succeeded(&self, pending: Self::Pending<'_>) -> bool {
+        pending.check().is_ok()
+    }
+
+    fn focused_window(&self) -> Window {
+        self.core_focus().0
+    }
+}
+
+/// Move the core focus through None back to `window`. Both requests leave
+/// before either is checked, so the core focus is None for no longer than
+/// the server takes to process them. True only when `window` holds the core
+/// focus afterwards.
+fn bounce_core_focus(x: &impl FocusRequests, window: Window, revert_to: InputFocus) -> bool {
+    let none = x.request_focus(x11rb::NONE, InputFocus::NONE);
+    let saved = x.request_focus(window, revert_to);
+    if let Some(none) = none {
+        x.succeeded(none);
+    }
+    saved.is_some_and(|saved| x.succeeded(saved)) && x.focused_window() == window
 }
 
 /// What a background action must not change.
@@ -621,11 +665,18 @@ impl FocusSnapshot {
             .previous_focus_window()
             .filter(|w| !x.window_viewable(*w));
         let new_owner = focus_window.and_then(|w| x.owner_pid(w));
+        // Only the WM's active-window record moved: the core focus and the
+        // stacking top are as saved. The same-app rule does not apply, since
+        // the focus never left the saved window.
+        let wm_only = self.core_focus > 1
+            && x.core_focus().0 == self.core_focus
+            && x.stacking_top() == self.stacking_top
+            && x.active_window() != self.active;
         match guard_restore(
             closed.is_some(),
             target_pid,
             self.previous_owner,
-            new_owner,
+            new_owner.filter(|_| !wm_only),
             report.grab_held_by.is_some(),
         ) {
             GuardRestore::PriorClosed => {
@@ -661,8 +712,8 @@ impl FocusSnapshot {
         let mut stable = 0;
         let mut resent = 0;
         let deadline = Instant::now() + crate::interaction::CLEANUP_CAP;
-        self.reassert(&x);
-        while Instant::now() < deadline {
+        let mut reasserted = self.reassert(&x, wm_only);
+        while reasserted && Instant::now() < deadline {
             std::thread::sleep(
                 RESTORE_POLL.min(deadline.saturating_duration_since(Instant::now())),
             );
@@ -670,7 +721,8 @@ impl FocusSnapshot {
             if now.is_empty() {
                 stable += 1;
                 if stable >= STABLE_POLLS {
-                    report.restored = true;
+                    // diff() skips a None core focus, which a bounce can leave.
+                    report.restored = !wm_only || x.core_focus().0 == self.core_focus;
                     break;
                 }
                 continue;
@@ -678,7 +730,7 @@ impl FocusSnapshot {
             stable = 0;
             if resent < 2 {
                 resent += 1;
-                self.reassert(&x);
+                reasserted = self.reassert(&x, wm_only);
             }
         }
         if !report.restored {
@@ -736,13 +788,18 @@ impl FocusSnapshot {
         })
     }
 
-    fn reassert(&self, x: &X) {
+    /// False when a core-focus bounce failed, which ends the restore.
+    fn reassert(&self, x: &X, wm_only: bool) -> bool {
+        if wm_only {
+            return bounce_core_focus(x, self.core_focus, self.revert_to);
+        }
         if let Some(prev) = self.active {
             x.activate(prev, x.active_window().unwrap_or(0));
         }
         if self.core_focus > 1 {
             x.set_focus(self.core_focus, self.revert_to);
         }
+        true
     }
 }
 
@@ -910,6 +967,62 @@ mod grab_tests {
             summary.contains("pid 77 holds a keyboard grab"),
             "{summary}"
         );
+    }
+
+    /// Records the bounce's requests; the request for `fail` errors, and
+    /// `focus` is what the server reports afterwards.
+    struct FakeFocus {
+        log: std::cell::RefCell<Vec<String>>,
+        fail: Option<Window>,
+        focus: Window,
+    }
+
+    impl FocusRequests for FakeFocus {
+        type Pending<'a> = Window;
+
+        fn request_focus(&self, window: Window, _: InputFocus) -> Option<Window> {
+            self.log.borrow_mut().push(format!("send {window}"));
+            Some(window)
+        }
+
+        fn succeeded(&self, window: Window) -> bool {
+            self.log.borrow_mut().push(format!("check {window}"));
+            self.fail != Some(window)
+        }
+
+        fn focused_window(&self) -> Window {
+            self.focus
+        }
+    }
+
+    fn fake(fail: Option<Window>, focus: Window) -> FakeFocus {
+        FakeFocus {
+            log: Default::default(),
+            fail,
+            focus,
+        }
+    }
+
+    #[test]
+    fn the_bounce_sends_both_focus_requests_before_checking_either() {
+        let x = fake(None, 0x42);
+        assert!(bounce_core_focus(&x, 0x42, InputFocus::PARENT));
+        assert_eq!(
+            *x.log.borrow(),
+            ["send 0", "send 66", "check 0", "check 66"]
+        );
+    }
+
+    #[test]
+    fn a_bounce_whose_saved_window_is_gone_does_not_restore() {
+        // BadMatch: the saved window unmapped before the second request.
+        assert!(!bounce_core_focus(
+            &fake(Some(0x42), 0),
+            0x42,
+            InputFocus::PARENT
+        ));
+        // The request went through, but the core focus is still not there.
+        assert!(!bounce_core_focus(&fake(None, 0), 0x42, InputFocus::PARENT));
     }
 
     #[test]

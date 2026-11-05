@@ -20,6 +20,8 @@ on:
       - "libs/cua/crates/cua-vmm/src/microvm/**"
       - "libs/cua/crates/cua-daemon/src/local.rs"
       - "tests/e2e/local-runtimes/tests/oci_any.rs"
+      - "tests/e2e/local-runtimes/tests/space_jobs.rs"
+      - "libs/cua/crates/cua-spaces/src/space_jobs.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
   push:
     branches: [main]
@@ -47,7 +49,14 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   static:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: static cua-spacesd (musl)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -115,3 +124,14 @@ jobs:
           export CUA_HOME="$RUNNER_TEMP/cua-home"
           mkdir -p "$CUA_HOME"
           cargo test --locked --test oci_any -- --nocapture
+      - name: Background jobs in a Space
+        working-directory: tests/e2e/local-runtimes
+        env:
+          CUA_E2E_SPACE_JOBS: "1"
+          CUA_E2E_OCI_ANY_RUNTIME: runc
+        run: |
+          set -euo pipefail
+          export CUA_SPACESD_STATIC="$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
+          export CUA_HOME="$RUNNER_TEMP/cua-home-jobs"
+          mkdir -p "$CUA_HOME"
+          cargo test --locked --test space_jobs -- --nocapture

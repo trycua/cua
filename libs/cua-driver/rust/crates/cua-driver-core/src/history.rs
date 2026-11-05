@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Encrypted, metadata-only Computer History.
 //!
 //! History is deliberately separate from trajectory recording.  It accepts

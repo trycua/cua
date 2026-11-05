@@ -625,8 +625,11 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
         if (-not $exe) { Stop-Install "no cua.exe inside $(Split-Path -Leaf $zip)" }
         New-Item -ItemType Directory -Force -Path $bin | Out-Null
         Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
-        # The static cua-spacesd injected into OCI images that carry none is
-        # found next to the CLI.
+        # QEMU VMs' network gateway, and the static cua-spacesd injected into
+        # OCI images that carry none, are found next to the CLI.
+        Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-netgw.exe' | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
+        }
         Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-spacesd-linux-*' | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
         }

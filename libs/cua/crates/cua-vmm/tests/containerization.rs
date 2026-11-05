@@ -10,11 +10,17 @@ use cua_vmm::{ExecRequest, ImageSource, Runtime, StartSpec, Status, VmmError};
 use fake_container::FakeContainer;
 
 fn spec(name: &str) -> StartSpec {
-    StartSpec::new(name, ImageSource::oci("ghcr.io/trycua/linux:24.04-slim"))
+    let mut s = StartSpec::new(name, ImageSource::oci("ghcr.io/trycua/linux:24.04-slim"))
         .cpus(2)
         .memory_mb(2048)
         .port(3211)
-        .env("CUA_ENV_TOKEN", "tok-0123456789")
+        .env("CUA_ENV_TOKEN", "tok-0123456789");
+    // Containerization cannot protect the network yet (it refuses the
+    // default); these tests are about its lifecycle.
+    s.network = Some(cua_vmm::network::NetworkSettings::preset(
+        cua_vmm::network::NetworkPreset::Unprotected,
+    ));
+    s
 }
 
 #[tokio::test]
@@ -148,6 +154,9 @@ async fn the_image_command_replaces_entrypoint_and_cmd() {
     let f = FakeContainer::new();
     let rt = f.runtime();
     let mut s = StartSpec::new("sb-cmd", ImageSource::oci("alpine"));
+    s.network = Some(cua_vmm::network::NetworkSettings::preset(
+        cua_vmm::network::NetworkPreset::Unprotected,
+    ));
     s.command = Some(vec!["/bin/sleep".into(), "100".into()]);
     rt.start(&s).await.unwrap();
     let calls = f.calls();
@@ -229,7 +238,9 @@ async fn what_containerization_cannot_do_is_refused() {
         (spec("bad name!"), "not a valid"),
         (
             {
+                // The default network (the secure one): it cannot be kept.
                 let mut s = spec("sb-net");
+                s.network = None;
                 s.restrict_network = true;
                 s
             },
@@ -423,7 +434,7 @@ impl RootfsResolver for FakeResolver {
     }
 }
 
-const PRIVATE: &str = "ghcr.io/acme/private-image:1";
+const PRIVATE: &str = "registry.example.com/team/private-linux:24.04";
 
 fn private_spec(name: &str) -> StartSpec {
     let mut s = spec(name);

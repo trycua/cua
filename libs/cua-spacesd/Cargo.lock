@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1893,6 +1893,7 @@ dependencies = [
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "image",
+ "indexmap",
  "jsonschema",
  "keyring 4.2.0",
  "libc",
@@ -1940,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1948,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1974,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1982,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1991,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2005,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -2021,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2029,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2042,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2073,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "cua-oidc"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2105,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2120,14 +2121,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "cua-relay"
+name = "cua-push"
 version = "0.10.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "cua-relay"
+version = "0.12.0"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "bytes",
  "clap",
  "cua-mesh",
+ "cua-proto",
+ "cua-push",
+ "cua-spacesd-html5",
  "futures-util",
  "hex",
  "http",
@@ -2149,6 +2169,7 @@ dependencies = [
  "tokio-native-tls",
  "tokio-tungstenite 0.24.0",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2158,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2179,12 +2200,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "axum 0.7.9",
  "bytes",
  "clap",
  "cua-driver-core",
+ "cua-driver-sdk",
+ "cua-home",
  "cua-logging",
  "cua-media-codec",
  "cua-media-protocol",
@@ -2223,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2260,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-desktop"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2309,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-doctor"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "bytes",
  "cua-hotspot",
@@ -2343,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -2351,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-provider-api"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "cua-media-protocol",
  "serde_json",
@@ -2360,7 +2383,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2428,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-session"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2445,7 +2468,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2455,14 +2478,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-supervise"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -2479,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-test-apps"
-version = "0.10.1"
+version = "0.12.0"
 dependencies = [
  "libc",
  "libloading",
@@ -2490,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -2503,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2522,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -6063,6 +6086,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

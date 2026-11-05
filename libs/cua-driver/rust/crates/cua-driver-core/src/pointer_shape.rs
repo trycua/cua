@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! What cursor shape the guest would show at an arbitrary point, for
 //! multiplayer presence.
 //!

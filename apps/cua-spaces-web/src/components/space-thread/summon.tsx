@@ -175,9 +175,10 @@ export function useSummon({ spaceId, thread, roster, canAdd }: { spaceId: string
   const connectors = useConnectors();
   const input: SummonInput = useMemo(
     () => ({
-      members: thread.members.map((m) => ({ handle: m.handle ?? m.name, harness: m.harness, label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name })),
+      members: thread.members.map((m) => ({ handle: m.handle ?? m.name, key: m.name, harness: m.harness, label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name })),
       people: roster.people.map((p) => p.label.toLowerCase().replace(/\s+/g, "")),
       canAdd: canAdd && !!data && threadOpAvailable(data.mode, "thread.agentAdd"),
+      reportUnknown: true,
       connectors: connectors.input,
     }),
     [thread.members, roster, canAdd, data, connectors.input],
@@ -263,7 +264,7 @@ export function WakeNoteView({
         </p>
         <p className="mt-0.5 text-[12.5px] text-muted-foreground">{c.detail}</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          {connected && note.state !== "connecting" ? (
+          {c.reason === "no-such-member" ? null : connected && note.state !== "connecting" ? (
             <Button size="sm" variant="outline" onClick={onRetry} data-wake-retry="">
               {c.retryLabel}
             </Button>

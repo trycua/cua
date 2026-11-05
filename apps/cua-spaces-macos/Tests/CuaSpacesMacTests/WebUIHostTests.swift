@@ -47,7 +47,7 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
         #expect(v?["webUi"] as? Bool == true)
@@ -407,11 +407,11 @@ struct WebUIHostTests {
     @Test func theUpdateChannelIsReadAndChosenByRow() async throws {
         let (bridge, model) = bridge()
         #expect((try await bridge.handle("settings.get", [:]) as? [String: Any])?["updateChannel"] is NSNull)
-        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "beta"]) == "unsupported")
+        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "nightly"]) == "unsupported")
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "beta"]) as? [String: Any]
-        #expect(s?["updateChannel"] as? String == "beta")
-        #expect(model.updates.channel == .beta)
+        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "nightly"]) as? [String: Any]
+        #expect(s?["updateChannel"] as? String == "nightly")
+        #expect(model.updates.channel == .nightly)
     }
 
     /// The page's core has no environment: the host names the account app
@@ -805,9 +805,9 @@ struct WebUIHostTests {
     @Test func aboutIsTheUpdatesModelsInput() async throws {
         let (bridge, model) = bridge()
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "beta"]) as? [String: Any]
+        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "nightly"]) as? [String: Any]
         #expect(a?["autoCheck"] as? Bool == true)
-        #expect(a?["channel"] as? String == "beta")
+        #expect(a?["channel"] as? String == "nightly")
         #expect(a?["updater"] as? Bool == true)
     }
 }

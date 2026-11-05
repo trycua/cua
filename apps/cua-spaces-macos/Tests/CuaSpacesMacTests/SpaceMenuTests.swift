@@ -19,7 +19,7 @@ struct SpaceMenuTests {
         AppSpaceRow(id: id, name: name, displayName: nil, provider: provider, spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z", os: .linux,
                     osName: "Ubuntu", osPrettyName: nil, image: nil, imageDigest: nil, kind: .container,
-                    arch: "arm64", reachable: running, error: nil, host: nil, hostName: hostName,
+                    arch: "arm64", hidden: false, reachable: running, error: nil, host: nil, hostName: hostName,
                     power: "stop", powerState: running ? "running" : "stopped", cloud: nil, cloudPlace: nil,
                     cloudDelete: nil, stopReason: nil, sharing: sharing)
     }
@@ -49,6 +49,31 @@ struct SpaceMenuTests {
         m.settings.experiments.sharing = true
         await m.refresh()
         return m
+    }
+
+    /// The home that warms for Home's prompt box (the daemon marks it `hidden`) is in no top bar view:
+    /// not the menu bar item's count, the notch's tab, nor `realSpaces`. The first message clears the
+    /// mark and it appears; a home the app did not prepare is never hidden.
+    @Test func aWarmingHomeIsInNoTopBarViewUntilTheFirstMessage() async throws {
+        func home(hidden: Bool) -> AppSpaceRow {
+            var r = Self.row("local:home-claude-code", "home-claude-code", running: true)
+            r.hidden = hidden
+            return r
+        }
+        let other = Self.row("local:other", "other", running: true)
+        let backend = FixtureSpacesBackend(rows: [home(hidden: true), other])
+        let m = await makeModel(backend)
+        // Listed by the core (marked), shown by none of the top bar views.
+        #expect(try space(m, "local:home-claude-code").hidden)
+        #expect(m.realSpaces.map(\.id) == ["local:other"])
+        #expect(m.menuBar.first?.label == "1 Space running")
+        #expect(appOnCount(spaces: m.spaces) == 1)
+
+        backend.fixtureRows = [home(hidden: false), other]
+        await m.refresh()
+        #expect(m.realSpaces.map(\.id).sorted() == ["local:home-claude-code", "local:other"])
+        #expect(m.menuBar.first?.label == "2 Spaces running")
+        #expect(appOnCount(spaces: m.spaces) == 2)
     }
 
     func space(_ m: AppModel, _ id: String) throws -> AppSpace {

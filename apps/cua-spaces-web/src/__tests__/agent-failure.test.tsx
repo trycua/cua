@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -23,7 +24,7 @@ const failureReply = (who: string) => qa("[data-entry]").find((e) => e.querySele
 const host = { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true } };
 
 describe("an agent that is not connected", () => {
-  it("answers in plain words with Connect and Retry, never as the raw error, and the person's message is not marked Failed", async () => {
+  it.skipIf(!wasmBuilt)("answers in plain words with Connect and Retry, never as the raw error, and the person's message is not marked Failed", async () => {
     await mountApp(path, host);
     const failed = await waitFor(
       () => {

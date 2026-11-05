@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Client for the bundled **cua WinRects** GNOME Shell extension
 //! (`org.cua.WinRects`, see `wayland-helper/winrects@cua/`).
 //!
@@ -1146,7 +1149,8 @@ mod tests {
     #[test]
     fn bundled_helper_uses_host_owned_modifier_badge_chips() {
         assert!(EXTENSION_SOURCE.contains("GetVersion()"));
-        assert!(EXTENSION_SOURCE.contains("return 11;"));
+        // v12 draws the tip, not the canvas centre, on the cursor point.
+        assert!(EXTENSION_SOURCE.contains("return 12;"));
         assert!(EXTENSION_SOURCE.contains("PlayCursorPath(trackJson)"));
         assert!(EXTENSION_SOURCE.contains("SetCursorLook(lookJson)"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorHalo"));
@@ -1175,7 +1179,7 @@ mod tests {
         assert!(!EXTENSION_SOURCE.contains("function drawModifiers"));
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
-        assert_eq!(metadata["version"], 11);
+        assert_eq!(metadata["version"], 12);
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",

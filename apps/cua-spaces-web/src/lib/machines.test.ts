@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine } from "@/bridge";
-import { connectionLabel, machineOs, machinesSummary, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount, spacesLabel } from "./machines";
+import { chatComputers, connectionLabel, machineOs, machinesSummary, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount, spacesLabel } from "./machines";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 
@@ -92,5 +92,25 @@ describe("machines", () => {
     expect(selectedMachine(list, "b")?.id).toBe("b");
     expect(selectedMachine(list, "gone")?.id).toBe("a");
     expect(selectedMachine([], null)).toBeUndefined();
+  });
+});
+
+describe("chatComputers", () => {
+  const m = (over: Partial<Machine>): Machine => ({ id: "m", name: "M", os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over });
+
+  it("keeps your other online computers once each, and leaves out this one, devices and offline ones", () => {
+    const rows = [
+      m({ id: "here", name: "This Mac", current: true }),
+      m({ id: "mini", name: "Mac mini" }),
+      m({ id: "mini", name: "Mac mini" }),
+      m({ id: "web-1", name: "Web browser", os: "web", device: true }),
+      m({ id: "web-2", name: "Web browser", os: "web", device: true }),
+      m({ id: "old", name: "Old box", online: false }),
+      m({ id: "off", name: "Not shared", notSharing: "Stopped sharing" }),
+      m({ id: "pc", name: "Studio PC", os: "windows" }),
+    ];
+    const { computers, offline } = chatComputers(rows);
+    expect(computers.map((c) => c.id)).toEqual(["mini", "pc"]);
+    expect(offline).toBe(2);
   });
 });

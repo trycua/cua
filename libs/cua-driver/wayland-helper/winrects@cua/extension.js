@@ -480,11 +480,13 @@ function cursorBodyMotion(progress, action) {
   return { dx, dy, rotation, scale };
 }
 
+// About the tip, like the Rust renderer's click squish, so a press never
+// moves the point the arrow clicks.
 function applyCursorBodyMotion(cr, motion) {
-  cr.translate(64 + motion.dx, 64 + motion.dy);
+  cr.translate(TIP_X + motion.dx, TIP_Y + motion.dy);
   cr.rotate(motion.rotation);
   cr.scale(motion.scale, motion.scale);
-  cr.translate(-64, -64);
+  cr.translate(-TIP_X, -TIP_Y);
 }
 
 function drawCursorGlow(cr, progress, action, glowSurface) {
@@ -902,6 +904,8 @@ export default class WinRectsExtension extends Extension {
       null
     );
     this._action = 'idle';
+    // Whether cua-driver asked for the current action's cue.
+    this._cueRequested = false;
     this._delivery = '';
     this._target = '';
     this._actionStarted = nowSeconds();
@@ -929,9 +933,13 @@ export default class WinRectsExtension extends Extension {
       const progress = (elapsed % duration) / duration;
       const pose = this._pose(nowSeconds());
       cr.save();
+      // The actor is placed with its centre on the cursor point (see
+      // _placeCursor), so the tip, not the canvas centre, goes there. Mapping
+      // the canvas centre drew the tip (55, 30) about 3 px left of and 11 px
+      // above the click point.
       cr.translate(ACTOR_CENTER, ACTOR_CENTER);
       cr.scale(SCALE, SCALE);
-      cr.translate(-CANVAS_SIZE / 2, -CANVAS_SIZE / 2);
+      cr.translate(-TIP_X, -TIP_Y);
       // The float moves the whole cursor; the rotation (heading plus the
       // float tilt) turns it about its tip.
       cr.translate(pose.dx / SCALE, pose.dy / SCALE);
@@ -940,7 +948,10 @@ export default class WinRectsExtension extends Extension {
       cr.translate(TIP_X, TIP_Y);
       cr.rotate(pose.rotation);
       cr.translate(-TIP_X, -TIP_Y);
-      drawActionCue(cr, this._action, progress, this._fillColor);
+      // A click the helper plays by itself (ClickPulse) only squishes the
+      // arrow; its marks are cua-driver's call (`cursor.marks`).
+      if (this._action !== 'click' || this._cueRequested)
+        drawActionCue(cr, this._action, progress, this._fillColor);
       drawCursorBody(cr, progress, this._action, this._fillColor);
       cr.restore();
       cr.$dispose();
@@ -1080,7 +1091,7 @@ export default class WinRectsExtension extends Extension {
     }
   }
   GetVersion() {
-    return 11;
+    return 12;
   }
   GetRects() {
     const actors = global.get_window_actors();
@@ -1274,8 +1285,10 @@ export default class WinRectsExtension extends Extension {
       this._cursor.set_position(x - ACTOR_CENTER, y - ACTOR_CENTER);
       this._positionBadge(x, y, 0);
     }
-    if (['idle', 'navigate', 'click'].includes(this._action))
+    if (['idle', 'navigate', 'click'].includes(this._action)) {
       this._setCursorState('click', this._delivery, this._target);
+      this._cueRequested = false;
+    }
     this._settleFloat();
     this._cursor.show();
     this._cursor.queue_repaint();
@@ -1378,6 +1391,7 @@ export default class WinRectsExtension extends Extension {
     if (!ACTIONS.has(action)) return;
     if (active) {
       this._setCursorState(action, delivery, target);
+      this._cueRequested = true;
       this._settleFloat();
     } else if (this._action === action && !ONE_SHOT_ACTIONS.has(action)) {
       this._endingAt = nowSeconds() + 0.4;

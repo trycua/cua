@@ -61,6 +61,104 @@ pub struct Share {
     /// Limits of this link worth showing next to it (for example that
     /// browsers cannot open it yet).
     pub notices: Vec<String>,
+    /// A public TCP share: what people connect to (a name they can type,
+    /// or `host:port`). `None`: an HTTP link.
+    pub tcp_connect_with: Option<String>,
+    /// A public TCP share: its `host:port`.
+    pub tcp_address: Option<String>,
+    /// A public TCP share: how people reach it, `host` (the Space's own
+    /// host in your cloud), `edge` (a share edge in your cloud) or
+    /// `relay` (Cua).
+    pub route: Option<String>,
+    /// The plain line for that route ("Through your AWS account").
+    pub route_line: Option<String>,
+    /// Who may connect (CIDRs); empty: anyone.
+    pub allow: Vec<String>,
+    /// Set while the share waits for its owner: `approval` or `consent`.
+    pub waiting: Option<String>,
+    /// What to show the owner while it waits.
+    pub waiting_text: Option<String>,
+}
+
+/// Where public TCP shares land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ShareLanding {
+    /// The Space's own cloud host, else a share edge, else Cua's relay.
+    Auto,
+    /// Only through your own clouds.
+    OnlyMyCloud,
+    /// Cua's relay unless the Space runs on its own cloud host.
+    AllowRelay,
+}
+
+/// The share settings.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ShareSettings {
+    /// Where public TCP shares land.
+    pub landing: ShareLanding,
+    /// Whether Cua's relay may carry public TCP shares at all.
+    pub relay_fallback: bool,
+    /// The most data public TCP shares move in a day, in MiB (0: no cap).
+    pub daily_cap_mib: u64,
+    /// The allowlist new shares start with (CIDRs; empty: anyone).
+    pub default_allow: Vec<String>,
+    /// Ask before an agent's share goes public.
+    pub approve_agent_shares: bool,
+    /// Spaces whose agents may share without asking.
+    pub always_allow_spaces: Vec<String>,
+    /// Clouds you agreed may hold a share edge.
+    pub edge_consent: Vec<String>,
+    /// Bytes public TCP shares moved today (read only).
+    pub used_today: u64,
+    /// The share edge's cloud and host, when there is one (read only).
+    pub edge_cloud: Option<String>,
+    /// The share edge's address (read only).
+    pub edge_host: Option<String>,
+    /// About what the edge costs a month, in US dollars (read only).
+    pub edge_monthly_usd: Option<f64>,
+}
+
+impl From<cua_daemon::ShareSettingsInfo> for ShareSettings {
+    fn from(i: cua_daemon::ShareSettingsInfo) -> Self {
+        use cua_daemon::share_route::Landing;
+        let s = i.settings;
+        ShareSettings {
+            landing: match s.landing {
+                Landing::Auto => ShareLanding::Auto,
+                Landing::OnlyMyCloud => ShareLanding::OnlyMyCloud,
+                Landing::AllowRelay => ShareLanding::AllowRelay,
+            },
+            relay_fallback: s.relay_fallback,
+            daily_cap_mib: s.daily_cap_mib,
+            default_allow: s.default_allow,
+            approve_agent_shares: s.approve_agent_shares,
+            always_allow_spaces: s.always_allow_spaces,
+            edge_consent: s.edge_consent,
+            used_today: i.used_today,
+            edge_cloud: i.edge.as_ref().map(|e| e.0.clone()),
+            edge_host: i.edge.as_ref().map(|e| e.1.clone()),
+            edge_monthly_usd: i.edge.as_ref().map(|e| e.2),
+        }
+    }
+}
+
+impl From<&ShareSettings> for cua_daemon::share_route::ShareSettings {
+    fn from(s: &ShareSettings) -> Self {
+        use cua_daemon::share_route::Landing;
+        cua_daemon::share_route::ShareSettings {
+            landing: match s.landing {
+                ShareLanding::Auto => Landing::Auto,
+                ShareLanding::OnlyMyCloud => Landing::OnlyMyCloud,
+                ShareLanding::AllowRelay => Landing::AllowRelay,
+            },
+            relay_fallback: s.relay_fallback,
+            daily_cap_mib: s.daily_cap_mib,
+            default_allow: s.default_allow.clone(),
+            approve_agent_shares: s.approve_agent_shares,
+            always_allow_spaces: s.always_allow_spaces.clone(),
+            edge_consent: s.edge_consent.clone(),
+        }
+    }
 }
 
 fn unix(t: SystemTime) -> i64 {
@@ -89,6 +187,17 @@ impl From<cua_daemon::ShareInfo> for Share {
             created_at_unix: s.created_at.map(unix),
             expires_at_unix: s.expires_at.map(unix),
             notices: s.notices,
+            tcp_connect_with: s.tcp.as_ref().map(|t| t.connect_with().to_owned()),
+            tcp_address: s.tcp.as_ref().map(|t| t.address.clone()),
+            route: s.tcp.as_ref().map(|t| t.route.clone()),
+            route_line: s
+                .tcp
+                .as_ref()
+                .map(|t| t.route_line.clone())
+                .or_else(|| s.waiting.as_ref().map(|w| w.route_line.clone())),
+            allow: s.tcp.map(|t| t.allow).unwrap_or_default(),
+            waiting: s.waiting.as_ref().map(|w| w.reason.clone()),
+            waiting_text: s.waiting.map(|w| w.text),
         }
     }
 }
@@ -161,6 +270,72 @@ impl Cua {
         .await
     }
 
+    /// Shares a raw TCP service in a Space (a game server, for example) at a
+    /// public address anyone can connect to, and returns it
+    /// (`tcp_connect_with`). `target` is a port in a Space
+    /// (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+    /// own. `service` (`"minecraft"`) adds a name people can type instead of
+    /// the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+    /// less. It reaches only that one port of that Space; admin and
+    /// remote-access ports are refused. An experiment (Public TCP shares),
+    /// off unless turned on.
+    ///
+    /// `route` is `auto` (default: the Space's own host in your cloud,
+    /// else a share edge in your linked cloud, else Cua's relay), `host`,
+    /// `edge` or `relay`. `allow` limits who may connect (CIDRs).
+    /// `check_host` (Minecraft) drops connections that did not dial this
+    /// address. `consent` agrees to a share edge's cost now; without it the
+    /// first share through a new edge comes back `waiting` until
+    /// `approve_share`.
+    #[uniffi::method(default(
+        service = None,
+        ttl_seconds = None,
+        name = None,
+        route = None,
+        allow = None,
+        check_host = false,
+        consent = false
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn share_tcp(
+        &self,
+        target: String,
+        service: Option<String>,
+        ttl_seconds: Option<u32>,
+        name: Option<String>,
+        route: Option<String>,
+        allow: Option<Vec<String>>,
+        check_host: bool,
+        consent: bool,
+    ) -> Result<Share> {
+        let backend = self.backend.clone();
+        let cwd =
+            std::env::current_dir().map_err(|e| crate::CuaError::InvalidArgument(e.to_string()))?;
+        let parsed = cua_daemon::ShareTarget::parse(&target, &cwd)?;
+        if matches!(
+            parsed,
+            cua_daemon::ShareTarget::File(_) | cua_daemon::ShareTarget::Dir(_)
+        ) {
+            return Err(crate::CuaError::InvalidArgument(
+                "share_tcp shares a port in a Space (space:NAME:PORT)".into(),
+            ));
+        }
+        let ttl = ttl_seconds.map(super::secs);
+        run(async move {
+            let d = daemon(&backend).await?;
+            let opts = cua_daemon::TcpShareOptions {
+                service,
+                route: route.filter(|r| !r.is_empty() && r != "auto"),
+                allow: allow.unwrap_or_default(),
+                check_host,
+                consent,
+            };
+            let s = d.create_tcp_share(&parsed, ttl, name, &opts).await?;
+            Ok(s.into())
+        })
+        .await
+    }
+
     /// The active shares, newest first.
     pub async fn shares(&self) -> Result<Vec<Share>> {
         let backend = self.backend.clone();
@@ -182,6 +357,61 @@ impl Cua {
         run(async move {
             let d = daemon(&backend).await?;
             Ok(d.stop_share(Some(&id), false).await?)
+        })
+        .await
+    }
+
+    /// Lets a waiting share go live (an agent's public share, or the first
+    /// through a share edge). `always`: its Space may share without asking
+    /// from now on.
+    #[uniffi::method(default(always = false))]
+    pub async fn approve_share(&self, id: String, always: bool) -> Result<Share> {
+        let backend = self.backend.clone();
+        run(async move {
+            let d = daemon(&backend).await?;
+            Ok(d.approve_share(&id, always).await?.into())
+        })
+        .await
+    }
+
+    /// Turns down a waiting share.
+    pub async fn deny_share(&self, id: String) -> Result<()> {
+        let backend = self.backend.clone();
+        run(async move {
+            let d = daemon(&backend).await?;
+            Ok(d.deny_share(&id).await?)
+        })
+        .await
+    }
+
+    /// The share settings, with today's data and the share edge.
+    pub async fn share_settings(&self) -> Result<ShareSettings> {
+        let backend = self.backend.clone();
+        run(async move {
+            let d = daemon(&backend).await?;
+            Ok(d.share_settings().await?.into())
+        })
+        .await
+    }
+
+    /// Saves the share settings (the read-only fields are ignored).
+    pub async fn set_share_settings(&self, settings: ShareSettings) -> Result<ShareSettings> {
+        let backend = self.backend.clone();
+        run(async move {
+            let d = daemon(&backend).await?;
+            d.set_share_settings(&(&settings).into()).await?;
+            Ok(d.share_settings().await?.into())
+        })
+        .await
+    }
+
+    /// Removes the share edge from your cloud now. Returns the ids of the
+    /// shares that ended with it.
+    pub async fn remove_share_edge(&self) -> Result<Vec<String>> {
+        let backend = self.backend.clone();
+        run(async move {
+            let d = daemon(&backend).await?;
+            Ok(d.remove_share_edge().await?)
         })
         .await
     }

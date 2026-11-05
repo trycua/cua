@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session lifecycle hooks.
 //!
 //! The public SDK runtime owns one shared platform registry; the cua-driver

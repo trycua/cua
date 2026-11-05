@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! CLI subcommand parsing and execution.
 //!
 //! Subcommand dispatch (mirrors the Swift cua-driver CLI):
@@ -25,11 +28,9 @@ pub enum Command {
         /// Own the runtime in this MCP process. On macOS this is an explicit
         /// TCC-attribution choice; it is mutually exclusive with `--socket`.
         direct: bool,
-        /// `--claude-code-computer-use-compat`: register the compat
-        /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
-        /// both required) instead of the full-featured one. Used when
-        /// the MCP server is wired up as `cua-computer-use` in Claude
-        /// Code, where this is the documented best-practice install.
+        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
+        /// It currently has no tool-surface effect and remains accepted so
+        /// existing Claude Code launch configurations keep working.
         claude_code_compat: bool,
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
@@ -69,10 +70,11 @@ pub enum Command {
         /// (checked inside the gate itself), so the flag is only one of
         /// two opt-out signals.
         no_permissions_gate: bool,
+        no_automation_prompts: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
         /// proxy forwards this flag to a daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so that daemon registers the requested
-        /// compatibility surface.
+        /// `launch_daemon_and_wait`) so existing launch configurations stay
+        /// stable. It currently has no tool-surface effect.
         claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
@@ -273,6 +275,7 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
+    "--no-automation-prompts",
 ];
 
 fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
@@ -621,6 +624,7 @@ pub fn parse_command() -> Command {
         println!("  The capture file supplies source metadata only; the image is never registered as a reusable capture.");
         println!();
         println!("agent authorization (serve only):");
+        println!("  --no-automation-prompts        Refuse scripting actions without granted macOS Automation consent.");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
         println!(
             "  --grant existing-profile       Pre-authorize existing logged-in Chromium attachment"
@@ -664,21 +668,11 @@ pub fn parse_command() -> Command {
         );
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
         println!("  --claude-code-computer-use-compat");
-        println!("                          Select the Claude Code computer-use compat surface.");
+        println!("                          Legacy compatibility flag retained for existing launch configs.");
         println!(
-            "                          Now forwarded to the proxy-launched daemon (was a no-op"
+            "                          It currently has no tool-surface effect and does not add a"
         );
-        println!(
-            "                          on the proxy path — the path you actually run — because"
-        );
-        println!("                          the daemon hardcoded compat=false). Note: the compat");
-        println!(
-            "                          screenshot tool itself was removed in #1692, so the flag"
-        );
-        println!(
-            "                          has no tool-surface effect today; the wiring is in place"
-        );
-        println!("                          for any future compat-gated tool.");
+        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -799,7 +793,10 @@ pub fn parse_command() -> Command {
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
             eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
-            eprintln!("For direct MCP, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
+            if flag == "--no-automation-prompts" {
+                eprintln!("Start `cua-driver serve --no-automation-prompts` before connecting MCP; an auto-started daemon does not enable this protection.");
+            }
+            eprintln!("For direct MCP authorization, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
             eprintln!("Otherwise start a configured daemon and connect with `cua-driver mcp --socket <path>`." );
             process::exit(64);
         }
@@ -868,6 +865,7 @@ pub fn parse_command() -> Command {
                 .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+            no_automation_prompts: args.iter().any(|a| a == "--no-automation-prompts"),
             claude_code_compat,
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
@@ -1470,17 +1468,9 @@ fn launch_daemon_with_state_and_wait(
     // `~/Applications`), LaunchServices may otherwise pick a different copy
     // than the one this CLI belongs to, with different TCC grants.
     let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
-    // Thread the Claude-Code compat flag through to the daemon. Without this
-    // the proxy-spawned daemon always called build_macos_registry() (compat
-    // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
-    // SILENTLY DROPPED the flag on the proxy path — the path users actually
-    // run on an installed bundle. Today this is latent: the compat screenshot
-    // tool was removed in #1692, so `register_all(compat)` ignores the flag and
-    // the served surface is identical either way. But the flag was being lost
-    // before reaching the daemon at all, so the moment any compat-gated tool is
-    // re-introduced the proxy path would not honour it. This makes the flag
-    // travel end-to-end. Only honoured on a freshly-launched daemon — a
-    // pre-existing daemon keeps whatever surface it launched with.
+    // `daemon_launch_arguments` keeps forwarding the legacy compatibility flag
+    // so existing launch configurations behave the same across proxy and
+    // in-process paths. It currently has no tool-surface effect.
     let status = Cmd::new("/usr/bin/open")
         // `-n` forces a new instance: CuaDriver.app might already be
         // running from a previous MCP session, and without `-n`, `open
@@ -1771,6 +1761,9 @@ fn append_daemon_launch_state(
     if state.no_permissions_gate {
         args.push("--no-permissions-gate".to_owned());
     }
+    if state.no_automation_prompts {
+        args.push("--no-automation-prompts".to_owned());
+    }
     if state.claude_code_compat {
         args.push("--claude-code-computer-use-compat".to_owned());
     }
@@ -1998,7 +1991,7 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
@@ -2015,7 +2008,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
                   { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
+                  { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag forwarded by the MCP proxy; no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
                   ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
@@ -2498,6 +2492,57 @@ mod daemon_compatibility_tests {
     }
 }
 
+fn call_text<'a>(
+    tool: &str,
+    args: Option<&serde_json::Value>,
+    result: &'a serde_json::Value,
+    printed: bool,
+) -> Vec<&'a str> {
+    let page_read = tool == "page"
+        && matches!(
+            args.and_then(|a| a["action"].as_str()),
+            Some("get_text" | "query_dom")
+        );
+    if printed && !page_read {
+        return Vec::new();
+    }
+    result["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "text")
+        .filter_map(|item| item["text"].as_str())
+        .collect()
+}
+
+#[cfg(test)]
+mod call_tests {
+    use super::call_text;
+
+    #[test]
+    fn call_page_read_preserves_text_with_structured_content() {
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": "Page body"}],
+            "structuredContent": {"source": "ax"}
+        });
+        for action in ["get_text", "query_dom"] {
+            let args = serde_json::json!({"action": action});
+            assert_eq!(
+                call_text("page", Some(&args), &result, true),
+                vec!["Page body"]
+            );
+        }
+        assert!(call_text("other", None, &result, true).is_empty());
+        assert!(call_text(
+            "page",
+            Some(&serde_json::json!({"action": "click"})),
+            &result,
+            true
+        )
+        .is_empty());
+    }
+}
+
 pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
@@ -2616,8 +2661,7 @@ pub fn run_call(
                         }
                         if let Some(sc) = result.get("structuredContent") {
                             // Merge image data into the structured payload so
-                            // `cua-driver call screenshot` over
-                            // the daemon socket still emits
+                            // a daemon-routed image response still emits
                             // `screenshot_png_b64`. Previously this path
                             // dropped the image entirely when no
                             // --screenshot-out-file was given.
@@ -2639,19 +2683,8 @@ pub fn run_call(
                             println!("{pretty}");
                             printed = true;
                         }
-                        if !printed {
-                            if let Some(content) = result.get("content").and_then(|v| v.as_array())
-                            {
-                                for item in content {
-                                    if item.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                        if let Some(text) =
-                                            item.get("text").and_then(|v| v.as_str())
-                                        {
-                                            println!("{text}");
-                                        }
-                                    }
-                                }
-                            }
+                        for text in call_text(tool, json_args.as_ref(), &result, printed) {
+                            println!("{text}");
                         }
                         if is_error {
                             process::exit(1);
@@ -4399,12 +4432,13 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"experimental-pip-geometry","short_name":null,"help":"Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).","default_value":false},
+                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.","default_value":false},
                     {"name":"experimental-pip","short_name":null,"help":"Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).","default_value":false},
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
                     {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
+                    {"name":"no-automation-prompts","short_name":null,"help":"Refuse scripting actions without granted macOS Automation consent.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
                     {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false},
                     {"name":"experimental-history","short_name":null,"help":"Admit the encrypted local Computer History early preview for this daemon launch.","default_value":false}
@@ -5759,6 +5793,7 @@ mod tests {
             capability_manifest: Some("/tmp/capabilities.yaml".to_owned()),
             approve_capability_manifest: true,
             no_permissions_gate: true,
+            no_automation_prompts: true,
             claude_code_compat: true,
             grants,
         };
@@ -5779,6 +5814,19 @@ mod tests {
             .any(|pair| { pair == ["--capability-manifest", "/tmp/capabilities.yaml"] }));
         assert!(launch.contains(&"--approve-capability-manifest".to_owned()));
         assert!(launch.contains(&"--no-permissions-gate".to_owned()));
+        assert!(launch.contains(&"--no-automation-prompts".to_owned()));
+        let encoded = serde_json::to_value(&state).unwrap();
+        let restored: crate::history_runtime::DaemonLaunchState =
+            serde_json::from_value(encoded.clone()).unwrap();
+        assert!(restored.no_automation_prompts);
+        let mut legacy = encoded;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("no_automation_prompts");
+        let restored: crate::history_runtime::DaemonLaunchState =
+            serde_json::from_value(legacy).unwrap();
+        assert!(!restored.no_automation_prompts);
         assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
@@ -5815,6 +5863,14 @@ mod tests {
     }
 
     #[test]
+    fn automation_prompt_flag_is_serve_only() {
+        assert_eq!(
+            serve_only_authorization_flag(&args(&["mcp", "--no-automation-prompts"])),
+            Some("--no-automation-prompts")
+        );
+    }
+
+    #[test]
     fn history_relaunch_preserves_explicit_unrestricted_approval() {
         let state = crate::history_runtime::DaemonLaunchState {
             permission_mode: Some("unrestricted".to_owned()),
@@ -5827,6 +5883,8 @@ mod tests {
             .windows(2)
             .any(|pair| { pair == ["--permission-mode", "unrestricted"] }));
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
+        assert!(!state.no_automation_prompts);
+        assert!(!launch.contains(&"--no-automation-prompts".to_owned()));
     }
 
     #[test]

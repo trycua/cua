@@ -65,9 +65,10 @@ pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_ARCH, META_CLOUD, META_OS, META_PROVIDES_SPACES, PermissionHint,
-    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, default_provide_spaces,
-    local_network_hint, permission_hints,
+    HostStatus, META_ARCH, META_CLOUD, META_OS, META_PHONE_FEED, META_PROVIDES_SPACES,
+    PendingRemoval, PermissionHint, RELAY_HICCUP_GRACE, RemovalAccount, SetupOptions,
+    ShareEdgeJoin, SpacesDaemon, StaticRelay, default_provide_spaces, local_network_hint,
+    permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{
@@ -78,9 +79,10 @@ pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };
 pub use relay::{
-    AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch, NoAccount, RelayClient,
-    RelayUsage, RelayUsageTeam, StaticToken, relay_url_from_env,
+    AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DefaultSpace, DefaultSpaceStep,
+    DeviceListing, DeviceState, DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch,
+    NoAccount, RelayClient, RelayUsage, RelayUsageTeam, SpacesSettings, StaticToken,
+    TcpShareRequest, TcpShareView, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 

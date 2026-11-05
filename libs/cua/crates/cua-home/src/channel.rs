@@ -24,6 +24,8 @@
 //! | Cua Volume            | `~/Cua Volume`                                | `~/Cua Volume Local`                             |
 //! | Lume                  | `lume`, `com.trycua.lume_daemon`, `:7777`, `~/.lume` | `lume-local`, `com.trycua.lume_daemon.local`, `:7787`, `~/.lume-local` |
 //! | App data              | `~/Library/Application Support/com.trycua.spaces.macos` | `.../com.trycua.spaces.macos.local`    |
+//! | Cua Driver socket     | `~/.cua/run/cua-driver.sock`                  | `~/.cua-local/run/cua-driver.sock`               |
+//! | Cua Driver updates    | `<App data>/driver/<version>/`                | `<App data>/driver/<version>/`                   |
 //! | Agent MCP server      | `cua` (launches `cua mcp`)                    | `cua-local` (launches `cua-local mcp`)           |
 //! | Agent skills          | `cua-spaces`, `cua-volume`, ...               | `cua-spaces-local`, `cua-volume-local`, ...      |
 //!
@@ -370,6 +372,24 @@ impl CuaChannel {
             .join("Library")
             .join("Application Support")
             .join(self.app_support_dir_name())
+    }
+
+    /// The socket of the Cua Driver that Cua Spaces runs for coding agents
+    /// on this Mac (`cua-spacesd` starts it as its own child, so its
+    /// permissions are the app's): `~/.cua/run/cua-driver.sock` or
+    /// `~/.cua-local/run/cua-driver.sock`. Agent configs name it, so it is
+    /// per channel and the same in every environment (never below
+    /// `envs/`), and never per launch. Not the standalone Cua Driver's
+    /// socket, so the two never fight over one endpoint.
+    pub fn embedded_driver_socket(self) -> PathBuf {
+        self.home_dir().join("run").join("cua-driver.sock")
+    }
+
+    /// Where Cua Spaces keeps Cua Driver versions newer than the one in its
+    /// bundle, one folder per version: `<app_support_dir>/driver`. Updates
+    /// go here, never into the signed app bundle.
+    pub fn driver_updates_dir(self) -> PathBuf {
+        self.app_support_dir().join("driver")
     }
 
     /// The URL scheme the app registers (`cua`, `cua-local`), without `://`.
@@ -1021,6 +1041,18 @@ mod tests {
         assert_eq!(
             l.app_support_dir(),
             user_home().join("Library/Application Support/com.trycua.spaces.macos.local")
+        );
+        assert_eq!(
+            l.embedded_driver_socket(),
+            user_home().join(".cua-local/run/cua-driver.sock")
+        );
+        assert_eq!(
+            l.driver_updates_dir(),
+            user_home().join("Library/Application Support/com.trycua.spaces.macos.local/driver")
+        );
+        assert_eq!(
+            CuaChannel::Stable.embedded_driver_socket(),
+            user_home().join(".cua/run/cua-driver.sock")
         );
         assert_eq!(l.cli_name(), "cua-local");
         assert_eq!(l.cli_path(), user_home().join(".local/bin/cua-local"));

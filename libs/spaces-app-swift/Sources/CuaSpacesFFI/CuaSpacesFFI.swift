@@ -3213,17 +3213,32 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoInstallEnabled: Bool
     /**
-     * "Update to:".
+     * "Updates".
      */
     public var channelLabel: String
     /**
-     * Stable, Beta.
+     * Stable, Nightly.
      */
     public var channels: [AppSettingsOption]
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     public var channelHelp: String
+    /**
+     * A word about the version running on this channel: a nightly build
+     * back on Stable stays until the next stable release passes it;
+     * `None`: nothing to say.
+     */
+    public var channelNote: String?
+    /**
+     * "Download Stable": the way back to Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    public var downloadLabel: String?
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    public var downloadUrl: String?
     /**
      * "Check Now" (or "Checking…").
      */
@@ -3256,14 +3271,26 @@ public struct AppAboutUpdates: Equatable, Hashable {
          * It can be used (only with automatic checks).
          */autoInstallEnabled: Bool,
         /**
-         * "Update to:".
+         * "Updates".
          */channelLabel: String,
         /**
-         * Stable, Beta.
+         * Stable, Nightly.
          */channels: [AppSettingsOption],
         /**
-         * The channel picker's tooltip.
+         * What the chosen channel gets, in a line.
          */channelHelp: String,
+        /**
+         * A word about the version running on this channel: a nightly build
+         * back on Stable stays until the next stable release passes it;
+         * `None`: nothing to say.
+         */channelNote: String?,
+        /**
+         * "Download Stable": the way back to Stable right now
+         * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+         */downloadLabel: String?,
+        /**
+         * Where [`AboutUpdates::download_label`] goes.
+         */downloadUrl: String?,
         /**
          * "Check Now" (or "Checking…").
          */checkLabel: String,
@@ -3281,6 +3308,9 @@ public struct AppAboutUpdates: Equatable, Hashable {
         self.channelLabel = channelLabel
         self.channels = channels
         self.channelHelp = channelHelp
+        self.channelNote = channelNote
+        self.downloadLabel = downloadLabel
+        self.downloadUrl = downloadUrl
         self.checkLabel = checkLabel
         self.checkEnabled = checkEnabled
         self.lastCheck = lastCheck
@@ -3310,6 +3340,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
                 channelLabel: FfiConverterString.read(from: &buf),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from: &buf),
                 channelHelp: FfiConverterString.read(from: &buf),
+                channelNote: FfiConverterOptionString.read(from: &buf),
+                downloadLabel: FfiConverterOptionString.read(from: &buf),
+                downloadUrl: FfiConverterOptionString.read(from: &buf),
                 checkLabel: FfiConverterString.read(from: &buf),
                 checkEnabled: FfiConverterBool.read(from: &buf),
                 lastCheck: FfiConverterString.read(from: &buf)
@@ -3325,6 +3358,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
         FfiConverterString.write(value.channelLabel, into: &buf)
         FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into: &buf)
         FfiConverterString.write(value.channelHelp, into: &buf)
+        FfiConverterOptionString.write(value.channelNote, into: &buf)
+        FfiConverterOptionString.write(value.downloadLabel, into: &buf)
+        FfiConverterOptionString.write(value.downloadUrl, into: &buf)
         FfiConverterString.write(value.checkLabel, into: &buf)
         FfiConverterBool.write(value.checkEnabled, into: &buf)
         FfiConverterString.write(value.lastCheck, into: &buf)
@@ -17070,6 +17106,47 @@ public struct AppExperiments: Equatable, Hashable {
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
     public var webUi: Bool
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    public var secureSpaces: Bool
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var childSpaces: Bool
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var askFirst: Bool
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    public var ciRunners: Bool
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var tcpShares: Bool
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    public var mobile: Bool
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var warmPools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17087,11 +17164,52 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * The shared web UI is the main window. Always on in the macOS shell
          * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool) {
+         */webUi: Bool,
+        /**
+         * Secure Spaces: a Space reaches the internet and nothing else on the
+         * network unless it is opened. Off unless turned on; the daemon enforces
+         * it (the switch is kept in the cua home).
+         */secureSpaces: Bool,
+        /**
+         * Child Spaces: a Space may make Spaces of its own. Off unless turned
+         * on; the daemon enforces it (the switch is kept in the cua home).
+         */childSpaces: Bool,
+        /**
+         * Ask first: an agent asks on a card before something leaves its Space
+         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */askFirst: Bool,
+        /**
+         * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+         * and the CI Runners page). Off unless turned on; the daemon and the
+         * `cua` command enforce it (the switch is kept in the cua home).
+         */ciRunners: Bool,
+        /**
+         * Public TCP shares: a raw TCP service in a Space (a game server) at a
+         * public address. Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */tcpShares: Bool,
+        /**
+         * Mobile: the computer answers the Cua Spaces phone app (its tools and
+         * push events). Off unless turned on; the daemon enforces it (the switch
+         * is kept in the cua home).
+         */mobile: Bool,
+        /**
+         * Warm pools: one Linux Space kept ready, with its coding apps
+         * installed, so the next Create from Home starts at once. Off unless
+         * turned on; the daemon enforces it (the switch is kept in the cua home).
+         */warmPools: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
         self.webUi = webUi
+        self.secureSpaces = secureSpaces
+        self.childSpaces = childSpaces
+        self.askFirst = askFirst
+        self.ciRunners = ciRunners
+        self.tcpShares = tcpShares
+        self.mobile = mobile
+        self.warmPools = warmPools
     }
 
 
@@ -17113,7 +17231,14 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 cuaVolume: FfiConverterBool.read(from: &buf),
                 yourCloud: FfiConverterBool.read(from: &buf),
                 sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf)
+                webUi: FfiConverterBool.read(from: &buf),
+                secureSpaces: FfiConverterBool.read(from: &buf),
+                childSpaces: FfiConverterBool.read(from: &buf),
+                askFirst: FfiConverterBool.read(from: &buf),
+                ciRunners: FfiConverterBool.read(from: &buf),
+                tcpShares: FfiConverterBool.read(from: &buf),
+                mobile: FfiConverterBool.read(from: &buf),
+                warmPools: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17122,6 +17247,13 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.yourCloud, into: &buf)
         FfiConverterBool.write(value.sharing, into: &buf)
         FfiConverterBool.write(value.webUi, into: &buf)
+        FfiConverterBool.write(value.secureSpaces, into: &buf)
+        FfiConverterBool.write(value.childSpaces, into: &buf)
+        FfiConverterBool.write(value.askFirst, into: &buf)
+        FfiConverterBool.write(value.ciRunners, into: &buf)
+        FfiConverterBool.write(value.tcpShares, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
+        FfiConverterBool.write(value.warmPools, into: &buf)
     }
 }
 
@@ -35786,6 +35918,24 @@ public struct AppSettings: Equatable, Hashable {
      * older settings file without it reads as tips on, none done.
      */
     public var tips: AppTipsState
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    public var agentMenuShown: [String]
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    public var agentMenuHidden: [String]
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    public var agentMenuSeen: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35867,7 +36017,22 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
          * older settings file without it reads as tips on, none done.
-         */tips: AppTipsState) {
+         */tips: AppTipsState,
+        /**
+         * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+         * Home's agent menu shows although the default hides them (an app
+         * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+         */agentMenuShown: [String],
+        /**
+         * The apps the menu hides although the default shows them. Nothing is
+         * signed out: a hidden app keeps its sign-ins and stays on the Agents
+         * page and available by name.
+         */agentMenuHidden: [String],
+        /**
+         * The working accounts the menu last saw (`app|variable|slot`): a new
+         * one is a connect, which shows its app again
+         * ([`crate::agent_menu::sync`]).
+         */agentMenuSeen: [String]) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -35886,6 +36051,9 @@ public struct AppSettings: Equatable, Hashable {
         self.autoConnect = autoConnect
         self.currentTeamId = currentTeamId
         self.tips = tips
+        self.agentMenuShown = agentMenuShown
+        self.agentMenuHidden = agentMenuHidden
+        self.agentMenuSeen = agentMenuSeen
     }
 
 
@@ -35921,7 +36089,10 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
                 currentTeamId: FfiConverterOptionString.read(from: &buf),
-                tips: FfiConverterTypeAppTipsState.read(from: &buf)
+                tips: FfiConverterTypeAppTipsState.read(from: &buf),
+                agentMenuShown: FfiConverterSequenceString.read(from: &buf),
+                agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -35944,6 +36115,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.currentTeamId, into: &buf)
         FfiConverterTypeAppTipsState.write(value.tips, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
     }
 }
 
@@ -38335,6 +38509,14 @@ public struct AppSpace: Equatable, Hashable {
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
     public var access: AppSpaceAccess?
+    /**
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
+     */
+    public var hidden: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38425,7 +38607,14 @@ public struct AppSpace: Equatable, Hashable {
         /**
          * Who it belongs to, who else has it and what you may do with it
          * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
-         */access: AppSpaceAccess?) {
+         */access: AppSpaceAccess?,
+        /**
+         * The home that warms in the background for Home's prompt box, until a
+         * person writes into it: no list shows it (not the Spaces list, the
+         * sidebar, the palette, the menu bar item or the notch; see
+         * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+         * SDK and `cua spaces ls` still return it, marked.
+         */hidden: Bool) {
         self.id = id
         self.name = name
         self.os = os
@@ -38452,6 +38641,7 @@ public struct AppSpace: Equatable, Hashable {
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
         self.access = access
+        self.hidden = hidden
     }
 
 
@@ -38495,7 +38685,8 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
                 cloud: FfiConverterOptionString.read(from: &buf),
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
                 cloudDelete: FfiConverterOptionString.read(from: &buf),
-                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf)
+                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -38526,6 +38717,7 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloudPlace, into: &buf)
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
         FfiConverterOptionTypeAppSpaceAccess.write(value.access, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
     }
 }
 
@@ -40102,6 +40294,11 @@ public struct AppSpaceRow: Equatable, Hashable {
      */
     public var arch: String?
     /**
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
+     */
+    public var hidden: Bool
+    /**
      * Answered the last connect.
      */
     public var reachable: Bool
@@ -40200,6 +40397,10 @@ public struct AppSpaceRow: Equatable, Hashable {
          * `aarch64`, `amd64`, `x86_64`).
          */arch: String?,
         /**
+         * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+         * for Home's prompt box. No list shows it ([`Space::hidden`]).
+         */hidden: Bool,
+        /**
          * Answered the last connect.
          */reachable: Bool,
         /**
@@ -40251,6 +40452,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.imageDigest = imageDigest
         self.kind = kind
         self.arch = arch
+        self.hidden = hidden
         self.reachable = reachable
         self.error = error
         self.host = host
@@ -40294,6 +40496,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 imageDigest: FfiConverterOptionString.read(from: &buf),
                 kind: FfiConverterOptionTypeAppSpaceKind.read(from: &buf),
                 arch: FfiConverterOptionString.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf),
                 reachable: FfiConverterBool.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
@@ -40323,6 +40526,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.imageDigest, into: &buf)
         FfiConverterOptionTypeAppSpaceKind.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.arch, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
         FfiConverterBool.write(value.reachable, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)
@@ -66604,9 +66808,12 @@ public enum AppUpdateChannel: Equatable, Hashable {
      */
     case stable
     /**
-     * Releases and prereleases (`X.Y.Z-suffix`).
+     * A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+     * its own feed. It replaced the Beta channel, so `beta` (an older
+     * build's word, and what the settings file still stores, see
+     * [`crate::settings::save`]) reads as Nightly.
      */
-    case beta
+    case nightly
 
 
 
@@ -66630,7 +66837,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
 
         case 1: return .stable
 
-        case 2: return .beta
+        case 2: return .nightly
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -66644,7 +66851,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .beta:
+        case .nightly:
             writeInt(&buf, Int32(2))
 
         }
@@ -78380,6 +78587,19 @@ public func appAboutAllowedChannels(channel: AppUpdateChannel) -> [String]  {
 })
 }
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+ */
+public func appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel_lower(channel),
+        FfiConverterString.lower(stableFeed),$0
+    )
+})
+}
+/**
  * The About input from JSON (parity flows).
  */
 public func appAboutInputFromJson(json: String)throws  -> AppAboutInput  {
@@ -80663,7 +80883,7 @@ public func appSettingsDefaults() -> AppSettings  {
 }
 /**
  * The update channel of an install's first launch, from the file's
- * `channel`: Beta for a prerelease, else unchanged.
+ * `channel`: Nightly for a prerelease, else unchanged.
  */
 public func appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel  {
     return try!  FfiConverterTypeAppUpdateChannel_lift(try! rustCall() {
@@ -80684,7 +80904,9 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 })
 }
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
     return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
@@ -80717,7 +80939,8 @@ public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> A
 })
 }
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 public func appSettingsSave(path: String, settings: AppSettings)throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(
@@ -82163,6 +82386,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() != 59781) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() != 25239) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() != 570) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -82796,13 +83022,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults() != 47096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 11279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 29109) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 42027) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
@@ -82811,7 +83037,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 30129) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() != 34252) {

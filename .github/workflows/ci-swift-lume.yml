@@ -20,7 +20,14 @@ permissions:
   contents: read
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Test
     runs-on: macos-15
     steps:
@@ -30,6 +37,8 @@ jobs:
       - run: swift test
         working-directory: ./libs/lume
   build:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Release build
     runs-on: macos-15
     steps:

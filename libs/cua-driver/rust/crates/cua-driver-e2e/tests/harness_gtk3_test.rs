@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Evidence-bearing native GTK3 harness catalog for Linux.
 //!
 //! GTK exposes accessibility through ATK -> AT-SPI. The Linux snapshot has no

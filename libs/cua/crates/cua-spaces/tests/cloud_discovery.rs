@@ -36,6 +36,10 @@ impl Provider for Cloud {
     fn joins_relay(&self) -> bool {
         true
     }
+    // Like a cloud machine whose own firewall cua installs first.
+    fn keeps_internet_only(&self) -> bool {
+        true
+    }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             kinds: vec![RunKind::Container],

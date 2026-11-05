@@ -247,6 +247,66 @@ pub struct Registration {
     pub jwks: serde_json::Value,
 }
 
+/// The account's default Space and the order to try when it is offline
+/// (`GET`/`PUT /v1/spaces/settings`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpacesSettings {
+    /// `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Ids to try, in order, when the default is offline. Empty: every
+    /// online computer you can use, oldest first.
+    #[serde(default)]
+    pub fallback: Vec<String>,
+    /// false: only the default, then this device.
+    #[serde(default = "fallback_on_default")]
+    pub fallback_on: bool,
+    /// Unix seconds the relay saved it (ignored on write).
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
+fn fallback_on_default() -> bool {
+    true
+}
+
+/// One entry of [`DefaultSpace::order`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpaceStep {
+    /// The Space id.
+    pub space: String,
+    /// Its display name.
+    #[serde(default)]
+    pub name: String,
+    /// Connected and sharing now.
+    #[serde(default)]
+    pub online: bool,
+    /// `default`, `fallback` or `here`.
+    #[serde(default)]
+    pub role: String,
+}
+
+/// `GET /v1/spaces/default`: where "my default Space" resolves now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpace {
+    /// The first online entry of the order; none with reason `here` when
+    /// this device is the answer.
+    #[serde(default)]
+    pub space: Option<String>,
+    /// `default`, `fallback`, `here` or `unset`.
+    #[serde(default)]
+    pub reason: String,
+    /// The chosen default, online or not.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Whether the default is online (none when unset).
+    #[serde(default)]
+    pub default_online: Option<bool>,
+    /// The order the relay tried.
+    #[serde(default)]
+    pub order: Vec<DefaultSpaceStep>,
+}
+
 /// `PATCH /v1/machines/{id}` body.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachinePatch {
@@ -1055,6 +1115,66 @@ impl RelayClient {
         .await
     }
 
+    /// The account's default Space settings (`GET /v1/spaces/settings`).
+    /// A relay that predates them answers [`RELAY_NEEDS_UPDATE`]
+    /// ([`is_relay_outdated`]).
+    pub async fn spaces_settings(&self, account_token: &str) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http.get(self.url("/v1/spaces/settings")),
+            account_token,
+        )
+        .await
+    }
+
+    /// Replaces the account's default Space settings (`PUT`, whole object).
+    pub async fn set_spaces_settings(
+        &self,
+        account_token: &str,
+        settings: &SpacesSettings,
+    ) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http
+                .put(self.url("/v1/spaces/settings"))
+                .json(settings),
+            account_token,
+        )
+        .await
+    }
+
+    /// Where the default Space resolves now (`GET /v1/spaces/default`).
+    /// `here` is this computer's own machine id, when it has one.
+    pub async fn resolve_default_space(
+        &self,
+        account_token: &str,
+        here: Option<&str>,
+    ) -> Result<DefaultSpace> {
+        let mut url = self.url("/v1/spaces/default");
+        if let Some(h) = here.filter(|h| !h.is_empty()) {
+            url.push_str("?here=");
+            url.push_str(h);
+        }
+        self.spaces_route(self.http.get(url), account_token).await
+    }
+
+    /// One request to a `/v1/spaces/...` route, mapping "no such route" to
+    /// [`RELAY_NEEDS_UPDATE`].
+    async fn spaces_route<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        account_token: &str,
+    ) -> Result<T> {
+        match self.send_once::<T>(req, account_token).await {
+            Ok(r) => Ok(r),
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
     /// Vouches for a machine that registered without proof (S5): shows it
     /// as "new" no longer. Owner only, from an enrolled device
     /// ([`RelayClient::with_device_session`]); a machine cannot confirm
@@ -1070,13 +1190,27 @@ impl RelayClient {
     }
 
     /// Deletes the machine and revokes its token (owner or machine token).
+    /// The Spaces it provides stay on the account, detached: they come
+    /// back when the computer registers again under the same id.
     pub async fn delete(&self, credential: &str, id: &str) -> Result<()> {
-        let _: serde_json::Value = self
-            .send(
-                self.http.delete(self.url(&format!("/v1/machines/{id}"))),
-                credential,
-            )
-            .await?;
+        self.delete_machine(credential, id, false).await
+    }
+
+    /// [`RelayClient::delete`], and with `delete_spaces` (owner only) the
+    /// records of the Spaces it provides go too
+    /// (`DELETE /v1/machines/{id}?spaces=delete`). Their files are the
+    /// caller's to delete through the computer first.
+    pub async fn delete_machine(
+        &self,
+        credential: &str,
+        id: &str,
+        delete_spaces: bool,
+    ) -> Result<()> {
+        let mut url = self.url(&format!("/v1/machines/{id}"));
+        if delete_spaces {
+            url.push_str("?spaces=delete");
+        }
+        let _: serde_json::Value = self.send(self.http.delete(url), credential).await?;
         Ok(())
     }
 
@@ -1104,6 +1238,67 @@ impl RelayClient {
             }
             Err((e, _)) => Err(e),
         }
+    }
+
+    /// Allocates a public TCP port for a share of machine `id`
+    /// (`POST /v1/machines/{id}/tcp-shares`, owner or machine token).
+    pub async fn tcp_share_allocate(
+        &self,
+        credential: &str,
+        id: &str,
+        req: &TcpShareRequest,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares")))
+                .json(req),
+            credential,
+        )
+        .await
+    }
+
+    /// Renews a TCP share's lease.
+    pub async fn tcp_share_keepalive(
+        &self,
+        credential: &str,
+        id: &str,
+        port: u16,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}/keepalive"))),
+            credential,
+        )
+        .await
+    }
+
+    /// Closes a TCP share's port.
+    pub async fn tcp_share_close(&self, credential: &str, id: &str, port: u16) -> Result<()> {
+        let _: serde_json::Value = self
+            .send(
+                self.http
+                    .delete(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}"))),
+                credential,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The computer's TCP share ports.
+    pub async fn tcp_shares(&self, credential: &str, id: &str) -> Result<Vec<TcpShareView>> {
+        #[derive(serde::Deserialize)]
+        struct List {
+            #[serde(default)]
+            shares: Vec<TcpShareView>,
+        }
+        let l: List = self
+            .send(
+                self.http
+                    .get(self.url(&format!("/v1/machines/{id}/tcp-shares"))),
+                credential,
+            )
+            .await?;
+        Ok(l.shares)
     }
 
     /// Cuts every client and refuses new ones (owner or machine token).
@@ -1151,6 +1346,66 @@ fn http_error(status: u16, body: &str) -> Error {
         409 => Error::Conflict(format!("relay: {message}")),
         _ => Error::Relay(format!("HTTP {status}: {message}")),
     }
+}
+
+/// Body of a TCP share allocation (see the relay's `tcp_shares`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareRequest {
+    /// The share's token (40 hex).
+    pub token: String,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Lifetime in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    /// SRV service (`minecraft`): also makes a name people can type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// Name for lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Who may connect (CIDRs, at most 32); empty: anyone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Drop Minecraft Java connections that did not dial this share's
+    /// address (needs `service` `minecraft`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_host: bool,
+    /// The most bytes the share may move (the owner's daily data cap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
+/// One TCP share port as the relay reports it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareView {
+    /// Public port.
+    pub port: u16,
+    /// `host:port`.
+    pub address: String,
+    /// Public host.
+    pub host: String,
+    /// The name people type, when there is an SRV record.
+    #[serde(default)]
+    pub srv_name: Option<String>,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Unix seconds.
+    pub lease_until: u64,
+    /// Unix seconds.
+    pub ends: u64,
+    /// Open connections now.
+    #[serde(default)]
+    pub connections: u32,
+    /// Who may connect (CIDRs); empty: anyone.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Bytes moved since the port opened.
+    #[serde(default)]
+    pub bytes: u64,
+    /// The share's data cap (0: none).
+    #[serde(default)]
+    pub max_bytes: u64,
 }
 
 /// `wss://x/` → `https://x`, `ws://` → `http://`, trims the trailing slash.
@@ -1323,6 +1578,115 @@ mod tests {
         let e = client.leave("bob-tok", id).await.unwrap_err();
         assert!(is_relay_outdated(&e), "{e:?}");
         assert_eq!(e.to_string(), "relay: the Cua relay needs an update");
+    }
+
+    /// The default-Space routes and `spaces=delete`, against a mock relay
+    /// that records what it was sent.
+    #[tokio::test]
+    async fn default_space_routes_send_what_the_contract_says() {
+        use axum::extract::{Query, State};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        type Log = Arc<Mutex<Vec<String>>>;
+        let log: Log = Arc::default();
+        let app = axum::Router::new()
+            .route(
+                "/v1/spaces/settings",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"default_space": "relay:abc",
+                        "fallback": ["relay:def"], "fallback_on": false, "updated_at": 7}))
+                })
+                .put(|State(l): State<Log>, body: String| async move {
+                    l.lock().unwrap().push(format!("PUT {body}"));
+                    axum::Json(serde_json::json!({"default_space": null,
+                        "fallback": [], "fallback_on": true, "updated_at": 9}))
+                }),
+            )
+            .route(
+                "/v1/spaces/default",
+                axum::routing::get(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("here={:?}", q.get("here")));
+                        axum::Json(serde_json::json!({"space": "relay:def", "reason": "fallback",
+                            "default_space": "relay:abc", "default_online": false,
+                            "order": [{"space": "relay:abc", "name": "Studio", "online": false, "role": "default"},
+                                      {"space": "relay:def", "name": "PC", "online": true, "role": "fallback"}]}))
+                    },
+                ),
+            )
+            .route(
+                "/v1/machines/m1",
+                axum::routing::delete(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("DELETE spaces={:?}", q.get("spaces")));
+                        axum::Json(serde_json::json!({"ok": true}))
+                    },
+                ),
+            )
+            .with_state(log.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+
+        let got = client.spaces_settings("tok").await.unwrap();
+        assert_eq!(got.default_space.as_deref(), Some("relay:abc"));
+        assert_eq!(got.fallback, vec!["relay:def".to_string()]);
+        assert!(!got.fallback_on && got.updated_at == 7);
+
+        let put = SpacesSettings {
+            default_space: None,
+            fallback: vec![],
+            fallback_on: true,
+            updated_at: 0,
+        };
+        assert_eq!(
+            client
+                .set_spaces_settings("tok", &put)
+                .await
+                .unwrap()
+                .updated_at,
+            9
+        );
+
+        let d = client
+            .resolve_default_space("tok", Some("here1"))
+            .await
+            .unwrap();
+        assert_eq!(d.reason, "fallback");
+        assert_eq!(d.default_online, Some(false));
+        assert_eq!(d.order.len(), 2);
+        assert_eq!(d.order[1].role, "fallback");
+        client.resolve_default_space("tok", None).await.unwrap();
+
+        client.delete("tok", "m1").await.unwrap();
+        client.delete_machine("tok", "m1", true).await.unwrap();
+
+        let log = log.lock().unwrap().clone();
+        let put_body: serde_json::Value =
+            serde_json::from_str(log[0].strip_prefix("PUT ").unwrap()).unwrap();
+        assert_eq!(put_body["default_space"], serde_json::Value::Null);
+        assert_eq!(put_body["fallback_on"], true);
+        assert_eq!(
+            &log[1..],
+            [
+                "here=Some(\"here1\")",
+                "here=None",
+                "DELETE spaces=None",
+                "DELETE spaces=Some(\"delete\")"
+            ]
+        );
+
+        // A relay that predates the routes (its own 404 has no JSON error).
+        let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_addr = old.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(old, axum::Router::new()).await.unwrap() });
+        let e = RelayClient::new(&format!("http://{old_addr}"))
+            .unwrap()
+            .spaces_settings("tok")
+            .await
+            .unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
     }
 
     #[tokio::test]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Enumerate top-level windows on Windows.
 //!
 //! Two enumeration sources, then union + dedupe by HWND:

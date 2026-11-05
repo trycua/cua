@@ -440,6 +440,9 @@ async fn cancelled_launch_child() {
     // still exercise both processes after they started.
     for file in ["fake.pid", "qemu.pid"] {
         match std::fs::read_to_string(root.join(file)) {
+            // A cancel can land between the stub creating its pid file and
+            // writing the pid, so an empty file counts as "not written yet".
+            Ok(pid) if pid.trim().is_empty() && !late => {}
             Ok(pid) => assert!(!host::pid_alive(pid.trim().parse().unwrap()), "{file}"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !late => {}
             Err(e) => panic!("{file}: {e}"),

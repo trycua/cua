@@ -168,7 +168,10 @@ pub fn steps(input: &FirstRunInput) -> Vec<FirstRunStep> {
     if asks_permissions(input) {
         out.push(FirstRunStep::Permissions);
     }
-    out.push(FirstRunStep::Setup);
+    // Ask first has no "Try it" screen: the person asks in the ask-first Space.
+    if !input.ask_first {
+        out.push(FirstRunStep::Setup);
+    }
     out
 }
 
@@ -321,6 +324,14 @@ pub struct FirstRunInput {
     pub signed_in: bool,
     /// Sign-in is waiting for the browser.
     pub signing_in: bool,
+    /// While signing in by a code: the code to enter on the sign-in page
+    /// (none: the browser flow).
+    pub sign_in_code: Option<String>,
+    /// The last sign-in didn't finish, for this reason (none: it did, it is
+    /// still running, or none was tried). Shown on the screen with what to
+    /// do next, never only in a sidebar the first run does not show
+    /// (CUA-3144).
+    pub sign_in_failure: Option<crate::sign_in::SignInFailure>,
     /// `host.status` (none: not read yet).
     pub host: Option<FirstRunHost>,
     /// The host setup is running (after sign-in).
@@ -335,6 +346,21 @@ pub struct FirstRunInput {
     /// The CLI's name (`SettingsSnapshot.cli`: `CuaChannel::cli_name`);
     /// none: the install plan's file name, else `cua`.
     pub cli_name: Option<String>,
+    /// Ask first is on: there is no "Try it in your agent" screen. The last
+    /// screen's button opens the ask-first Space, which is already being
+    /// prepared, and the person asks there.
+    #[serde(default)]
+    pub ask_first: bool,
+}
+
+/// The label of the button that ends the first run: "Open Cua" on the last
+/// screen of an ask-first run, "Continue" on every other.
+fn continue_label(input: &FirstRunInput, step: FirstRunStep) -> &'static str {
+    if input.ask_first && steps(input).last() == Some(&step) {
+        "Open Cua"
+    } else {
+        "Continue"
+    }
 }
 
 /// The CLI's name for `input`: the host's, else the install plan's file
@@ -512,7 +538,8 @@ pub struct CheckRow {
     pub state: RowState,
     pub title: String,
     pub note: String,
-    /// The fix: `restart-check`, `connect`, `sign-in`, `open-settings`,
+    /// The fix: `restart-check`, `connect`, `sign-in`, `sign-in-code`,
+    /// `reopen-sign-in`, `open-settings`,
     /// `set-up`.
     pub action: Option<FirstRunButton>,
     /// The Settings pane `open-settings` opens.
@@ -1162,14 +1189,7 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
         settings_url: None,
     };
     if !input.signed_in {
-        return input.signing_in.then(|| {
-            row(
-                RowState::Checking,
-                "Signing in".into(),
-                "Finish signing in to Cua in your browser.".into(),
-                None,
-            )
-        });
+        return sign_in_row(input);
     }
     let Some(host) = &input.host else {
         return Some(row(
@@ -1213,6 +1233,56 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
     ))
 }
 
+/// Screen 3's sign-in line before this computer is signed in: waiting
+/// (with the way out when the browser tab was closed or opened in the
+/// wrong browser), or why it didn't finish with the next step. Every way a
+/// sign-in ends shows here: the first run has no sidebar to show it in.
+fn sign_in_row(input: &FirstRunInput) -> Option<CheckRow> {
+    use crate::sign_in::{FAILED_TITLE, SignInFailure, reason_text};
+    let row = |state, title: &str, note: String, action: Option<FirstRunButton>| CheckRow {
+        id: "account".into(),
+        state,
+        title: title.into(),
+        note,
+        action,
+        settings_url: None,
+    };
+    if input.signing_in {
+        let code = input.sign_in_code.as_deref().filter(|c| !c.is_empty());
+        return Some(match code {
+            Some(code) => row(
+                RowState::Checking,
+                "Signing in",
+                format!("Enter the code {code} on the sign-in page."),
+                Some(button("reopen-sign-in", "Open the page")),
+            ),
+            None => row(
+                RowState::Checking,
+                "Signing in",
+                "Finish signing in to Cua in your browser.".into(),
+                Some(button("sign-in-code", "Use a code instead")),
+            ),
+        });
+    }
+    let reason = input.sign_in_failure?;
+    let note = match reason_text(reason) {
+        "" => "Try again, or use a code instead.".to_string(),
+        why => why.to_string(),
+    };
+    // A code helps when the browser can't get back here; not when the
+    // person declined, is offline, or this computer can't save it.
+    let code = matches!(
+        reason,
+        SignInFailure::NotConfirmed | SignInFailure::CodeRejected | SignInFailure::Unknown
+    );
+    Some(row(
+        RowState::Fix,
+        FAILED_TITLE,
+        note,
+        code.then(|| button("sign-in-code", "Use a code instead")),
+    ))
+}
+
 fn devices_view(input: &FirstRunInput) -> DevicesView {
     let place = this_computer(&input.host_os);
     let rows = vec![
@@ -1237,7 +1307,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             lede: "Sign in on your other computers to use its Spaces.".into(),
             rows,
             status,
-            primary: button("continue", "Continue"),
+            primary: button("continue", continue_label(input, FirstRunStep::Devices)),
             secondary: None,
             note: None,
         };
@@ -1249,7 +1319,14 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         ),
         rows,
         status: account_row(input),
-        primary: button("sign-in", "Sign in"),
+        primary: button(
+            "sign-in",
+            if input.sign_in_failure.is_some() && !input.signing_in {
+                "Try again"
+            } else {
+                "Sign in"
+            },
+        ),
         secondary: Some(button("not-now", "Not now")),
         note: Some(format!(
             "Not now keeps Cua on {place} only. You can sign in later."
@@ -1364,7 +1441,7 @@ pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
         },
         rows,
         note: format!("Allow opens System Settings, where you turn on {app}."),
-        primary: all.then(|| button("continue", "Continue")),
+        primary: all.then(|| button("continue", continue_label(input, FirstRunStep::Permissions))),
         secondary: (!all).then(|| button("not-now", "Not now")),
     }
 }
@@ -1744,6 +1821,8 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
     // its screen is not shared) shows the try screen instead.
     let step = if all.contains(&input.step) {
         input.step
+    } else if input.ask_first {
+        all.last().copied().unwrap_or(FirstRunStep::Welcome)
     } else {
         FirstRunStep::Setup
     };
@@ -2072,6 +2151,123 @@ mod tests {
     }
 
     #[test]
+    fn ask_first_has_no_try_it_screen_and_the_last_screen_opens_cua() {
+        let mut i = input(FirstRunStep::Devices, vec![claude(true)]);
+        // Off: the Try it screen is last, as before.
+        assert_eq!(steps(&i).last(), Some(&FirstRunStep::Setup));
+        i.ask_first = true;
+        // Signed out: no permissions screen, so Add your other machines is last.
+        assert_eq!(
+            steps(&i),
+            vec![
+                FirstRunStep::Welcome,
+                FirstRunStep::Connect,
+                FirstRunStep::Devices
+            ]
+        );
+        assert!(!steps(&i).contains(&FirstRunStep::Setup));
+        assert_eq!(view(&i).dots, 3);
+        // Signed in and not sharing the screen: still no permissions screen; the button ends the run.
+        i.signed_in = true;
+        i.host = Some(FirstRunHost {
+            configured: true,
+            share_desktop: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(view(&i).devices.unwrap().primary.label, "Open Cua");
+        // A Mac that shares its screen asks for permissions last: Continue on Devices, Open Cua there.
+        i.host = Some(FirstRunHost {
+            configured: true,
+            ..Default::default()
+        });
+        assert_eq!(steps(&i).last(), Some(&FirstRunStep::Permissions));
+        assert_eq!(view(&i).devices.unwrap().primary.label, "Continue");
+        i.step = FirstRunStep::Permissions;
+        assert_eq!(
+            view(&i).permissions.unwrap().primary.map(|b| b.label),
+            Some("Open Cua".to_string())
+        );
+        // A run saved on the removed screen shows the last one.
+        i.step = FirstRunStep::Setup;
+        assert_eq!(view(&i).step, FirstRunStep::Permissions);
+    }
+
+    #[test]
+    fn every_page_in_every_branch_has_its_action_and_every_agent_row_its_state_or_action() {
+        for ask_first in [false, true] {
+            for signed_in in [false, true] {
+                for cli_missing in [false, true] {
+                    let mut base = input(
+                        FirstRunStep::Welcome,
+                        vec![claude(false), codex(false, false), hermes()],
+                    );
+                    base.ask_first = ask_first;
+                    base.signed_in = signed_in;
+                    if signed_in {
+                        base.host = Some(FirstRunHost {
+                            configured: true,
+                            ..Default::default()
+                        });
+                    }
+                    if cli_missing {
+                        base.cli.plan = Some(crate::installer::CliInstallPlan {
+                            source: Some("/app/cua".into()),
+                            target: "/usr/local/bin/cua".into(),
+                            ..Default::default()
+                        });
+                    }
+                    let all = steps(&base);
+                    assert_eq!(all.contains(&FirstRunStep::Setup), !ask_first);
+                    for st in all {
+                        let mut i = base.clone();
+                        i.step = st;
+                        let v = view(&i);
+                        let what = format!(
+                            "ask_first {ask_first}, signed_in {signed_in}, cli_missing {cli_missing}, {st:?}"
+                        );
+                        assert_eq!(v.step, st, "{what}");
+                        match st {
+                            FirstRunStep::Welcome => {
+                                assert!(!v.welcome.unwrap().primary.label.is_empty(), "{what}")
+                            }
+                            FirstRunStep::Connect => {
+                                let c = v.connect.unwrap();
+                                assert!(!c.primary.label.is_empty(), "{what}: Continue");
+                                assert!(!c.agents.is_empty(), "{what}");
+                                for a in &c.agents {
+                                    assert!(
+                                        a.connected || a.action.is_some() || a.note.is_some(),
+                                        "{what}: {} has no state or action",
+                                        a.name
+                                    );
+                                }
+                            }
+                            FirstRunStep::Cli => {
+                                let c = v.cli.unwrap();
+                                assert!(c.primary.is_some(), "{what}");
+                            }
+                            FirstRunStep::Devices => {
+                                let d = v.devices.unwrap();
+                                assert!(!d.primary.label.is_empty(), "{what}");
+                            }
+                            FirstRunStep::Permissions => {
+                                let p = v.permissions.unwrap();
+                                assert!(
+                                    p.primary.is_some() || p.secondary.is_some(),
+                                    "{what}: no Continue and no Not now"
+                                );
+                            }
+                            FirstRunStep::Setup => {
+                                assert!(v.setup.is_some(), "{what}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn four_screens_in_order_and_a_fresh_run_starts_on_welcome() {
         assert_eq!(FirstRunInput::default().step, FirstRunStep::Welcome);
         let mut i = input(FirstRunStep::Welcome, vec![claude(false)]);
@@ -2373,6 +2569,104 @@ mod tests {
             view(&i).devices.unwrap().status.unwrap().state,
             RowState::Ok
         );
+    }
+
+    /// Every way a sign-in on screen 3 ends is on the screen with a next
+    /// step, never a silent "Sign in" again (CUA-3144): the first run has no
+    /// sidebar or toast to show it in.
+    #[test]
+    fn every_sign_in_state_shows_on_the_screen_with_a_next_step() {
+        use crate::sign_in::SignInFailure;
+        let mut i = input(FirstRunStep::Devices, vec![]);
+
+        // Waiting for the browser: the way out if the tab was closed or
+        // opened in another browser.
+        i.signing_in = true;
+        let d = view(&i).devices.unwrap();
+        let w = d.status.unwrap();
+        assert_eq!(
+            (w.state, w.title.as_str(), w.note.as_str()),
+            (
+                RowState::Checking,
+                "Signing in",
+                "Finish signing in to Cua in your browser."
+            )
+        );
+        let a = w.action.unwrap();
+        assert_eq!(
+            (a.id.as_str(), a.label.as_str()),
+            ("sign-in-code", "Use a code instead")
+        );
+        assert_eq!(d.primary.label, "Sign in");
+
+        // Waiting for a code: the code, and the page to enter it on.
+        i.sign_in_code = Some("4F2-91K".into());
+        let w = view(&i).devices.unwrap().status.unwrap();
+        assert_eq!(w.note, "Enter the code 4F2-91K on the sign-in page.");
+        assert_eq!(w.action.unwrap().id, "reopen-sign-in");
+
+        // It failed: why, Try again, and a code where a code helps.
+        i.signing_in = false;
+        i.sign_in_code = None;
+        for reason in SignInFailure::ALL {
+            i.sign_in_failure = Some(reason);
+            let d = view(&i).devices.unwrap();
+            let f = d.status.unwrap_or_else(|| panic!("{reason:?} is silent"));
+            assert_eq!(f.state, RowState::Fix, "{reason:?}");
+            assert_eq!(f.title, "Sign-in didn't finish");
+            assert!(!f.note.is_empty(), "{reason:?} has no words");
+            for raw in ["HTTP", "error", "`", "{", "_", "OIDC", "token"] {
+                assert!(!f.note.contains(raw), "{reason:?} shows {raw:?}");
+            }
+            assert_eq!(
+                (d.primary.id.as_str(), d.primary.label.as_str()),
+                ("sign-in", "Try again"),
+                "{reason:?}"
+            );
+            assert_eq!(d.secondary.as_ref().unwrap().id, "not-now");
+            let code = f.action.map(|a| a.id);
+            let helps = matches!(
+                reason,
+                SignInFailure::NotConfirmed | SignInFailure::CodeRejected | SignInFailure::Unknown
+            );
+            assert_eq!(code.as_deref() == Some("sign-in-code"), helps, "{reason:?}");
+        }
+        i.sign_in_failure = Some(SignInFailure::CouldNotSave);
+        assert_eq!(
+            view(&i).devices.unwrap().status.unwrap().note,
+            "This computer couldn't save the sign-in. Unlock your keychain, then try again."
+        );
+
+        // Trying again is waiting again, not the old failure.
+        i.signing_in = true;
+        let d = view(&i).devices.unwrap();
+        assert_eq!(d.status.unwrap().state, RowState::Checking);
+        assert_eq!(d.primary.label, "Sign in");
+
+        // Signed in: the failure is gone.
+        i.signing_in = false;
+        i.signed_in = true;
+        let d = view(&i).devices.unwrap();
+        assert_ne!(d.status.unwrap().title, "Sign-in didn't finish");
+    }
+
+    /// The shells' JSON for the new fields: camelCase, absent in older ones.
+    #[test]
+    fn the_sign_in_fields_read_from_the_page() {
+        let i: FirstRunInput = serde_json::from_value(serde_json::json!({
+            "step": "devices",
+            "hostOs": "macos",
+            "signInFailure": "couldNotSave",
+            "signInCode": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            i.sign_in_failure,
+            Some(crate::sign_in::SignInFailure::CouldNotSave)
+        );
+        let old: FirstRunInput =
+            serde_json::from_value(serde_json::json!({"step": "devices"})).unwrap();
+        assert_eq!(old.sign_in_failure, None);
     }
 
     /// Where Back and Continue go from `v`.

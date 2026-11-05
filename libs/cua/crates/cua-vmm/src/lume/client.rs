@@ -55,6 +55,15 @@ pub struct VmDetails {
     /// saved states; older ones never report it).
     #[serde(default)]
     pub saved_state: bool,
+    /// The running VM forwards host loopback ports to its guest over vsock
+    /// (a run with [`RunVm::forwards`] on a Lume that supports it).
+    #[serde(default)]
+    pub vsock: bool,
+    /// Guest port to host loopback port, once the guest's vsock agent
+    /// answers ([`RunVm::forwards`]); empty before that, and on a Lume or a
+    /// guest without the agent.
+    #[serde(default)]
+    pub forwards: std::collections::BTreeMap<u16, u16>,
 }
 
 impl VmDetails {
@@ -63,6 +72,18 @@ impl VmDetails {
         self.ip_address
             .as_deref()
             .filter(|ip| !ip.is_empty() && *ip != "unknown" && !ip.starts_with("0.0.0.0"))
+    }
+
+    /// The host loopback port for each of `ports` over vsock, when every
+    /// one of them is forwarded and the guest agent answers.
+    pub fn vsock_ports(&self, ports: &[u16]) -> Option<std::collections::BTreeMap<u16, u16>> {
+        if ports.is_empty() || self.forwards.is_empty() {
+            return None;
+        }
+        ports
+            .iter()
+            .map(|p| self.forwards.get(p).map(|h| (*p, *h)))
+            .collect()
     }
 }
 
@@ -141,6 +162,19 @@ pub struct RunVm {
     pub storage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_path: Option<String>,
+    /// This run's network (`gateway:<socket>`: behind a Cua network
+    /// gateway); `None` keeps the VM's configured network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// `"disabled"`: start the VM with no VNC server (Lume's VNC server
+    /// listens on every interface); `None` keeps Lume's default (enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc: Option<String>,
+    /// Guest ports Lume publishes on host loopback ports over a virtio
+    /// socket device (reported back in [`VmDetails::forwards`]). A Lume
+    /// without the option ignores it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -238,6 +272,17 @@ impl LumeClient {
                 .unwrap_or(message);
             return Err(VmmError::NotFound(name));
         }
+        // Apple's license allows two running macOS VMs per Mac: say how to
+        // free one rather than only that Lume refused.
+        let message = if crate::error::is_vm_limit(&message.to_ascii_lowercase()) {
+            format!(
+                "{message}. This Mac is already running two macOS VMs, the most Apple allows at \
+                 once: stop one (in Cua Spaces, or `cua sb ls` then `cua sb suspend <name>`) and \
+                 try again"
+            )
+        } else {
+            message
+        };
         Err(VmmError::Lume {
             status: status.as_u16(),
             message,
@@ -456,6 +501,26 @@ impl LumeClient {
             .send()
             .await
             .map_err(|e| self.net_err(e))?;
+        if r.status() == 400
+            && req
+                .network
+                .as_deref()
+                .is_some_and(|n| n.starts_with("gateway:"))
+        {
+            // A Lume that predates network gateways rejects the run as an
+            // argument error with no hint of why.
+            let text = r.text().await.unwrap_or_default();
+            return Err(VmmError::Lume {
+                status: 400,
+                message: format!(
+                    "this Lume does not take a network gateway ({}). The secure network default \
+                     for macOS Spaces needs a Lume built from this repository \
+                     (libs/lume/scripts/install-local.sh); CUA_SECURE_DEFAULT=0 runs on Apple's \
+                     NAT as before",
+                    text.trim()
+                ),
+            });
+        }
         Self::check(r).await.map(|_| ())
     }
 
@@ -946,6 +1011,19 @@ pub(crate) mod tests {
         )
     }
 
+    /// Lume's 409 at Apple's two macOS VMs says how to free one, and
+    /// telemetry reads it as `vm_limit`.
+    #[tokio::test]
+    async fn the_macos_vm_limit_says_how_to_free_one() {
+        let body =
+            r#"{"message":"VM start rejected: host limit of 2 running macOS guests reached"}"#;
+        let (lume, _) = scripted_lume(vec![(409, body.to_string())]).await;
+        let e = lume.get("b").await.unwrap_err().to_string();
+        assert!(e.starts_with("lume API 409: VM start rejected"), "{e}");
+        assert!(e.contains("`cua sb suspend <name>`"), "{e}");
+        assert_eq!(crate::error::failure_kind(&e), Some("vm_limit"));
+    }
+
     #[tokio::test]
     async fn a_pull_reports_lumes_bytes() {
         let mut gets = vec![];
@@ -1085,6 +1163,24 @@ pub(crate) mod tests {
         assert_eq!(b["organization"], "trycua");
         assert!(b.get("registry").is_none());
         assert_eq!(pull_body("macos:1", "n")["image"], "macos:1");
+    }
+
+    #[test]
+    fn run_body_turns_vnc_off_only_when_asked() {
+        let on = serde_json::to_value(RunVm {
+            no_display: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(on.get("vnc").is_none(), "{on}");
+        let off = serde_json::to_value(RunVm {
+            no_display: true,
+            vnc: Some("disabled".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(off["vnc"], "disabled");
+        assert_eq!(off["noDisplay"], true);
     }
 
     #[test]

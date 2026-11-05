@@ -100,6 +100,18 @@ pub struct AppSettings {
     /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
     /// older settings file without it reads as tips on, none done.
     pub tips: crate::tips::TipsState,
+    /// Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+    /// Home's agent menu shows although the default hides them (an app
+    /// outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+    pub agent_menu_shown: Vec<String>,
+    /// The apps the menu hides although the default shows them. Nothing is
+    /// signed out: a hidden app keeps its sign-ins and stays on the Agents
+    /// page and available by name.
+    pub agent_menu_hidden: Vec<String>,
+    /// The working accounts the menu last saw (`app|variable|slot`): a new
+    /// one is a connect, which shows its app again
+    /// ([`crate::agent_menu::sync`]).
+    pub agent_menu_seen: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -123,6 +135,9 @@ impl Default for AppSettings {
             auto_connect: true,
             current_team_id: None,
             tips: crate::tips::TipsState::default(),
+            agent_menu_shown: vec![],
+            agent_menu_hidden: vec![],
+            agent_menu_seen: vec![],
         }
     }
 }
@@ -241,11 +256,12 @@ pub fn resolve_new_ui(settings: &AppSettings, _version: &str) -> AppSettings {
 }
 
 /// The update channel of an install's first launch, from the one in the
-/// settings file (`channel`): Beta for a prerelease (someone who installed
-/// a beta keeps getting betas), else unchanged.
+/// settings file (`channel`): Nightly for any prerelease (a nightly, or a
+/// beta from before Nightly: someone who installed one keeps getting the
+/// newest builds), else unchanged.
 pub fn first_launch_channel(channel: UpdateChannel, version: &str) -> UpdateChannel {
     if version.split('+').next().unwrap_or("").contains('-') {
-        UpdateChannel::Beta
+        UpdateChannel::Nightly
     } else {
         channel
     }
@@ -265,7 +281,17 @@ pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> App
 pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
     let mut stored = settings.clone();
     stored.experiments.web_ui = stored.new_ui == Some(true);
-    let json = serde_json::to_string_pretty(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
+    let mut value = serde_json::to_value(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
+    // Nightly is stored as `beta`, its old name: a release from before
+    // Nightly (someone going back to Stable by hand) reads the whole file
+    // with serde and starts over with the defaults on a word it does not
+    // know. This build reads `beta` as Nightly ([`UpdateChannel`]).
+    if stored.update_channel == UpdateChannel::Nightly
+        && let Some(o) = value.as_object_mut()
+    {
+        o.insert("updateChannel".into(), STORED_NIGHTLY.into());
+    }
+    let json = serde_json::to_string_pretty(&value).map_err(|e| CoreError::Io(e.to_string()))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| CoreError::Io(e.to_string()))?;
     }
@@ -273,6 +299,9 @@ pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
     std::fs::write(&tmp, json).map_err(|e| CoreError::Io(e.to_string()))?;
     std::fs::rename(&tmp, path).map_err(|e| CoreError::Io(e.to_string()))
 }
+
+/// How the settings file stores [`UpdateChannel::Nightly`] (see [`save`]).
+const STORED_NIGHTLY: &str = "beta";
 
 /// A pressed key combination.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1050,7 +1079,7 @@ mod tests {
             menu_bar: true,
             default_location: Location::Yours,
             last_seen_version: Some("0.2.0 (0.2.0.1)".into()),
-            update_channel: UpdateChannel::Beta,
+            update_channel: UpdateChannel::Nightly,
             launch_at_login: Some(false),
             ..Default::default()
         };
@@ -1480,14 +1509,76 @@ mod tests {
     }
 
     #[test]
-    fn a_prerelease_installs_first_launch_is_on_beta() {
-        use UpdateChannel::{Beta, Stable};
-        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1"), Beta);
-        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1+abc"), Beta);
+    fn a_prerelease_installs_first_launch_is_on_nightly() {
+        use UpdateChannel::{Nightly, Stable};
+        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1"), Nightly);
+        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1+abc"), Nightly);
+        assert_eq!(
+            first_launch_channel(Stable, "0.21.0-nightly.20261105+55e1f5d"),
+            Nightly
+        );
+        assert_eq!(
+            first_launch_channel(Stable, "0.21.0-nightly.20261105"),
+            Nightly
+        );
+        assert_eq!(
+            first_launch_channel(Stable, "0.21.0-nightly.20261105.42+55e1f5d"),
+            Nightly
+        );
         assert_eq!(first_launch_channel(Stable, "0.7.2"), Stable);
         assert_eq!(first_launch_channel(Stable, "0.8.0+build-7"), Stable);
         // A release keeps a channel already in the file.
-        assert_eq!(first_launch_channel(Beta, "0.7.2"), Beta);
+        assert_eq!(first_launch_channel(Nightly, "0.7.2"), Nightly);
+    }
+
+    #[test]
+    fn beta_users_move_to_nightly_and_older_releases_still_read_the_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "cua-app-core-settings-nightly-{}",
+            std::process::id()
+        ));
+        let path = dir.join("settings.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file written by a release that had Beta: now Nightly, the rest kept.
+        std::fs::write(&path, r#"{"updateChannel":"beta","menuBar":true}"#).unwrap();
+        let s = load(&path);
+        assert_eq!(s.update_channel, UpdateChannel::Nightly);
+        assert!(s.menu_bar);
+        // Saved as `beta`, so a release from before Nightly reads it (as
+        // Beta, every other setting kept) instead of starting over.
+        save(&path, &s).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["updateChannel"], "beta");
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum OldChannel {
+            Stable,
+            Beta,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct OldSettings {
+            update_channel: OldChannel,
+            menu_bar: bool,
+        }
+        let old: OldSettings = serde_json::from_value(raw).unwrap();
+        assert!(matches!(old.update_channel, OldChannel::Beta) && old.menu_bar);
+        // A file a Nightly-aware build wrote by hand still loads.
+        std::fs::write(&path, r#"{"updateChannel":"nightly","menuBar":true}"#).unwrap();
+        assert_eq!(load(&path).update_channel, UpdateChannel::Nightly);
+        // Stable stays `stable`.
+        save(
+            &path,
+            &AppSettings {
+                update_channel: UpdateChannel::Stable,
+                ..s
+            },
+        )
+        .unwrap();
+        assert_eq!(load(&path).update_channel, UpdateChannel::Stable);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

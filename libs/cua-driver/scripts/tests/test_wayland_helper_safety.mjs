@@ -69,7 +69,7 @@ for (const version of ['50', '50.1', '50.beta', '50.rc', '51', '45', '46', '47',
     assert.deepEqual(counts, {});
   } else {
     helper.enable();
-    assert.equal(helper.GetVersion(), 11);
+    assert.equal(helper.GetVersion(), 12);
     assert.equal(counts.export, 1);
     assert.equal(counts.own, 1);
     assert.equal(counts.actor, 5);

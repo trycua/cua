@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parse the `CUA:` / `CUA_ERR:` result marker that the bookmark
 //! JavaScript fallback in [`super::page_bookmark`] writes into the active
 //! tab's title.

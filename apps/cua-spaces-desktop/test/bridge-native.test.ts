@@ -17,6 +17,9 @@ import { validate, type Schema } from "../../cua-spaces-web/src/bridge/contracts
 import { OP_SHAPES, SHAPE_DEFS } from "../../cua-spaces-web/src/bridge/contracts/shapes";
 import { HOST_COVERAGE } from "../../cua-spaces-web/src/bridge/coverage";
 import { THREAD_OPERATIONS } from "../../cua-spaces-web/src/bridge/ops/thread";
+import { testCore, wasmBuilt } from "../../cua-spaces-web/src/bridge/__tests__/testCore";
+import type { WizardEnv } from "../../cua-spaces-web/src/bridge/contracts/new-space";
+import { homeCreateRequest, type HomeOffer } from "../../cua-spaces-web/src/lib/prepare/home-request";
 import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/bridge/protocol";
 import { createBridge, type Bridge } from "../src/bridge";
 import { runtimeWord } from "../src/model/backend";
@@ -183,6 +186,22 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["links.list", {}],
       ["links.create", { target: "3000" }],
       ["links.stop", { id: "all" }],
+      ["links.approve", { id: "share-000000000001", always: false }],
+      ["links.deny", { id: "share-000000000001" }],
+      ["shares.settings.get", {}],
+      ["shares.settings.set", { settings: { landing: "auto", relayFallback: true, dailyCapMib: 2048, defaultAllow: [], approveAgentShares: true, alwaysAllowSpaces: [], edgeConsent: [], usedToday: 0, edgeCloud: null, edgeHost: null, edgeMonthlyUsd: null } }],
+      ["shares.edge.remove", {}],
+      ["network.get", { spaceId: "local:aurora" }],
+      ["network.set", { spaceId: "local:aurora", network: "internet", allow: [], deny: [] }],
+      ["network.log", { spaceId: "local:aurora" }],
+      ["network.ackNotice", { spaceId: "local:aurora" }],
+      ["spaces.setAccess", { spaceId: "local:aurora", clipboard: "ask" }],
+      ["spaces.tree", {}],
+      ["children.set", { spaceId: "local:aurora", enabled: true }],
+      ["budget.get", { spaceId: "local:aurora" }],
+      ["budget.set", { spaceId: "local:aurora", limits: { maxSpaces: 4 } }],
+      ["services.list", { spaceId: "local:aurora" }],
+      ["services.control", { spaceId: "local:aurora", name: "web", action: "restart" }],
       ["checklist.get", {}],
       ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
@@ -193,8 +212,9 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks, and the default Space: machines-view.test.ts; the Windows runtime fix: below.)
+    // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
+    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -266,6 +286,21 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(row.detail).toBe("Another computer · Downloading macOS (first time only)…");
     release();
     await create;
+  });
+
+  // CUA-3193: the new setup ended on "Preparing stopped: config.image: string". The page's
+  // first-Space create, from the wizard's Linux offer (the real core), through this host's create.
+  it.skipIf(!wasmBuilt)("makes the new setup's first Space through the real create", async () => {
+    const core = await testCore();
+    const mac = JSON.parse(readFileSync(path.resolve(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/parity/first-run.json"), "utf8")).machineBase as WizardEnv;
+    // The page's offers (`firstSpaceOffers`): the core's, for this machine's env.
+    const offers = core.call<HomeOffer[]>("wizard.firstSpaceOffers", { env: mac, hostOs: "macos" });
+    const { os, ...config } = homeCreateRequest(offers, "home-claude-code");
+    const made = (await call("spaces.create", { pendingId: "pending:home", config, os })) as { id: string; name: string };
+    expect(made).toMatchObject({ name: "home-claude-code" });
+    expect(backend.created.at(-1)).toMatchObject({ image: config.image, name: "home-claude-code", on: "local" });
+    // What it used to send: no image, which this host refuses with its argument check.
+    expect(await code("spaces.create", { pendingId: "pending:old", config: { os: "linux", name: "home-claude-code" }, os: "linux" })).toBe("bad_args");
   });
 
   it("refuses a create it cannot run", async () => {
@@ -606,12 +641,27 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "nudges.answer": { id: "none", choice: "separate" },
       "links.create": { target: "3000" },
       "links.stop": { id: "all" },
+      "network.get": { spaceId: "local:aurora" },
+      "network.set": { spaceId: "local:aurora", network: "internet", allow: [], deny: [] },
+      "network.log": { spaceId: "local:aurora" },
+      "network.ackNotice": { spaceId: "local:aurora" },
+      "spaces.setAccess": { spaceId: "local:aurora", clipboard: "ask" },
+      "children.set": { spaceId: "local:aurora", enabled: true },
+      "budget.get": { spaceId: "local:aurora" },
+      "budget.set": { spaceId: "local:aurora", limits: { maxSpaces: 4 } },
+      "services.list": { spaceId: "local:aurora" },
+      "services.control": { spaceId: "local:aurora", name: "web", action: "restart" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
+      "links.approve": { id: "share-000000000001" },
+      "links.deny": { id: "share-000000000001" },
+      "shares.settings.set": { settings: { landing: "auto", relayFallback: true, dailyCapMib: 2048, defaultAllow: [], approveAgentShares: true, alwaysAllowSpaces: [], edgeConsent: [], usedToday: 0, edgeCloud: null, edgeHost: null, edgeMonthlyUsd: null } },
       "spaces.deleteMany": { ids: ["local:nowhere"] },
       "spaces.leave": { ids: ["local:nowhere"] },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
+    // (The Cua Driver page, driver.*: the Electron app has no driver and refuses with "comes with the Mac app".)
+    const skip = new Set<OpName>(["driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     // (The thread: thread.test.ts.)
     const problems: string[] = [];
     const checked: string[] = [];

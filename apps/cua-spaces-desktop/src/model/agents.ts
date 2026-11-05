@@ -130,13 +130,24 @@ export class PersistentAgents {
     space: string,
     agent: string,
     prompt: string,
-    o: { repo: string | null; branch: string | null; model: string | null; envFromHost: string[] },
+    o: {
+      repo: string | null;
+      branch: string | null;
+      model: string | null;
+      envFromHost: string[];
+      cwd?: string | null;
+      resumeSession?: string | null;
+      resumeContext?: string | null;
+    },
   ): Promise<Json> {
     const args: Record<string, unknown> = { space, agent, prompt };
     if (o.repo) args.repo = o.repo;
     if (o.branch) args.branch = o.branch;
     if (o.model) args.model = o.model;
     if (o.envFromHost.length) args.env_from_host = o.envFromHost;
+    if (o.cwd) args.cwd = o.cwd;
+    if (o.resumeSession) args.resume_session = o.resumeSession;
+    if (o.resumeContext) args.resume_context = o.resumeContext;
     return this.call("agent_start", args);
   }
 

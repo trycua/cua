@@ -514,7 +514,14 @@ export type ActionResult = {
      * The call that moves the task forward, always safe to run as is (a read,
      * or a call that keeps the user's window where it is).
      */
-    nextCall?: ActionNextCall
+    nextCall?: ActionNextCall,
+    /**
+     * Present only when the `fast_path` config key is `on`: the check cost,
+     * the target class and the changed regions since the last read, as one
+     * JSON object. Absent when the flag is off, so default results are
+     * unchanged.
+     */
+    fastPath?: string
 }
 
 /**
@@ -546,7 +553,8 @@ const FfiConverterTypeActionResult = (() => {
                 summary: FfiConverterOptionalString.read(from),
                 error: FfiConverterOptionalTypeActionError.read(from),
                 hint: FfiConverterOptionalString.read(from),
-                nextCall: FfiConverterOptionalTypeActionNextCall.read(from)
+                nextCall: FfiConverterOptionalTypeActionNextCall.read(from),
+                fastPath: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -559,6 +567,7 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionError.write(value.error, into);
             FfiConverterOptionalString.write(value.hint, into);
             FfiConverterOptionalTypeActionNextCall.write(value.nextCall, into);
+            FfiConverterOptionalString.write(value.fastPath, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
@@ -569,7 +578,8 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterOptionalString.allocationSize(value.summary) +
              FfiConverterOptionalTypeActionError.allocationSize(value.error) +
              FfiConverterOptionalString.allocationSize(value.hint) +
-             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall);
+             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall) +
+             FfiConverterOptionalString.allocationSize(value.fastPath);
 
         }
     };

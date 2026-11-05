@@ -78,6 +78,35 @@ jobs:
           CUA_TEST_VM_READY: "1"
           CUA_TEST_VM_READY_CREATES: ${{ matrix.creates }}
           CUA_TEST_VM_READY_CONCURRENCY: ${{ matrix.concurrency }}
-        run: >
-          cargo test --locked -p cua-sdk --test vm_ready_after_boot
-          -- --ignored --nocapture
+          # Quarantine (CUA-3132, see .github/workflows/FLAKY.md): with
+          # four creates at once on a hosted runner, an anonymous ghcr manifest
+          # pull sometimes comes back "Not authorized" and some guests miss the
+          # spacesd connect window. Only the concurrent shape, and only when every
+          # failure line matches one of those two signatures, gets one more run.
+          # Any other failure, or a second failure, fails the job.
+          QUARANTINE_SHAPE: ${{ matrix.shape }}
+        run: |
+          set -uo pipefail
+          run_test() {
+            cargo test --locked -p cua-sdk --test vm_ready_after_boot \
+              -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/vm-ready.log"
+            return "${PIPESTATUS[0]}"
+          }
+          run_test && exit 0
+          status=$?
+          [[ "$QUARANTINE_SHAPE" == concurrent ]] || exit "$status"
+          # The failure lines are the "<sandbox>: <phase>: <error>" rows the test prints.
+          failures=$(grep -E '^cua-e2e-ready-[0-9a-f]+-[0-9]+: ' "$RUNNER_TEMP/vm-ready.log" || true)
+          known='registry: Not authorized: .*ghcr\.io/v2/trycua/|cua-spacesd is not available in sandbox .*nothing answered at'
+          if [[ -z "$failures" ]] || grep -Evq "$known" <<<"$failures"; then
+            echo "::error::linux-kvm (concurrent) failed outside the quarantined signatures"
+            exit "$status"
+          fi
+          echo "::warning::linux-kvm (concurrent): known flake (CUA-3132), running once more"
+          {
+            echo "### linux-kvm (concurrent): quarantined flake, retried once (CUA-3132)"
+            echo '```'
+            echo "$failures"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          run_test

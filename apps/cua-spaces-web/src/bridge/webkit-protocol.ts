@@ -33,9 +33,13 @@ import type { MachineAccessNotice } from "./contracts/devices";
 import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
+import { GITHUB_WEBKIT_METHODS } from "./ops/github";
+import { CI_WEBKIT_METHODS } from "./ops/ci";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
+import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -53,6 +57,7 @@ export const WEBKIT_METHODS = [
   "session.signOut",
   "onboarding.get",
   "onboarding.complete",
+  "onboarding.reset",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
@@ -62,6 +67,17 @@ export const WEBKIT_METHODS = [
   "spaces.deleteMany",
   "spaces.leave",
   "spaces.rename",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
@@ -82,6 +98,7 @@ export const WEBKIT_METHODS = [
   "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
+  ...GITHUB_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
   ...KEYVAULT_MANAGE_WEBKIT_METHODS,
   // The pages beyond Spaces, the Keyvault and Agents (ops/webkit-pages.ts).
@@ -183,18 +200,34 @@ export const WEBKIT_METHODS = [
   "relay.usage",
   "nudges.pending",
   "nudges.answer",
+  "driver.status",
+  "driver.list",
+  "driver.config",
+  "driver.setConfig",
+  "driver.test",
+  "driver.pause",
+  "driver.setup",
+  "driver.setApp",
   "resources.get",
   "machines.rename",
   "machines.remove",
   "machines.checkHealth",
+  ...SPACES_SETTINGS_WEBKIT_METHODS,
   "checklist.get",
   "checklist.send",
   "links.list",
   "links.create",
   "links.stop",
+  "links.approve",
+  "links.deny",
+  "shares.settings.get",
+  "shares.settings.set",
+  "shares.edge.remove",
   "cli.plan",
   "cli.install",
+  ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
+  ...AGENT_THREADS_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -369,7 +402,7 @@ export interface WkSettingsRow {
 /** `settings.get`, `settings.choose`, `settings.press`: the core's Settings page. */
 export interface WkSettings {
   page: { title: string; sections: { id: string; rows: WkSettingsRow[] }[] };
-  /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
+  /** `AppSettings.updateChannel` (`stable` or `nightly`; `beta` from an older host); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */
@@ -383,6 +416,8 @@ export interface WkSettings {
   tips?: { off: boolean; done: string[] };
   /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */
   notchPinned?: string[];
+  /** `AppSettings.agentMenu*`: which coding apps the agent menu shows; absent: an older host. Saved with `settings.update`. */
+  agentMenu?: { shown: string[]; hidden: string[]; seen: string[] };
   /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
   runtimes?: RuntimesInput | null;
 }

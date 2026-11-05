@@ -671,11 +671,28 @@ fn canonical_of(
         "firmware": t.firmware,
         "ports": ports,
         "env": env,
-        "probes": t.probes,
+        "probes": (!loose).then_some(&t.probes),
         "restrict_network": t.restrict_network,
         "labels": t.labels,
         "container_runtime": t.container_runtime,
         "command": (!loose).then_some(&t.command),
+    })
+}
+
+/// Whether the member is ready by every check `want` waits for: a probe on
+/// a port is covered by one on the same port that is at least as strict (an
+/// HTTP check also means the port accepts connections).
+fn probes_covered(member: &StartSpec, want: &StartSpec) -> bool {
+    use cua_vmm::Probe;
+    want.probes.iter().all(|w| match w {
+        Probe::None => true,
+        Probe::Tcp { port } => member.probes.iter().any(
+            |m| matches!(m, Probe::Tcp { port: p } | Probe::Http { port: p, .. } if p == port),
+        ),
+        Probe::Http { port, path } => member
+            .probes
+            .iter()
+            .any(|m| matches!(m, Probe::Http { port: p, path: q } if p == port && q == path)),
     })
 }
 
@@ -694,6 +711,7 @@ fn serves(member: &StartSpec, want: &StartSpec, backend: BackendKind) -> bool {
     member.cpus >= want.cpus
         && member.memory_mb >= want.memory_mb
         && (has_desktop(member) || !has_desktop(want))
+        && probes_covered(member, want)
         && canonical_of(member, backend, have, true) == canonical_of(want, backend, asked, true)
 }
 
@@ -905,13 +923,23 @@ impl WarmPool {
         backend: BackendKind,
         spacesd: bool,
     ) -> Option<Instance> {
-        let key = shape_key(spec, backend, spacesd)?;
-        let token = token_of(spec)?;
+        let Some(key) = shape_key(spec, backend, spacesd) else {
+            tracing::debug!(space = %spec.name, "warm pool: this create is not of a shape that pools");
+            return None;
+        };
+        let Some(token) = token_of(spec) else {
+            tracing::debug!(space = %spec.name, "warm pool: this create has no Spaces token yet");
+            return None;
+        };
         let arrived = self.now_s();
         let want = template_of(spec);
         // The shape's own member first; else a bigger one the experiment
         // keeps warm ([`serves`]), whose shape then pays for the claim.
-        let (member, rt, key) = self.take_member(&key, &want, backend).await?;
+        let shapes_known = self.inner.shapes.lock().unwrap().len();
+        let Some((member, rt, key)) = self.take_member(&key, &want, backend).await else {
+            tracing::debug!(space = %spec.name, shapes_known, "warm pool: no member for this create");
+            return None;
+        };
         let started = Instant::now();
         let identity = ClaimIdentity {
             token: Some(token.clone()),
@@ -1061,6 +1089,7 @@ impl WarmPool {
                 return None;
             };
             if !starting {
+                self.explain_miss(own, want, backend);
                 if waited || self.is_warm_shape(own) {
                     tracing::info!(
                         shape = own,
@@ -1076,6 +1105,35 @@ impl WarmPool {
                     "warm-pools: the member that was starting did not arrive in time; starting cold"
                 );
                 return None;
+            }
+        }
+    }
+
+    /// Says why no warm Space of the experiment serves `want` (a debug
+    /// aid for shapes that never match).
+    fn explain_miss(&self, own: &str, want: &StartSpec, backend: BackendKind) {
+        let shapes = self.inner.shapes.lock().unwrap();
+        for (k, s) in shapes.iter().filter(|(_, s)| s.is_warm_source()) {
+            let image = match &s.template.image {
+                cua_vmm::ImageSource::Oci { reference } => reference.as_str(),
+                _ => continue,
+            };
+            let (a, b) = (
+                canonical_of(&s.template, backend, image, true),
+                canonical_of(want, backend, image, true),
+            );
+            tracing::debug!(
+                shape = own,
+                warm = k.as_str(),
+                member_cpus = s.template.cpus,
+                member_mb = s.template.memory_mb,
+                want_cpus = want.cpus,
+                want_mb = want.memory_mb,
+                same_but_size = (a == b),
+                "warm-pools: a warm Space does not serve this create"
+            );
+            if a != b {
+                tracing::debug!(member = %a, want = %b, "warm-pools: the shapes differ");
             }
         }
     }
@@ -3132,13 +3190,18 @@ mod tests {
             s.env.insert(k, v);
         }
         s.command = Some(crate::local::headless_command_line());
+        // A create waits for the port to accept; the warm member's check
+        // (HTTP health) covers it.
+        s.probes = vec![cua_vmm::Probe::tcp(3211)];
         s
     }
 
     #[tokio::test]
     async fn a_home_claims_the_bigger_warm_space_and_only_that() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
-        let warm_key = keep_warm_space(&f, &spec("one", "t")).await;
+        let mut member = spec("one", "t");
+        member.probes = vec![cua_vmm::Probe::http(3211, "/health")];
+        let warm_key = keep_warm_space(&f, &member).await;
         until_ready(&f, &warm_key, 1).await;
         assert_ne!(
             shape_key(&home_spec("h", "t"), BackendKind::Container, true),

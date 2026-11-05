@@ -2303,6 +2303,9 @@ impl LocalRuntime for VmmLocal {
             .get()
             .filter(|_| spec.warm != Some(false) && !injected)
             .filter(|_| s.egress.is_empty() || backend != BackendKind::Qemu);
+        if self.pool.get().is_some() && pool.is_none() {
+            tracing::debug!(name = spec.name, warm = ?spec.warm, injected, "warm pool: not asked for this create");
+        }
         if let Some(pool) = pool
             && let Some(inst) = pool.claim(&s, backend, spacesd).await
         {

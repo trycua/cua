@@ -55,7 +55,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   hermetic:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: hermetic (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -96,7 +103,8 @@ jobs:
   surface:
     name: E2B SDK surface
     # Not on main pushes: those exist to keep the hermetic job's Rust cache warm.
-    if: github.event_name != 'push'
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'push') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -121,7 +129,8 @@ jobs:
     name: live E2B conformance (drift)
     # Paid E2B sandboxes and a live provider: the weekly run and manual runs only,
     # never the main pushes that keep the Rust cache warm.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

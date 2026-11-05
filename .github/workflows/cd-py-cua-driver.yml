@@ -271,7 +271,8 @@ jobs:
           TAG: ${{ needs.get-version.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/cua-driver-assets" "$RUNNER_TEMP/cua-driver-native"
-          gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
             --pattern '*-darwin-universal-binary.tar.gz' \
             --pattern '*-linux-x86_64-binary.tar.gz' \
             --pattern '*-linux-arm64-binary.tar.gz' \

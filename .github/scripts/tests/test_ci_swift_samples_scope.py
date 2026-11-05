@@ -283,11 +283,14 @@ class WorkflowWiringTests(unittest.TestCase):
         """Evaluate the small subset of the expression language the job conditions use."""
         expression = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", condition.strip()).group(1)
         expression = re.sub(r"startsWith\(([\w.]+), ('[^']*')\)", r"\1.startswith(\2)", expression)
-        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+        # No earlier job failed or was cancelled in these scenarios; skipped needs are fine.
+        expression = expression.replace("!failure()", "True").replace("!cancelled()", "True")
+        expression = expression.replace("!=", "\0")
+        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ").replace("\0", "!=")
         for name, key in (("needs.changes.outputs.run", "run"), ("needs.changes.outputs.typescript", "typescript"),
                           ("github.head_ref", "head_ref"), ("github.event_name", "event_name")):
             expression = expression.replace(name, key)
-        return eval(expression, {"__builtins__": {}}, context)
+        return eval(expression, {"__builtins__": {}}, {"event_name": "pull_request", **context})
 
     def test_macos_job_waits_for_the_scope_job(self):
         for lane in LANES:
@@ -298,8 +301,9 @@ class WorkflowWiringTests(unittest.TestCase):
             script = changes["steps"][-1]["run"]
             self.assertIn(f"check-manifests {lane}", script)
             self.assertIn(f"scope {lane}", script)
-            self.assertNotIn("needs", changes)
-            self.assertNotIn("if", changes)
+            # Only the quick stage (ci-quick.yml) comes before the scope job.
+            self.assertEqual(changes["needs"], "quick")
+            self.assertEqual(changes["if"], "${{ !failure() && !cancelled() }}")
             swift = jobs["swift"]
             self.assertEqual(swift["needs"], "changes")
             # The arm64 larger runner of the same macOS image (macos-26 is 3-core).
@@ -322,7 +326,15 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(self.load("openkoalabot")["jobs"]["typescript"]["needs"], "changes")
 
     def test_no_other_job_in_the_infinite_canvas_workflow(self):
-        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"changes", "swift"})
+        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"quick", "changes", "swift", "bench"})
+
+    def test_benchmark_never_runs_on_pull_requests(self):
+        bench = self.load("infinite-canvas")["jobs"]["bench"]
+        self.assertEqual(bench["needs"], "changes")
+        for event in ("pull_request",):
+            self.assertFalse(self.evaluate(bench["if"], run="true", head_ref="feature/x", event_name=event))
+        for event in ("push", "schedule", "workflow_dispatch"):
+            self.assertTrue(self.evaluate(bench["if"], run="true", head_ref="feature/x", event_name=event))
 
 
 if __name__ == "__main__":

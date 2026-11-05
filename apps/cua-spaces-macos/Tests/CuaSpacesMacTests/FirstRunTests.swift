@@ -25,10 +25,19 @@ struct FirstRunTests {
                              onboarding: OnboardingModel(statePath: state.path),
                              settingsPath: dir.appendingPathComponent("settings.json").path, telemetry: telemetry,
                              loginItem: loginItem)
-        model.settings.experiments = AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: true)
+        model.settings.experiments = AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
         bridge.notifySpaceReady = { _ in }
         return (bridge, model, telemetry, state)
+    }
+
+    /// The app core's reset plan (`contracts/onboarding-reset.json`, the golden of `onboarding_reset::plan`).
+    static var resetPlan: [String: Any] {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("../../libs/cua/crates/cua-spaces-app-core/contracts/onboarding-reset.json").standardized
+        let data = (try? Data(contentsOf: url)) ?? Data()
+        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
     }
 
     func yield() async {
@@ -47,6 +56,26 @@ struct FirstRunTests {
         #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
         #expect(MainUIRouter.launchRoute(onboarded: true) == nil, "done: the app as it was")
         #expect(MainUIRoute.onboarding.webPath == "/onboarding", "Show again has no due: it always shows")
+    }
+
+    /// The app's first launch here opens the first run whatever the page
+    /// kept from an earlier install (a stale "Skip for now" hid it behind
+    /// the sidebar's small "Finish setting up", CUA-3063); from the next
+    /// launch on, `due` applies again.
+    @Test func theFirstLaunchAlwaysShowsTheFirstRun() throws {
+        #expect(MainUIRoute.firstLaunch.webPath == "/onboarding?fresh=1")
+        #expect(MainUIRouter.launchRoute(onboarded: false, firstLaunch: true) == .firstLaunch)
+        #expect(MainUIRouter.launchRoute(onboarded: true, firstLaunch: true) == nil)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-firstlaunch-\(UUID().uuidString)")
+        let path = dir.appendingPathComponent("onboarding.json").path
+        let first = OnboardingModel(statePath: path)
+        #expect(first.firstLaunch && !first.completed)
+        first.markSeen()
+        #expect(!first.firstLaunch)
+        let next = OnboardingModel(statePath: path)
+        #expect(!next.firstLaunch && !next.completed, "seen, not done")
+        #expect(MainUIRouter.launchRoute(onboarded: next.completed, firstLaunch: next.firstLaunch) == .firstRunDue)
+        try? FileManager.default.removeItem(at: dir)
     }
 
     // MARK: - onboarding.get, onboarding.complete
@@ -68,6 +97,32 @@ struct FirstRunTests {
         // Settings, Welcome, shows it again.
         model.onboarding.restart()
         #expect((try await bridge.handle("onboarding.get", [:]) as? [String: Any])?["completed"] as? Bool == false)
+    }
+
+    /// Settings, About, "Reset & Show": the saved first run is forgotten, so it
+    /// is due from its first step; only `onboarding.json` goes (the app core's
+    /// reset plan lists it), and a second reset changes nothing.
+    @Test func resetForgetsTheSavedFirstRunAndNothingElse() async throws {
+        let (bridge, model, _, state) = bridge()
+        let other = state.deletingLastPathComponent().appendingPathComponent("checklist.json")
+        try FileManager.default.createDirectory(at: state.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: other)
+        _ = try await bridge.handle("onboarding.complete", ["mode": "host"])
+        #expect(FileManager.default.fileExists(atPath: state.path))
+
+        let reset = try #require(try await bridge.handle("onboarding.reset", [:]) as? [String: Any])
+        #expect(reset["completed"] as? Bool == false && reset["mode"] as? String == "client")
+        #expect(!model.onboarding.completed)
+        #expect(!FileManager.default.fileExists(atPath: state.path))
+        #expect(FileManager.default.fileExists(atPath: other.path), "nothing else is touched")
+        // A new launch reads it as due.
+        #expect(!OnboardingModel(statePath: state.path).completed)
+
+        _ = try await bridge.handle("onboarding.reset", [:])
+        #expect(!model.onboarding.completed, "safe to run twice")
+        // The file it removes is the one the app core's reset plan names.
+        #expect(Self.resetPlan["hostFiles"] as? [String] == [state.lastPathComponent])
+        #expect(Self.resetPlan["firstStep"] as? String == "welcome")
     }
 
     @Test func completingNeedsAModeAndAppliesTheLoginCheckbox() async throws {

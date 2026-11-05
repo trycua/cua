@@ -36,7 +36,7 @@ import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
 import { LinuxRuntime, nodeLinuxSystem } from "./model/linux-runtime";
-import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleOverlaySurface, handleViewerKeyboard, setWindowBackground } from "./window";
 import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
@@ -353,7 +353,10 @@ if (!app.requestSingleInstanceLock()) {
     initTheme();
     installMenu({ newSpace, settings: openSettings, gettingStarted });
     handleViewerKeyboard();
-    if (process.platform !== "darwin") handleOverlayDim();
+    if (process.platform !== "darwin") {
+      handleOverlayDim();
+      handleOverlaySurface();
+    }
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 

@@ -159,6 +159,8 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: |

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows [`PointerShapeBackend`]: what cursor the guest would show at a
 //! point.
 //!

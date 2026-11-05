@@ -178,7 +178,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["volume.resolve", { path: "public/plan.md" }],
       ["volume.reveal", { path: "~/Cua Volume/public" }],
       ["about.get", {}],
-      ["about.set", { channel: "beta" }],
+      ["about.set", { channel: "nightly" }],
       ["about.checkNow", {}],
       ["update.get", {}],
       ["update.install", {}],
@@ -214,7 +214,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(problems).toEqual([]);
     // Every method of this area has its case (the first run's are checked below).
     // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
-    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
+    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "onboarding.reset", "host.joinWithCode"]);
     expect(HOST_METHODS.filter((m) => !checkedBelow.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
@@ -596,6 +596,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
   });
 
+  it("keeps which coding apps the agent menu shows in the app settings (`settings.update`), across a restart", async () => {
+    const before = (await call("settings.get")) as { agentMenu: { shown: string[]; hidden: string[]; seen: string[] } };
+    expect(before.agentMenu).toEqual({ shown: [], hidden: [], seen: [] });
+    const menu = { shown: ["goose"], hidden: ["hermes"], seen: ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"] };
+    const after = (await call("settings.update", { agentMenu: menu })) as typeof before;
+    expect(after.agentMenu).toEqual(menu);
+    const kept = native.appSettingsLoad(model.settingsPath);
+    expect([kept.agentMenuShown, kept.agentMenuHidden, kept.agentMenuSeen]).toEqual([menu.shown, menu.hidden, menu.seen]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { agentMenu: { shown: [], hidden: "hermes", seen: [] } })).toBe("bad_args");
+    expect(await code("settings.update", { agentMenu: null })).toBe("bad_args");
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });
@@ -690,13 +703,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   });
 
   it("reads and chooses the update channel by row, unsupported without an updater", async () => {
+    await call("settings.choose", { row: "update-channel", option: "nightly" });
+    expect(system.updater.channel).toBe("nightly");
+    expect(model.settings.updateChannel).toBe(native.AppUpdateChannel.Nightly);
+    expect(((await call("settings.get")) as { updateChannel: string }).updateChannel).toBe("nightly");
+    // A switch checks the new channel at once.
+    expect(system.updater.checks).toBe(1);
+    // A page from before Nightly asks for Beta: that is Nightly.
+    await call("settings.choose", { row: "update-channel", option: "stable" });
     await call("settings.choose", { row: "update-channel", option: "beta" });
-    expect(system.updater.channel).toBe("beta");
-    expect(model.settings.updateChannel).toBe(native.AppUpdateChannel.Beta);
-    expect(((await call("settings.get")) as { updateChannel: string }).updateChannel).toBe("beta");
+    expect(system.updater.channel).toBe("nightly");
     await make({ system: null });
     expect(((await call("settings.get")) as { updateChannel: unknown }).updateChannel).toBeNull();
-    expect(await code("settings.choose", { row: "update-channel", option: "beta" })).toBe("unsupported");
+    expect(await code("settings.choose", { row: "update-channel", option: "nightly" })).toBe("unsupported");
   });
 
   it("Welcome's Show again makes the first run due", async () => {
@@ -706,6 +725,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "welcome", option: "show" });
     expect(await call("onboarding.get")).toMatchObject({ completed: false });
     expect(events.some((e) => e.event === "session.changed")).toBe(true);
+  });
+
+  it("Reset & Show forgets the first run from its first step, and says so", async () => {
+    await call("onboarding.complete", { mode: "host" });
+    events.length = 0;
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
+    expect(await call("onboarding.get")).toEqual({ completed: false, mode: "client" });
+    expect(events.some((e) => e.event === "session.changed")).toBe(true);
+    // Twice is the same as once.
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
   });
 
   it("the Keyvault's switches show its state and run through the broker", async () => {
@@ -727,14 +756,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   // MARK: About and launch at login
 
   it("About is the updater's input, and Check Now answers before the updater's window", async () => {
-    const a = (await call("about.set", { autoCheck: true, channel: "beta" })) as Record<string, unknown>;
-    expect(a).toMatchObject({ autoCheck: true, channel: "beta", updater: true, platform: "macos", version: "1.2.3" });
+    const a = (await call("about.set", { autoCheck: true, channel: "nightly" })) as Record<string, unknown>;
+    expect(a).toMatchObject({ autoCheck: true, channel: "nightly", updater: true, platform: "macos", version: "1.2.3" });
     expect(String(a.os)).toMatch(/\(/);
+    // Switching to Nightly checked it at once.
+    expect(system.updater.checks).toBe(1);
     const c = (await call("about.checkNow")) as Record<string, unknown>;
     expect(c.checking).toBe(true);
-    expect(system.updater.checks).toBe(0);
-    await tick(5);
     expect(system.updater.checks).toBe(1);
+    await tick(5);
+    expect(system.updater.checks).toBe(2);
     expect(((await call("about.get")) as Record<string, unknown>).lastCheck).toEqual(expect.any(String));
     expect(a.build).toBe("");
     await make({ system: null });
@@ -964,6 +995,33 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     // The count is the Spaces on or starting among them (never a stopped one).
     expect(items[0]!.label).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
+  });
+
+  it("the home warming for Home's prompt box is in no top bar view until a person writes into it", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const base = backend.rowsNow[2]!;
+    const home = { ...base, id: "local:home-claude-code", name: "home-claude-code", provider: "local", host: undefined, reachable: true, power: undefined, powerState: undefined };
+    backend.rowsNow = [...backend.rowsNow, { ...home, hidden: true }];
+    await model.refresh();
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const tiles = () => {
+      const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+      const opened = core.appNotchReduce(shown.state, { tag: "Click" });
+      return wireView(core.appNotchView(opened.state, model.spaces));
+    };
+    // Warming: the list the SDK returns keeps it (marked), the menu, the tray and the notch do not.
+    expect(model.spaces.find((s) => s.id === home.id)?.hidden).toBe(true);
+    expect(realSpaces(model.spaces).map((s) => s.id)).not.toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).not.toContain(home.id);
+    const before = menuItems(bridge.context)[0]!.label;
+    expect(before).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
+    // The first message: the daemon clears the mark and the next list has it.
+    backend.rowsNow = backend.rowsNow.map((r) => (r.id === home.id ? { ...r, hidden: false } : r));
+    await model.refresh();
+    expect(realSpaces(model.spaces).map((s) => s.id)).toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).toContain(home.id);
+    expect(menuItems(bridge.context)[0]!.label).not.toBe(before);
   });
 
   it("the notch lists the Spaces, never a machine that only provides them (CUA-1619)", async () => {

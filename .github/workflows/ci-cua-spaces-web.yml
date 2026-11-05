@@ -51,8 +51,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   test:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: typecheck, tests, bridge contract, build
     runs-on: ubuntu-24.04
     steps:
@@ -74,6 +80,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          # pnpm's store, keyed on both lockfiles (pnpm is installed above).
+          cache: pnpm
+          cache-dependency-path: |
+            apps/cua-spaces-web/pnpm-lock.yaml
+            apps/cua-spaces-desktop/pnpm-lock.yaml
       - name: Install (web UI, Electron shell)
         run: |
           (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
@@ -137,6 +148,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          # pnpm's store, keyed on both lockfiles (pnpm is installed above).
+          cache: pnpm
+          cache-dependency-path: |
+            apps/cua-spaces-web/pnpm-lock.yaml
+            apps/cua-spaces-desktop/pnpm-lock.yaml
       - name: Install
         run: |
           (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)

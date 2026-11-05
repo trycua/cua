@@ -67,7 +67,7 @@ export function updatesModel(ctx: BridgeContext): UpdatesModel {
     model.native,
     system?.updater ?? null,
     { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
-    system?.updater?.channel === "beta" ? model.native.AppUpdateChannel.Beta : system?.updater ? model.native.AppUpdateChannel.Stable : model.settings.updateChannel,
+    system?.updater?.channel === "nightly" ? model.native.AppUpdateChannel.Nightly : system?.updater ? model.native.AppUpdateChannel.Stable : model.settings.updateChannel,
     (channel) => {
       model.settings = { ...model.settings, updateChannel: channel };
       model.saveSettings();

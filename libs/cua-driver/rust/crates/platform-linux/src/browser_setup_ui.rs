@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Linux AT-SPI setup for Chromium existing-profile attachment.
 
 use std::time::{Duration, Instant};

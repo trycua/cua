@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wall-clock and node budget for the accessibility walk behind
 //! `get_window_state` (`timeout_ms` / `max_elements`).
 //!

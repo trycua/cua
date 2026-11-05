@@ -5,16 +5,18 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { useAgentKeys, useBridge, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { useAgentKeys, useBridge, useExperiments, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
 import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-machine-block";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentMenuGroup } from "@/components/settings/connections/agent-menu-group";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { FactRow, GroupedAction, GroupedRow } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
+import { GithubGroup } from "@/components/settings/connections/github-group";
 import { ProviderMark } from "@/components/settings/connections/provider-mark";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
@@ -39,6 +41,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const navigate = useNavigate();
   const { data } = useBridge();
   const keys = useAgentKeys();
+  // The GitHub sign-in is part of the Ask first experiment: no row until it is on.
+  const askFirst = useExperiments().data?.experiments.askFirst === true;
   // Opening this page asks the providers whether the saved sign-ins and keys still work.
   useKeysRecheck();
   const [all, setAll] = useState(false);
@@ -113,6 +117,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           {all ? "Show fewer" : "Show all"} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
+      <AgentMenuGroup c={c} />
       {all ? (
         <SettingsGroup title="Background computer use">
           <Suspense fallback={<div className="h-48" />}>
@@ -193,6 +198,8 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           {moreOpen ? "Show fewer" : `Show all ${view.moreCount}`} {moreOpen ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
+
+      {askFirst ? <GithubGroup onPaste={() => keys.openSheet("other", "GITHUB_TOKEN")} saved={keys.input.keys.some((k) => k.env === "GITHUB_TOKEN")} /> : null}
 
       {detailRow ? (
         <ProviderDetail

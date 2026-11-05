@@ -59,6 +59,10 @@ export interface SpaceCreateConfig {
   spacesd?: boolean;
   reuse?: boolean;
   gpu?: string;
+  /** Lets the Space make child Spaces of its own (the SDK's `children`). */
+  children?: boolean;
+  /** Labels kept with the Space (the SDK's `labels`). The agent home's grants ride on `cua.home.*`. */
+  labels?: Record<string, string>;
 }
 
 /** Where new Spaces go by default (`default.on`), and where that came from. */

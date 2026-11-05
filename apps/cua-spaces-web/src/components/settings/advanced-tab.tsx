@@ -4,6 +4,8 @@
 import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
+import { SharedLinks } from "@/components/links/shared-links";
+import { SharingSettings } from "@/components/links/sharing-settings";
 import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { RuntimeKindRows } from "@/components/settings/runtime-rows";
@@ -11,17 +13,16 @@ import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
+import { thisComputerText } from "@/lib/host-labels";
 
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
 
-const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
-
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
 
 /**
- * Settings, Advanced: early releases, Labs, which software runs Spaces on
+ * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
  * this Mac, and your own connection server. For options most people never
  * touch; each says what it does in a line.
  */
@@ -42,8 +43,9 @@ export function AdvancedTab() {
 
   return (
     <div data-settings-tab="advanced">
-      <EarlyReleases />
+      <UpdateChannel />
       <Labs />
+      <Sharing />
       {runtimes || autoConnect || overflow ? (
         <SettingsGroup title="Which software runs Spaces on this machine">
           {/* One row per kind of Space, as the core lays them out (always there, "Checking…" until the host read them). */}
@@ -51,8 +53,8 @@ export function AdvancedTab() {
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
           {overflow ? (
             <CoreSettingsRow
-              row={{ ...overflow, label: "Use my own cloud when this Mac is busy" }}
-              description="New Spaces go to your linked cloud when this Mac is full."
+              row={{ ...overflow, label: `Use my own cloud when ${thisComputerText()} is busy` }}
+              description={`New Spaces go to your linked cloud when ${thisComputerText()} is full.`}
               onChoose={choose}
             />
           ) : null}
@@ -63,8 +65,13 @@ export function AdvancedTab() {
   );
 }
 
-/** "Get early releases (Beta)": the update channel, moved here from About. */
-function EarlyReleases() {
+/**
+ * Updates: Stable or Nightly, as the core lays them out (`about::view`). The
+ * old "Get early releases (Beta)" switch; whoever had it on is on Nightly.
+ * A prerelease build back on Stable says it stays until the next stable
+ * release, with a link to download Stable now.
+ */
+function UpdateChannel() {
   const { data, setAbout } = useAbout();
   const { mode, core } = useBridge();
   const view = data?.view;
@@ -73,30 +80,30 @@ function EarlyReleases() {
   const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
   const updates = view.updates ?? unavailable;
   if (!updates) return null;
-  const beta = updates.channels.find((c) => c.id === "beta")?.active ?? false;
   const row: CoreRow = {
     id: "update-channel",
-    kind: "toggle",
-    label: "Get early releases (Beta)",
+    kind: "choice",
+    label: updates.channelLabel,
     value: null,
     button: null,
-    options: [
-      { id: "on", label: "On", active: beta },
-      { id: "off", label: "Off", active: !beta },
-    ],
+    options: updates.channels,
     enabled: data.canChange && !unavailable,
     help: null,
     linkLabel: null,
     linkUrl: null,
     placeholder: null,
   };
+  const note: CoreRow | null = updates.channelNote
+    ? { ...row, id: "update-channel-note", kind: "note", label: updates.channelNote, options: [], linkLabel: updates.downloadLabel ?? null, linkUrl: updates.downloadUrl ?? null }
+    : null;
   return (
     <SettingsGroup title="Updates">
       <CoreSettingsRow
         row={row}
-        description={BETA_HELP}
-        onChoose={(_, option) => void setAbout({ channel: option === "on" ? "beta" : "stable" }).catch(toastError("Couldn't change the update channel"))}
+        description={updates.channelHelp}
+        onChoose={(_, option) => void setAbout({ channel: option === "nightly" ? "nightly" : "stable" }).catch(toastError("Couldn't change the update channel"))}
       />
+      {note ? <CoreSettingsRow row={note} /> : null}
     </SettingsGroup>
   );
 }
@@ -121,9 +128,21 @@ function flagRow(id: string, label: string, on: boolean): CoreRow {
   };
 }
 
+/** Public TCP shares (Labs): how they are shared, and what is shared now. Only while the Labs switch is on. */
+function Sharing() {
+  const on = useExperiments().data?.experiments.tcpShares === true;
+  if (!on) return null;
+  return (
+    <>
+      <SharingSettings />
+      <SharedLinks />
+    </>
+  );
+}
+
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
-  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
+  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: `Ask before a task uses ${thisComputerText()}`, options: [
     { id: "on", label: "On", active: asks },
     { id: "off", label: "Off", active: !asks },
   ] };
@@ -133,10 +152,19 @@ function thisMacAskRow(asks: boolean): CoreRow {
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
+  const newSetup = useFlag("spaces_new_onboarding");
+  const tree = useFlag("spaces_tree");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
+    "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
+    "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
+    "experiment:ask_first": "An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
+    "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
+    "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
+    "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
+    "experiment:warm_pools": "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once.",
   };
   return (
     <SettingsGroup title="Labs">
@@ -145,10 +173,26 @@ function Labs() {
         description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
         onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
       />
+      <CoreSettingsRow
+        row={flagRow("spaces_new_onboarding", "Try the new setup", newSetup && askFirst)}
+        description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
+        onChoose={(_, option) => {
+          setFlagOverride("spaces_new_onboarding", option === "on");
+          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
+        }}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_tree", "Spaces as a tree", tree && askFirst)}
+        description="Your computers and the Spaces made on them in one list. New tasks run on your default Space. Turns on the new Home too. On this device only."
+        onChoose={(_, option) => {
+          setFlagOverride("spaces_tree", option === "on");
+          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
+        }}
+      />
       {askFirst ? (
         <CoreSettingsRow
           row={thisMacAskRow(!thisMacOk)}
-          description="Before a task works directly on this Mac, with your files and apps. Turn it on to be asked again."
+          description={`Before a task works directly on ${thisComputerText()}, with your files and apps. Turn it on to be asked again.`}
           onChoose={(_, option) => setThisMacConfirmed(option === "off")}
         />
       ) : null}

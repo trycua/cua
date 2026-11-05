@@ -24,7 +24,6 @@
 #include <src/protocols/core/Seat.hpp>
 #include <src/protocols/core/DataDevice.hpp>
 #include <src/layout/LayoutManager.hpp>
-#include "hyprland_compat.hpp"
 #include <linux/input-event-codes.h>
 #include <wayland.hpp>
 #include <wayland-server-core.h>
@@ -71,6 +70,41 @@ constexpr bool kProduction = true;
 #else
 constexpr bool kProduction = false;
 #endif
+
+#ifndef CUA_HYPRLAND_WINDOW_BACKEND_API
+#error CUA_HYPRLAND_WINDOW_BACKEND_API must name the detected Hyprland window API
+#endif
+// Hyprland 0.57 moved window identity onto the window backend and renamed the
+// exclusive layer list when pointer focus stopped following it (#15899). The
+// input guard still refuses while any exclusive layer surface is present.
+bool window_mapped(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->mapped();
+#else
+    return window->m_isMapped;
+#endif
+}
+bool window_is_x11(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->backend().isX11();
+#else
+    return window->m_isX11;
+#endif
+}
+pid_t window_pid(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->backend().pid();
+#else
+    return window->getPID();
+#endif
+}
+const std::vector<PHLLSREF>& exclusive_layer_surfaces() {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return g_pInputManager->m_exclusiveKeyboardLSes;
+#else
+    return g_pInputManager->m_exclusiveLSes;
+#endif
+}
 
 #ifdef CUA_HYPRLAND_TEST_INPUT
 std::uint64_t unix_ms() {
@@ -525,8 +559,8 @@ struct InputExperiment::Impl {
     }
     static std::optional<std::array<double, 6>> target_geometry(
         const PHLWINDOW& window, const SP<CWLSurfaceResource>& surface) {
-        if (!window || !surface || !compat::window_mapped(window) || window->isHidden() ||
-            compat::window_is_x11(window) || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
+        if (!window || !surface || !window_mapped(window) || window->isHidden() ||
+            window_is_x11(window) || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
         // Match Driver's captured client surface, not the decorated window box
         // (which includes compositor borders and shifts clicks by their width).
         const auto box = window->surfaceLogicalBox(); const auto surface_box = box;
@@ -846,7 +880,7 @@ struct InputExperiment::Impl {
             .physical_keys = pressed,
             .physical_buttons = g_pInputManager->hasHeldButtons(),
             .grab = bool(g_pSeatManager->m_seatGrab) || bool(g_layoutManager->dragController()->target()) ||
-                compat::exclusive_layer_surface_active(),
+                !exclusive_layer_surfaces().empty(),
             .dnd = PROTO::data && PROTO::data->dndActive(),
             .constraint = g_pInputManager->isConstrained(),
             .exact_keyboard_focus = root && g_pSeatManager->m_state.keyboardFocus == root &&
@@ -1148,8 +1182,8 @@ struct InputExperiment::Impl {
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
-                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(compat::window_pid(w)) == pid) window = w;
-            if (!window || compat::window_is_x11(window) || !compat::window_mapped(window) || window->isHidden() || !window->resource()) {
+                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(window_pid(w)) == pid) window = w;
+            if (!window || window_is_x11(window) || !window_mapped(window) || window->isHidden() || !window->resource()) {
                 invalidate(c); send(c, refusal("stale_target")); return;
             }
             // Retire the old target before rebinding: even if the new target's

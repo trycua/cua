@@ -35,11 +35,11 @@ CHECKS = {
 
 
 def run_text(job: str) -> str:
-    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job]["steps"])
+    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job].get("steps", []))
 
 
 def uses(job: str) -> list[str]:
-    return [step["uses"] for step in JOBS[job]["steps"] if "uses" in step]
+    return [step["uses"] for step in JOBS[job].get("steps", []) if "uses" in step]
 
 
 def test_every_swift_check_still_runs_in_exactly_one_job():

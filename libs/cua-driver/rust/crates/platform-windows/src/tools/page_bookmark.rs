@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bookmark-URL-field JavaScript-execution bypass for Chromium-family
 //! browsers on Windows.
 //!

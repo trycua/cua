@@ -14,7 +14,7 @@
  * | `thread.post {spaceId, text, replyTo?, answer?, toSession?, view?}` | `thread_post` | the tool's JSON as-is | unsupported |
  * | `thread.members {spaceId}` | `agent_members` | the tool's JSON as-is | unsupported |
  * | `thread.setRights {spaceId, name, task?, control?, approve?}` | `agent_set_rights` | the tool's JSON as-is | unsupported |
- * | `thread.agentAdd {spaceId, name, harness}` | `agent_add` | the tool's JSON as-is | unsupported |
+ * | `thread.agentAdd {spaceId, name, harness, model?, standby?, brief?}` | `agent_add` | the tool's JSON as-is | unsupported |
  * | `thread.agentRemove {spaceId, name}` | `agent_remove` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeCreate {spaceId, ttlS?, canTask?, askBeforeJoin?}` | `thread_join_code_create` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeList {spaceId}` | `thread_join_code_list` | the tool's JSON as-is | unsupported |
@@ -143,7 +143,7 @@ export interface ThreadEntry {
   task: { to: string; session: number | null } | null;
   attachments: ThreadAttachment[];
   /** An agent asks before it acts. */
-  approval: { action: string; details: string; state: string } | null;
+  approval: { action: string; details: string; state: string; card?: Record<string, unknown> | null } | null;
   /** Someone answered an approval (`kind: "answer"`). */
   answer: { approval: number; approve: boolean; note: string | null } | null;
   /** A system note about a task (`task_seq` on a `system` entry): it shows inside that task. */
@@ -320,6 +320,12 @@ export interface ThreadAgentAddArgs {
   name: string;
   /** The harness id (`hermes`, `claude-code`, `openai-codex`, ...). */
   harness: string;
+  /** The model its next message uses (an open session switches to it before the turn). On a member that exists, it is updated. */
+  model?: string;
+  /** Keep its run open with the session ready, so a message starts its turn at once. */
+  standby?: boolean;
+  /** Standing instructions: the first message each run takes carries them in front of its text. */
+  brief?: string;
 }
 
 export interface ThreadJoinCodeCreateArgs {
@@ -496,7 +502,14 @@ export function threadSetRightsArgs(a: ThreadSetRightsArgs): Json {
 export const threadAgentRemoveArgs = (a: ThreadAgentRemoveArgs): Json => ({ name: a.name });
 
 /** `agent_add`: a started member of the Space (`agent` is the harness id). */
-export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({ space: a.spaceId, name: a.name, agent: a.harness });
+export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({
+  space: a.spaceId,
+  name: a.name,
+  agent: a.harness,
+  ...(a.model ? { model: a.model } : {}),
+  ...(a.standby !== undefined ? { standby: a.standby } : {}),
+  ...(a.brief ? { brief: a.brief } : {}),
+});
 
 export function threadJoinCodeCreateArgs(a: ThreadJoinCodeCreateArgs): Json {
   const out: Json = { space: a.spaceId };
@@ -634,7 +647,15 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
     task: task && str(task.to) ? { to: str(task.to), session: num(task.session) } : null,
     noteFor: kind === "system" ? num(e.task_seq) : null,
     attachments: (Array.isArray(e.attachments) ? e.attachments : []).map(attachment).filter((a): a is ThreadAttachment => a !== null),
-    approval: approval ? { action: str(approval.action), details: str(approval.details), state: str(approval.state, "open") } : null,
+    approval: approval
+      ? {
+          action: str(approval.action),
+          details: str(approval.details),
+          state: str(approval.state, "open"),
+          // A card is data only Cua's own host writes: an agent's approval stays text.
+          card: author(e.author).kind === "system" ? obj(approval.card) : null,
+        }
+      : null,
     answer: answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null } : null,
     update:
       update && num(update.task) !== null && updateState

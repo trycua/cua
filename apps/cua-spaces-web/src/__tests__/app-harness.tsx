@@ -92,6 +92,7 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
+    ...(demo.children ? { children: demo.children } : {}),
     ...(host.machinesView ? { machinesView: host.machinesView } : {}),
     ...(host.listStatus ? { listStatus: host.listStatus } : {}),
     ...(host.creatingElsewhere ? { creatingElsewhere: host.creatingElsewhere } : {}),

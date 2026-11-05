@@ -85,6 +85,7 @@ PATHS = (
     "docs/code-block-policy.json",
     # What the job runs around the suite: gVisor, the toolchain, the cache, the scope script.
     "scripts/images/install-gvisor.sh",
+    "scripts/ci/lib/docker-sccache.sh",
     ".github/actions/linux-rust-prep/**",
     ".github/actions/setup-protoc/**",
     ".github/actions/rust-cache/**",

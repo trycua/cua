@@ -212,6 +212,8 @@ async fn refresh_owner(owner: Arc<std::sync::RwLock<crate::thread::Author>>, spa
 pub fn register() {
     crate::stream::register();
     crate::presence_datagrams::register();
+    // Approvals that wait and tasks that end reach the person's phone.
+    crate::push_client::register();
     cua_daemon::extension::register(Arc::new(CuaSpacesDaemon::default()));
 }
 

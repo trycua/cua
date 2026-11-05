@@ -44,6 +44,10 @@ use cua_spaces::{Error, Result};
 /// runs there (no agent is a member of it). Its thread lives on this machine
 /// only: it is not mirrored to the Volume, so it never mixes with another
 /// machine's.
+/// What a phone is told when it answers what widens a Space's reach.
+pub const PHONE_NOT_FOR_REACH: &str =
+    "this widens what a Space can reach, so it is answered on the computer, not from a phone";
+
 pub const HOST_DESKTOP: &str = "this-mac";
 
 /// The longest a status read of one Space's runs may take (the list shows
@@ -79,6 +83,11 @@ pub struct Policy {
     /// [`Rights::default`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rights: Option<Rights>,
+    /// Keep a run open with its session ready (the supervisor starts one when
+    /// there is none, and it never exits for being idle), so the next message
+    /// starts its turn at once instead of starting the agent first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub standby: bool,
 }
 
 fn local() -> String {
@@ -93,6 +102,7 @@ impl Default for Policy {
             once: false,
             guard: true,
             rights: None,
+            standby: false,
         }
     }
 }
@@ -118,6 +128,27 @@ pub struct MemberOptions {
     pub rights: Option<Rights>,
     /// `on: auto`: the durable Space (by name) `spec.space` is now.
     pub durable_space: Option<String>,
+    /// Keep a run ready ([`Policy::standby`]); `None` leaves it as it is.
+    pub standby: Option<bool>,
+}
+
+/// An answer to an approval, as `thread_post` gets it.
+#[derive(Clone, Debug, Default)]
+pub struct AnswerArgs {
+    pub approval: u64,
+    pub approve: bool,
+    pub note: String,
+    /// `once` or `space` ([`crate::thread::Answer::scope`]).
+    pub scope: Option<String>,
+    /// The answerer's key for a retry ([`crate::thread::Answer::client_id`]).
+    pub client_id: Option<String>,
+}
+
+/// One answer at a time: the check that an approval is still open and the
+/// write of its answer must not interleave with another answer's.
+fn answering() -> &'static tokio::sync::Mutex<()> {
+    static L: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    L.get_or_init(Default::default)
 }
 
 /// What `thread_post` posts.
@@ -129,14 +160,16 @@ pub struct PostArgs {
     pub attachments: Vec<String>,
     /// `(action, details)`.
     pub approval: Option<(String, String)>,
-    /// `(approval seq, approve, note)`.
-    pub answer: Option<(u64, bool, String)>,
+    /// The answer to an approval or join request.
+    pub answer: Option<AnswerArgs>,
     /// The session of the mentioned agent that should take the task
     /// (default: any free session).
     pub to_session: Option<u32>,
     /// What the person was looking at in the Space (its desktop or a
     /// window), stored with the entry.
     pub view: Option<crate::thread::ViewContext>,
+    /// The poster's key for this post (see [`ThreadEntry::client_id`]).
+    pub client_id: Option<String>,
 }
 
 /// One entry of an import.
@@ -154,6 +187,26 @@ pub struct ImportEntry {
 
 fn denied(msg: impl Into<String>) -> Error {
     Error::extension("permission_denied", msg)
+}
+
+/// An entry as `thread_read` shows it. An approval also says what kind of
+/// request it is (decided by the host, never from the agent's words), what
+/// an answer may choose (`scope_choices`) and which entry answered it.
+fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold) -> Value {
+    let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+    if e.approval.is_some()
+        && let Some(a) = v.get_mut("approval").and_then(Value::as_object_mut)
+    {
+        a.insert("kind".into(), json!(crate::thread::grants::kind(e)));
+        a.insert(
+            "scope_choices".into(),
+            json!(crate::thread::grants::scope_choices(e)),
+        );
+        if let Some(by) = fold.answer_of.get(&e.seq) {
+            a.insert("answered_by".into(), json!(by));
+        }
+    }
+    v
 }
 
 /// Managing members (add, remove, schedules) is the owner's.
@@ -229,7 +282,17 @@ impl Persistent {
 
     /// The thread of `space` (a Space id as recorded), without checks.
     pub fn thread_store(&self, space: &str) -> ThreadStore {
-        ThreadStore::open(self.spaces.home_dir(), space)
+        let store = ThreadStore::open(self.spaces.home_dir(), space);
+        self.with_volume_id(store)
+    }
+
+    /// `store` with the Volume's name for its Space (the Space's id in the
+    /// folder name).
+    fn with_volume_id(&self, store: ThreadStore) -> ThreadStore {
+        match self.spaces.volume_space_id(store.space()) {
+            Ok(vid) => store.with_volume_id(vid),
+            Err(_) => store,
+        }
     }
 
     /// The thread key of `space`: its Space id, or [`HOST_DESKTOP`] for the
@@ -302,6 +365,20 @@ impl Persistent {
         }
     }
 
+    /// The member of `space` that `token` names: the `@handle` the Space
+    /// knows it by, else its key on this machine (`claude-8`). The key
+    /// is only an alias: a member's handle always wins, and a Space never
+    /// answers to another Space's key. The one rule every @mention, add
+    /// and wake goes through, so a name copied from `cua agent ls` reaches
+    /// the same member as the handle the thread shows.
+    pub fn member_named(&self, space: &str, token: &str) -> Result<Option<AgentRecord>> {
+        let token = token.trim().trim_start_matches('@').to_ascii_lowercase();
+        let members = self.members_of(space)?;
+        let by = |f: &dyn Fn(&AgentRecord) -> bool| members.iter().find(|r| f(r)).cloned();
+        Ok(by(&|r| r.handle().eq_ignore_ascii_case(&token))
+            .or_else(|| by(&|r| r.name.eq_ignore_ascii_case(&token))))
+    }
+
     /// The agent members of `space` (a Space id).
     pub fn members_of(&self, space: &str) -> Result<Vec<AgentRecord>> {
         Ok(self
@@ -362,10 +439,7 @@ impl Persistent {
         let space = self.spaces.resolve(&spec.space)?.to_string();
         let wanted = spec.name.clone();
         // This Space's own member of that name (an older Cua's included).
-        let here = self
-            .members_of(&space)?
-            .into_iter()
-            .find(|r| r.handle() == wanted);
+        let here = self.member_named(&space, &wanted)?;
         let rec = match here {
             Some(r) => {
                 if r.harness != spec.harness {
@@ -374,7 +448,24 @@ impl Persistent {
                         r.harness, spec.harness
                     )));
                 }
-                r
+                // The model it is asked for now is the one its next message
+                // names (an open run switches to it before the turn).
+                if spec.model.is_some() || spec.base_url.is_some() || spec.brief.is_some() {
+                    self.update(&r.name, |x| {
+                        if spec.model.is_some() {
+                            x.model = spec.model.clone();
+                        }
+                        if spec.base_url.is_some() {
+                            x.base_url = spec.base_url.clone();
+                        }
+                        if spec.brief.is_some() {
+                            x.brief = spec.brief.clone();
+                        }
+                    })?;
+                    self.get(&r.name)?
+                } else {
+                    r
+                }
             }
             None => {
                 // Names are keys on this machine, but a Space's `@claude` is its
@@ -410,6 +501,7 @@ impl Persistent {
                 once: opts.once,
                 guard: true,
                 rights: opts.rights.clone(),
+                standby: opts.standby.unwrap_or(r.policy.standby),
             };
             r.durable_space = opts.durable_space.clone();
             r.sessions = opts.sessions.unwrap_or(1);
@@ -535,7 +627,13 @@ impl Persistent {
             reported.extend(answers);
         }
         for r in recs {
-            let open = fold.open_tasks(Some(&r.name)).len();
+            let open_tasks = fold.open_tasks(Some(&r.name));
+            let open = open_tasks.len();
+            // Messages waiting behind the turn that is running.
+            let queued = open_tasks
+                .iter()
+                .filter(|t| t.state == TaskState::Queued)
+                .count();
             let mut sessions = vec![];
             let mut first_status = None;
             for s in r.session_views() {
@@ -603,6 +701,7 @@ impl Persistent {
             row["run_id"] = json!(r.run_id);
             row["status"] = status;
             row["open_tasks"] = json!(open);
+            row["queued"] = json!(queued);
             row["session_states"] = json!(sessions);
             out.push(row);
         }
@@ -743,10 +842,10 @@ impl Persistent {
         entry: &str,
     ) -> Result<Delivered> {
         let picked_ms = super::phases::now_ms();
-        let (base, cold) = match self.current_turn(rec).await {
-            Some(Some(turn)) => (turn, false),
-            Some(None) => return Ok(Delivered::Busy),
-            None => (0, true),
+        let (base, cold, known) = match self.current_turn_info(rec).await {
+            Some((Some(turn), info)) => (turn, false, Some(info)),
+            Some((None, _)) => return Ok(Delivered::Busy),
+            None => (0, true, None),
         };
         let holder = Holder::new(&rec.name, rec.k(), rec.drive_epoch());
         let dispatch = || ClaimEntries {
@@ -770,6 +869,14 @@ impl Persistent {
             "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
             task.seq, task.author.name
         );
+        // The member's standing instructions go in front of the first message
+        // each run takes (the thread shows only what the person wrote).
+        let framed = match rec.brief.as_deref().filter(|b| !b.trim().is_empty()) {
+            Some(brief) if rec.run_id.is_none() || rec.briefed_run != rec.run_id => {
+                format!("{}\n\n{framed}", brief.trim())
+            }
+            _ => framed,
+        };
         let update = |state, note: String| {
             Draft::update(
                 Author::system("dispatch"),
@@ -803,12 +910,23 @@ impl Persistent {
                 "starting"
             }),
         );
-        let sent = Box::pin(self.send_session(rec, &framed, entry)).await;
+        let sent = Box::pin(self.send_session(rec, &framed, entry, known)).await;
         if sent.is_err() {
             self.set_stage(rec, None);
         }
         match sent {
             Ok(d) => {
+                super::phases::local(
+                    &d.run_id,
+                    "delivered",
+                    super::phases::now_ms().saturating_sub(posted_ms),
+                    d.started,
+                    &rec.harness,
+                );
+                if rec.brief.is_some() {
+                    let run = d.run_id.clone();
+                    let _ = self.update_in(rec, |r| r.briefed_run = Some(run));
+                }
                 let base = if d.started { 0 } else { base };
                 if !d.started {
                     // A follow-up to a running agent: its steps are timed too.
@@ -904,13 +1022,19 @@ impl Persistent {
     /// The turn of `rec`'s run when it can take a message: `None` (no
     /// run), `Some(None)` (mid turn), `Some(Some(turn))`.
     async fn current_turn(&self, rec: &AgentRecord) -> Option<Option<u32>> {
+        self.current_turn_info(rec).await.map(|(turn, _)| turn)
+    }
+
+    /// [`Self::current_turn`] with the status it was read from, so a
+    /// delivery that follows does not read it again.
+    async fn current_turn_info(&self, rec: &AgentRecord) -> Option<(Option<u32>, ag::RunInfo)> {
         let run = rec.run_id.as_ref()?;
         let agents = self.cached_agents(&rec.space).await.ok()?;
         match agents.status(run).await {
-            Ok(st) if st.status == RunStatus::Running => Some(None),
+            Ok(st) if st.status == RunStatus::Running => Some((None, st)),
             // A durable run being re-driven: its turn goes on.
-            Ok(st) if Persistent::redriving(rec, st.status) => Some(None),
-            Ok(st) => Some(Some(st.turn)),
+            Ok(st) if Persistent::redriving(rec, st.status) => Some((None, st)),
+            Ok(st) => Some((Some(st.turn), st)),
             Err(_) => None,
         }
     }
@@ -1019,6 +1143,18 @@ impl Persistent {
         name: &str,
         text: &str,
     ) -> Result<super::Delivery> {
+        self.send_as_entry(caller, name, text).await.map(|(d, _)| d)
+    }
+
+    /// [`Persistent::send_as`], also saying which thread entry recorded the
+    /// message (none when it was not recorded: a message that looks like a
+    /// secret is delivered and never written to the thread).
+    pub async fn send_as_entry(
+        &self,
+        caller: &Caller,
+        name: &str,
+        text: &str,
+    ) -> Result<(super::Delivery, Option<u64>)> {
         let rec = self.get(name)?;
         self.check_right(caller, &rec, Right::Task)?;
         let keys_of = self.keys_of(caller, &rec);
@@ -1044,13 +1180,29 @@ impl Persistent {
         if let Err(e) = check_text(text) {
             // Delivered, but not recorded: the thread never holds a secret.
             tracing::warn!(agent = name, "message not recorded in the thread: {e}");
-            return Ok(d);
+            return Ok((d, None));
         }
         let e = store.append(draft)?;
         if tracked {
             self.mark_delivered(&rec, &store, e.seq, if d.started { 0 } else { base })?;
         }
-        Ok(d)
+        Ok((d, Some(e.seq)))
+    }
+
+    /// Records in the thread, authored by `caller`, a message already
+    /// delivered to `name`'s running turn (queued behind it): the running
+    /// task keeps its place, so this is only a message the thread shows.
+    /// None when it looks like a secret (never written).
+    pub fn record_sent(&self, caller: &Caller, name: &str, text: &str) -> Result<Option<u64>> {
+        let rec = self.get(name)?;
+        if let Err(e) = check_text(text) {
+            tracing::warn!(agent = name, "message not recorded in the thread: {e}");
+            return Ok(None);
+        }
+        let store = self.thread_store(&rec.space);
+        let mut draft = Draft::new(self.author_for(caller), EntryKind::Message, text);
+        draft.mentions = vec![name.to_string()];
+        Ok(Some(store.append(draft)?.seq))
     }
 
     /// When the turn after the in-flight task of the session `rec` shows
@@ -1326,6 +1478,7 @@ impl Persistent {
         }
         let owner = self.owner();
         for store in ThreadStore::list(self.spaces.home_dir()) {
+            let store = self.with_volume_id(store);
             let key = store.space().to_string();
             // Not shipped to the Volume: see [`HOST_DESKTOP`].
             if key == HOST_DESKTOP {
@@ -1455,13 +1608,12 @@ impl Thread {
             .collect())
     }
 
-    /// The key of this Space's member that answers to `@handle`.
+    /// The key of this Space's member that answers to `@handle` (or, as an
+    /// alias, to its key on this machine).
     fn member_key(&self, handle: &str) -> Option<String> {
         self.p
-            .members_of(self.store.space())
+            .member_named(self.store.space(), handle)
             .ok()?
-            .into_iter()
-            .find(|r| r.handle() == handle)
             .map(|r| r.name)
     }
 
@@ -1472,8 +1624,35 @@ impl Thread {
     /// reply to an agent's message with no @mention addresses that agent.
     /// An agent's message wakes another agent only through an explicit
     /// @mention, within the chatter limits ([`super::wake`]).
-    pub async fn post(&self, args: PostArgs) -> Result<ThreadEntry> {
+    pub async fn post(&self, mut args: PostArgs) -> Result<ThreadEntry> {
         policy::may_write(self.p.role_of(&self.caller))?;
+        // An answer is checked against the approval's state and written
+        // under one hold, so a retry racing its first try writes nothing twice.
+        let client_id = args
+            .client_id
+            .take()
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
+        if client_id.as_ref().is_some_and(|c| c.chars().count() > 128) {
+            return Err(Error::invalid("client_id: at most 128 characters"));
+        }
+        let _answering = match (&args.answer, &client_id) {
+            (None, None) => None,
+            _ => Some(answering().lock().await),
+        };
+        // The same post again is the first one.
+        if let Some(key) = &client_id {
+            let mine = self.author().id;
+            let recent = self.store.read_before(None, 200)?.0;
+            if let Some(mut first) = recent
+                .into_iter()
+                .rev()
+                .find(|e| e.author.id == mine && e.client_id.as_deref() == Some(key.as_str()))
+            {
+                first.extra.insert("replayed".into(), Value::Bool(true));
+                return Ok(first);
+            }
+        }
         check_text(&args.text)?;
         // An answer to an approval or join request may carry no words.
         if args.text.trim().is_empty() && args.attachments.is_empty() && args.answer.is_none() {
@@ -1484,18 +1663,22 @@ impl Thread {
         }
         let author = self.author();
         let members = self.member_names()?;
-        // `@claude` of this Space is the member's key (`claude-2` in a second Space).
-        let mentions: Vec<String> = parse_mentions(&args.text)
+        // `@claude` of this Space is the member's key (`claude-2` in a second
+        // Space); the key itself (`@claude-2`) reaches the same member.
+        let mut mentions: Vec<String> = vec![];
+        for key in parse_mentions(&args.text)
             .into_iter()
-            .filter(|m| members.contains(m))
             .filter_map(|m| self.member_key(&m))
-            .collect();
+        {
+            if !mentions.contains(&key) {
+                mentions.push(key);
+            }
+        }
         let fold = self.store.fold()?;
         let by_agent = author.agent_name().map(str::to_string);
         // Mentions a person did not type: `@everyone`, or a reply to an agent's message.
         let mut implied: Vec<String> = vec![];
         let mut everyone = false;
-        let mut mentions = mentions;
         if by_agent.is_none() {
             let typed = parse_mentions(&args.text);
             if typed.iter().any(|m| m == "everyone") && !members.iter().any(|h| h == "everyone") {
@@ -1535,24 +1718,94 @@ impl Thread {
                 action,
                 details,
                 state: "open".into(),
+                // Only the host writes a card: an agent's approval is text.
+                card: None,
             });
         }
-        if let Some((seq, approve, note)) = args.answer {
+        if let Some(ans) = args.answer.take() {
             if kind == EntryKind::Approval {
                 return Err(Error::invalid("give approval or answer, not both"));
             }
+            let AnswerArgs {
+                approval: seq,
+                approve,
+                note,
+                scope,
+                client_id,
+            } = ans;
             refuse_secrets("note", &note)?;
+            let scope = match scope.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                None => None,
+                Some("once") => Some("once".to_string()),
+                Some("space") => Some("space".to_string()),
+                Some(other) => {
+                    return Err(Error::invalid(format!(
+                        "scope {other:?}: use \"once\" or \"space\""
+                    )));
+                }
+            };
+            if scope.as_deref() == Some("space") && !approve {
+                return Err(Error::invalid(
+                    "a decline is for this request only: leave out the scope",
+                ));
+            }
+            let client_id = client_id
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty());
+            if client_id.as_ref().is_some_and(|c| c.chars().count() > 128) {
+                return Err(Error::invalid("client_id: at most 128 characters"));
+            }
             match fold.approvals.get(&seq) {
                 None => return Err(Error::NotFound(format!("approval #{seq} in this thread"))),
-                Some(true) => return Err(Error::invalid(format!("approval #{seq} was answered"))),
+                Some(true) => {
+                    // The same answer again is the first one; a different
+                    // one is refused and says what was decided.
+                    let first = fold
+                        .answer_of
+                        .get(&seq)
+                        .and_then(|a| self.store.get(*a).ok().flatten());
+                    if let Some(mut first) = first {
+                        let same = first.author.id == author.id
+                            && first.answer.as_ref().is_some_and(|a| {
+                                a.approve == approve
+                                    && (client_id.is_none() || a.client_id == client_id)
+                            });
+                        if same {
+                            first.extra.insert("replayed".into(), Value::Bool(true));
+                            return Ok(first);
+                        }
+                        let what = if first.answer.as_ref().is_some_and(|a| a.approve) {
+                            "allowed"
+                        } else {
+                            "declined"
+                        };
+                        return Err(Error::invalid(format!(
+                            "approval #{seq} was already answered ({what})"
+                        )));
+                    }
+                    return Err(Error::invalid(format!("approval #{seq} was answered")));
+                }
                 Some(false) => {}
             }
             self.may_answer(seq)?;
+            if scope.as_deref() == Some("space") {
+                let asked = self
+                    .store
+                    .get(seq)?
+                    .ok_or_else(|| Error::NotFound(format!("approval #{seq} in this thread")))?;
+                if !crate::thread::grants::scope_choices(&asked).contains(&"space") {
+                    return Err(Error::invalid(
+                        "this request is answered one at a time: it does not offer \"allow for this Space\"",
+                    ));
+                }
+            }
             kind = EntryKind::Answer;
             draft_answer = Some(Answer {
                 approval: seq,
                 approve,
                 note,
+                scope,
+                client_id,
             });
         }
         if let Some(r) = args.reply_to
@@ -1659,6 +1912,7 @@ impl Thread {
         });
         d.runs_on_keys_of = keys_of;
         d.view = view;
+        d.client_id = client_id;
         // Each agent shows as at work in the thread's live row right away
         // (the dispatcher gives it the task within a second).
         for to in targets.iter().map(|t| &t.0) {
@@ -1677,7 +1931,39 @@ impl Thread {
                 );
             }
         }
-        let e = self.store.append(d)?;
+        // A request the person already allowed for this Space is answered
+        // the moment it is posted, in the same write, so it is never open.
+        let granted = match (&d.approval, by_agent.as_deref()) {
+            (Some(ap), Some(agent)) => crate::thread::grants::find(&self.store, agent, &ap.action)?,
+            _ => None,
+        };
+        let space_grant = d
+            .answer
+            .as_ref()
+            .filter(|a| a.scope.as_deref() == Some("space"))
+            .map(|a| a.approval);
+        let e = match granted {
+            Some(g) => {
+                let mut auto =
+                    Draft::new(Author::system("grant"), EntryKind::Answer, String::new());
+                auto.answer = Some(Answer {
+                    approval: 0,
+                    approve: true,
+                    note: format!(
+                        "Allowed for this Space (you said yes to this in #{})",
+                        g.approval
+                    ),
+                    scope: Some("space".into()),
+                    client_id: None,
+                });
+                auto.answers_prev = true;
+                self.store.append_many(vec![d, auto])?.remove(0)
+            }
+            None => self.store.append(d)?,
+        };
+        if let Some(approval) = space_grant {
+            self.remember_grant(approval, &e)?;
+        }
         let mut copied = vec![];
         for (to, mut c) in copies {
             c.fanout_of = Some(e.seq);
@@ -1779,7 +2065,11 @@ impl Thread {
                 Caller::Agent { name: agent, space } => self
                     .p
                     .drive
-                    .session(cua_volume::Context::agent(agent, Some(space)))
+                    .session(crate::drive_runtime::agent_context(
+                        &self.p.spaces,
+                        agent,
+                        Some(space),
+                    ))
                     .open(&key, None)
                     .await
                     .drive()?,
@@ -1852,7 +2142,7 @@ impl Thread {
             .map(|e| {
                 let open =
                     e.join_request.is_some() && fold.join_requests.get(&e.seq) == Some(&None);
-                let mut v = serde_json::to_value(&e).unwrap_or(Value::Null);
+                let mut v = approval_overlay(&e, &fold);
                 if e.join_request.is_some() {
                     v["you_can_answer"] = json!(open && answers_joins);
                 }
@@ -1872,6 +2162,9 @@ impl Thread {
             "read_seq": read_seq,
             "unread": self.store.unread(&me.id)?,
             "tasks": self.store.with_claims(fold.open_tasks(None))?,
+            // The approvals still waiting that this caller may answer
+            // (the phone's "1 of 3").
+            "open_approvals": self.open_approvals(&fold),
         }))
     }
 
@@ -1925,11 +2218,14 @@ impl Thread {
             .iter()
             .filter(|e| e.seq > read_seq && e.author.id != me.id)
             .count();
+        let fold = self.store.fold()?;
+        let entries: Vec<Value> = entries.iter().map(|e| approval_overlay(e, &fold)).collect();
         Ok(json!({
             "space": self.store.space(),
             "me": me,
             "role": self.p.role_of(&self.caller).as_str(),
             "with": with,
+            "open_approvals": self.open_approvals(&fold),
             "entries": entries,
             "cursor": cursor,
             "caught_up": cursor >= last,
@@ -2027,9 +2323,99 @@ impl Thread {
         self.p.check_control(&self.caller, &rec)
     }
 
+    /// The approvals nobody answered yet that this caller may answer, oldest
+    /// first.
+    fn open_approvals(&self, fold: &crate::thread::Fold) -> Vec<u64> {
+        fold.approvals
+            .iter()
+            .filter(|(seq, answered)| !**answered && self.may_answer(**seq).is_ok())
+            .map(|(seq, _)| *seq)
+            .collect()
+    }
+
+    /// A person allowed `approval` for this Space (`answer` is their answer
+    /// entry): remembers that kind of request from that agent, and answers
+    /// the same requests the agent already has open.
+    fn remember_grant(&self, approval: u64, answer: &ThreadEntry) -> Result<()> {
+        use crate::thread::grants;
+        let Some(asked) = self.store.get(approval)? else {
+            return Ok(());
+        };
+        let (Some(agent), Some(ap)) = (asked.author.agent_name(), asked.approval.as_ref()) else {
+            return Ok(());
+        };
+        grants::add(
+            &self.store,
+            grants::Grant {
+                key: grants::key(agent, &ap.action),
+                agent: agent.to_string(),
+                action: ap.action.clone(),
+                approval,
+                by: answer.author.id.clone(),
+                by_name: answer.author.name.clone(),
+                ts_ms: answer.ts_ms,
+                device: cua_spaces::extension::Caller::current_device().id,
+                from_phone: cua_spaces::extension::Caller::current_device().phone,
+            },
+        )?;
+        // The same request, already waiting (three at once, "1 of 3").
+        let fold = self.store.fold()?;
+        let key = grants::key(agent, &ap.action);
+        let mut siblings = vec![];
+        for (seq, open) in fold.approvals.iter().map(|(s, a)| (*s, !*a)) {
+            if !open || seq == approval {
+                continue;
+            }
+            let Some(e) = self.store.get(seq)? else {
+                continue;
+            };
+            let same = e.author.agent_name() == Some(agent)
+                && e.approval
+                    .as_ref()
+                    .is_some_and(|a| grants::key(agent, &a.action) == key)
+                && grants::scope_choices(&e).contains(&"space");
+            if same {
+                siblings.push(seq);
+            }
+        }
+        let drafts: Vec<Draft> = siblings
+            .into_iter()
+            .map(|seq| {
+                let mut d = Draft::new(Author::system("grant"), EntryKind::Answer, String::new());
+                d.reply_to = Some(seq);
+                d.answer = Some(Answer {
+                    approval: seq,
+                    approve: true,
+                    note: format!("Allowed for this Space (you said yes to this in #{approval})"),
+                    scope: Some("space".into()),
+                    client_id: None,
+                });
+                d
+            })
+            .collect();
+        self.store.append_many(drafts)?;
+        Ok(())
+    }
+
     /// Answering approval `seq`: the `approve` right of the agent that
     /// asked (the defaults when a person asked or the agent is gone).
     fn may_answer(&self, seq: u64) -> Result<()> {
+        // What widens a Space's reach (an ability for a home Space, an agent asking to
+        // join) is answered on a computer, not from a phone: a phone that is lost or
+        // taken could otherwise widen a sandbox. Everything else a phone may answer.
+        if cua_spaces::extension::Caller::current_device().phone {
+            let kind = self
+                .store
+                .get(seq)?
+                .map(|e| crate::thread::grants::kind(&e))
+                .unwrap_or("request");
+            if kind == "ability"
+                || kind == "join"
+                || self.store.fold()?.join_requests.contains_key(&seq)
+            {
+                return Err(denied(PHONE_NOT_FOR_REACH));
+            }
+        }
         if self.store.fold()?.join_requests.contains_key(&seq) {
             return match self.p.role_of(&self.caller) {
                 policy::Role::Owner | policy::Role::Admin => Ok(()),

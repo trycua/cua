@@ -257,7 +257,8 @@ describe("a Space's drop well", () => {
     const seen: string[] = [];
     await sendFiles(demo, core, "local:design-review", ["/Users/ada/notes.txt"], (s) => seen.push(`${s?.kind}: ${s?.text}`));
     expect(seen[0]).toMatch(/^working: Sending notes\.txt/);
-    expect(seen[1]).toMatch(/^done: notes\.txt .* verified in /);
+    // The core words what landed; without it the bridge names the files.
+    expect(seen[1]).toMatch(wasmBuilt ? /^done: notes\.txt .* verified in / : /^done: notes\.txt$/);
     seen.length = 0;
     await sendFiles(demo, core, "local:agent-sandbox", ["/Users/ada/notes.txt"], (s) => seen.push(s!.kind));
     expect(seen).toEqual(["working", "failed"]);

@@ -19,10 +19,13 @@ import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
+import { ImportedTaskView } from "./imported-task";
 import { StateDot, taskRun } from "./home";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
+import { useTreeWhere } from "./tree-where";
+import { hostOs, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /** What the agent is told when the person hands the computer back. */
 /** How long a sent reply may take to show in the run before the thread trusts the run's status again (ms). */
@@ -48,6 +51,8 @@ export function AskFirstTask({ taskId }: { taskId: string }) {
       </div>
     );
   }
+  // A chat picked from "Pick up where you left off" (CUA-3319): its earlier messages and the box to continue it.
+  if (task.imported) return <ImportedTaskView task={{ ...task, imported: task.imported }} />;
   return <TaskView task={task} />;
 }
 
@@ -248,7 +253,7 @@ function CuaLine({ children }: { children: ReactNode }) {
 function Starting({ pending, space, name, onHost }: { pending: Space | undefined; space: Space | undefined; name: string; onHost: boolean }) {
   const making = pending?.progress;
   const steps = onHost
-    ? [{ text: `Opening ${name} on this Mac`, done: false, now: true }]
+    ? [{ text: `Opening ${name} on ${thisComputerText()}`, done: false, now: true }]
     : [
         { text: "Making the computer", done: Boolean(space), now: !space },
         { text: `Opening ${name} inside it`, done: false, now: Boolean(space) },
@@ -258,7 +263,7 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
       <div className="flex items-center gap-3">
         <CuaKey size={28} />
         <div className="flex-1">
-          <div className="text-[15px] font-semibold">{onHost ? "Starting on this Mac" : "Getting a fresh computer ready"}</div>
+          <div className="text-[15px] font-semibold">{onHost ? `Starting on ${thisComputerText()}` : "Getting a fresh computer ready"}</div>
           <div className="text-[13px] text-muted-foreground">
             {onHost
               ? "It works with your own files and apps."
@@ -299,6 +304,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
     if (outcome === "connected") onRetry();
   };
   const { kinds, spaces } = useWhereOptions();
+  const tree = useTreeWhere();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
   return (
@@ -332,6 +338,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
             onOpenChange={setOpen}
             kinds={kinds}
             spaces={spaces}
+            tree={tree}
             trigger={
               <Button variant={view.action === "change-computer" ? "default" : "outline"} className="h-10 px-4" data-ask-change-computer="">
                 Change computer <ChevronDownIcon />
@@ -474,7 +481,7 @@ function Screen({
           ? "Thrown away"
           : task.onHost
             ? state === "working" || state === "stuck"
-              ? "Working on this Mac"
+              ? `Working on ${thisComputerText()}`
               : TASK_STATE_TEXT[state]
             : "Not ready yet"
         : state === "needs-you"
@@ -536,7 +543,7 @@ function Screen({
 function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined }) {
   const os = task.os === "macos" ? "Mac" : task.os === "windows" ? "Windows" : "Linux";
   const line = task.onHost
-    ? "Your own Mac, with your files and apps"
+    ? `Your own ${{ macos: "Mac", windows: "PC", linux: "computer" }[hostOs()]}, with your files and apps`
     : !space
       ? task.ending === "thrown"
         ? "Thrown away"
@@ -551,7 +558,7 @@ function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined
       <div className="flex min-h-12 items-center gap-3 px-4 py-2">
         <OsIcon os={task.os} className="size-4 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{task.onHost ? "This Mac" : space ? space.name : `${os} computer for this task`}</div>
+          <div className="font-medium">{task.onHost ? thisComputerLabel() : space ? space.name : `${os} computer for this task`}</div>
           <div className="text-muted-foreground">{line}</div>
         </div>
         {space ? (

@@ -68,7 +68,8 @@ service SpaceService {
   // wizard's GPU row; `gpu` of `CreateSpace`).
   rpc GetGpuSupport(GetGpuSupportRequest) returns (GetGpuSupportResponse);
   // Deletes a Space's sandbox and forgets it. A Space added by address
-  // (`direct:`, `relay:`) is only forgotten: cua did not create it.
+  // (`direct:`, `relay:`) is only forgotten: cua did not create it. Its
+  // child Spaces are deleted first, unless `keep_children`.
   rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse);
   // Deletes several Spaces (at most 3 at a time), turning running ones off
   // first. One result per Space, in order; one failure never stops the
@@ -102,6 +103,34 @@ service SpaceService {
   rpc SetSpaceLifetime(SetSpaceLifetimeRequest) returns (SetSpaceLifetimeResponse);
   // Replaces a Space's egress policy (empty removes it).
   rpc SetSpaceEgress(SetSpaceEgressRequest) returns (SetSpaceEgressResponse);
+  // A Space's network: its settings, what they open, where they are
+  // enforced (or why its network is cut), and what is always blocked.
+  rpc GetSpaceNetwork(GetSpaceNetworkRequest) returns (GetSpaceNetworkResponse);
+  // Replaces a Space's network settings (a child's stay within its
+  // parent's unless `widen`).
+  rpc SetSpaceNetwork(SetSpaceNetworkRequest) returns (SetSpaceNetworkResponse);
+  // What a Space tried to reach and its network refused, most recent first.
+  rpc GetSpaceNetworkLog(GetSpaceNetworkLogRequest) returns (GetSpaceNetworkLogResponse);
+  // Sets when the Space's viewers may move the clipboard between this
+  // computer and the Space ("viewing", "ask" or "off").
+  rpc SetSpaceClipboard(SetSpaceClipboardRequest) returns (SetSpaceClipboardResponse);
+  // Sets what the Space sees of the Cua Volume ("own" or "off"), now.
+  rpc SetSpaceVolume(SetSpaceVolumeRequest) returns (SetSpaceVolumeResponse);
+  // Lets a Space make child Spaces of its own, or stops it. Turning it off
+  // ends the Space's spawn capability at once; children it already made
+  // keep running until they are deleted or their lifetime ends.
+  rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
+  // A tree's budget (kept on its top-level Space) and what its children
+  // use now. `space` may be any Space of the tree.
+  rpc GetTreeBudget(GetTreeBudgetRequest) returns (GetTreeBudgetResponse);
+  // Sets a tree's budget: how many child Spaces, vCPUs and memory its
+  // children may hold at once, and what they may cost. Unset limits take
+  // the defaults; all unset removes the budget.
+  rpc SetTreeBudget(SetTreeBudgetRequest) returns (SetTreeBudgetResponse);
+  // Child Spaces whose parent is gone, or not this machine's to judge: the
+  // ones it ends after a grace period (only on proof the parent is gone)
+  // and the ones it only lists.
+  rpc ListOrphans(ListOrphansRequest) returns (ListOrphansResponse);
   // Connects to a registered Space and returns a loopback env passthrough
   // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
   // so a client runs every `cua.env.v1` call and media WebSocket through the
@@ -275,7 +304,63 @@ message Space {
   // Space that is a machine on the relay is renamed there, so its `name`
   // changes instead.
   string display_name = 33;
+  // Its network settings. Unset for a Space created before they existed
+  // (it gets them on its next start).
+  NetworkSettings network_settings = 34;
+  // Why its network is not what was asked, in plain words (a runtime that
+  // can't protect it yet started it without network). Empty otherwise.
+  string network_note = 35;
+  // The Space it was created from (a child), by id; empty for a top-level
+  // Space.
+  string parent = 36;
+  // The top-level Space of its tree, by id; empty for a top-level Space.
+  string root = 37;
+  // Its network settings changed by an update (an old Space moved to the
+  // new defaults); apps and the CLI say so once.
+  bool network_notice_pending = 38;
+  // How far below its tree's top-level Space it is: 0 for a top-level
+  // Space, 1 for its children, ...
+  uint32 depth = 39;
+  // How it was made: "user", "child" or "fork-batch:<id>".
+  string origin = 40;
+  // When viewers may move the clipboard between this computer and the
+  // Space: "viewing" (only while you're viewing, the default), "ask" or
+  // "off". Empty from a daemon that predates the setting, which means
+  // "viewing".
+  string clipboard = 41;
+  // What the Space sees of the Cua Volume: "own" (its own folder, the
+  // default) or "off". Empty means "own".
+  string volume = 42;
+  // The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`,
+  // the SDKs and the agent's tools in it create, list and delete Spaces
+  // that belong to it, on a channel only it can reach.
+  bool children = 43;
+  // A VM's address in its tree (198.19.0.0/16), where the other members of
+  // its tree reach it; empty otherwise.
+  string tree_address = 44;
 }
+
+// Request for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardRequest {
+  // Space.
+  string space = 1;
+  // "viewing", "ask" or "off".
+  string clipboard = 2;
+}
+
+// Response for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardResponse {}
+
+// Request for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeRequest {
+  // Space.
+  string space = 1;
+  // "own" (its own folder) or "off".
+  string volume = 2;
+}
+
+// Response for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeResponse {}
 
 // Who a Space belongs to and who else has it (`Space.sharing`).
 message SpaceSharing {
@@ -647,6 +732,9 @@ message SetSpaceLifetimeResponse {
 message DeleteSpaceRequest {
   // Space.
   string space = 1;
+  // Keep its child Spaces: they become top-level Spaces and keep running.
+  // Unset: they are deleted first.
+  bool keep_children = 2;
 }
 
 // Response for `SpaceService.DeleteSpace`.
@@ -898,6 +986,33 @@ message CreateSpaceRequest {
   string instance_type = 26;
   // Cloud host region (a pin).
   string region = 27;
+  // Network settings. Unset: what `network` and `egress` say ("internet"
+  // when neither says anything).
+  NetworkSettings network_settings = 28;
+  // Create it as a child of this Space (id or name): its network is no
+  // more open than the parent's.
+  string parent = 29;
+  // With `parent`: let it be more open than its parent (recorded on the
+  // Space).
+  // (30 and 31 are kept for other create options.)
+  bool widen = 32;
+  // Let the Space make child Spaces of its own (`SetSpaceChildren`).
+  // Unset: off.
+  optional bool children = 33;
+}
+
+// Request for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenRequest {
+  // Id or name.
+  string space = 1;
+  // On or off.
+  bool enabled = 2;
+}
+
+// Response for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenResponse {
+  // The Space as it is now.
+  Space space = 1;
 }
 
 // Request for `SpaceService.CreateSpaceStream`.
@@ -965,4 +1080,97 @@ message GpuSupport {
 message GetGpuSupportResponse {
   // One entry per runtime of the location.
   repeated GpuSupport runtimes = 1;
+}
+
+// What a tree's children may hold and cost. Unset: the default.
+message TreeBudgetLimits {
+  // Child Spaces at once (default 16).
+  optional uint32 max_spaces = 1;
+  // vCPUs at once (default 16).
+  optional uint32 max_vcpus = 2;
+  // Memory at once, MiB (default 32768).
+  optional uint64 max_memory_mb = 3;
+  // Cost per hour of what runs at once, in linked clouds (default 2.0).
+  optional double usd_per_hour = 4;
+  // Cost in total (default: no total cap).
+  optional double usd_total = 5;
+}
+
+// Request for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetRequest {
+  // Any Space of the tree (id or name).
+  string space = 1;
+}
+
+// Request for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetRequest {
+  // Any Space of the tree (id or name); the budget is kept on its root.
+  string space = 1;
+  // The limits.
+  TreeBudgetLimits limits = 2;
+}
+
+// Response for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// Response for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// A tree's budget and use.
+message TreeBudget {
+  // The tree's top-level Space.
+  string root = 1;
+  // What the owner set (unset fields take the default).
+  TreeBudgetLimits set = 2;
+  // Child Spaces it may hold at once.
+  uint32 max_spaces = 3;
+  // vCPUs it may hold at once.
+  uint32 max_vcpus = 4;
+  // Memory it may hold at once (MiB).
+  uint64 max_memory_mb = 5;
+  // Cost per hour it may run at.
+  double usd_per_hour = 6;
+  // Cost in total it may reach, when capped.
+  optional double usd_total = 7;
+  // Child Spaces now (creates in flight included).
+  uint32 spaces = 8;
+  // vCPUs they hold.
+  uint32 vcpus = 9;
+  // Memory they hold (MiB).
+  uint64 memory_mb = 10;
+  // Cost per hour they run at.
+  double usd_per_hour_used = 11;
+  // What its children have cost so far.
+  double usd_spent = 12;
+}
+
+// Request for `SpaceService.ListOrphans`.
+message ListOrphansRequest {}
+
+// A child Space whose parent is gone or out of reach.
+message Orphan {
+  // The child.
+  string space = 1;
+  // Its parent's id.
+  string parent = 2;
+  // "ending": its parent is provably gone and it ends after the grace;
+  // "listed": its parent is not this machine's to judge, so it stays until
+  // deleted or its own lifetime ends.
+  string state = 3;
+  // Why, in words.
+  string why = 4;
+  // Seconds until it ends ("ending" only).
+  int64 ends_in_secs = 5;
+}
+
+// Response for `SpaceService.ListOrphans`.
+message ListOrphansResponse {
+  // By child id.
+  repeated Orphan orphans = 1;
 }

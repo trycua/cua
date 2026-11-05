@@ -170,6 +170,50 @@ export interface FirstSpaceOffer {
   args: CreateSpaceArgs;
 }
 
+/** What an example needs (`first_prompts::Cap`). */
+export type PromptCap = "linux-space" | "macos-space" | "windows-space" | "kvm" | "fill-in" | "account";
+
+/** One example job card on an empty Home (`first_prompts::Suggestion`). */
+export interface PromptSuggestion {
+  id: string;
+  family: string;
+  title: string;
+  detail: string;
+  os: "linux" | "macos" | "windows";
+  prompt: string;
+  why: string;
+  needs: PromptCap[];
+}
+
+/** One example to copy (`first_prompts::Example`): a whole prompt that needs no repo and no account. */
+export interface PromptExample {
+  id: string;
+  family: string;
+  text: string;
+  /** Why this is useful, one line. */
+  why: string;
+  needs: PromptCap[];
+}
+
+/** The example jobs for this machine (`first_prompts::FirstPrompts`): examples to copy, best fit first, and Home's cards. */
+export interface FirstPrompts {
+  caps: { macos: boolean; windows: boolean; kvm: boolean; macosCached: boolean; windowsCached: boolean };
+  /** Onboarding's one example sentence, from the bug-on-platform entries: a system this machine can run. */
+  lede: string;
+  examples: PromptExample[];
+  suggestions: PromptSuggestion[];
+}
+
+/**
+ * The jobs the app suggests, chosen by the core from what this machine can do now (`firstPrompts.choose`):
+ * always a job that works on every host, and a macOS job only where a macOS Space can be made. No shell
+ * keeps a sentence of its own. Null without the core.
+ */
+export function firstPrompts(core: CoreClient, env: WizardEnv, os: HostOs = hostOs()): FirstPrompts | null {
+  if (core.status !== "ready" || !core.methods.includes("firstPrompts.choose")) return null;
+  return core.call<FirstPrompts>("firstPrompts.choose", { env, hostOs: os });
+}
+
 /** Bytes the way the wizard shows them (binary units labeled GB). */
 export function sizeText(bytes: number): string {
   const gb = bytes / 1024 ** 3;

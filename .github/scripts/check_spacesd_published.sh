@@ -55,7 +55,9 @@ for name in "${ASSETS[@]}"; do
   url="$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | .browser_download_url' <<<"$json")"
   if [ -z "$url" ]; then
     missing+=("$name (not attached)")
-  elif ! curl -fsSIL --retry 3 --max-time 60 -o /dev/null "$url"; then
+  # GitHub's release CDN answers 504 for minutes at a time (5 Nov 2026):
+  # retry transient errors with a pause before calling an asset missing.
+  elif ! curl -fsSIL --retry 6 --retry-delay 15 --retry-max-time 300 --max-time 60 -o /dev/null "$url"; then
     missing+=("$name (not downloadable: $url)")
   fi
 done

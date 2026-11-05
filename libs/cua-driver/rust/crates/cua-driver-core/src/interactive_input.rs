@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform input-delivery contract for in-process embedders.
 //!
 //! Automation tools (`click`, `type_text`, ...) trade latency for

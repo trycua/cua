@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -5,6 +8,8 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
+
+use crate::atspi::native::OptionPickSent;
 
 use super::impl_::{
     attach_focus_guard, background_virtual_key, background_virtual_text, foreground_budget,
@@ -108,6 +113,10 @@ impl Tool for SetValueTool {
             Ok(Err(error)) if crate::atspi::native::is_no_value_route(&error) => error,
             Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
                 return no_such_option_result(idx, &error)
+            }
+            Ok(Err(error)) if error.is::<OptionPickSent>() => {
+                let readback = read_back(token).await;
+                return pick_sent_result(idx, &value, "ax", readback, &error);
             }
             Ok(Err(error)) => {
                 return stale_observed_element("set_value", idx, &error)
@@ -225,6 +234,15 @@ impl Tool for SetValueTool {
             Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
                 no_such_option_result(idx, &error)
             }
+            Ok(Err(error)) if error.is::<OptionPickSent>() => {
+                let path = if foreground_route {
+                    "click_select_fg"
+                } else {
+                    "click_select_mpx"
+                };
+                let readback = read_back(token).await;
+                pick_sent_result(idx, &value, path, readback, &error)
+            }
             Ok(Err(error)) => input_error_result(error),
             Err(error) => ToolResult::error(format!("Task error: {error}")),
         }
@@ -314,6 +332,45 @@ fn pick_from_popup(
         open_and_pick()
     })?;
     Ok(guard)
+}
+
+async fn read_back(token: crate::atspi::TokenElement) -> Option<String> {
+    tokio::task::spawn_blocking(move || crate::atspi::read_value_token(&token))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// `set_value` result for a combo box pick that was sent but not answered
+/// ([`OptionPickSent`]): the option may be set, so it is reported like a
+/// write with its readback, never as a failure that invites picking again.
+/// Without a matching readback the effect is unknown, not a no-op, and no
+/// escalation is offered.
+fn pick_sent_result(
+    idx: usize,
+    value: &str,
+    path: &str,
+    readback: Option<String>,
+    error: &anyhow::Error,
+) -> ToolResult {
+    let mut result = set_value_result(idx, value, path, readback, None);
+    let note = format!("the option pick was sent, but {error}; it may have taken effect");
+    if let Some(structured) = result.structured_content.as_mut() {
+        if structured["verified"] != true {
+            structured["effect"] = json!("unverifiable");
+            if let Some(fields) = structured.as_object_mut() {
+                fields.remove("escalation");
+            }
+        }
+        structured["note"] = json!(note);
+    }
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(
+            " Note: {note}. Read it back before picking again."
+        ));
+    }
+    result
 }
 
 /// `set_value` result with an honest verification: `verified` only when the
@@ -426,5 +483,30 @@ mod set_value_tests {
         assert_eq!(s["readback"], "10.0");
         let blind = set_value_result(3, "40", "ax", None, None);
         assert_eq!(blind.structured_content.unwrap()["effect"], "unverifiable");
+    }
+
+    #[test]
+    fn a_sent_pick_is_never_reported_as_failed_or_a_noop() {
+        let sent = anyhow::Error::new(OptionPickSent("the option's action did not answer".into()));
+        // The combo box already shows the option: the pick landed.
+        let landed = pick_sent_result(3, "Medium", "ax", Some("Medium".into()), &sent);
+        assert_ne!(landed.is_error, Some(true));
+        let s = landed.structured_content.unwrap();
+        assert_eq!(s["verified"], true);
+        assert_eq!(s["effect"], "confirmed");
+        // It shows the old option, or nothing: unknown, with no escalation
+        // that would send the pick again.
+        for readback in [Some("Small".to_owned()), None] {
+            let unknown = pick_sent_result(3, "Medium", "click_select_mpx", readback, &sent);
+            assert_ne!(unknown.is_error, Some(true));
+            let s = unknown.structured_content.unwrap();
+            assert_eq!(s["verified"], false);
+            assert_eq!(s["effect"], "unverifiable");
+            assert!(s.get("escalation").is_none(), "{s}");
+            assert!(s["note"]
+                .as_str()
+                .unwrap()
+                .contains("may have taken effect"));
+        }
     }
 }

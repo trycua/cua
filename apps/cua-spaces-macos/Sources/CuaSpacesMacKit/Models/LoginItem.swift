@@ -310,6 +310,21 @@ public enum HelperService {
         }
     }
 
+    /// Starts the host service, or restarts it when `restart` (`launchctl
+    /// kickstart [-k]`). Blocks until launchctl returns: call off the main
+    /// thread. False when launchctl failed (the service isn't loaded).
+    @discardableResult
+    public static func kickstart(restart: Bool) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["kickstart"] + (restart ? ["-k"] : []) + ["gui/\(getuid())/\(label)"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
     private static func stamped(_ info: [String: Any]?, _ key: String) -> String? {
         guard let value = (info?[key] as? String)?.trimmingCharacters(in: .whitespaces),
               !value.isEmpty else { return nil }

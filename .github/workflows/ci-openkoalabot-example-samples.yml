@@ -55,9 +55,14 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   typescript:
     needs: changes
-    if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -99,7 +104,7 @@ jobs:
           npm ci
           node ../scripts/stage-uniffi-library.mjs --only=node
           npm run build
-          command -v wasm-pack >/dev/null || curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          command -v wasm-pack >/dev/null || curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
           command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
           npm run build:browser
       - name: Test the sample
@@ -111,6 +116,8 @@ jobs:
           npm run build:web
 
   changes:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -145,7 +152,7 @@ jobs:
 
   swift:
     needs: changes
-    if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 30

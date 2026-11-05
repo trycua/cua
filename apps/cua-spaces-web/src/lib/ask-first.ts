@@ -19,6 +19,7 @@ import type { DataAdapter } from "@/bridge/adapter";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 
 import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
+import { thisComputerLabel, thisComputerText } from "./host-labels";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -44,10 +45,39 @@ export interface AskTask {
   transcript: TranscriptItem[] | null;
   /** The status the run last had, for a thrown-away task's line. */
   lastStatus: AgentRunStatus | null;
+  /**
+   * The Space is an agent home (CUA-2630): the root of this task's tree, where
+   * the agent decides where to run. Absent on tasks made before it.
+   */
+  home?: boolean;
+  /** Names the person gave as where to run (@mentions, "on my Mac"), for the thread's first line. */
+  named?: string[];
   /** It runs on this Mac itself (its own Space id is in `spaceId`): nothing to throw away. */
   onHost?: boolean;
   /** Started in its Space's thread: the job is the Space's first message, @mentioning the agent. */
   inSpace?: boolean;
+  /**
+   * A chat picked from "Pick up where you left off" (CUA-3319): the agent's
+   * own session on this Mac. Only this reference is kept; the earlier
+   * messages are read again from the agent's own store when the task opens,
+   * and nothing is posted to a Space thread, so the chat stays private to
+   * this device's user. The first message the person sends resumes it.
+   */
+  imported?: ImportedChat;
+  /** The model the person picked (its id), when they did. */
+  model?: string;
+  /** The repo the task starts from, when one was chosen. */
+  repo?: { url: string; label: string };
+}
+
+/** Which of the agent's own chats a task continues. */
+export interface ImportedChat {
+  /** The agent's session id. */
+  sessionId: string;
+  title: string;
+  /** The chat's folder: the run continues there. */
+  cwd: string | null;
+  lastActiveMs: number;
 }
 
 const KEY = "cua.askFirst.tasks";
@@ -123,6 +153,31 @@ export function updateAskTask(id: string, patch: Partial<AskTask> | ((t: AskTask
   save(load().map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
 }
 
+/**
+ * A new Home task for one of the agent's own chats (Continue in Cua). Nothing
+ * runs: the task waits for the person's next message. Picking the same chat
+ * again opens the task already made for it.
+ */
+export function addImportedTask(chat: { agent: string; id: string; title: string; cwd: string | null; lastActiveMs: number }, now = Date.now()): AskTask {
+  const existing = load().find((t) => t.imported?.sessionId === chat.id && t.agent === chat.agent && !t.runId);
+  if (existing) return existing;
+  return addAskTask(
+    {
+      prompt: "",
+      agent: chat.agent,
+      os: "macos",
+      onHost: true,
+      imported: { sessionId: chat.id, title: chat.title, cwd: chat.cwd, lastActiveMs: chat.lastActiveMs },
+    },
+    now,
+  );
+}
+
+/** A task's title: what was asked, or the continued chat's own title. */
+export function askTaskTitle(t: Pick<AskTask, "prompt" | "imported">): string {
+  return t.prompt.trim() ? taskTitle(t.prompt) : (t.imported?.title ?? "");
+}
+
 /** Keeps the conversation with the task before its computer goes. */
 export function keepTranscript(items: readonly TranscriptItem[]): TranscriptItem[] {
   return items.slice(-MAX_ITEMS).map((i) => ({ ...i, steps: [...i.steps] }));
@@ -167,8 +222,26 @@ export function taskTitle(prompt: string, max = 80): string {
   return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
 }
 
-/** Where the job runs, as picked: a new computer of a kind on this Mac, a Space you already have, or this Mac itself. */
-export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: Space } | { kind: "this-mac" };
+/**
+ * Where the job runs, as picked: a new computer of a kind on this Mac, a Space
+ * you already have (or one on another of your computers, `on`), or this Mac itself. With the Child Spaces experiment on
+ * (agent homes, CUA-2630) the agent may also decide (`agent`: it starts in its
+ * own home Space and makes what the job needs) or be told one of your machines
+ * (`machine`).
+ */
+export type TaskWhere =
+  | { kind: "new"; os: SpaceOs; on?: NewSpaceOn }
+  | { kind: "space"; space: Space }
+  | { kind: "this-mac" }
+  | { kind: "agent"; fresh?: boolean }
+  | { kind: "machine"; machine: { id: string; name: string } };
+
+/** Another of your computers a new Space is made on ("New Space on Studio Mac mini"); absent: this Mac. */
+export interface NewSpaceOn {
+  /** Its relay machine id (`host:<machine>` in the create's `on`). */
+  machine: string;
+  name: string;
+}
 
 /**
  * What `agents.start` is pointed at. The core's `agent_start` only takes a
@@ -178,7 +251,7 @@ export type TaskWhere = { kind: "new"; os: SpaceOs } | { kind: "space"; space: S
  * This Mac. The person confirms once that the agent works on their own
  * files and apps.
  */
-export type TaskTarget = { kind: "create"; os: SpaceOs } | { kind: "space"; spaceId: string } | { kind: "host" };
+export type TaskTarget = { kind: "create"; os: SpaceOs; on?: string } | { kind: "space"; spaceId: string } | { kind: "host" };
 
 /** The id of this Mac's own row in the Spaces list. */
 export const THIS_MAC_ID = "this-mac";
@@ -206,12 +279,15 @@ export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "ma
 }
 
 export function taskTarget(where: TaskWhere): TaskTarget {
-  if (where.kind === "new") return { kind: "create", os: where.os };
+  // An agent home is a Linux Space made for the task (`useStartTask` decides whether it is a home).
+  if (where.kind === "agent" || where.kind === "machine") return { kind: "create", os: "linux" };
+  if (where.kind === "new") return where.on ? { kind: "create", os: where.os, on: `host:${where.on.machine}` } : { kind: "create", os: where.os };
   if (where.kind === "this-mac" || where.space.id === THIS_MAC_ID) return { kind: "host" };
   return { kind: "space", spaceId: where.space.id };
 }
 
-export const whereOs = (where: TaskWhere): SpaceOs => (where.kind === "new" ? where.os : where.kind === "space" ? where.space.os : "macos");
+export const whereOs = (where: TaskWhere): SpaceOs =>
+  where.kind === "new" ? where.os : where.kind === "space" ? where.space.os : where.kind === "agent" || where.kind === "machine" ? "linux" : "macos";
 
 /** A kept task's target, for Try again: its computer if it has one (the row, when listed, decides), else a new one. */
 export function retryTarget(task: Pick<AskTask, "spaceId" | "os" | "onHost">): TaskTarget {
@@ -241,8 +317,8 @@ export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
 
 /** The pick if it's still offered, else the default (a picked Space that went away falls back). */
 export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[], spaces: readonly Space[]): TaskWhere {
-  if (picked?.kind === "this-mac") return picked;
-  if (picked?.kind === "new" && kinds.some((k) => k.os === picked.os && !k.blocked)) return picked;
+  if (picked?.kind === "this-mac" || picked?.kind === "agent" || picked?.kind === "machine") return picked;
+  if (picked?.kind === "new" && (picked.on || kinds.some((k) => k.os === picked.os && !k.blocked))) return picked;
   if (picked?.kind === "space") {
     const row = spaces.find((s) => s.id === picked.space.id);
     if (row) return { kind: "space", space: row };
@@ -287,8 +363,8 @@ export function useThisMacConfirmed(): boolean {
 /** What the person is told, once, before a task works on this Mac itself. */
 export function thisMacConfirmText(agent: string): { title: string; description: string } {
   return {
-    title: "Work on this Mac?",
-    description: `${agent} will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
+    title: `Work on ${thisComputerText()}?`,
+    description: `${agent} will work directly on ${thisComputerText()}, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
   };
 }
 
@@ -313,16 +389,16 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   const e = raw.toLowerCase();
   if (e.includes("isn't shared"))
     return {
-      title: "This Mac isn't set up for tasks yet",
-      body: "Turn on sharing for this Mac on the Machines page, then try again. Or pick another machine.",
+      title: `${thisComputerLabel()} isn't set up for tasks yet`,
+      body: `Turn on sharing for ${thisComputerText()} on the Machines page, then try again. Or pick another machine.`,
       action: "set-up-host",
       retry: true,
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another machine.", action: "retry", retry: true };
+    return { title: `Couldn't start on ${thisComputerText()}`, body: `Try again to start it on ${thisComputerText()}, or pick another machine.`, action: "retry", retry: true };
   if (/cloud has ended/.test(e))
-    return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
+    return { title: "That computer is no longer available", body: `Cua Cloud has ended. Pick a computer on ${thisComputerText()} instead.`, action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))
     return { title: "More than one computer has that name", body: "Pick the one you mean.", action: "change-computer", retry: false };
   if (/not found|no such|unknown space|add_space/.test(e))
@@ -332,7 +408,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
-    return { title: "This Mac doesn't have room for a new computer", body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
+    return { title: `${thisComputerLabel()} doesn't have room for a new computer`, body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
   return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another machine.", action: "retry", retry: true };
 }
 
@@ -368,6 +444,16 @@ export const TASK_STATE_TEXT: Record<TaskState, string> = {
   thrown: "Done. Computer thrown away",
 };
 
+/** The same states for a task in an agent home: its Space is a home, not a computer made for the job. */
+export const TASK_STATE_TEXT_HOME: Partial<Record<TaskState, string>> = {
+  starting: "Getting its home ready",
+  kept: "Done. Home kept",
+  thrown: "Done. Home thrown away",
+};
+
+/** A task's state line. */
+export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string => (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
+
 /** Home's order: needs you first, then running, then the rest, newest first. */
 export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: T[]): T[] {
   const rank = (s: TaskState) => (s === "needs-you" || s === "stuck" ? 0 : s === "working" || s === "starting" ? 1 : 2);
@@ -377,10 +463,10 @@ export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: 
 /** The jobs offered on an empty Home: real dev work where a fresh computer matters. */
 export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: string }[] = [
   {
-    title: "Run my project's tests on a clean Linux computer",
-    detail: "Find out if it works on a computer that has never seen your code.",
+    title: "Run my project's tests on a clean Linux Space",
+    detail: "Find out if it works somewhere that has never seen your code.",
     os: "linux",
-    prompt: "Copy my project onto this machine, install what it needs and run its tests. Tell me what passed and what failed: ",
+    prompt: "Get my project, make a clean Linux Space for it, install what it needs and run its tests. Tell me what passed and what failed: ",
   },
   {
     title: "Try a pull request before merging",
@@ -390,8 +476,8 @@ export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: 
   },
   {
     title: "Check my site works on Safari",
-    detail: "It clicks through your pages on a Mac and shows you what looks wrong.",
+    detail: "It clicks through your pages on a macOS Space and shows you what looks wrong.",
     os: "macos",
-    prompt: "Open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
+    prompt: "Make a macOS Space, open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
   },
 ];

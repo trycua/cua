@@ -520,6 +520,10 @@ async fn redeeming_teaches_the_next_steps_and_posts_are_the_agents() {
         "thread_post",
         "never @mention yourself",
         "scheduled poll",
+        // How to wait on long work and share a Space with other agents.
+        "space_job",
+        "CLAIM <what>",
+        "BLOCKED <what>",
     ] {
         assert!(steps.contains(must), "{must}: {steps}");
     }

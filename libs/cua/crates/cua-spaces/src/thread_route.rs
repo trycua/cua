@@ -36,6 +36,22 @@ pub const TOOLS: &[&str] = &[
     "agent_send",
 ];
 
+/// The calls of the paired phone app (`cua-spaces-ext`'s `persistent::phone`):
+/// not Spaces tools, so no MCP server lists them and an agent cannot call
+/// them; they run on the machine that provides the Space, as the account
+/// the relay verified, the way the thread tools do.
+pub const PHONE_TOOLS: &[&str] = &[
+    "thread_tool_rows",
+    "task_start",
+    "task_status",
+    "task_options",
+    "space_changes",
+    "space_file_diff",
+    "space_file_preview",
+    "thread_grants",
+    "thread_grant_revoke",
+];
+
 /// The run tools that run on the owner when given a member's `name` (with a
 /// `run_id` they reach the Space's own agent service, wherever it is).
 pub const MEMBER_TOOLS: &[&str] = &[
@@ -64,7 +80,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Whether `tool` with `args` is a thread or agent member call that runs
 /// where the Space's thread lives.
 pub fn routed(tool: &str, args: &Value) -> bool {
-    if TOOLS.contains(&tool) {
+    if TOOLS.contains(&tool) || PHONE_TOOLS.contains(&tool) {
         return true;
     }
     MEMBER_TOOLS.contains(&tool)
@@ -379,8 +395,15 @@ impl crate::host_spaces::HostSpacesServer {
         };
         args["space"] = json!(here);
         let as_caller = crate::extension::Caller::from_host(caller);
+        let device = crate::extension::CallerDevice {
+            id: caller.device.clone().filter(|d| !d.is_empty()),
+            phone: caller.phone,
+        };
         Ok(as_caller
-            .scope(crate::mcp::McpServer::new(self.spaces().clone()).call(tool, args))
+            .scope_with_device(
+                device,
+                crate::mcp::McpServer::new(self.spaces().clone()).call(tool, args),
+            )
             .await)
     }
 }
@@ -489,7 +512,7 @@ mod tests {
 
     #[test]
     fn routes_the_thread_tools_and_member_calls_by_name() {
-        for t in TOOLS {
+        for t in TOOLS.iter().chain(PHONE_TOOLS) {
             assert!(routed(t, &json!({"space": "relay:m"})), "{t}");
         }
         assert!(routed("agent_stop", &json!({"space": "s", "name": "ada"})));
@@ -497,6 +520,13 @@ mod tests {
         assert!(!routed("agent_stop", &json!({"space": "s", "name": " "})));
         assert!(!routed("space_bash", &json!({"space": "s"})));
         assert!(!routed("thread_import", &json!({"space": "s"})));
+        // A phone call is not a Spaces tool: the contract does not list it.
+        for t in PHONE_TOOLS {
+            assert!(
+                cua_spaces_contract::tool(t).is_none(),
+                "{t} is in the contract"
+            );
+        }
     }
 
     #[cfg(feature = "spaces-agents")]

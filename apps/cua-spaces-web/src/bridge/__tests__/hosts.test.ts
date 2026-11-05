@@ -84,6 +84,7 @@ describe("tauri adapter", () => {
     await a.call("session.signIn", {});
     await a.call("session.signOut", {});
     await a.call("session.completeOnboarding", { mode: "client" });
+    await a.call("session.resetOnboarding", {});
     expect(calls).toEqual([
       ["list_spaces", undefined],
       ["create_space", { config: { image: "ubuntu" }, pendingId: "pending:1" }],
@@ -101,6 +102,7 @@ describe("tauri adapter", () => {
       ["begin_sign_in", undefined],
       ["sign_out", undefined],
       ["complete_onboarding", { mode: "client" }],
+      ["reset_onboarding", undefined],
     ]);
   });
 
@@ -311,6 +313,8 @@ describe("electron adapter", () => {
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "host", launchAtLogin: false }]);
     await a.call("session.completeOnboarding", { mode: "client" });
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "client" }]);
+    await a.call("session.resetOnboarding", {});
+    expect(sent.at(-1)).toEqual(["onboarding.reset", {}]);
   });
 
   it("names this machine for the shell's platform", async () => {
@@ -545,7 +549,8 @@ describe("webkit adapter", () => {
   it("reads launch at login and the update channel when the host sends them, and sets them by row", async () => {
     const { win, sent } = webkitHost(() => ok(settingsWithLogin));
     const a = createWebkitAdapter(win);
-    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "beta" });
+    // A host from before Nightly says `beta`: that is Nightly now.
+    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "nightly" });
     await a.call("settings.set", { key: "launchAtLogin", value: false });
     await a.call("settings.set", { key: "updateChannel", value: "stable" });
     expect(sent.filter((r) => r.method === "settings.choose").map((r) => r.args)).toEqual([

@@ -397,6 +397,17 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
         true
     }
 
+    fn takes_network_rules(&self) -> bool {
+        self.api.takes_network_rules()
+    }
+
+    /// A VM-per-sandbox cloud: the computer's own firewall (installed by
+    /// bootstrap before the sandbox starts, [`crate::hostnet`]) keeps it to
+    /// the internet.
+    fn keeps_internet_only(&self) -> bool {
+        matches!(self.api.tier(), Tier::Vm)
+    }
+
     async fn create(&self, spec: &ProviderCreate) -> Result<ProviderInstance> {
         let conn = self.connection()?;
         let family = family_of(&spec.image.reference);
@@ -444,6 +455,24 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
         let machine = format!("cloud-{suffix}");
         let resource_name = format!("cua-{}-{}", self.api.name(), &suffix[..12]);
         let sandbox = format!("{}:{}", self.api.name(), spec.name);
+        // The network rules the Space asked for: kept by the cloud itself or
+        // refused, before anything is made (never created without them).
+        let network = if spec.egress.is_empty() && !spec.no_network && !spec.protect {
+            None
+        } else if self.api.takes_network_rules() {
+            crate::modal_net::request(&spec.egress, spec.no_network, spec.protect, &self.relay.url)?
+        } else if spec.egress.is_empty() && !spec.no_network && matches!(self.api.tier(), Tier::Vm)
+        {
+            // Internet only, kept by the computer's own firewall.
+            None
+        } else {
+            return Err(Error::InvalidArgument(format!(
+                "{} cannot keep a Space's network rules: it runs the Space on a computer cua \
+                 does not control the network of. Use Modal, or run the Space on this machine \
+                 or one of yours",
+                self.api.title()
+            )));
+        };
         // 1. The relay machine the sandbox joins as.
         let join = self
             .relay
@@ -508,10 +537,12 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
             ttl_secs,
             arch: spec.image.arch.clone(),
             runtime: runtime_word(self.api.as_ref(), &spec.runtime)?,
+            network,
             ..Default::default()
         };
         match self.api.tier() {
             Tier::Vm => {
+                let (net_guard, share_slots) = VmBoot::switches();
                 provision.user_data = cloud_init(&VmBoot {
                     join: &join,
                     image: &spec.image.pinned_ref,
@@ -519,6 +550,9 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                     expires,
                     ttl_secs,
                     shm_mb: 2048,
+                    provider: self.api.name(),
+                    net_guard,
+                    share_slots,
                 });
             }
             Tier::Sandbox => {

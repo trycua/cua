@@ -42,7 +42,7 @@ async function pickThisMac() {
 }
 
 async function startJob(text: string) {
-  fireEvent.change(screen.getByLabelText("What do you want to do?"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: text } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
     await pickThisMac();
     await screen.findByText("Work on this Mac?");
-    expect(screen.getByText(/Claude Code will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
+    expect(screen.getByText(/Codex will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Use this Mac" }));
     });
@@ -65,6 +65,18 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     const id = askTasks()[0]!.id;
     // The job goes to this Mac's own Space, as the first message of its thread.
     await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null }), { timeout: 5000 });
+  });
+
+  it("opens the task's own page, never the unlisted relay Space (trycua/cua#6363)", async () => {
+    setThisMacConfirmed(true);
+    await mountApp("/home", HOST);
+    await screen.findByText("What do you want to do?");
+    await pickThisMac();
+    await startJob("hi");
+    const id = askTasks()[0]!.id;
+    await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true }), { timeout: 5000 });
+    expect(screen.queryByText("This Space isn't here")).toBeNull();
+    expect(screen.getAllByText("This Mac").length).toBeGreaterThan(0);
   });
 
   it("Pick another keeps the default and reopens the picker", async () => {

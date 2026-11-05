@@ -39,10 +39,8 @@ jobs:
               "CI: Test Scripts": "ci-test-scripts.yml",
               "CI: cua-agent": "ci-py-agent.yml",
               "CI: cua-core": "ci-py-core.yml",
-              "CI: cua-som": "ci-py-som.yml",
               "CI: cua-bench": "ci-py-bench.yml",
-              "CI: cua-bench-ui": "ci-py-bench-ui.yml",
-              "CI: @trycua/core": "ci-ts-core.yml"
+              "CI: cua-bench-ui": "ci-py-bench-ui.yml"
             };
 
             console.log(`Looking for failed runs on branch: ${targetBranch}`);

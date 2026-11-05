@@ -183,10 +183,6 @@ public final class AppModel {
     public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
-    /// The running app's version: with it, the New UI's default follows
-    /// the update channel and the version (`appSettingsResolveNewUi`);
-    /// without it (tests, fixtures), the New UI is on only by choice.
-    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -197,7 +193,7 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil, appVersion: String? = nil) {
+                startup: StartupModel? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
@@ -220,9 +216,7 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        self.appVersion = appVersion
-        var settings = appSettingsLoad(path: settingsPath)
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        let settings = appSettingsLoad(path: settingsPath)
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation,
@@ -373,13 +367,12 @@ public final class AppModel {
             access: detail.access))
     }
 
-    /// The detail without what Settings, Experiments hides (Share while
-    /// Sharing is off), as this Mac sees it: a machine reached through the
+    /// The detail as this Mac sees it: a machine reached through the
     /// relay has its Connect greyed out while this Mac is not enrolled, and
     /// one that does not share its desktop shows why in its place.
     public func detail(_ space: AppSpace) -> AppSpaceDetail {
         appSpaceDetailFor(space: space, usage: usage[space.id], hostArch: Self.hostArch,
-                          experiments: settings.experiments, access: devices.accessNotice)
+                          access: devices.accessNotice)
     }
 
     /// The Spaces one of your machines provides (its detail lists them).
@@ -2019,14 +2012,10 @@ public final class AppModel {
         applyExperiments(before: before, after: after)
     }
 
-    /// Settings → About's channel, saved; with no choice of the user's, the
-    /// New UI follows the channel's default at once.
+    /// Settings → About's channel, saved.
     public func setUpdateChannel(_ channel: AppUpdateChannel) {
         settings.updateChannel = channel
-        let before = settings.experiments
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         saveSettings()
-        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
     /// What follows a change of the switches: an open New Space.

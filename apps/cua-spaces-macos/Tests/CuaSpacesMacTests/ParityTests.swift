@@ -2428,7 +2428,7 @@ struct ParityTests {
         var env = try appWizardEnvFromJson(json: text(f["env"]))
         env.experiments = x
         let wizard = appWizardView(state: appWizardInitial(env: env), env: env)
-        let detail = windowDetail(appSpaceDetailWith(space: space, usage: nil, hostArch: nil, experiments: x))
+        let detail = windowDetail(appSpaceDetailFor(space: space, usage: nil, hostArch: nil, access: nil))
         var menuInput = try appMenuInputFromJson(json: text(f["menu"]))
         menuInput.experiments = x
         let chrome = appMainChrome(input: AppChromeInput(identity: nil, cloudConfigured: false, canSignIn: false,

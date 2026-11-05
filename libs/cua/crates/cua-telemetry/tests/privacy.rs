@@ -140,7 +140,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::stream_summary(s, s, Some(true), 900, 1080, Some(40.0), d).unwrap(),
         events::app_active(),
         // Unknown experiment ids are dropped (`none`); known ones kept.
-        events::app_active_with(&[s, "sharing", s], s),
+        events::app_active_with(&[s, "mobile", s], s),
         events::space_create(
             &events::SpaceCreate {
                 on: s,
@@ -212,7 +212,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
         events::cloud_link(s, "aws", "oidc", "connected", Outcome::Ok),
-        events::experiment(s, "sharing"),
+        events::experiment(s, "mobile"),
         events::experiment("experiment_on", s),
     ] {
         assert!(opt.is_none(), "PII accepted as a vocabulary value: {s}");
@@ -274,7 +274,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         )
         .unwrap(),
     );
-    v.push(events::experiment("experiment_off", "your_cloud").unwrap());
+    v.push(events::experiment("experiment_off", "warm_pools").unwrap());
     v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
     v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
     v.push(
@@ -1631,33 +1631,33 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let k = Kind::Set(schema::EXPERIMENTS);
     for ok in [
         "none",
-        "sharing",
-        "cua_volume+sharing",
-        "cua_volume+your_cloud+sharing",
+        "mobile",
+        "cua_volume+mobile",
+        "cua_volume+mobile+warm_pools",
     ] {
         assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
     }
     for bad in [
         "",
-        "sharing+cua_volume",
-        "sharing+sharing",
+        "mobile+cua_volume",
+        "mobile+mobile",
         "cua_volume+",
-        "+sharing",
-        "none+sharing",
+        "+mobile",
+        "none+mobile",
         "/Users/alice",
     ] {
         assert!(!schema::value_ok(k, &Value::from(bad)), "{bad}");
     }
     assert_eq!(
-        events::experiments_set(&["sharing", "nope", "cua_volume", "sharing"]),
-        "cua_volume+sharing"
+        events::experiments_set(&["mobile", "nope", "cua_volume", "mobile"]),
+        "cua_volume+mobile"
     );
     assert_eq!(events::experiments_set(&[]), "none");
 
     let h = tempfile::tempdir().unwrap();
     let (t, sink) = ready(h.path(), &[]);
     assert_eq!(t.capture_active_on(20_000), Captured::Queued);
-    t.set_experiments_on(&["your_cloud", "alice@example.com"]);
+    t.set_experiments_on(&["warm_pools", "alice@example.com"]);
     // The next day, another process of the same install.
     let (t2, sink2) = ready(h.path(), &[]);
     assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
@@ -1676,10 +1676,10 @@ fn the_active_day_carries_the_experiments_that_are_on() {
             .collect()
     };
     assert_eq!(sets(&sink), ["none"], "the first day had none");
-    assert_eq!(sets(&sink2), ["your_cloud"]);
+    assert_eq!(sets(&sink2), ["warm_pools"]);
     let h2 = tempfile::tempdir().unwrap();
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
-    off.set_experiments_on(&["sharing"]);
+    off.set_experiments_on(&["mobile"]);
     assert!(!h2.path().join("telemetry/experiments_on").exists());
 }
 

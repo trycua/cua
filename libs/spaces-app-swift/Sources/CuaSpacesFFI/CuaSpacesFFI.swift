@@ -17093,20 +17093,6 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var cuaVolume: Bool
     /**
-     * Your own clouds in the New Space wizard.
-     */
-    public var yourCloud: Bool
-    /**
-     * Sharing a Space with other accounts. On unless turned off: a missing
-     * key reads as on (the plans on cua.ai/pricing list sharing).
-     */
-    public var sharing: Bool
-    /**
-     * The shared web UI is the main window. Always on in the macOS shell
-     * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-     */
-    public var webUi: Bool
-    /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
      * network unless it is opened. Off unless turned on; the daemon enforces
      * it (the switch is kept in the cua home).
@@ -17155,17 +17141,6 @@ public struct AppExperiments: Equatable, Hashable {
          * Cua Volume in the first run and Settings, Storage.
          */cuaVolume: Bool,
         /**
-         * Your own clouds in the New Space wizard.
-         */yourCloud: Bool,
-        /**
-         * Sharing a Space with other accounts. On unless turned off: a missing
-         * key reads as on (the plans on cua.ai/pricing list sharing).
-         */sharing: Bool,
-        /**
-         * The shared web UI is the main window. Always on in the macOS shell
-         * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool,
-        /**
          * Secure Spaces: a Space reaches the internet and nothing else on the
          * network unless it is opened. Off unless turned on; the daemon enforces
          * it (the switch is kept in the cua home).
@@ -17200,9 +17175,6 @@ public struct AppExperiments: Equatable, Hashable {
          * turned on; the daemon enforces it (the switch is kept in the cua home).
          */warmPools: Bool) {
         self.cuaVolume = cuaVolume
-        self.yourCloud = yourCloud
-        self.sharing = sharing
-        self.webUi = webUi
         self.secureSpaces = secureSpaces
         self.childSpaces = childSpaces
         self.askFirst = askFirst
@@ -17229,9 +17201,6 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         return
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
-                yourCloud: FfiConverterBool.read(from: &buf),
-                sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf),
                 secureSpaces: FfiConverterBool.read(from: &buf),
                 childSpaces: FfiConverterBool.read(from: &buf),
                 askFirst: FfiConverterBool.read(from: &buf),
@@ -17244,9 +17213,6 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
 
     public static func write(_ value: AppExperiments, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
-        FfiConverterBool.write(value.yourCloud, into: &buf)
-        FfiConverterBool.write(value.sharing, into: &buf)
-        FfiConverterBool.write(value.webUi, into: &buf)
         FfiConverterBool.write(value.secureSpaces, into: &buf)
         FfiConverterBool.write(value.childSpaces, into: &buf)
         FfiConverterBool.write(value.askFirst, into: &buf)
@@ -35865,18 +35831,9 @@ public struct AppSettings: Equatable, Hashable {
     public var launchAtLogin: Bool?
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]). Its `webUi` is always on in the macOS
-     * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-     * "on" there, the value older builds read.
+     * ([`crate::experiments`]).
      */
     public var experiments: AppExperiments
-    /**
-     * The New UI as an older build's "Use classic UI" saved it. Read and
-     * kept for those builds, never acted on: the web UI is the only UI
-     * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-     * `Some(true)`; its `false` was only the saved default ([`load`]).
-     */
-    public var newUi: Bool?
     /**
      * Keyvault copies (import ids) the user dismissed from the notch: it no
      * longer shows them, nothing is revoked or wiped
@@ -35974,16 +35931,8 @@ public struct AppSettings: Equatable, Hashable {
          */launchAtLogin: Bool?,
         /**
          * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]). Its `webUi` is always on in the macOS
-         * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-         * "on" there, the value older builds read.
+         * ([`crate::experiments`]).
          */experiments: AppExperiments,
-        /**
-         * The New UI as an older build's "Use classic UI" saved it. Read and
-         * kept for those builds, never acted on: the web UI is the only UI
-         * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-         * `Some(true)`; its `false` was only the saved default ([`load`]).
-         */newUi: Bool?,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no
          * longer shows them, nothing is revoked or wiped
@@ -36043,7 +35992,6 @@ public struct AppSettings: Equatable, Hashable {
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
-        self.newUi = newUi
         self.dismissedAccess = dismissedAccess
         self.notchPinned = notchPinned
         self.keyvaultSiteIcons = keyvaultSiteIcons
@@ -36082,7 +36030,6 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                newUi: FfiConverterOptionBool.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
                 notchPinned: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
@@ -36107,7 +36054,6 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into: &buf)
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
-        FfiConverterOptionBool.write(value.newUi, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
         FfiConverterSequenceString.write(value.notchPinned, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
@@ -65580,7 +65526,7 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          * `experiment_on` or `experiment_off`.
          */action: String,
         /**
-         * `cua_volume`, `your_cloud` or `sharing`.
+         * `cua_volume`, `mobile`, ...
          */experiment: String
     )
     /**
@@ -80926,19 +80872,6 @@ public func appSettingsPage(input: AppSettingsInput) -> AppSettingsPage  {
 })
 }
 /**
- * The settings with the New UI as a launch of `version` shows it: the
- * user's choice, else the default for the update channel and version
- * (again after the channel changes).
- */
-public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> AppSettings  {
-    return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(
-        FfiConverterTypeAppSettings_lower(settings),
-        FfiConverterString.lower(version),$0
-    )
-})
-}
-/**
  * Writes the settings file, and keeps the experiments the daemon enforces
  * where it reads them (the cua home).
  */
@@ -81153,19 +81086,18 @@ public func appSpaceDetailCopy() -> AppDetailCopy  {
 })
 }
 /**
- * [`app_space_detail_with`] as this device sees it: `access` (from
+ * [`app_space_detail_live`] as this device sees it: `access` (from
  * [`app_machine_access_notice`]) greys out Connect on every Space reached
  * through the relay while this device is not enrolled; one of your
  * machines that does not share its desktop shows its note in place of the
  * desktop, Stream, Agents and Teleport.
  */
-public func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments, access: AppMachineAccessNotice?) -> AppSpaceDetail  {
+public func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, access: AppMachineAccessNotice?) -> AppSpaceDetail  {
     return try!  FfiConverterTypeAppSpaceDetail_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_space_detail_for(
         FfiConverterTypeAppSpace_lower(space),
         FfiConverterOptionTypeAppSpaceUsage.lower(usage),
         FfiConverterOptionString.lower(hostArch),
-        FfiConverterTypeAppExperiments_lower(experiments),
         FfiConverterOptionTypeAppMachineAccessNotice.lower(access),$0
     )
 })
@@ -81182,20 +81114,6 @@ public func appSpaceDetailLive(space: AppSpace, usage: AppSpaceUsage?, hostArch:
         FfiConverterTypeAppSpace_lower(space),
         FfiConverterOptionTypeAppSpaceUsage.lower(usage),
         FfiConverterOptionString.lower(hostArch),$0
-    )
-})
-}
-/**
- * [`app_space_detail_live`] without what Settings, Experiments hides (the
- * Share button while Sharing is off).
- */
-public func appSpaceDetailWith(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments) -> AppSpaceDetail  {
-    return try!  FfiConverterTypeAppSpaceDetail_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_space_detail_with(
-        FfiConverterTypeAppSpace_lower(space),
-        FfiConverterOptionTypeAppSpaceUsage.lower(usage),
-        FfiConverterOptionString.lower(hostArch),
-        FfiConverterTypeAppExperiments_lower(experiments),$0
     )
 })
 }
@@ -83034,9 +82952,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -83094,13 +83009,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy() != 55740) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() != 46982) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() != 50402) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live() != 55583) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_with() != 51134) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_host() != 37974) {

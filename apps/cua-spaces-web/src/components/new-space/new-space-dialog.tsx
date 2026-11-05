@@ -34,9 +34,9 @@ export function NewSpaceDialog() {
   const wizard = useNewSpaceWizard();
   const connect = useConnectCloud();
   const { view, send } = wizard;
-  const { defaultLocation, clouds = [], experiments } = wizard.env;
+  const { defaultLocation, clouds = [] } = wizard.env;
   // The default only counts once the clouds it may name have loaded.
-  const defaultKey = [defaultLocation, experiments?.yourCloud, ...clouds.map((c) => c.name)].join(" ");
+  const defaultKey = [defaultLocation, ...clouds.map((c) => c.name)].join(" ");
 
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens, or change when a cloud is connected as default).

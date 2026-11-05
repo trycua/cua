@@ -28,14 +28,13 @@ const machine = (features: string[]) => ({ id: "relay:studio", name: "Studio", p
 const hosted = { id: "relay:studio/space-1", name: "Build box", provider: "relay", os: "linux", spacesdVersion: "0.6.0", features: ["desktop_stream"], reachable: true, host: "studio", hostName: "Studio" };
 
 /** `over` is read on every answer: a test may change it while the page is open. */
-function host(rows: unknown[], over: { access?: boolean; sharing?: boolean } = {}): TestHost {
+function host(rows: unknown[], over: { access?: boolean } = {}): TestHost {
   return {
     failsCreates: false,
     listsGhost: false,
     answer: (op, out) => {
       if (op === "spaces.list") return [...(out as unknown[]), ...rows];
       if (op === "machines.list" && over.access) return (out as MachineRow[]).map((m) => (m.current ? { ...m, accessNotice: NOTICE } : m));
-      if (op === "experiments.get") return { ...(out as object), sharing: Boolean(over.sharing) };
       return out;
     },
   };
@@ -79,7 +78,7 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
 
 describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real routes, wasm core)", () => {
   it("greys out a machine's Connect, Teleport and Share while this device is not enrolled, and its action opens the enroll sheet", async () => {
-    const { router, hooks } = await mountApp("/spaces", host([machine(["desktop_stream", "window_stream", "host_spaces", "relay_attach"])], { access: true, sharing: true }));
+    const { router, hooks } = await mountApp("/spaces", host([machine(["desktop_stream", "window_stream", "host_spaces", "relay_attach"])], { access: true }));
     await waitFor(() => expect(hooks.machines.data?.find((m) => m.current)?.accessNotice).toEqual(NOTICE));
     await act(() => router.navigate({ to: "/spaces/$spaceId", params: { spaceId: "relay:studio" } }));
 
@@ -130,7 +129,7 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect(screen.queryByRole("button", { name: /^Share$/ })).toBeNull();
     cleanup();
 
-    const on = await mountApp("/spaces/local:design-review", host([], { sharing: true }));
+    const on = await mountApp("/spaces/local:design-review", host([]));
     await on.router.load();
     await screen.findByRole("button", { name: /^Share$/ });
   });

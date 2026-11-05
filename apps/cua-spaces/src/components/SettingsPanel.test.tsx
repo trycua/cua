@@ -437,7 +437,7 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume", "your_cloud", "sharing"] },
+      { type: "experiments-on", experiments: ["cua_volume"] },
     ]);
   });
 });

@@ -75,6 +75,36 @@ fn sidecar(iso: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// The ISO you registered for a version (`cua sb create windows:11 --iso
+/// <path>` remembers it, so the daemon that builds finds it): the pointer
+/// file next to the cache, when its target still exists.
+pub fn registered(cache_dir: &Path, v: &WindowsVersion, arch: WindowsArch) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(pointer(cache_dir, v, arch)).ok()?;
+    let p = PathBuf::from(text.trim());
+    p.is_file().then_some(p)
+}
+
+/// Remembers `path` as the ISO for a version, after checking it.
+pub fn register(
+    cache_dir: &Path,
+    v: &WindowsVersion,
+    arch: WindowsArch,
+    path: &Path,
+) -> Result<()> {
+    check_user_iso(path, arch)?;
+    let abs = std::fs::canonicalize(path)?;
+    std::fs::create_dir_all(cache_dir)?;
+    std::fs::write(
+        pointer(cache_dir, v, arch),
+        abs.to_string_lossy().trim_start_matches(r"\?\").as_bytes(),
+    )?;
+    Ok(())
+}
+
+fn pointer(cache_dir: &Path, v: &WindowsVersion, arch: WindowsArch) -> PathBuf {
+    cache_dir.join(format!("windows-{}-{}.path", v.id, arch.as_str()))
+}
+
 /// SHA-256 of a file, lowercase hex.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     use std::io::Read as _;
@@ -487,6 +517,22 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("--iso") && e.contains("windows11arm64"), "{e}");
+    }
+
+    #[test]
+    fn a_registered_iso_is_remembered_until_it_goes() {
+        let d = tempfile::tempdir().unwrap();
+        let v = lookup("11").unwrap();
+        let iso = d.path().join("mine.iso");
+        fake_iso(&iso);
+        let cache = d.path().join("cache");
+        assert_eq!(registered(&cache, v, WindowsArch::Amd64), None);
+        register(&cache, v, WindowsArch::Amd64, &iso).unwrap();
+        let got = registered(&cache, v, WindowsArch::Amd64).unwrap();
+        assert_eq!(std::fs::canonicalize(&got).unwrap(), std::fs::canonicalize(&iso).unwrap());
+        assert!(register(&cache, v, WindowsArch::Amd64, &d.path().join("none.iso")).is_err());
+        std::fs::remove_file(&iso).unwrap();
+        assert_eq!(registered(&cache, v, WindowsArch::Amd64), None);
     }
 
     #[test]

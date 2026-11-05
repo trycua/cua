@@ -108,6 +108,8 @@ export type ConnectOutcome = "connected" | "sheet" | "failed";
 export interface Connectors {
   apps: ConnectedApps;
   input: ConnectorsInput;
+  /** The saved sign-ins and keys were read (a sync of the agent menu waits for it). */
+  keysReady: boolean;
   view: ConnectorsView | null;
   detail(agent: string): AppDetailView | null;
   /** The provider sheet open now. */
@@ -401,6 +403,7 @@ export function useConnectors(): Connectors {
   return {
     apps,
     input,
+    keysReady: !keys.isLoading && !keys.input.error && !keys.input.unavailable && apps.rows !== null,
     view,
     detail: (agent) => appDetail(core, input, agent),
     sheet,

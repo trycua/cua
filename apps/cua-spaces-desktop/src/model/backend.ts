@@ -236,6 +236,17 @@ export interface SpacesBackend {
   ackNetworkNotice?(id: string): Promise<void>;
   /** `spaces.setAccess`: a Space's clipboard and/or Volume setting. */
   setAccess?(id: string, clipboard: string | null, volume: string | null): Promise<void>;
+  /** `spaces.tree`: every Space's parent, depth and whether it may make
+   * children (the SDK's `Spaces.list`). */
+  spaceTree?(): Promise<TreeNodeJson[]>;
+  /** `children.set`: lets a Space make child Spaces, or stops it. */
+  setChildren?(id: string, enabled: boolean): Promise<void>;
+  /** `budget.get` / `budget.set`: a Space's tree's budget and use. */
+  treeBudget?(id: string): Promise<TreeBudgetJson>;
+  setTreeBudget?(id: string, limits: TreeBudgetLimitsJson): Promise<TreeBudgetJson>;
+  /** `services.list` / `services.control`: the commands a Space keeps running. */
+  services?(id: string): Promise<ServiceJson[]>;
+  controlService?(id: string, name: string, action: string): Promise<void>;
   /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
   relayUnregister(machineId: string): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
@@ -568,6 +579,7 @@ export class LiveSpacesBackend implements SpacesBackend {
     // The New Space's Network choice (`config.network`), by create id.
     // Kept until the whole create is over: the model runs a failed one once more.
     const network = createNetworks.get(createId);
+    const extras = createExtras.get(createId) ?? {};
     const result = await this.cua.spaces().createWithProgress(
       {
         ...(network ? { networkSettings: networkSettingsOf(network, [], []) } : {}),
@@ -590,7 +602,8 @@ export class LiveSpacesBackend implements SpacesBackend {
         createId,
         durable: false,
         volumes: [],
-        labels: new Map(),
+        labels: new Map(Object.entries(extras.labels ?? {})),
+        ...(extras.children ? { children: true } : {}),
       },
       { onProgress: progress },
     );
@@ -693,6 +706,63 @@ export class LiveSpacesBackend implements SpacesBackend {
   async setAccess(id: string, clipboard: string | null, volume: string | null): Promise<void> {
     if (clipboard) await this.cua.spaces().setClipboard(id, clipboard);
     if (volume) await this.cua.spaces().setVolume(id, volume);
+  }
+
+  async spaceTree(): Promise<TreeNodeJson[]> {
+    return (await this.cua.spaces().list()).map((s) => ({
+      id: s.id,
+      parent: s.parent ?? null,
+      depth: Number(s.depth),
+      children: Boolean(s.children),
+      home: s.labels.get("cua.home") === "1" ? (s.labels.get("cua.home.agent") ?? "") : null,
+    }));
+  }
+
+  async setChildren(id: string, enabled: boolean): Promise<void> {
+    await this.cua.spaces().setChildren(id, enabled);
+  }
+
+  async treeBudget(id: string): Promise<TreeBudgetJson> {
+    return budgetJson(await this.cua.spaces().treeBudget(id));
+  }
+
+  async setTreeBudget(id: string, l: TreeBudgetLimitsJson): Promise<TreeBudgetJson> {
+    const big = (v: number | null | undefined) => (v === null || v === undefined ? undefined : BigInt(Math.round(v)));
+    const n = (v: number | null | undefined) => (v === null || v === undefined ? undefined : v);
+    return budgetJson(
+      await this.cua.spaces().setTreeBudget(id, {
+        maxSpaces: n(l.maxSpaces),
+        maxVcpus: n(l.maxVcpus),
+        maxMemoryMb: big(l.maxMemoryMb),
+        usdPerHour: n(l.usdPerHour),
+        usdTotal: n(l.usdTotal),
+      }),
+    );
+  }
+
+  async services(id: string): Promise<ServiceJson[]> {
+    const space = await this.cua.spaces().space(id);
+    return (await space.keptServices()).map((s) => ({ name: s.name, command: s.command, state: s.state, restarts: Number(s.restarts), lastEnd: s.lastEnd, probeError: s.probeError }));
+  }
+
+  async controlService(id: string, name: string, action: string): Promise<void> {
+    const space = await this.cua.spaces().space(id);
+    switch (action) {
+      case "start":
+        await space.startService(name);
+        return;
+      case "stop":
+        await space.stopService(name);
+        return;
+      case "restart":
+        await space.restartService(name);
+        return;
+      case "remove":
+        await space.deleteService(name);
+        return;
+      default:
+        throw new Error(`no service action ${action}`);
+    }
   }
 
   async relayUnregister(machineId: string): Promise<void> {
@@ -982,6 +1052,86 @@ export interface SpaceNetworkJson {
   volume: string;
 }
 
+/** A Space's place in its tree, as `spaces.tree` answers it. */
+export interface TreeNodeJson {
+  id: string;
+  parent: string | null;
+  depth: number;
+  children: boolean;
+  /** The agent it is the home of (its `cua.home` labels), or null. */
+  home: string | null;
+}
+
+/** A tree's limits, as `budget.set` takes them. */
+export interface TreeBudgetLimitsJson {
+  maxSpaces?: number | null;
+  maxVcpus?: number | null;
+  maxMemoryMb?: number | null;
+  usdPerHour?: number | null;
+  usdTotal?: number | null;
+}
+
+/** A tree's budget and use, as `budget.get` answers it. */
+export interface TreeBudgetJson {
+  root: string;
+  set: TreeBudgetLimitsJson;
+  maxSpaces: number;
+  maxVcpus: number;
+  maxMemoryMb: number;
+  usdPerHour: number;
+  usdTotal: number | null;
+  spaces: number;
+  vcpus: number;
+  memoryMb: number;
+  usdPerHourUsed: number;
+  usdSpent: number;
+}
+
+/** A kept command, as `services.list` answers it. */
+export interface ServiceJson {
+  name: string;
+  command: string;
+  state: string;
+  restarts: number;
+  lastEnd: string;
+  probeError: string;
+}
+
+type SdkLimits = { maxSpaces?: number; maxVcpus?: number; maxMemoryMb?: bigint | number; usdPerHour?: number; usdTotal?: number };
+type SdkBudget = {
+  root: string;
+  set: SdkLimits;
+  maxSpaces: number;
+  maxVcpus: number;
+  maxMemoryMb: bigint | number;
+  usdPerHour: number;
+  usdTotal?: number;
+  spaces: number;
+  vcpus: number;
+  memoryMb: bigint | number;
+  usdPerHourUsed: number;
+  usdSpent: number;
+};
+
+/** The SDK's `TreeBudget` as JSON (u64s as numbers). */
+function budgetJson(b: SdkBudget): TreeBudgetJson {
+  const opt = (v: bigint | number | undefined) => (v === undefined || v === null ? null : Number(v));
+  return {
+    root: b.root,
+    set: { maxSpaces: opt(b.set.maxSpaces), maxVcpus: opt(b.set.maxVcpus), maxMemoryMb: opt(b.set.maxMemoryMb), usdPerHour: opt(b.set.usdPerHour), usdTotal: opt(b.set.usdTotal) },
+    maxSpaces: Number(b.maxSpaces),
+    maxVcpus: Number(b.maxVcpus),
+    maxMemoryMb: Number(b.maxMemoryMb),
+    usdPerHour: b.usdPerHour,
+    usdTotal: opt(b.usdTotal),
+    spaces: Number(b.spaces),
+    vcpus: Number(b.vcpus),
+    memoryMb: Number(b.memoryMb),
+    usdPerHourUsed: b.usdPerHourUsed,
+    usdSpent: b.usdSpent,
+  };
+}
+
 /** One kind of blocked connection, as `network.log` answers it. */
 export interface NetworkEventJson {
   reason: string;
@@ -993,6 +1143,27 @@ export interface NetworkEventJson {
 
 /** The New Space's Network choice by create id, until its create runs. */
 export const createNetworks = new Map<string, string>();
+
+/** What an agent home is created with besides the plan's fields (CUA-2630): the spawn capability and its `cua.home.*` labels. */
+export interface CreateExtras {
+  children?: boolean;
+  labels?: Record<string, string>;
+}
+
+/** The extras of a create, by create id, until its create runs. */
+export const createExtras = new Map<string, CreateExtras>();
+
+/** The extras in a `spaces.create` config; anything of the wrong type is ignored, a label that is not text is dropped. */
+export function createExtrasOf(config: Record<string, unknown>): CreateExtras {
+  const out: CreateExtras = {};
+  if (config.children === true) out.children = true;
+  const l = config.labels;
+  if (l && typeof l === "object" && !Array.isArray(l)) {
+    const labels = Object.fromEntries(Object.entries(l as Record<string, unknown>).filter(([k, v]) => k !== "" && typeof v === "string" && v !== "")) as Record<string, string>;
+    if (Object.keys(labels).length) out.labels = labels;
+  }
+  return out;
+}
 
 /** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
  * `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,

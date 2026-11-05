@@ -596,6 +596,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
   });
 
+  it("keeps which coding apps the agent menu shows in the app settings (`settings.update`), across a restart", async () => {
+    const before = (await call("settings.get")) as { agentMenu: { shown: string[]; hidden: string[]; seen: string[] } };
+    expect(before.agentMenu).toEqual({ shown: [], hidden: [], seen: [] });
+    const menu = { shown: ["goose"], hidden: ["hermes"], seen: ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"] };
+    const after = (await call("settings.update", { agentMenu: menu })) as typeof before;
+    expect(after.agentMenu).toEqual(menu);
+    const kept = native.appSettingsLoad(model.settingsPath);
+    expect([kept.agentMenuShown, kept.agentMenuHidden, kept.agentMenuSeen]).toEqual([menu.shown, menu.hidden, menu.seen]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { agentMenu: { shown: [], hidden: "hermes", seen: [] } })).toBe("bad_args");
+    expect(await code("settings.update", { agentMenu: null })).toBe("bad_args");
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });

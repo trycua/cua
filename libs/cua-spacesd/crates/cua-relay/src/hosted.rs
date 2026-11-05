@@ -556,7 +556,10 @@ pub(crate) fn shared_with(
     };
     let mut shared = Vec::new();
     for (record, role) in relay.directory.visible_to(&who) {
-        if role == crate::directory::Role::Owner || !record.sharing {
+        if role == crate::directory::Role::Owner
+            || !record.sharing
+            || relay.directory.is_detached(&record)
+        {
             continue;
         }
         let host = record.host.as_deref().and_then(|h| relay.directory.get(h));

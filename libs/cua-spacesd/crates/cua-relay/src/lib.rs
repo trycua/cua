@@ -56,6 +56,7 @@ pub mod push_api;
 pub mod route_marker;
 pub mod server;
 pub mod share_web;
+pub mod spaces;
 pub mod storage;
 pub mod tcp_shares;
 mod transport;

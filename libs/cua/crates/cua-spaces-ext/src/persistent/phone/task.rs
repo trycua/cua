@@ -50,10 +50,11 @@ use cua_spaces::extension::Caller;
 use cua_spaces::mcp::ToolOutcome;
 use cua_spaces::{Error, Result, SpaceCreate, SpaceCreated, Spaces};
 
-/// The agent home runs on the agent home image (the slim Linux image plus the
-/// cua CLI, so the agent can make child Spaces); a test keeps it equal to the
-/// image catalog and to the desktop app's `AGENT_HOME_IMAGE` where that exists.
-pub const HOME_IMAGE: &str = "ghcr.io/trycua/agent-home:24.04";
+/// The agent home runs on the slim Linux image (the `cua` CLI and a
+/// spawn-capable cua-spacesd are baked into that tier, so the agent can make
+/// child Spaces); a test keeps it equal to the image catalog and to the
+/// desktop app's `AGENT_HOME_IMAGE` where that exists.
+pub const HOME_IMAGE: &str = "ghcr.io/trycua/linux:24.04-slim";
 /// The labels the daemon reads on a home (`cua-daemon`'s `children::home`).
 pub const LABEL_HOME: &str = "cua.home";
 pub const LABEL_AGENT: &str = "cua.home.agent";
@@ -873,7 +874,7 @@ mod tests {
         for call in [
             "cua spaces ls",
             "cua spaces create <linux|windows|macos> --name <name> [--image <image>]",
-            "cua spaces create <os> --on host:<machine>",
+            "cua spaces create <os> --on host:<computer>",
         ] {
             assert!(container.contains(call), "{call}");
         }

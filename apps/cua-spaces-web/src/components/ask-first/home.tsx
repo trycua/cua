@@ -1,19 +1,29 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
-import { useAgentChats, useSpaces, type AgentRunSummary } from "@/bridge";
+import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
+import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
+import { useAgentMenu } from "@/hooks/use-agent-menu";
+import { useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
-import { currentWhere, mostUsedAgent, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { currentWhere, SUGGESTIONS, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from "@/lib/ask-first-model";
+import { reusableHome } from "@/lib/agent-home/home-space";
+import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
-import { agentName, chooseAgent } from "./task-agents";
-import { useInstalledAgents } from "./use-installed-agents";
+import { agentName } from "./task-agents";
+import { AgentStatus } from "./agent-status";
+import type { AccountActions } from "./agent-picker";
+import { useAgentReadiness } from "./use-agent-readiness";
+import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
@@ -21,8 +31,6 @@ import { useWhereOptions } from "./where-options";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { usePrepare } from "@/lib/prepare/store";
-
-const NONE: ReadonlySet<string> = new Set();
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -50,24 +58,53 @@ export function AskFirstHome() {
   const listed = useListedSpaces(spaces);
   const { kinds, spaces: pickable } = useWhereOptions();
   const { start } = useStartTask();
-  // Only agents on this computer are offered (the agent setup's detection, which skips files Cua wrote).
-  const installed = useInstalledAgents() ?? NONE;
-  const mostUsed = mostUsedAgent(tasks);
+  const { core } = useBridge();
+  // The agent: the last app, account and model picked while they are still there, else the first connected app. The
+  // account is the app's own choice (kept by the host), so a run uses the one shown.
+  const connectors = useConnectors();
+  const keys = useAgentKeys();
+  // Which apps the menu lists is the person's choice (Settings, Connections); an app they connect shows again.
+  const menu = useAgentMenu(connectors);
+  const navigate = useNavigate();
+  const agents = useMemo(() => (core ? agentsView(core, connectors.input, menu.prefs) : null), [core, connectors.input, menu.prefs]);
+  const picked = usePickedAgent();
+  const selected = resolveAgent(agents, picked);
+  const { current: repo } = useRepos();
   const [text, setText] = useState("");
-  const [agent, setAgent] = useState<string | null>(null);
-  const chosenAgent = chooseAgent(agent, mostUsed, installed);
+  // With Child Spaces on (and this Home, the Ask first experiment), the job goes to the agent's Home Space, which
+  // makes the Spaces it needs on your computers when asked in plain words.
+  const children = useChildren();
+  const agentHome = Boolean(children);
+  const chosenAgent = selected?.harness ?? "claude-code";
+  const { data: machineRows } = useMachines();
+  const machines = useMemo(() => (machineRows ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current, online: m.online })), [machineRows]);
+  useKeepHomeWarm(chosenAgent, agentHome);
+  const readiness = useAgentReadiness(chosenAgent, agentHome, agents, selected);
   // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
-  const [picked, setWhere] = useState<TaskWhere | null>(null);
+  const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
   // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
-  const pick = useWherePick(chosenAgent ? agentName(chosenAgent) : "Your agent");
-  const where = currentWhere(picked, kinds, pickable);
+  const pick = useWherePick(agentName(chosenAgent));
+  const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : null), kinds, pickable);
   const submit = (prompt = text, w = where) => {
-    if (!prompt.trim() || !chosenAgent) return;
-    start({ prompt, agent: chosenAgent, where: w });
+    if (!prompt.trim() || !selected) return;
+    // The run uses the app's own choice of account: make it the one shown.
+    if (!selected.account.selected) void connectors.useCredential(selected.group.app, { env: selected.account.env, slot: selected.account.slot });
+    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
     setText("");
+  };
+  const useAccount = (group: AgentGroup, account: AgentAccount) => {
+    rememberAgent(pickAccount(group, account, picked));
+    if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
+  };
+  const accountActions: AccountActions = {
+    onUse: useAccount,
+    onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
+    onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
+    // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
+    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
   };
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
@@ -86,34 +123,43 @@ export function AskFirstHome() {
         <AskBox
           text={text}
           onText={setText}
-          agent={chosenAgent}
-          onAgent={setAgent}
-          installed={installed}
-          mostUsed={mostUsed}
+          view={agents}
+          selected={selected}
+          onPickAccount={useAccount}
+          onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
+          onSignIn={(g) => void connectors.connectApp(g.app)}
+          onConfigure={() => void navigate({ to: "/settings/connections" })}
+          accounts={accountActions}
+          repo={repo}
           where={where}
           onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
           whereOpen={whereOpen}
           onWhereOpen={setWhereOpen}
           kinds={kinds}
           spaces={pickable}
+          machines={machines}
+          agentHome={agentHome}
+          hasHome={agentHome && reusableHome(chosenAgent, spaces, false, children?.homesOf(chosenAgent)) !== null}
           busy={false}
           onSubmit={() => submit()}
           compact={!first}
           autoFocus
         />
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void connectors.connectApp(selected.group.app)} />
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
-              {SUGGESTIONS.filter((s) => kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
+              {SUGGESTIONS.filter((s) => agentHome || kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
                 <button
                   type="button"
                   key={s.title}
                   data-home-card=""
                   onClick={() => {
                     setText(s.prompt);
-                    setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
+                    // Without an agent home the suggestion's kind of computer is made for it.
+                    if (!agentHome) setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
                   }}
                   className="flex flex-col gap-2 rounded-xl border bg-card/60 px-5 py-4 text-left transition-colors hover:bg-accent dark:bg-white/[0.02]"
                 >
@@ -124,7 +170,10 @@ export function AskFirstHome() {
               ))}
             </div>
             <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done.
+              <CuaKey size={24} />
+              {agentHome
+                ? "The agent works in Spaces of its own, so your computer stays untouched. Watch it live, step in any time, and throw them away when you're done."
+                : "A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done."}
             </p>
           </>
         ) : null}

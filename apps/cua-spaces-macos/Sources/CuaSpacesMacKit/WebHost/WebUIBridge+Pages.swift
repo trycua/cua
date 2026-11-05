@@ -138,6 +138,11 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
             if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
             return try await model.agentKeys.call("agent_keys.use", useArgs)
+        // A saved key or sign-in gets a name (no slot: the first saved for env).
+        case "agentKeys.rename":
+            var renameArgs: [String: Any] = ["env": try string(args, "env"), "label": try string(args, "label")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { renameArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
         case "agentKeys.fromShell":
@@ -560,6 +565,9 @@ extension WebUIBridge {
             guard let harness = args["harness"] as? String, !harness.isEmpty else { throw Failure.badArgs("harness: string") }
             out["name"] = name
             out["agent"] = harness
+            if let model = args["model"] as? String, !model.isEmpty { out["model"] = model }
+            if let standby = args["standby"] as? Bool { out["standby"] = standby }
+            if let brief = args["brief"] as? String, !brief.isEmpty { out["brief"] = brief }
             return ("agent_add", out)
         case "thread.agentRemove":
             // Member names are unique per machine: the tool takes the name.

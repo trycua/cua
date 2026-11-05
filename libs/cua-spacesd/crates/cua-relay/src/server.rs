@@ -409,6 +409,8 @@ pub struct Relay {
     pub(crate) grants: Arc<crate::grants::Grants>,
     /// Pairing codes ("add a machine" by link or QR).
     pub(crate) pairing: Arc<crate::pairing::PairingStore>,
+    /// Each account's default Space and fallback order.
+    pub(crate) spaces: Arc<crate::spaces::SpacesSettings>,
     pub(crate) key: Arc<RelayKey>,
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
@@ -529,6 +531,13 @@ impl Relay {
             )?,
             None => crate::pairing::PairingStore::in_memory(),
         };
+        let spaces = match &config.state_file {
+            Some(path) => crate::spaces::SpacesSettings::open_with(
+                path.with_extension("spaces.json"),
+                storage.clone(),
+            )?,
+            None => crate::spaces::SpacesSettings::in_memory(),
+        };
         let key = config
             .signing_key
             .clone()
@@ -583,6 +592,7 @@ impl Relay {
             plans,
             grants: Arc::new(grants),
             pairing: Arc::new(pairing),
+            spaces: Arc::new(spaces),
             key,
             global_streams: Arc::default(),
             mesh,
@@ -639,6 +649,7 @@ impl Relay {
             .merge(crate::meter::routes())
             .merge(self.hosted_routes())
             .merge(crate::pairing::routes())
+            .merge(crate::spaces::routes())
             .merge(crate::tcp_shares::routes())
             .merge(if self.share_web_enabled() {
                 crate::share_web::routes()
@@ -1397,6 +1408,9 @@ async fn machine_connect_inner(
             .filter(|t| t.starts_with(MACHINE_TOKEN_PREFIX))
             .and_then(|t| relay.directory.machine_for_token(t));
         match record {
+            Some(record) if record.id == id && relay.directory.is_detached(&record) => {
+                return text(StatusCode::FORBIDDEN, crate::api::DETACHED_MESSAGE)
+            }
             Some(record) if record.id == id => Registrant::Account(record.owner.id),
             Some(_) => {
                 return text(
@@ -2107,6 +2121,21 @@ async fn authorize_account_client(
             StatusCode::FORBIDDEN,
             GrpcCode::PermissionDenied,
             "the host stopped sharing this computer",
+        ));
+    }
+    // A Space whose computer was removed from the account is kept but
+    // refused. Someone it is not shared with gets the usual refusal below,
+    // so this does not tell them it exists.
+    if relay.directory.is_detached(&record)
+        && identity
+            .as_ref()
+            .is_none_or(|who| relay.machine_role(&record, who).is_some())
+    {
+        return Err(refuse(
+            headers,
+            StatusCode::FORBIDDEN,
+            GrpcCode::PermissionDenied,
+            crate::api::DETACHED_MESSAGE,
         ));
     }
     let mut phone_call = false;

@@ -13,6 +13,7 @@ import { resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetAskTasks } from "@/lib/ask-first";
+import { rememberAgent, resetPickedAgent } from "@/lib/ask-first-model";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -24,6 +25,9 @@ beforeEach(() => {
   resetConnectedAppsState();
   resetPrepare();
   resetAskTasks();
+  // The agent the first run prepares a home for is the one the person last used.
+  resetPickedAgent();
+  rememberAgent({ harness: "claude-code" });
   setFlagOverride("spaces_ask_first_home", true);
   setFlagOverride("spaces_new_onboarding", true);
 });
@@ -68,7 +72,7 @@ describe.skipIf(!wasmBuilt)("where the first run ends", () => {
     const router = await throughOnboarding(new Promise<void>((r) => (release = r)));
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
     // The prompt box and the suggestions are there, not a Space's page.
-    expect(await screen.findByLabelText("What do you want to do?")).not.toBeNull();
+    expect(await screen.findByLabelText("What should it do?")).not.toBeNull();
     expectCards();
     expect(document.querySelector("[data-ask-first-home]")).not.toBeNull();
     // Warming is silent: no line, no steps, and the home is not in "Your Spaces".
@@ -81,7 +85,7 @@ describe.skipIf(!wasmBuilt)("where the first run ends", () => {
     expect(document.body.textContent).not.toContain("Getting your agent ready");
     expect(document.querySelector("[data-home-spaces]")?.textContent ?? "").not.toContain("home-claude-code");
     // A prompt sent now is kept and goes once the agent is ready (the Space's thread says so).
-    fireEvent.change(screen.getByLabelText("What do you want to do?"), { target: { value: "fix the build" } });
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(getDriver()?.state?.messages.map((m) => m.text)).toEqual(["fix the build"]));
     release();
@@ -92,7 +96,7 @@ describe.skipIf(!wasmBuilt)("where the first run ends", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
     await waitFor(() => expect(getDriver()?.view()?.phase).toBe("ready"), { timeout: 30_000 });
     await waitFor(() => expect(document.querySelector("[data-prepare-line]")).toBeNull());
-    expect(screen.getByLabelText("What do you want to do?")).not.toBeNull();
+    expect(screen.getByLabelText("What should it do?")).not.toBeNull();
     expect(document.querySelector("[data-home-spaces]")?.textContent ?? "").not.toContain("home-claude-code");
     expect(document.body.textContent).not.toContain("home-claude-code");
     // The home that was made meanwhile does not take the suggestions away: nothing was asked yet.

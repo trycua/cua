@@ -361,7 +361,15 @@ async fn the_run_tools_take_a_member_name() {
     .unwrap();
     assert_eq!(
         keys(&m),
-        ["delivered", "phase", "reason", "run_id", "status"]
+        [
+            "delivered",
+            "entry_seq",
+            "mode",
+            "phase",
+            "reason",
+            "run_id",
+            "status"
+        ]
     );
     assert_eq!(inbox(&fx), ["and the tests"]);
     // Both, or neither, is refused.
@@ -1462,6 +1470,58 @@ async fn two_spaces_each_get_their_own_claude() {
     .await
     .unwrap();
     assert_eq!(first["entry"]["task"]["to"], "claude");
+}
+
+/// The name `cua agent ls` shows (`claude-2`, the member's key on this
+/// machine) is an alias of the Space's `@claude`: an @mention or an add
+/// by that name reaches the same member instead of waking nobody (or
+/// adding a second one). Only inside the member's own Space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hosts_key_for_a_member_answers_as_an_alias_in_its_own_space() {
+    let fx = setup().await;
+    let (_srv2, two) = second_space(&fx).await;
+    add_claude(&fx, &fx.space).await.unwrap();
+    add_claude(&fx, &two).await.unwrap();
+    // `@claude-2` in the second Space is its member `claude` (key claude-2).
+    let by_key = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": two, "text": "@claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(by_key["entry"]["task"]["to"], "claude-2");
+    assert_eq!(by_key["entry"]["mentions"], json!(["claude-2"]));
+    // The handle and the key together are one member, one task.
+    let both = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": two, "text": "@claude @claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(both["entry"]["mentions"], json!(["claude-2"]));
+    // Adding by the key is the same member, not a third.
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": two, "name": "claude-2", "harness": "claude-code"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        member_names(&fx, &two).await,
+        [("claude-2".to_string(), "claude".to_string())]
+    );
+    // Another Space's key is nobody's here.
+    let other = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert!(other["entry"]["task"].is_null());
 }
 
 /// Deleting a Space frees its members' names.

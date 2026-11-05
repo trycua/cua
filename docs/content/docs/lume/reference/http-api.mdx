@@ -378,6 +378,7 @@ POST /lume/vms/:name/run
 | `storage` | `string` |  | VM storage location. |
 | `clipboard` | `boolean` | `false` | Enable bidirectional clipboard sync via SSH (experimental). |
 | `vnc` | `string` | `enabled` | VNC server policy: 'enabled' or 'disabled'. 'disabled' requires noDisplay=true, starts no VNC listener, and reports a null vncUrl. |
+| `forwards` | `array` |  | Guest ports to publish on host loopback ports over a virtio socket device, through Cua's guest vsock agent. GET reports the host ports under 'forwards' once the agent answers; these connections are not subject to macOS Local Network privacy or VPN routes. |
 
 **Example request**
 

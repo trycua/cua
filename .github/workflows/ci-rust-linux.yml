@@ -64,8 +64,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   pacman:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -121,7 +127,8 @@ jobs:
             libs/cua-driver/rust/pacman-build.jsonl
 
   unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     # 10 to 14 minutes warm. The headroom covers a run with neither the
@@ -152,7 +159,7 @@ jobs:
           packages: >-
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
-            imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon
+            imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon picom
       - name: Prove the AT-SPI connection graph excludes peer-to-peer
         working-directory: libs/cua-driver/rust
         run: |
@@ -167,9 +174,9 @@ jobs:
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
-      - name: Run Wayland libei tests (portal-input)
+      - name: Run Wayland portal tests (portal-input + portal-capture)
         working-directory: libs/cua-driver/rust
-        run: cargo test --locked -p platform-linux --features portal-input --lib
+        run: cargo test --locked -p platform-linux --features portal-input,portal-capture --lib
       - name: Run cua-cursor-motion tests (lab parity, golden trajectories)
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-cursor-motion --all-features --all-targets --locked
@@ -203,6 +210,24 @@ jobs:
             cargo test -p platform-linux \
             x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
             --locked -- --ignored --nocapture
+      - name: Run X11 overlay atomic-frame regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_frames_are_never_seen_half_presented \
+            --locked -- --ignored --nocapture
+          # The same under a compositing manager.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" sh -c '
+            picom --backend xrender >/tmp/picom.log 2>&1 &
+            picom_pid=$!
+            sleep 2
+            cargo test -p platform-linux \
+              x11_overlay_frames_are_never_composited_half_presented \
+              --locked -- --ignored --nocapture
+            status=$?
+            kill "$picom_pid"
+            exit $status'
       - name: Run X11 desktop capture overlay-exclusion regression
         working-directory: libs/cua-driver/rust
         run: |

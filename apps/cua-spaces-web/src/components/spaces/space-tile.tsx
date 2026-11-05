@@ -24,6 +24,8 @@ import { StateLabel } from "@/components/state-dot";
 import { toast, toastError } from "@/components/ui/toast";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useInView } from "@/hooks/use-in-view";
+import { useChildren } from "@/components/children/use-children";
+import { useIsHomeSpace } from "@/lib/agent-home/home-space";
 import { creatingLine } from "@/lib/host-labels";
 import { createError, createProgress, osLabel, powerButton, powerError, type PowerButton } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -98,6 +100,7 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               </p>
               <PinnedMark id={space.id} />
               {item.desktop ? <DesktopTag /> : null}
+              <HomeTag spaceId={space.id} />
               {/* The state, in the core's words ("Running", "Suspended", "Turning off…"), flush right; the hover "⋯" takes its place. */}
               <StateLabel
                 state={item.desktop === "off" ? "stopped" : state}
@@ -184,6 +187,19 @@ export function DesktopTag() {
   return (
     <span data-desktop-tag="" className="shrink-0 text-xs text-muted-foreground">
       Desktop
+    </span>
+  );
+}
+
+/** The "Home" tag beside an agent's home Space (the Space its requests from Home go to). */
+export function HomeTag({ spaceId }: { spaceId: string }) {
+  const remembered = useIsHomeSpace(spaceId);
+  // The host knows a home by its label, so the tag shows on a new device too.
+  const labelled = Boolean(useChildren()?.node(spaceId)?.home);
+  if (!remembered && !labelled) return null;
+  return (
+    <span data-home-tag="" className="shrink-0 text-xs text-muted-foreground">
+      Home
     </span>
   );
 }

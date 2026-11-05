@@ -18,6 +18,7 @@
 pub mod claude_login;
 pub mod config;
 pub mod connection;
+pub mod driver;
 mod edit;
 mod fsutil;
 pub mod registry;
@@ -62,6 +63,31 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+
+/// Whether the config file at `path` holds nothing but its servers object
+/// (`mcpServers`, `mcp_servers`): what cua writes into a file the agent never
+/// created. Unreadable or unparsable (comments, another format): no.
+fn holds_only_servers(path: &Path, m: &McpSpec) -> bool {
+    let Some(key) = m.key_path.first() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if text.trim().is_empty() {
+        return true;
+    }
+    match m.format {
+        Format::Json => serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v.as_object().map(|o| o.keys().all(|k| k == key)))
+            .unwrap_or(false),
+        Format::Toml => text
+            .parse::<toml_edit::DocumentMut>()
+            .is_ok_and(|d| d.as_table().iter().all(|(k, _)| k == *key)),
+        Format::Yaml => false,
+    }
+}
 
 /// Errors.
 #[derive(Debug, thiserror::Error)]
@@ -413,21 +439,13 @@ impl McpServer {
         }
     }
 
-    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path on
-    /// `env`'s PATH, else in `~/.local/bin` (where cua-driver's installer
-    /// puts it; GUI apps often run without the user's shell PATH), else the
-    /// bare name.
+    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path
+    /// ([`driver::locate`]: `env`'s PATH, `~/.local/bin` where cua-driver's
+    /// installer links it, then `CuaDriver.app`; GUI apps often run without
+    /// the user's shell PATH), else the bare name, which
+    /// [`AgentSetup::setup_cua_driver`] refuses to write.
     pub fn driver_for(env: &HostEnv) -> Self {
-        let bin = if env.os == Os::Windows {
-            "cua-driver.exe"
-        } else {
-            "cua-driver"
-        };
-        let cmd = env
-            .which("cua-driver")
-            .or_else(|| {
-                Some(env.home.join(".local").join("bin").join(bin)).filter(|p| is_executable(p))
-            })
+        let cmd = driver::locate(env)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "cua-driver".into());
         McpServer::driver(cmd)
@@ -656,6 +674,40 @@ impl AgentSetup {
             .unwrap_or_else(|| m.file.resolve(&self.env))
     }
 
+    /// Whether `marker` (one of `a`'s markers) holds only what cua's own
+    /// setup writes there: an MCP config file cua created with nothing but
+    /// its servers in it, or a folder with nothing but that file and the
+    /// skills folder (an empty folder is not). Cua's setup must not make an agent look installed
+    /// (Claude Code "Ready" on a Mac without it, after `~/.claude.json` and
+    /// `~/.claude/skills` were written).
+    fn only_cua_wrote(&self, marker: &Path, a: &registry::AgentSpec) -> bool {
+        let mcp = a.mcp.as_ref().map(|m| (self.mcp_file(m), m));
+        let skills = a.skills.map(|l| l.resolve(&self.env));
+        let cua_config = |f: &Path| {
+            mcp.as_ref()
+                .is_some_and(|(file, m)| file == f && holds_only_servers(f, m))
+        };
+        if marker.is_file() {
+            return cua_config(marker);
+        }
+        let Ok(entries) = std::fs::read_dir(marker) else {
+            return false;
+        };
+        // An empty folder is the agent's (cua writes something into each).
+        let mut cua_only = false;
+        for e in entries.flatten() {
+            let p = e.path();
+            if e.file_name() == ".DS_Store" {
+                continue;
+            }
+            if !(cua_config(&p) || skills.as_ref().is_some_and(|s| s.starts_with(&p))) {
+                return false;
+            }
+            cua_only = true;
+        }
+        cua_only
+    }
+
     /// Detects every registry agent (read-only).
     pub fn detect(&self) -> Vec<AgentStatus> {
         let state = State::load(&self.state_path).unwrap_or_default();
@@ -742,7 +794,7 @@ impl AgentSetup {
         }
         for m in a.markers {
             let p = m.resolve(&self.env);
-            if p.exists() {
+            if p.exists() && !self.only_cua_wrote(&p, a) {
                 evidence.push(format!("path:{}", p.display()));
             }
         }
@@ -1437,15 +1489,51 @@ impl AgentSetup {
             out.extend(self.install_skills(agents, &[DRIVER_SKILL.to_string()], force)?);
         }
         if parts.mcp {
-            let with_mcp: Vec<String> = self
-                .specs(agents)?
-                .iter()
-                .filter(|a| a.mcp.is_some())
-                .map(|a| a.id.to_string())
-                .collect();
-            out.extend(self.configure_mcp(&with_mcp, server)?);
+            // Only a cua-driver that runs and answers MCP is written, by
+            // absolute path: a bare or missing command would leave every
+            // agent with a server that fails to start (ENOENT).
+            let checked = driver::resolve(&self.env, &server.command)
+                .ok_or_else(|| "cua-driver isn't installed".to_string())
+                .and_then(|p| driver::check(&p).map(|_| p));
+            match checked {
+                Ok(path) => {
+                    let server = McpServer {
+                        command: path.display().to_string(),
+                        ..server.clone()
+                    };
+                    let with_mcp: Vec<String> = self
+                        .specs(agents)?
+                        .iter()
+                        .filter(|a| a.mcp.is_some())
+                        .map(|a| a.id.to_string())
+                        .collect();
+                    out.extend(self.configure_mcp(&with_mcp, &server)?);
+                }
+                Err(why) => out.extend(self.driver_unavailable(agents, &why)?),
+            }
         }
         Ok(out)
+    }
+
+    /// One failed `cua-driver` MCP row per agent in `agents` that supports
+    /// MCP, saying `why`; no config is touched.
+    pub fn driver_unavailable(&self, agents: &[String], why: &str) -> Result<Vec<Outcome>> {
+        Ok(self
+            .specs(agents)?
+            .iter()
+            .filter_map(|a| {
+                let m = a.mcp.as_ref()?;
+                Some(Outcome {
+                    agents: vec![a.id.into()],
+                    target: Target::Mcp,
+                    item: DRIVER_MCP_SERVER_NAME.into(),
+                    path: self.mcp_file(m),
+                    change: Change::Failed,
+                    detail: why.to_string(),
+                    backup: None,
+                })
+            })
+            .collect())
     }
 
     /// Refreshes every skill folder cua installed to this build's content

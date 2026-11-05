@@ -68,7 +68,8 @@ describe("migrateFromSwiftApp", () => {
     expect(JSON.parse(readFileSync(paths.settings, "utf8"))).toEqual(swiftSettings);
     expect(JSON.parse(readFileSync(paths.onboarding, "utf8"))).toEqual(onboarding);
     expect(patch).toEqual({
-      updateChannel: "beta",
+      // The Swift app's Beta is Nightly now.
+      updateChannel: "nightly",
       windowBounds: { x: 220, y: 177, width: 1280, height: 800 },
       swiftMigration: {
         at: "2026-10-07T12:00:00.000Z",

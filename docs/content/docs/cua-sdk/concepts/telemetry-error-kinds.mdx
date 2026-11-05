@@ -47,6 +47,37 @@ say.
 | `pull_interrupted` | The image download stopped partway. Another try resumes it. |
 | `local_network_denied` | macOS Local Network privacy is off for the app or its service. |
 | `local_network_vpn` | A VPN routes the VM's private network away. |
+| `capacity_vms` | `host_capacity`: this machine had no room and Cua VMs it runs hold the capacity (the error names them so the person can stop them). A VM left running by an earlier failed attempt shows up here. |
+| `capacity_other` | `host_capacity`: this machine had no room while no Cua VM runs there; other programs use its memory or CPUs, or its limits are too tight. |
+| `runtime_install_failed` | The built-in runtime (Lume) could not be set up: its download, checksum or unpacking failed. |
+| `runtime_not_signed` | The built-in runtime's signature did not verify. |
+| `runtime_unresponsive` | The runtime's service started and never answered. |
+| `runtime_too_old` | This Mac's own Lume is older than macOS Spaces need. |
+| `runtime_api_error` | The runtime's API answered with an error, or not at all. |
+| `vm_never_started` | The VM was created and never started, stopped while booting, or vanished while booting. |
+| `vm_config_invalid` | The VM's configuration was refused. |
+| `host_command_failed` | A host command the create ran (`lume`, `codesign`) exited with an error. |
+
+## Failed step
+
+`cua_space_create` also sets `failed_step`, the step inside `failed_phase` a
+failure stopped at. It is worked out on your device from the fixed words
+above (the phase, `error_kind` and `error_subclass`), never from the error
+text. It is `none` when the create worked or was cancelled.
+
+| `failed_step` | Step |
+|---|---|
+| `check_host` | The checks before anything starts (this Mac can't run VMs, Local Network, disk). |
+| `start_runtime` | The local runtime: Lume, the container engine, the built-in Linux runtime. |
+| `reach_daemon` | Cua's background service took no create. |
+| `resolve_image` | Finding the image. |
+| `pull_image` | Downloading the image. |
+| `clone_disk` | Preparing a VM's disk. |
+| `create_container` | Creating a container. |
+| `configure_vm` | The Space's settings were refused. |
+| `start_vm` | Booting the VM or container. |
+| `connect_services` | Reaching the Space's own services once it booted. |
+| `unknown` | Nothing narrows the phase down; these are what still need a name. |
 
 ## Automatic retry
 

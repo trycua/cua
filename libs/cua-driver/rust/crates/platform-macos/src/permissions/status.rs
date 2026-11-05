@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Low-level TCC permission status probes.
 //!
 //! Mirrors Swift `Permissions.currentStatus()` / `Permissions.requestAccessibility()`

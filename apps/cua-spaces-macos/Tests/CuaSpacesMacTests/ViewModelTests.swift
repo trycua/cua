@@ -432,7 +432,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"])
         // Sharing and Your cloud are on unless turned off; no New UI row.
         let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in
@@ -791,7 +791,7 @@ struct ViewModelTests {
         let name = "e2e-1005-gamma-macos"
         let record = AppSpaceRow(id: "relay:96fe/space-46e0", name: name, displayName: nil, provider: "relay", spacesdVersion: "",
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
-                                 imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
+                                 imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
                                  cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
         let backend = FixtureSpacesBackend(rows: [record])
@@ -1226,7 +1226,7 @@ struct ViewModelTests {
         func cloudRow(_ id: String, _ name: String, _ cloud: String, _ place: String, _ delete: String) -> AppSpaceRow {
             AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
-                        reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
+                        hidden: false, reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
                         cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil)
         }
         let backend = FixtureSpacesBackend(rows: [

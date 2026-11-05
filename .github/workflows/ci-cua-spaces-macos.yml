@@ -88,8 +88,14 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   core:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:
@@ -128,12 +134,14 @@ jobs:
   # each compiling it (the checks that need the Rust toolchain compile only
   # the small bindgen tools).
   ffi:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: Cua Spaces app library (built once)
     runs-on: macos-26
     # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
-    # cancelled steady progress on PRs that miss main's cached library.
-    timeout-minutes: 90
+    # cancelled steady progress on PRs that miss main's cached library, and 90
+    # cancelled a PR that changes Cargo.lock (it builds every dependency).
+    timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).

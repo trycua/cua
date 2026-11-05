@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! End-to-end session lifecycle / disposal test (cross-platform; runs on the Mac
 //! via `cargo test -p cua-driver-core`).
 //!

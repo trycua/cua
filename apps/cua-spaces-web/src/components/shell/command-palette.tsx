@@ -17,10 +17,11 @@ import {
   SunIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 
 import { useBridge, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
+import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
 import { toast, toastError } from "@/components/ui/toast";
@@ -54,14 +55,17 @@ const icon = (Icon: LucideIcon) => <Icon className="size-4 text-muted-foreground
 function PaletteBody({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const navigate = useNavigate();
-  const { data: spaces = [], startSpace, stopSpace } = useSpaces();
+  const { core } = useBridge();
+  const { data: allSpaces = [], startSpace, stopSpace } = useSpaces();
+  // The home warming for Home's box is not a command until a person wrote into it.
+  const warming = useHiddenSpaceIds(core);
+  const spaces = useMemo(() => allSpaces.filter((s) => !warming.has(s.id)), [allSpaces, warming]);
   const { data: machines = [] } = useMachines();
   const newSpace = useNewSpace();
   const { data: keyvault, lockItems } = useKeyvault();
   const { data: session, signIn, signOut } = useSession();
   const { preference, resolved, setPreference } = useTheme();
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const { core } = useBridge();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 

@@ -93,6 +93,9 @@
   "features_not_applicable": [],
   "features_optional": [
     "hotspot",
+    "exit",
+    "host_ports",
+    "process.services",
     "relay_attach",
     "h264_hw",
     "audio.per_app",
@@ -126,7 +129,8 @@
     "audio.desktop",
     "audio.uplink",
     "audio.opus",
-    "process.exec_ledger"
+    "process.exec_ledger",
+    "spawn"
   ],
   "fixtures": {
     "apps": [
@@ -231,6 +235,13 @@
         "--version"
       ],
       "expect": "^cmake version 3\\."
+    },
+    "cua": {
+      "argv": [
+        "cua",
+        "--version"
+      ],
+      "expect": "^cua [0-9]"
     },
     "curl": {
       "argv": [

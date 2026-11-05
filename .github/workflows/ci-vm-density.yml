@@ -51,7 +51,14 @@ env:
   CARGO_BUILD_JOBS: "4"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   unit:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -83,7 +90,8 @@ jobs:
   kvm:
     name: nightly KVM (density tests + bench guard)
     # Also on a pull request labelled ci:vm-density.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:

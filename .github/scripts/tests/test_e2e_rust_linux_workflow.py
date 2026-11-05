@@ -13,7 +13,9 @@ def test_canonical_certification_is_fail_closed_and_complete() -> None:
     certification = workflow.split("\n  certify:\n", 1)[1]
 
     # Manual dispatches and stable-tag release-gate calls both certify.
-    assert "if: success() && inputs.lane == 'all'" in certification
+    assert "!failure() && !cancelled() && inputs.lane == 'all'" in certification
+    for job in ("source", "shared", "native", "capture", "installer"):
+        assert f"needs.{job}.result == 'success'" in certification
     assert "needs: [source, shared, native, capture, installer]" in certification
     assert 'schema "cua-driver/e2e-certification/v1"' in certification
     assert 'platform "linux"' in certification
@@ -45,7 +47,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertIn("          - verify", workflow)
         job = workflow.split("\n  verify-skill:\n")[1].split("\n  shared:\n")[0]
         for setting in (
-            "if: inputs.lane == '' || inputs.lane == 'verify'",
+            "if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') }}",
             "timeout-minutes: 25",
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
@@ -291,3 +293,46 @@ class VerifySkillTests(unittest.TestCase):
         finally:
             sleeper.terminate()
             sleeper.wait(timeout=5)
+
+
+def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> None:
+    """A PR must not save its own sccache entry, but a dispatch still may.
+
+    `github.ref_type == 'branch'` is true on pull_request too, so it never gated
+    a PR save. The in-repo rust-cache action decides `save` itself and only drops
+    a save when `save-if` is the literal "false", so these guards must evaluate
+    false on pull_request and true otherwise. Swatinem/rust-cache honours
+    `save-if` directly and was the one site writing PR-scoped entries.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    # Only the save guards: setup-node's `cache:` inputs are a separate decision.
+    save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
+    assert not any("ref_type == 'branch'" in line for line in save_guards)
+
+    # `needs.source.outputs.sha == github.sha` must survive: a dispatch can
+    # certify an older SHA, and that run must not seed main's scope with it.
+    swatinem = workflow.split("- uses: Swatinem/rust-cache", 1)[1].split("- uses:", 1)[0]
+    assert (
+        "save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')"
+        " && needs.source.outputs.sha == github.sha }}" in swatinem
+    )
+
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}"
+        )
+        == 4
+    )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """The release driver and Tauri units of the shared leg live in their own entry.
+
+    In the default libs-cua-driver-rust family the day's entry is saved first by
+    debug-only unit jobs; the shared leg then gets an exact hit, never saves, and
+    rebuilds its release units on every run.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    shared = workflow.split("\n  shared:\n", 1)[1].split("\n  native:\n", 1)[0]
+    assert "shared-key: cua-driver-e2e-shared" in shared
+    assert workflow.count("shared-key: cua-driver-e2e-shared") == 1

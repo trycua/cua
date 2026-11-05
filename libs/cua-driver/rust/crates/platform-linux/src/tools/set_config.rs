@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -40,14 +43,16 @@ impl Tool for SetConfigTool {
                 `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
                 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
                 for every cursor at once.\n\n\
-                `cursor.float` (resting float) is `on` (default), `off` or `default`; \
-                `cursor.marks` (action marks) and `cursor.rotate` (turn toward travel) are `on`, \
-                `off` (default) or `default`. All apply to every cursor at once.".into(),
+                `cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are \
+                `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, \
+                `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, \
+                `off` or `default`. All apply to every cursor at once.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
-                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
+                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."},
+                "fast_path": cua_driver_core::fast_path::wire::config_schema()
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -96,6 +101,14 @@ impl Tool for SetConfigTool {
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;
         }
+        match cua_driver_core::fast_path::wire::apply_config_args(&args) {
+            Ok(Some(mode)) => parts.push(format!(
+                "fast_path={} (applies now, not saved)",
+                mode.as_str()
+            )),
+            Ok(None) => {}
+            Err(message) => return ToolResult::error(message),
+        }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
             if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(dim)) {
@@ -136,7 +149,8 @@ impl Tool for SetConfigTool {
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "experimental_pip": pip_enabled,
-            "experimental_pip_geometry": pip_geometry
+            "experimental_pip_geometry": pip_geometry,
+            "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }
 }

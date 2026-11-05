@@ -51,7 +51,14 @@ env:
   CUA_RELEASE_REPOSITORY: ${{ github.repository }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   slice:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: SwiftUI Rust (${{ matrix.arch }})
     runs-on: macos-26
     timeout-minutes: 120

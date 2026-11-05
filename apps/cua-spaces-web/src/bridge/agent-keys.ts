@@ -262,6 +262,15 @@ export class AgentKeysStore {
     this.set({ report, error: null });
   }
 
+  /** Gives a saved key or sign-in a name (`slot` null: the first saved for `env`). Throws the host's words. */
+  async rename(env: string, slot: string | null, label: string): Promise<void> {
+    this.epoch++;
+    const report = await this.adapter.call("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) });
+    this.epoch++;
+    this.pinned = false;
+    this.set({ report, error: null });
+  }
+
   openSheet(provider: AgentKeyProvider, env: string | null = null): void {
     this.set({ sheet: { provider, env }, removing: null });
   }
@@ -312,6 +321,8 @@ export interface AgentKeysHook extends AgentKeysState {
   remove(env: string, which?: { slot?: string; keepOthers?: boolean }): Promise<void>;
   /** Tells `app` which saved credential to use (null: the first that works). */
   use(app: string, choice: { env: string; slot?: string } | null): Promise<void>;
+  /** Gives a saved key or sign-in a name. */
+  rename(env: string, slot: string | null, label: string): Promise<void>;
   openSheet(provider: AgentKeyProvider, env?: string | null): void;
   closeSheet(): void;
   askRemove(env: string | null): void;
@@ -355,6 +366,7 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     save: (provider, value, env, choices, more) => need().save(provider, value, env, choices, more),
     remove: (env, which) => need().remove(env, which),
     use: (app, choice) => need().use(app, choice),
+    rename: (env, slot, label) => need().rename(env, slot, label),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),
     closeSheet: () => store?.closeSheet(),
     askRemove: (env) => store?.askRemove(env),

@@ -68,6 +68,29 @@ export function appAboutAllowedChannels(channel: AppUpdateChannel): Array<string
     }
 
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+ */
+export function appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: string): string | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel.lower(channel, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(stableFeed, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The About input from JSON (parity flows).
  */
 export function appAboutInputFromJson(json: string): AppAboutInput /*throws*/ {
@@ -4480,7 +4503,7 @@ export function appSettingsDefaults(): AppSettings {
 
 /**
  * The update channel of an install's first launch, from the file's
- * `channel`: Beta for a prerelease, else unchanged.
+ * `channel`: Nightly for a prerelease, else unchanged.
  */
 export function appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: string): AppUpdateChannel {
     return ((__rb: Uint8Array) => {
@@ -4522,7 +4545,9 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
     }
 
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
     return ((__rb: Uint8Array) => {
@@ -4585,7 +4610,8 @@ export function appSettingsResolveNewUi(settings: AppSettings, version: string):
     }
 
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 export function appSettingsSave(path: string, settings: AppSettings): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
@@ -7250,9 +7276,12 @@ export enum AppUpdateChannel {
      */
     Stable = "stable",
     /**
-     * Releases and prereleases (`X.Y.Z-suffix`).
+     * A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+     * its own feed. It replaced the Beta channel, so `beta` (an older
+     * build's word, and what the settings file still stores, see
+     * [`crate::settings::save`]) reads as Nightly.
      */
-    Beta = "beta"
+    Nightly = "nightly"
 }
 
 const FfiConverterTypeAppUpdateChannel = (() => {
@@ -7262,14 +7291,14 @@ const FfiConverterTypeAppUpdateChannel = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return AppUpdateChannel.Stable;
-                case 2: return AppUpdateChannel.Beta;
+                case 2: return AppUpdateChannel.Nightly;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         write(value: TypeName, into: RustBuffer): void {
             switch (value) {
                 case AppUpdateChannel.Stable: return ordinalConverter.write(1, into);
-                case AppUpdateChannel.Beta: return ordinalConverter.write(2, into);
+                case AppUpdateChannel.Nightly: return ordinalConverter.write(2, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -7572,17 +7601,32 @@ export type AppAboutUpdates = {
      */
     autoInstallEnabled: boolean,
     /**
-     * "Update to:".
+     * "Updates".
      */
     channelLabel: string,
     /**
-     * Stable, Beta.
+     * Stable, Nightly.
      */
     channels: Array<AppSettingsOption>,
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     channelHelp: string,
+    /**
+     * A word about the version running on this channel: a nightly build
+     * back on Stable stays until the next stable release passes it;
+     * `None`: nothing to say.
+     */
+    channelNote?: string,
+    /**
+     * "Download Stable": the way back to Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    downloadLabel?: string,
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    downloadUrl?: string,
     /**
      * "Check Now" (or "Checking…").
      */
@@ -7626,6 +7670,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
                 channelLabel: FfiConverterString.read(from),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from),
                 channelHelp: FfiConverterString.read(from),
+                channelNote: FfiConverterOptionalString.read(from),
+                downloadLabel: FfiConverterOptionalString.read(from),
+                downloadUrl: FfiConverterOptionalString.read(from),
                 checkLabel: FfiConverterString.read(from),
                 checkEnabled: FfiConverterBool.read(from),
                 lastCheck: FfiConverterString.read(from)
@@ -7640,6 +7687,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
             FfiConverterString.write(value.channelLabel, into);
             FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into);
             FfiConverterString.write(value.channelHelp, into);
+            FfiConverterOptionalString.write(value.channelNote, into);
+            FfiConverterOptionalString.write(value.downloadLabel, into);
+            FfiConverterOptionalString.write(value.downloadUrl, into);
             FfiConverterString.write(value.checkLabel, into);
             FfiConverterBool.write(value.checkEnabled, into);
             FfiConverterString.write(value.lastCheck, into);
@@ -7653,6 +7703,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
              FfiConverterString.allocationSize(value.channelLabel) +
              FfiConverterSequenceTypeAppSettingsOption.allocationSize(value.channels) +
              FfiConverterString.allocationSize(value.channelHelp) +
+             FfiConverterOptionalString.allocationSize(value.channelNote) +
+             FfiConverterOptionalString.allocationSize(value.downloadLabel) +
+             FfiConverterOptionalString.allocationSize(value.downloadUrl) +
              FfiConverterString.allocationSize(value.checkLabel) +
              FfiConverterBool.allocationSize(value.checkEnabled) +
              FfiConverterString.allocationSize(value.lastCheck);
@@ -13260,7 +13313,15 @@ export type AppSpace = {
      * Who it belongs to, who else has it and what you may do with it
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
-    access?: AppSpaceAccess
+    access?: AppSpaceAccess,
+    /**
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
+     */
+    hidden: boolean
 }
 
 /**
@@ -13309,7 +13370,8 @@ const FfiConverterTypeAppSpace = (() => {
                 cloud: FfiConverterOptionalString.read(from),
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
-                access: FfiConverterOptionalTypeAppSpaceAccess.read(from)
+                access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
+                hidden: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13339,6 +13401,7 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalString.write(value.cloudPlace, into);
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
+            FfiConverterBool.write(value.hidden, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13366,7 +13429,8 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloud) +
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
-             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access);
+             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
+             FfiConverterBool.allocationSize(value.hidden);
 
         }
     };
@@ -14565,7 +14629,48 @@ export type AppExperiments = {
      * The shared web UI is the main window. Always on in the macOS shell
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
-    webUi: boolean
+    webUi: boolean,
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    secureSpaces: boolean,
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    childSpaces: boolean,
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    askFirst: boolean,
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    ciRunners: boolean,
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    tcpShares: boolean,
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    mobile: boolean,
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    warmPools: boolean
 }
 
 /**
@@ -14592,7 +14697,14 @@ const FfiConverterTypeAppExperiments = (() => {
                 cuaVolume: FfiConverterBool.read(from),
                 yourCloud: FfiConverterBool.read(from),
                 sharing: FfiConverterBool.read(from),
-                webUi: FfiConverterBool.read(from)
+                webUi: FfiConverterBool.read(from),
+                secureSpaces: FfiConverterBool.read(from),
+                childSpaces: FfiConverterBool.read(from),
+                askFirst: FfiConverterBool.read(from),
+                ciRunners: FfiConverterBool.read(from),
+                tcpShares: FfiConverterBool.read(from),
+                mobile: FfiConverterBool.read(from),
+                warmPools: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14600,12 +14712,26 @@ const FfiConverterTypeAppExperiments = (() => {
             FfiConverterBool.write(value.yourCloud, into);
             FfiConverterBool.write(value.sharing, into);
             FfiConverterBool.write(value.webUi, into);
+            FfiConverterBool.write(value.secureSpaces, into);
+            FfiConverterBool.write(value.childSpaces, into);
+            FfiConverterBool.write(value.askFirst, into);
+            FfiConverterBool.write(value.ciRunners, into);
+            FfiConverterBool.write(value.tcpShares, into);
+            FfiConverterBool.write(value.mobile, into);
+            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
              FfiConverterBool.allocationSize(value.yourCloud) +
              FfiConverterBool.allocationSize(value.sharing) +
-             FfiConverterBool.allocationSize(value.webUi);
+             FfiConverterBool.allocationSize(value.webUi) +
+             FfiConverterBool.allocationSize(value.secureSpaces) +
+             FfiConverterBool.allocationSize(value.childSpaces) +
+             FfiConverterBool.allocationSize(value.askFirst) +
+             FfiConverterBool.allocationSize(value.ciRunners) +
+             FfiConverterBool.allocationSize(value.tcpShares) +
+             FfiConverterBool.allocationSize(value.mobile) +
+             FfiConverterBool.allocationSize(value.warmPools);
 
         }
     };
@@ -40822,7 +40948,25 @@ export type AppSettings = {
      * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
      * older settings file without it reads as tips on, none done.
      */
-    tips: AppTipsState
+    tips: AppTipsState,
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    agentMenuShown: Array<string>,
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    agentMenuHidden: Array<string>,
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    agentMenuSeen: Array<string>
 }
 
 /**
@@ -40863,7 +41007,10 @@ const FfiConverterTypeAppSettings = (() => {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
                 autoConnect: FfiConverterBool.read(from),
                 currentTeamId: FfiConverterOptionalString.read(from),
-                tips: FfiConverterTypeAppTipsState.read(from)
+                tips: FfiConverterTypeAppTipsState.read(from),
+                agentMenuShown: FfiConverterSequenceString.read(from),
+                agentMenuHidden: FfiConverterSequenceString.read(from),
+                agentMenuSeen: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -40885,6 +41032,9 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterBool.write(value.autoConnect, into);
             FfiConverterOptionalString.write(value.currentTeamId, into);
             FfiConverterTypeAppTipsState.write(value.tips, into);
+            FfiConverterSequenceString.write(value.agentMenuShown, into);
+            FfiConverterSequenceString.write(value.agentMenuHidden, into);
+            FfiConverterSequenceString.write(value.agentMenuSeen, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -40904,7 +41054,10 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
              FfiConverterBool.allocationSize(value.autoConnect) +
              FfiConverterOptionalString.allocationSize(value.currentTeamId) +
-             FfiConverterTypeAppTipsState.allocationSize(value.tips);
+             FfiConverterTypeAppTipsState.allocationSize(value.tips) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
 
         }
     };
@@ -44267,6 +44420,11 @@ export type AppSpaceRow = {
      */
     arch?: string,
     /**
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
+     */
+    hidden: boolean,
+    /**
      * Answered the last connect.
      */
     reachable: boolean,
@@ -44352,6 +44510,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 imageDigest: FfiConverterOptionalString.read(from),
                 kind: FfiConverterOptionalTypeAppSpaceKind.read(from),
                 arch: FfiConverterOptionalString.read(from),
+                hidden: FfiConverterBool.read(from),
                 reachable: FfiConverterBool.read(from),
                 error: FfiConverterOptionalString.read(from),
                 host: FfiConverterOptionalString.read(from),
@@ -44380,6 +44539,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.imageDigest, into);
             FfiConverterOptionalTypeAppSpaceKind.write(value.kind, into);
             FfiConverterOptionalString.write(value.arch, into);
+            FfiConverterBool.write(value.hidden, into);
             FfiConverterBool.write(value.reachable, into);
             FfiConverterOptionalString.write(value.error, into);
             FfiConverterOptionalString.write(value.host, into);
@@ -44407,6 +44567,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.imageDigest) +
              FfiConverterOptionalTypeAppSpaceKind.allocationSize(value.kind) +
              FfiConverterOptionalString.allocationSize(value.arch) +
+             FfiConverterBool.allocationSize(value.hidden) +
              FfiConverterBool.allocationSize(value.reachable) +
              FfiConverterOptionalString.allocationSize(value.error) +
              FfiConverterOptionalString.allocationSize(value.host) +
@@ -71111,6 +71272,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() !== 59781) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() !== 25239) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() !== 570) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json");
     }
@@ -71747,13 +71911,13 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults() !== 47096) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() !== 11279) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() !== 29109) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 42027) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 56775) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
@@ -71762,7 +71926,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() !== 48081) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 30129) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 62204) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_save");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() !== 34252) {

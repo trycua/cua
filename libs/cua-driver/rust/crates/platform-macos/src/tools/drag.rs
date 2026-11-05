@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! drag tool — matches the Swift reference DragTool.swift.
 //!
 //! Press-drag-release gesture: mouseDown at (from_x, from_y), N interpolated

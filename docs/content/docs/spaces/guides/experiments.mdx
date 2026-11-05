@@ -1,0 +1,34 @@
+---
+title: Experiments
+description: Features that are still being built are off until you turn them on, one switch each, with the cua experiments command or in the app's Settings.
+---
+
+An experiment is a feature that works but is still being built. It is off until you turn it on, and turning it off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
+
+## Turn one on or off
+
+```bash skip="no-runner"
+cua experiments list                  # every experiment and whether it is on
+cua experiments enable secure-spaces
+cua experiments disable secure-spaces
+```
+
+The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, every experiment has a switch under Settings, Advanced, Labs, off until you turn it on, and it does what the command does; a change made with the command shows there the next time the app starts. To turn one on for a single process, set `CUA_EXPERIMENTS=secure-spaces` (or `-secure-spaces` to force it off).
+
+A command that belongs to an experiment that is off is left out of `--help`. If you run it anyway it says which experiment to turn on.
+
+## The experiments
+
+| Name | What it does |
+| --- | --- |
+| `ask-first` | An agent asks you on a card before anything leaves its Space, starting with a push to GitHub, and Cua does it only after you say yes. See [Agents in a Space](/spaces/guides/agents-in-a-space) and [Connections](/spaces/guides/connections). |
+| `ci-runners` | GitHub Actions jobs run in a fresh Space each, on your computers, with `cua ci` and the CI Runners page. See [Cua CI](/spaces/guides/cua-ci). |
+| `child-spaces` | A Space makes Spaces of its own, inside a budget for its tree, and keeps a command running. See [Child Spaces](/spaces/guides/child-spaces) and [Keep a command running](/spaces/guides/keep-a-command-running). |
+| `tcp-shares` | Share a raw TCP service in a Space, such as a game server, at a public address. See [Share a game server](/spaces/guides/share-a-game-server). |
+| `mobile` | Your computers answer the Cua Spaces phone app: the daemon serves a phone's tools (start a task, tool rows, changes and diffs, approval scopes) and reports events for push alerts. See [Cua Spaces on your phone](/spaces/guides/phone). |
+| `warm-pools` | Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once. See [Warm start](/spaces/guides/warm-start). |
+| `secure-spaces` | A Space reaches the internet and its own tree and nothing else on your network unless you open it, with a network setting for each Space. See [A Space's network](/cua-sdk/guides/egress). |
+
+## Turning one off
+
+Turning an experiment off takes effect for the Spaces you start or create afterwards. A running Space keeps the network it started with until it restarts, and a Space made while Secure Spaces was on keeps the protection it was made with. A Space made before you turned Secure Spaces on stays on the open network it had; to move it to the secure one it has to be recreated, which loses its files, so Cua refuses to restart it while the experiment is on and tells you the two ways forward (turn the experiment off to keep using it, or copy what you need out and delete it). Turning an experiment back on later brings back the settings you chose.

@@ -144,6 +144,15 @@ pub const UNREACHABLE: &str = "could not reach the sign-in service";
 /// (`access_denied`).
 pub const LOGIN_DECLINED: &str = "sign-in was declined in the browser";
 
+/// How an error starts when a started sign-in was stopped before it
+/// finished ([`LoginCanceller::cancel`]): another attempt finished first, or
+/// the caller stopped waiting. Its loopback listener is closed by then.
+pub const LOGIN_STOPPED: &str = "sign-in was stopped before it finished";
+
+fn stopped() -> Error {
+    Error::Timeout(format!("{LOGIN_STOPPED}; start it again"))
+}
+
 /// A request that failed before any answer: [`UNREACHABLE`] for transport
 /// failures, the error's own words otherwise.
 fn net_err(e: reqwest::Error) -> Error {
@@ -1913,6 +1922,49 @@ pub struct PendingLogin {
     oidc: Oidc,
     token_endpoint: String,
     pending: Pending,
+    cancel: LoginCanceller,
+}
+
+/// Stops a started sign-in from anywhere ([`PendingLogin::canceller`]): a
+/// browser sign-in closes its loopback listener at once (no stale listener
+/// keeps the port or signs in later), a device-code sign-in stops polling.
+/// The wait then ends with an error that starts with [`LOGIN_STOPPED`].
+#[derive(Clone, Debug, Default)]
+pub struct LoginCanceller(Arc<LoginCancel>);
+
+#[derive(Debug, Default)]
+struct LoginCancel {
+    stopped: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl LoginCanceller {
+    /// Stops the sign-in (once; later calls do nothing).
+    pub fn cancel(&self) {
+        self.0
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.notify.notify_waiters();
+    }
+
+    /// Whether [`cancel`](Self::cancel) was called.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once cancelled (at once when it already was).
+    async fn cancelled(&self) {
+        loop {
+            let notified = self.0.notify.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so a cancel in between is seen.
+            let _ = notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 fn b64url(bytes: &[u8]) -> String {
@@ -2014,6 +2066,7 @@ async fn begin_pkce(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin, String> 
             state,
             redirect,
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
@@ -2060,13 +2113,44 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
             interval: v["interval"].as_u64().unwrap_or(5).max(1),
             expires_in: v["expires_in"].as_u64().unwrap_or(600).clamp(1, 3600),
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
 impl PendingLogin {
+    /// Stops this sign-in from another task (see [`LoginCanceller`]).
+    pub fn canceller(&self) -> LoginCanceller {
+        self.cancel.clone()
+    }
+
     /// Waits for the user to finish and returns the tokens (not yet saved).
+    /// Callers that keep the session use [`Session::finish_login`], which
+    /// saves it before the browser page says "You're signed in".
     pub async fn complete(self) -> Result<Credentials> {
-        match self.pending {
+        self.complete_with(|_| Ok(())).await
+    }
+
+    /// Waits for the user to finish, then runs `save` on the tokens before
+    /// the browser's page is answered: the page says "You're signed in" only
+    /// once the session is kept, and "couldn't save" when `save` fails (a
+    /// locked keychain, a denied prompt), never success for a sign-in the
+    /// app then reports as failed. `save`'s error is returned as is.
+    pub async fn complete_with<F>(self, save: F) -> Result<Credentials>
+    where
+        F: FnOnce(&Credentials) -> Result<()>,
+    {
+        let PendingLogin {
+            oidc,
+            token_endpoint,
+            pending,
+            cancel,
+            return_to,
+            ..
+        } = self;
+        if cancel.is_cancelled() {
+            return Err(stopped());
+        }
+        match pending {
             Pending::Pkce {
                 listener,
                 verifier,
@@ -2077,27 +2161,32 @@ impl PendingLogin {
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(600);
-                let to = self.return_to.as_ref();
-                let (code, mut browser) = tokio::time::timeout(
-                    Duration::from_secs(secs),
-                    await_callback(&listener, &state, to),
-                )
-                .await
-                .map_err(|_| {
+                let to = return_to.as_ref();
+                // Stopped while waiting: the listener closes on return.
+                let waited = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Err(stopped()),
+                    w = tokio::time::timeout(
+                        Duration::from_secs(secs),
+                        await_callback(&listener, &state, to),
+                    ) => w,
+                };
+                let (code, mut browser) = waited.map_err(|_| {
                     Error::Timeout(
                         "browser sign-in was not completed in time; try `cua auth login --remote`"
                             .into(),
                     )
                 })??;
-                let exchanged = self
-                    .oidc
+                // The code is here: nothing else may answer on this port.
+                drop(listener);
+                let exchanged = oidc
                     .form(
-                        &self.token_endpoint,
+                        &token_endpoint,
                         &[
                             ("grant_type", "authorization_code"),
                             ("code", &code),
                             ("redirect_uri", &redirect),
-                            ("client_id", &self.oidc.client_id),
+                            ("client_id", &oidc.client_id),
                             ("code_verifier", &verifier),
                         ],
                     )
@@ -2114,13 +2203,16 @@ impl PendingLogin {
                     )),
                     Err(e) => Err(e),
                 };
-                let (status, outcome) = match &creds {
+                let exchanged_ok = creds.is_ok();
+                let kept = creds.and_then(|c| save(&c).map(|()| c));
+                let (status, outcome) = match &kept {
                     Ok(c) => ("200 OK", Outcome::SignedIn(c.identity().email)),
+                    Err(_) if exchanged_ok => ("500 Internal Server Error", Outcome::NotSaved),
                     Err(_) if invalid_grant => ("400 Bad Request", Outcome::Expired),
                     Err(_) => ("502 Bad Gateway", Outcome::Failed),
                 };
                 respond_page(&mut browser, status, &outcome, to).await;
-                creds
+                kept
             }
             Pending::Device {
                 device_code,
@@ -2139,19 +2231,25 @@ impl PendingLogin {
                 // is the error then, never a silent "expired".
                 let mut last: Option<Error> = None;
                 for _ in 0..(expires_in / interval + 20) {
-                    let polled = self
-                        .oidc
+                    if cancel.is_cancelled() {
+                        return Err(stopped());
+                    }
+                    let polled = oidc
                         .form(
-                            &self.token_endpoint,
+                            &token_endpoint,
                             &[
                                 ("grant_type", DEVICE_GRANT),
                                 ("device_code", &device_code),
-                                ("client_id", &self.oidc.client_id),
+                                ("client_id", &oidc.client_id),
                             ],
                         )
                         .await;
                     match polled {
-                        Ok((200, v)) => return Credentials::from_token_response(&v),
+                        Ok((200, v)) => {
+                            let c = Credentials::from_token_response(&v)?;
+                            save(&c)?;
+                            return Ok(c);
+                        }
                         Ok((status, v)) => match v["error"].as_str() {
                             Some("authorization_pending") => last = None,
                             Some("slow_down") => {
@@ -2187,7 +2285,11 @@ impl PendingLogin {
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
-                    tokio::time::sleep(unit * interval as u32).await;
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => return Err(stopped()),
+                        () = tokio::time::sleep(unit * interval as u32) => {}
+                    }
                 }
                 Err(last.unwrap_or_else(|| {
                     Error::Timeout("device authorization expired before it was completed".into())
@@ -2395,6 +2497,17 @@ impl Session {
     /// Stores freshly issued credentials.
     pub async fn install(&self, c: Credentials) -> Result<Identity> {
         self.store.save(&c)?;
+        let id = c.identity();
+        *self.cached.lock().await = Some(c);
+        Ok(id)
+    }
+
+    /// Waits for `login`, stores the session, and returns who signed in.
+    /// The session is saved before the browser's page is answered, so a
+    /// store that refuses the write (a locked keychain, a denied prompt)
+    /// shows as "couldn't save" there too, never as "You're signed in".
+    pub async fn finish_login(&self, login: PendingLogin) -> Result<Identity> {
+        let c = login.complete_with(|c| self.store.save(c)).await?;
         let id = c.identity();
         *self.cached.lock().await = Some(c);
         Ok(id)

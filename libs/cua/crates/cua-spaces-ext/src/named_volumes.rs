@@ -15,6 +15,7 @@
 //! | `volumes.delete` | `name`, `force` | `{deleted, files}`; refused while mounted unless forced |
 //! | `volumes.exists` | `names` | `{}`; `not_found` names the first missing volume |
 //! | `volume.attach` | `space` | the volume mounted in `space`, with its binds |
+//! | `volume.refresh` | `space` | `{mounted}`; applies the Space's Volume setting (own folder / off) to a mounted volume |
 
 use cua_spaces::extension::BoxFuture;
 use cua_spaces::mcp::ToolOutcome;
@@ -32,6 +33,7 @@ pub const OPS: &[&str] = &[
     "volumes.delete",
     "volumes.exists",
     "volume.attach",
+    "volume.refresh",
 ];
 
 #[derive(Deserialize)]
@@ -164,6 +166,12 @@ pub fn call<'a>(
                         limitation: "the Space has no Cua Volume mount".into(),
                     }),
                 }
+            }
+            "volume.refresh" => {
+                let a: SpaceArg =
+                    serde_json::from_value(args).map_err(|e| parse(&e.to_string()))?;
+                let mounted = crate::drive_runtime::apply_setting(spaces, &a.space).await?;
+                Ok(ToolOutcome::json(&json!({ "mounted": mounted })))
             }
             other => Err(Error::invalid(format!("unknown operation {other}"))),
         }

@@ -125,7 +125,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 114)
+        #expect(rows.count == 121)
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [
@@ -144,14 +144,14 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "volumeRequestAccess", "volumeRequests", "volumeApprove", "volumeDeny", "volumeAudit",
             "volumeStorage", "volumeStorageSet", "volumeMountStatus", "volumeMount", "volumeUnmount",
             "volumeSyncStatus", "volumeSyncEvents", "volumeSyncResolve", "volumeCacheStats",
-            "volumeCacheSet", "volumeCacheClear",
+            "volumeCacheSet", "volumeCacheClear", "network", "setNetwork", "networkLog",
         ]
         let spaceHandle: Set<String> = [
             "bash", "write", "home", "upload", "download", "sendFile", "listTools", "callTool",
             "windows", "openStream", "closeStream", "streamSession", "joinPresence",
             "teleportManifest", "teleport", "startHotspot", "stopHotspot", "hotspotStatus",
             "agentStart", "agentStatus", "agentMessage", "agentStop", "agentList",
-            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares",
+            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares", "putService",
         ]
         for row in rows {
             let parts = row.method.split(separator: ".").map(String.init)
@@ -182,7 +182,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             { $0.volumeStorage }, { $0.volumeStorageSet }, { $0.volumeMountStatus },
             { $0.volumeMount }, { $0.volumeUnmount }, { $0.volumeSyncStatus },
             { $0.volumeSyncEvents }, { $0.volumeSyncResolve }, { $0.volumeCacheStats },
-            { $0.volumeCacheSet }, { $0.volumeCacheClear },
+            { $0.volumeCacheSet }, { $0.volumeCacheClear }, { $0.networkLog },
         ]
         let _: [(any SpaceProtocol) -> Any] = [
             { $0.bash }, { $0.write }, { $0.home }, { $0.upload }, { $0.download }, { $0.sendFile },

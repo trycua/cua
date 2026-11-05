@@ -1002,6 +1002,8 @@ impl DaemonClient {
                 access: access.to_pb(),
                 ttl: ttl.map(dur),
                 name: name.unwrap_or_default(),
+                tcp: false,
+                ..Default::default()
             })
             .await
             .map_err(Self::map)?
@@ -1010,6 +1012,121 @@ impl DaemonClient {
             .as_ref()
             .map(crate::ShareInfo::from_pb)
             .ok_or_else(|| Error::Internal("daemon returned no share".into()))
+    }
+
+    /// `CreateShare` for a public TCP share (a raw TCP service in a Space,
+    /// such as a game server): the address people connect to, with a name
+    /// they can type when `service` is a known one (`minecraft`). Inside a
+    /// Space (this client on its spawn channel), a bare port is the Space's
+    /// own. An experiment, off unless turned on.
+    ///
+    /// The route (`opts.route`) is picked per share unless asked: the
+    /// Space's own cloud host, a share edge in a linked cloud, or Cua's
+    /// relay. A share that needs the owner (an agent's, or the first share
+    /// edge without `opts.consent`) comes back with `waiting` set.
+    pub async fn create_tcp_share(
+        &self,
+        target: &crate::ShareTarget,
+        ttl: Option<Duration>,
+        name: Option<String>,
+        opts: &crate::TcpShareOptions,
+    ) -> Result<crate::ShareInfo> {
+        let r = self
+            .share_svc()
+            .create_share(pb::CreateShareRequest {
+                target: Some(target.to_pb()),
+                access: crate::ShareAccess::Public.to_pb(),
+                ttl: ttl.map(dur),
+                name: name.unwrap_or_default(),
+                tcp: true,
+                service: opts.service.clone().unwrap_or_default(),
+                route: opts.route.clone().unwrap_or_default(),
+                allow: opts.allow.clone(),
+                check_host: opts.check_host,
+                consent: opts.consent,
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        r.share
+            .as_ref()
+            .map(crate::ShareInfo::from_pb)
+            .ok_or_else(|| Error::Internal("daemon returned no share".into()))
+    }
+
+    /// `ApproveShare`: a waiting share goes live (`always`: its Space may
+    /// share without asking from now on).
+    pub async fn approve_share(&self, id: &str, always: bool) -> Result<crate::ShareInfo> {
+        let r = self
+            .share_svc()
+            .approve_share(pb::ApproveShareRequest {
+                id: id.into(),
+                always,
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        r.share
+            .as_ref()
+            .map(crate::ShareInfo::from_pb)
+            .ok_or_else(|| Error::Internal("daemon returned no share".into()))
+    }
+
+    /// `DenyShare`.
+    pub async fn deny_share(&self, id: &str) -> Result<()> {
+        self.share_svc()
+            .deny_share(pb::DenyShareRequest { id: id.into() })
+            .await
+            .map_err(Self::map)?;
+        Ok(())
+    }
+
+    /// `GetShareSettings`.
+    pub async fn share_settings(&self) -> Result<crate::ShareSettingsInfo> {
+        let r = self
+            .share_svc()
+            .get_share_settings(pb::GetShareSettingsRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        Ok(crate::ShareSettingsInfo {
+            settings: crate::share_types::settings_from_pb(&r.settings.unwrap_or_default()),
+            used_today: r.used_today,
+            edge: (!r.edge_cloud.is_empty()).then_some((
+                r.edge_cloud,
+                r.edge_host,
+                r.edge_monthly_usd,
+            )),
+        })
+    }
+
+    /// `SetShareSettings`.
+    pub async fn set_share_settings(
+        &self,
+        s: &cua_share::route::ShareSettings,
+    ) -> Result<cua_share::route::ShareSettings> {
+        let r = self
+            .share_svc()
+            .set_share_settings(pb::SetShareSettingsRequest {
+                settings: Some(crate::share_types::settings_to_pb(s)),
+            })
+            .await
+            .map_err(Self::map)?
+            .into_inner();
+        Ok(crate::share_types::settings_from_pb(
+            &r.settings.unwrap_or_default(),
+        ))
+    }
+
+    /// `RemoveShareEdge`: the ids of the shares that ended with it.
+    pub async fn remove_share_edge(&self) -> Result<Vec<String>> {
+        Ok(self
+            .share_svc()
+            .remove_share_edge(pb::RemoveShareEdgeRequest {})
+            .await
+            .map_err(Self::map)?
+            .into_inner()
+            .stopped)
     }
 
     /// `ListShares`.
@@ -1188,6 +1305,41 @@ fn refused(e: &tonic::Status) -> bool {
         src = err.source();
     }
     false
+}
+
+/// The spawn channel of the Space this process runs in, when it has one:
+/// `CUA_SPAWN` and `CUA_SPAWN_TOKEN_FILE` (set for processes started after
+/// the channel), else the files cua-spacesd keeps
+/// ([`cua_proto::metadata::spawn_dirs`]). Through it, `cua` and the SDKs
+/// in a Space make and manage the Space's own children; nothing else.
+pub fn spawn_channel() -> Option<DaemonAddress> {
+    use cua_proto::metadata as m;
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    if let (Some(url), Some(file)) = (
+        std::env::var(m::ENV_SPAWN).ok().filter(|v| !v.is_empty()),
+        std::env::var_os(m::ENV_SPAWN_TOKEN_FILE),
+    ) && let Some(token) = read(std::path::Path::new(&file))
+    {
+        return Some(DaemonAddress::Url { url, token });
+    }
+    #[cfg(unix)]
+    // SAFETY: getuid has no preconditions.
+    let uid = Some(unsafe { libc::getuid() });
+    #[cfg(not(unix))]
+    let uid = None;
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    m::spawn_dirs(uid, xdg.as_deref(), &std::env::temp_dir())
+        .into_iter()
+        .find_map(|dir| {
+            let url = read(&dir.join(m::SPAWN_ADDRESS_FILE))?;
+            let token = read(&dir.join(m::SPAWN_TOKEN_FILE))?;
+            Some(DaemonAddress::Url { url, token })
+        })
 }
 
 /// The address of the daemon this machine runs when one accepts

@@ -515,6 +515,7 @@ impl QemuRuntime {
             // identity, no workload): the Space's own run is the one its
             // policy applies to, from its restore on.
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
             shared_memory: false,
@@ -1335,8 +1336,10 @@ mod tests {
             bulk: false,
             tpm: false,
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
+            gateway_control: None,
         }
     }
 

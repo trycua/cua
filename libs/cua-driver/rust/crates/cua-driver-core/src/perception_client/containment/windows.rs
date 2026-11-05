@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows worker containment.
 //!
 //! The worker runs as an AppContainer (LowBox) identity with no capabilities,

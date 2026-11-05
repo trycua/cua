@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Hosted native-Wayland lifecycle and CPU certification for the layer-shell
 //! cursor overlay. Run inside the repository's isolated Sway session.
 

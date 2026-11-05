@@ -20,7 +20,7 @@ struct BulkDeleteTests {
     static func sharedRow() -> AppSpaceRow {
         AppSpaceRow(id: "relay:space-sam-qa", name: "qa-shared", displayName: nil, provider: "relay", spacesdVersion: "0.4.0",
                     features: [], addedAt: nil, os: .macos, osName: nil, osPrettyName: nil, image: nil,
-                    imageDigest: nil, kind: nil, arch: nil, reachable: true, error: nil, host: nil,
+                    imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil,
                     hostName: "Mac mini", power: "stop", powerState: "running", cloud: nil, cloudPlace: nil,
                     cloudDelete: nil, stopReason: nil,
                     sharing: AppSpaceSharingFacts(ownerId: "sam", ownerEmail: "sam@example.com",

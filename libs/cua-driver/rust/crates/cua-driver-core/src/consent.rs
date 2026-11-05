@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted host authorization seam.
 //!
 //! Ordinary MCP elicitation, tool arguments, inherited stdio, files, and
@@ -94,6 +97,8 @@ pub enum ConsentError {
     Canceled,
     #[error("confirmation provider failed: {0}")]
     Provider(String),
+    #[error("{0}")]
+    ProtectedScope(crate::tool::ProtectedResourceScopeError),
     #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
     #[error("confirmation expired before activation")]

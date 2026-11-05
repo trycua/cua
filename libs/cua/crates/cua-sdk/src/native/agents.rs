@@ -502,6 +502,9 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
         durable: None,
         // The saved connections are the Cua Spaces app's; an SDK run names its own keys.
         hermes_config: None,
+        // Continuing a chat from this computer's own agent store is the Spaces app's (CUA-3319).
+        resume_session: None,
+        resume_context: None,
     })
 }
 

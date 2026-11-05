@@ -4,6 +4,8 @@
 //! installers' `--no-skills`) leaves every skills folder untouched. Always in
 //! a temporary HOME, never the real one.
 
+mod common;
+
 use cua_agent_setup::{AGENTS, AgentSetup, Change, HostEnv, McpServer, Parts, Target};
 use std::path::{Path, PathBuf};
 
@@ -146,15 +148,17 @@ fn skills_only_installs_the_skill_without_touching_mcp_config() {
     assert!(!home.path.join(".claude.json").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn rerunning_the_setup_changes_nothing() {
     let home = Home::new();
     let setup = home.setup();
+    let driver = McpServer::driver(common::answering_driver());
     setup
-        .setup_cua_driver(&ids("codex"), &driver(), Parts::ALL, false)
+        .setup_cua_driver(&ids("codex"), &driver, Parts::ALL, false)
         .unwrap();
     let again = setup
-        .setup_cua_driver(&ids("codex"), &driver(), Parts::ALL, false)
+        .setup_cua_driver(&ids("codex"), &driver, Parts::ALL, false)
         .unwrap();
     assert!(
         again.iter().all(|o| o.change == Change::Unchanged),

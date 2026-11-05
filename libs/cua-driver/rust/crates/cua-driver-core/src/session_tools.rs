@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session lifecycle and per-session capture-scope tools.
 //!
 //! A session is lifecycle identity for an agent run (see [`crate::session`]).

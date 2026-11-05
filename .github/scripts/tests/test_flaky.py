@@ -126,3 +126,80 @@ def test_parse_playwright(tmp_path):
     got = flaky.parse_playwright([str(path)])
     assert got["a.spec.ts > flows > one [chromium]"] == {"status": "flaky", "message": "x"}
     assert got["a.spec.ts > flows > two [chromium]"]["status"] == "failed"
+
+
+# --- job quarantine (ci-gate) and the nightly flake scan ------------------------------
+
+
+def job(**kw):
+    base = {"job": "linux-kvm (concurrent)", "workflow": "Nightly: *", "signature": "Not authorized",
+            "owner": "francesco", "issue": "CUA-1", "expires": "2026-11-01"}
+    base.update(kw)
+    return base
+
+
+def test_validate_job_entries():
+    assert flaky.check_entries([job()], TODAY) == ([], [])
+    assert flaky.check_entries([job(signature="")], TODAY)[0]  # a job entry must name its failure
+    assert flaky.check_entries([job(signature="(")], TODAY)[0]
+    assert flaky.check_entries([job(test="x")], TODAY)[0]
+
+
+def test_the_repo_quarantine_list_is_valid():
+    entries = json.loads(SCRIPT.parents[2].joinpath("flaky", "quarantine.json").read_text())["entries"]
+    errors, _ = flaky.check_entries(entries, dt.date.fromisoformat(min(e["expires"] for e in entries)))
+    assert errors == []
+
+
+def test_job_entries_never_match_tests():
+    assert flaky.is_quarantined("linux-kvm (concurrent)", "s", [job()]) is None
+
+
+def gate_check(env, monkeypatch, entries, stdin, logs, workflow="Nightly: VM Space ready after boot"):
+    flaky.QUARANTINE_FILE.write_text(json.dumps({"entries": entries}))
+    monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(stdin))
+    args = flaky.argparse.Namespace(workflow=workflow, quarantine=None, today="2026-10-25")
+    out = __import__("io").StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    assert flaky.cmd_gate_check(args, fetch_log=lambda repo, job_id: logs.get(job_id, "")) == 0
+    return out.getvalue().strip()
+
+
+@pytest.mark.parametrize(("stdin", "logs", "workflow", "want"), [
+    ("1\tlinux-kvm (concurrent)\n", {"1": "x registry: Not authorized y"}, "Nightly: VM Space ready after boot", "all"),
+    # the job's log must show the known failure; a new failure in the same job still blocks
+    ("1\tlinux-kvm (concurrent)\n", {"1": "assertion failed"}, "Nightly: VM Space ready after boot", "none"),
+    # every failed job must be quarantined
+    ("1\tlinux-kvm (concurrent)\n2\tlinux-kvm (sequential)\n", {"1": "Not authorized", "2": "Not authorized"},
+     "Nightly: VM Space ready after boot", "none"),
+    ("1\tlinux-kvm (concurrent)\n", {"1": "Not authorized"}, "CI: other", "none"),
+    ("", {}, "Nightly: VM Space ready after boot", "none"),
+])
+def test_gate_check(env, monkeypatch, stdin, logs, workflow, want):
+    assert gate_check(env, monkeypatch, [job()], stdin, logs, workflow) == want
+
+
+def test_gate_check_ignores_expired_entries(env, monkeypatch):
+    assert gate_check(env, monkeypatch, [job(expires="2026-10-01")], "1\tlinux-kvm (concurrent)\n",
+                      {"1": "Not authorized"}) == "none"
+
+
+def test_detect_reports_jobs_that_failed_then_passed_on_a_rerun(env, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    pages = {
+        "runs?": {"workflow_runs": [
+            {"id": 7, "name": "CI: jev-use", "run_attempt": 2, "head_sha": "abc", "head_branch": "b",
+             "pull_requests": [{"number": 5}]},
+            {"id": 8, "name": "CI: once", "run_attempt": 1},
+        ]},
+        "runs/7/attempts/1/": {"jobs": [{"name": "macOS mock E2E", "conclusion": "failure"},
+                                        {"name": "lint", "conclusion": "success"}]},
+        "runs/7/attempts/2/": {"jobs": [{"name": "macOS mock E2E", "conclusion": "success"}]},
+    }
+    api = lambda path: next(v for k, v in pages.items() if k in path)
+    args = flaky.argparse.Namespace(out=str(env / "out"), since_hours=24, max_pages=2)
+    assert flaky.cmd_detect(args, api=api) == 0
+    report = json.loads((env / "out" / "run-7.json").read_text())
+    assert report["kind"] == "job" and report["pr"] == 5
+    assert [r["id"] for r in report["flaky"]] == ["CI: jev-use / macOS mock E2E"]
+    assert not (env / "out" / "run-8.json").exists()

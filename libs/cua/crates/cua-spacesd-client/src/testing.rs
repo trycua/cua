@@ -17,6 +17,8 @@
 //!   mock's in-memory files (the ones `Filesystem` reads and writes).
 //! - `whoami`, `id -un`, `id -u`, `printf %s "$HOME"`: answer for the user
 //!   the process runs as ([`MockState::process_user`]).
+//! - `sudo [-u USER] [--] [env K=V...] PROGRAM...`: runs PROGRAM as USER
+//!   (root without `-u`), unless the agent reports `run_as_mode` `none`.
 //!
 //! The agent is not root unless `run_as_mode` is `root`: a process or file
 //! call that names no user runs as [`MOCK_AGENT_USER`], as on the Linux
@@ -156,15 +158,17 @@ fn sudo_target(args: &[String]) -> (String, usize) {
     let mut i = 0;
     while let Some(a) = args.get(i) {
         match a.as_str() {
-            "-u" => {
+            "-u" | "--user" => {
                 user = args.get(i + 1).cloned().unwrap_or_default();
-                i += 2;
-                continue;
+                i += 1;
             }
+            "-g" | "-C" | "-D" | "-h" | "-p" | "-r" | "-t" | "-U" => i += 1,
             "--" => {
                 i += 1;
                 break;
             }
+            a if a.starts_with("--user=") => user = a["--user=".len()..].into(),
+            a if a.starts_with("-u") => user = a[2..].into(),
             a if a.starts_with('-') => {}
             _ => break,
         }
@@ -390,23 +394,50 @@ impl MockState {
     }
 
     /// Who `cfg` runs as, and what runs: a `sudo` command line is unwrapped
-    /// to its program.
-    fn effective_user(&self, cfg: &pb::ProcessConfig) -> (String, pb::ProcessConfig) {
+    /// to its program. An agent that reports `none` has no `sudo` to use.
+    fn effective_user(
+        &self,
+        cfg: &pb::ProcessConfig,
+    ) -> Result<(String, pb::ProcessConfig), Status> {
         if cfg.command.rsplit('/').next() == Some("sudo") {
+            if self.run_as_mode.lock().unwrap().as_deref() == Some("none") {
+                return Err(Status::permission_denied(
+                    "the driver runs as \"cua\" and cannot switch users: no sudo",
+                ));
+            }
             let (user, at) = sudo_target(&cfg.args);
+            check_run_as(&user)?;
             let run = pb::ProcessConfig {
                 command: cfg.args.get(at).cloned().unwrap_or_default(),
                 args: cfg.args.get(at + 1..).unwrap_or_default().to_vec(),
                 ..cfg.clone()
             };
-            return (user, run);
+            return Ok((user, run));
         }
         let user = if cfg.user.is_empty() {
             self.agent_user()
         } else {
             cfg.user.clone()
         };
-        (user, cfg.clone())
+        Ok((user, cfg.clone()))
+    }
+
+    /// `cp src dst` as `user`: a new file belongs to who copied it, an
+    /// existing one keeps its owner. False when `src` does not exist.
+    fn copy_as(&self, src: &str, dst: String, user: String) -> bool {
+        let Some(data) = self.files.lock().unwrap().get(src).cloned() else {
+            return false;
+        };
+        self.files.lock().unwrap().insert(dst.clone(), data);
+        self.file_attrs
+            .lock()
+            .unwrap()
+            .entry(dst)
+            .or_insert_with(|| FileAttrs {
+                owner: user,
+                ..Default::default()
+            });
+        true
     }
 
     /// The pid of the newest process started.
@@ -547,8 +578,8 @@ impl MockState {
         self.file_attrs.lock().unwrap().remove(path);
     }
 
-    /// Owner the mock recorded for a file (`None` when it never saw a
-    /// `run_as` write).
+    /// Owner the mock recorded for a file (`None` for one put with
+    /// [`MockState::put_file`]).
     pub fn file_owner(&self, path: &str) -> Option<String> {
         self.file_attrs
             .lock()
@@ -1541,7 +1572,7 @@ impl ProcessService for Svc {
                 cfg.user
             )));
         }
-        let (user, run) = self.0.effective_user(&cfg);
+        let (user, run) = self.0.effective_user(&cfg)?;
         let script = parse_script(&run, &user);
         let pid = self.0.next_pid.fetch_add(1, Ordering::Relaxed);
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Option<Vec<u8>>>();
@@ -1611,25 +1642,13 @@ impl ProcessService for Svc {
                         (Some(0), String::new())
                     }
                     Script::Cp(src, dst) => {
-                        let data = svc.0.files.lock().unwrap().get(&src).cloned();
-                        match data {
-                            Some(d) => {
-                                svc.0.put_file(&dst, d);
-                                svc.0.file_attrs.lock().unwrap().insert(
-                                    dst,
-                                    FileAttrs {
-                                        owner: user,
-                                        ..Default::default()
-                                    },
-                                );
-                                (Some(0), String::new())
-                            }
-                            None => {
-                                let msg =
-                                    format!("cp: cannot stat '{src}': No such file or directory\n");
-                                svc.emit(pid, if pty { 2 } else { 1 }, msg.into_bytes());
-                                (Some(1), String::new())
-                            }
+                        if svc.0.copy_as(&src, dst, user) {
+                            (Some(0), String::new())
+                        } else {
+                            let msg =
+                                format!("cp: cannot stat '{src}': No such file or directory\n");
+                            svc.emit(pid, if pty { 2 } else { 1 }, msg.into_bytes());
+                            (Some(1), String::new())
                         }
                     }
                     Script::Rm(paths, force) => {

@@ -995,6 +995,11 @@ async fn sudo_is_the_fallback_for_older_and_sudo_agents_only() {
             .unwrap();
         assert!(h.via_sudo(), "{mode:?}");
         assert_eq!(
+            srv.state.process_user(h.pid()).as_deref(),
+            Some("alice"),
+            "{mode:?}"
+        );
+        assert_eq!(
             srv.state
                 .sudo_runs
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -1046,6 +1051,18 @@ async fn the_mock_runs_a_command_as_the_user_it_names() {
         .await,
         "bob"
     );
+    let as_bob = ["-n", "-H", "-u", "bob", "--preserve-env", "--", "whoami"];
+    assert_eq!(run(Command::new("/usr/bin/sudo").args(as_bob)).await, "bob");
+    assert_eq!(
+        run(sudo(&["-n", "-u", "alice", "-g", "staff", "id", "-un"])).await,
+        "alice"
+    );
+    // `sudo` refuses a user the guest does not have, or may not act as.
+    for user in ["nosuch", "locked"] {
+        env.run(sudo(&["-n", "-u", user, "whoami"]))
+            .await
+            .expect_err(user);
+    }
 
     // A file written without a user belongs to the agent's user.
     env.upload(
@@ -1061,4 +1078,7 @@ async fn the_mock_runs_a_command_as_the_user_it_names() {
     // An agent that is root itself runs unnamed work as root.
     set_run_as(&srv, Some("root"), false);
     assert_eq!(run(Command::new("id").arg("-u")).await, "0");
+    // One that reports no way to switch users has no `sudo` either.
+    set_run_as(&srv, Some("none"), false);
+    env.run(sudo(&["-n", "whoami"])).await.expect_err("no sudo");
 }

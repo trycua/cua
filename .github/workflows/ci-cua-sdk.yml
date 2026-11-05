@@ -843,7 +843,16 @@ jobs:
           CUA_REQUIRE_FIXTURES: "1"
         run: |
           ../cua/swift/scripts/fresh-abi.sh . debug
-          swift test
+          # Per-file times (timings.py) from the XCTest suite summaries; the exit code is swift test's.
+          rc=0
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test-spaces-sdk.log"
+          rc=${PIPESTATUS[0]}
+          python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" swift-log --suite swift-spaces-sdk "$RUNNER_TEMP/swift-test-spaces-sdk.log"
+          exit "$rc"
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: swift-spaces-sdk
       - name: XCFramework (static) binary target
         run: |
           swift/scripts/build-xcframework.sh

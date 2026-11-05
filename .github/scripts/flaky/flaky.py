@@ -318,6 +318,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     write_summary(args.suite, results, flaky, quarantined, real, live)
     write_artifact(args.suite, flaky, quarantined)
+    record_timings(args.suite, args.format, paths, lines)
 
     if code == 0:
         return 0
@@ -351,6 +352,29 @@ def write_summary(suite: str, results: Results, flaky: Results, quarantined: Res
         out += [f"| `{cell(t)}` | {cell(r['message'])} |" for t, r in sorted(real.items())]
     with open(path, "a") as fh:
         fh.write("\n".join(out) + "\n")
+
+
+def record_timings(suite: str, fmt: str, paths: List[str], lines: List[str]) -> None:
+    """Per-file test times (timings.py). Measurement only: never changes the verdict."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import timings
+
+        if fmt == "junit":
+            files = timings.junit_files(paths)
+        elif fmt == "log":
+            files = timings.swift_log_suites(lines)
+        elif fmt == "vitest":
+            files = []
+            for path in paths:
+                side = Path(path + ".timings.json")
+                if side.is_file():
+                    files += json.loads(side.read_text())
+        else:
+            return
+        timings.write(suite, files)
+    except Exception as exc:  # noqa: BLE001
+        print(f"::warning title=Test timings::{suite}: {exc}")
 
 
 def write_artifact(suite: str, flaky: Results, quarantined: Results) -> None:

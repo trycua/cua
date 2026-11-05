@@ -103,11 +103,23 @@ jobs:
         run: |
           cd libs/python/${{ matrix.package }}
           if [ -d tests ]; then
-            python -m pytest tests/ -v --tb=short --cov --cov-report=term --cov-report=xml
+            python -m pytest tests/ -v --tb=short --cov --cov-report=term --cov-report=xml \
+              --durations=25 --durations-min=1.0 --junitxml="$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
           else
             echo "No tests directory found, skipping tests"
           fi
         shell: bash
+      - name: Per-file test times
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml" ]; then
+            python3 .github/scripts/flaky/timings.py junit --suite "pytest-${{ matrix.package }}" "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
+          fi
+        shell: bash
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: pytest-${{ matrix.package }}
         env:
           CUA_TELEMETRY_ENABLED: "false" # Disable telemetry during tests
 
@@ -160,11 +172,22 @@ jobs:
           CUA_TELEMETRY_ENABLED: "false"
         run: >
           uv run --frozen pytest tests -p no:cacheprovider --timeout=120 -ra
+          --durations=25 --durations-min=1.0 --junitxml="$RUNNER_TEMP/pytest-cua-sandbox.xml"
           --ignore=tests/live
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
           --ignore=tests/test_windows_timing.py
           --deselect tests/test_oci.py::TestLiveRegistry
+      - name: Per-file test times
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pytest-cua-sandbox.xml" ]; then
+            python3 .github/scripts/flaky/timings.py junit --suite pytest-cua-sandbox "$RUNNER_TEMP/pytest-cua-sandbox.xml"
+          fi
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: pytest-cua-sandbox
 
   summary:
     name: Test Summary

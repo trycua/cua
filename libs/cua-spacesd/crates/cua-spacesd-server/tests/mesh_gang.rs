@@ -238,8 +238,20 @@ async fn gang_ports_open_only_to_the_accounts_machines_while_a_job_holds_them() 
     assert_eq!(open(svc.clone()).await, b"", "an unregistered port");
 
     // A running job registers it: the account's other machine gets through.
+    // The first stream after the registration can land while B's path to
+    // A is still settling (the stream open errors, which `open` reports as
+    // no answer). Poll until the registered port answers instead of
+    // asserting on the first try.
     let reg = registry.register(port, "run-1 attempt 1 rank 0").unwrap();
-    assert_eq!(open(svc.clone()).await, b"rank-1");
+    let mut answer = Vec::new();
+    for _ in 0..40 {
+        answer = open(svc.clone()).await;
+        if !answer.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(answer, b"rank-1", "a registered port");
 
     // A machine peer never reaches spacesd.
     let mut s = b

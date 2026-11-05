@@ -175,6 +175,15 @@ heading (`## [x.y.z](...)`), never above it. Release Please reads the version
 from that heading; with text above it, it tags every component with the PR's
 version (#6350). `CI: Release metadata` and the release workflow both check this.
 
+## Cua Spaces: no betas
+
+Never tag a Cua Spaces beta (`cua-spaces-vX.Y.Z-beta.N`): the release workflow
+refuses it unless the repository variable `ALLOW_SPACES_BETA` is `true`. For
+pre-release testing, use the Nightly channel (Settings, Advanced, Nightly), or
+run the **Nightly: Cua Spaces** workflow (`nightly-cua-spaces.yml`) to build
+main now. Stable stays Release Please plus the canary gate. Details:
+[docs/contributing/releasing-cua-spaces.md](docs/contributing/releasing-cua-spaces.md).
+
 ## Monorepo component release resolution
 
 Cua is a monorepo with independent component release streams. Never use

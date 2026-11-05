@@ -549,6 +549,10 @@ only if either failed.
 
 ### Release versions
 
+There are no betas: pre-release builds are the Nightly channel
+(`nightly-cua-spaces.yml`, its own `cua-spaces-nightly` release and feeds;
+see [docs/contributing/releasing-cua-spaces.md](../../docs/contributing/releasing-cua-spaces.md)).
+
 Release Please drives the `cua-spaces` component from this directory: a
 releasable conventional commit (`fix:`, `feat:`) that touches
 `apps/cua-spaces-macos` opens the `cua-spaces` release PR, which bumps

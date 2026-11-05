@@ -150,6 +150,26 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     await waitFor(() => expect(decodeURIComponent(router.state.location.pathname)).toBe("/spaces/relay:linux-box/ubuntu-build"));
   });
 
+  it("a computer the relay calls offline is offline in the tree, and can be removed, while the machines list lags", { timeout: 30000 }, async () => {
+    on();
+    const resolved = {
+      space: "relay:this-mac",
+      reason: "fallback",
+      defaultSpace: "relay:linux-box",
+      defaultOnline: false,
+      order: [
+        { space: "relay:linux-box", name: "Linux box", online: false, role: "default" },
+        { space: "relay:this-mac", name: "This Mac", online: true, role: "here" },
+      ],
+    };
+    await mountApp("/spaces", host([], { resolved }));
+    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
+    fireEvent.click(await found('[data-tree-menu="relay:linux-box"]'));
+    const remove = await screen.findByRole("menuitem", { name: "Remove Linux box" });
+    expect(remove.getAttribute("aria-disabled")).not.toBe("true");
+    expect(remove.hasAttribute("data-disabled")).toBe(false);
+  });
+
   it("removes a computer: names each Space, deletes nothing unless the box is ticked", { timeout: 40000 }, async () => {
     on();
     const calls: Call[] = [];

@@ -145,7 +145,9 @@ export function SpacesTreePage() {
       items.push({ label: "Make this my default", onSelect: () => void defaults.makeDefault(n.settingsId!).catch(toastError("Couldn't change your default Space")) });
     if (n.kind === "computer" && !n.current && n.machine) {
       const r = viewRemove(n);
-      items.push({ label: `Remove ${n.name}`, destructive: true, disabled: r ? !r.enabled : false, onSelect: () => setRemoving(n) });
+      // The core keeps Remove off while a computer is online. The tree's offline (the relay's own answer) wins over a
+      // machines list that lags; the relay still refuses a computer that is connected.
+      items.push({ label: `Remove ${n.name}`, destructive: true, disabled: r ? !r.enabled && n.online : false, onSelect: () => setRemoving(n) });
     }
     if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: "Delete", destructive: true, onSelect: () => setDeleting(n) });
     return items;

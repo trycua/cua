@@ -8,13 +8,11 @@
 #
 # bullseye is past its support window and deb.debian.org is dropping it:
 # the bullseye-security pool already 404s while its index still lists the
-# versions the debian:11 image ships (libc6 +deb11u14), and archived main
-# only has older ones, so libc6-dev cannot resolve against the installed
-# libc6. The official image records the snapshot.debian.org timestamp it was
-# built from (commented `# deb http://snapshot...` lines in
-# /etc/apt/sources.list); when a plain install fails, apt switches to that
-# snapshot, which serves exactly those versions. Snapshot Release files are
-# past Valid-Until by design.
+# versions the debian:11 image ships (libc6 +deb11u14). archive.debian.org
+# keeps those versions (its debian-security tree has libc6-dev +deb11u14),
+# so a plain install that fails switches to archive.debian.org and retries.
+# snapshot.debian.org is not used: its outages broke two release runs on
+# 5 Nov 2026. Archive Release files are past Valid-Until by design.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -28,18 +26,17 @@ PACKAGES=(
 )
 
 install_packages() {
-  apt-get "$@" update && apt-get "$@" install -y --no-install-recommends "${PACKAGES[@]}"
+  apt-get -o Acquire::Retries=5 "$@" update && apt-get -o Acquire::Retries=5 "$@" install -y --no-install-recommends "${PACKAGES[@]}"
 }
 
 if install_packages; then
   exit 0
 fi
-snapshot="$(sed -n 's/^# *\(deb http:\/\/snapshot\.debian\.org\/.*\)$/\1/p' /etc/apt/sources.list)"
-if [ -z "$snapshot" ]; then
-  echo "apt install failed and the image records no snapshot.debian.org sources" >&2
-  exit 1
-fi
-echo "falling back to the image's snapshot.debian.org sources:" >&2
-echo "$snapshot" | sed 's/^deb /deb [check-valid-until=no] /' | tee /etc/apt/sources.list >&2
+echo "falling back to archive.debian.org sources" >&2
+cat > /etc/apt/sources.list <<'EOF'
+deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
+deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
+deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+EOF
 rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
 install_packages -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5

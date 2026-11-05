@@ -398,7 +398,7 @@ def run_entry(entry, args, out_dir, log):
 
 
 def home_image_for(entry, args):
-    """The image a home Space is made from: the agent-home image (the slim Linux image plus the `cua` CLI),
+    """The image a home Space is made from: the slim Linux image (it carries the `cua` CLI),
     its VM disk for a VM runtime, or what --entry-home-image names for this entry."""
     override = dict(x.split("=", 1) for x in (args.entry_home_image or []))
     if entry["id"] in override:
@@ -455,7 +455,7 @@ def row_children(run, entry, name, args, row, mode):
     img = args.child_image
     flags = ["--kind", entry["kind"]] + (["--runtime", entry["runtime"]] if entry["runtime"] else [])
     # The case drives the `cua` CLI inside the Space: the Space under test when its image ships it,
-    # else a home made from the agent-home image on the same runtime.
+    # else a home made from the slim Linux image on the same runtime.
     rc, o, e, _ = run.exec(name, "command -v cua >/dev/null 2>&1 && echo has-cua || echo no-cua")
     if "has-cua" not in o:
         home_img = home_image_for(entry, args)
@@ -465,7 +465,7 @@ def row_children(run, entry, name, args, row, mode):
             said = (e or o).strip()
             gone = any(k in said for k in ("not published", "not found", "manifest unknown", "MANIFEST_UNKNOWN", "denied", "unauthorized"))
             row("children", "skip" if gone or any(k in said for k in MISSING) else "fail",
-                f"the home image {home_img} could not be made: {said[:300]} (build it with libs/images/agent-home and pass --home-image, or --entry-home-image ID=IMAGE)")
+                f"the home image {home_img} could not be made: {said[:300]} (build libs/images/linux --target slim and pass --home-image, or --entry-home-image ID=IMAGE)")
             return
         run.sh("spaces", "add", f"local:{name}")
         for _ in range(60):  # a Space that was just made answers a moment later
@@ -695,7 +695,7 @@ def main():
     ap.add_argument("--image", default="ghcr.io/trycua/linux:24.04-slim")
     ap.add_argument("--alias", default=None, help="the package the image resolves to (a private mirror of the same tag)")
     ap.add_argument("--child-image", default="ghcr.io/trycua/linux:24.04-slim")
-    ap.add_argument("--home-image", default="ghcr.io/trycua/agent-home:24.04",
+    ap.add_argument("--home-image", default="ghcr.io/trycua/linux:24.04-slim",
                     help="the image of the home Space the children case makes child Spaces from when the Space under test has no `cua` CLI "
                          "(a VM runtime adds -disk)")
     ap.add_argument("--entry-home-image", action="append", help="ID=IMAGE: the home image one entry uses (a local build, for example)")

@@ -2224,7 +2224,8 @@ jobs:
           # Every asset: the SwiftUI app's, and the Electron installers
           # (Windows and Linux always, macOS for a prerelease) with their
           # installer-named copies (electron-publish).
-          gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
           rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json
           # Keyless Sigstore bundles next to each installer (install.sh and
           # install.ps1 verify them with cosign when it is installed).

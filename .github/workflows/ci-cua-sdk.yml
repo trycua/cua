@@ -392,6 +392,29 @@ jobs:
           echo "shards: $RESULT"
           test "$RESULT" = success
 
+  # The pool_model checks no longer run on pull requests, so a night or main run
+  # that fails on them must be heard: one issue, updated on every failure.
+  rust-linux-nightly-report:
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    name: open or update the nightly issue
+    needs: rust-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "Nightly: cua SDK Rust tests are failing"
+          detail: >-
+            The nightly run of CI: cua SDK failed in the Linux Rust shards. Pull requests skip the
+            pool_model model checks (about 7 minutes), so a protocol change that breaks them first
+            shows up here or on main.
+
   # macOS and Windows legs (full runs only). The Linux leg is sharded: see
   # rust-linux and the `rust (ubuntu-latest)` job below.
   rust:

@@ -39,19 +39,25 @@ export function stopsLine(node: Pick<TreeNode, "name" | "running">): string {
 }
 
 /** The remove dialog's words (f9): what leaves the list, what stops, and that nothing is deleted unless asked. */
-export function removeText(node: Pick<TreeNode, "name" | "children">): { title: string; lead: string; keep: string; box: string | null; confirm: string } {
+export function removeText(
+  node: Pick<TreeNode, "name" | "children">,
+  alsoDelete = false,
+): { title: string; lead: string; keep: string; box: string | null; confirm: string } {
   const n = node.children.length;
   const lead =
     n === 0
       ? "It leaves your Spaces list, and your team can't use it any more."
       : `It leaves your Spaces list, and your team can't use it any more. The ${plural(n, "Space")} made on it leave${n === 1 ? "s" : ""} the list with it:`;
   const back = n === 0 ? "" : n === 1 ? " Add it again and it comes back." : ` Add it again and all ${n} come back.`;
+  // Stopgap (CUA-3413): a computer can only be removed while it is offline, so its Spaces can't be deleted on it. Ticked,
+  // they leave your account and their files stay on the computer until it deletes them. Say exactly that.
+  const them = n === 1 ? "Its files stay" : "Their files stay";
   return {
     title: `Remove ${node.name}?`,
     lead,
-    keep: `Nothing is deleted from ${node.name}.${back}`,
-    box: n === 0 ? null : `Also delete the ${n === 1 ? "Space" : `${n} Spaces`} and ${n === 1 ? "its" : "their"} files from ${node.name}`,
-    confirm: `Remove ${node.name}`,
+    keep: alsoDelete ? `${n === 1 ? "The Space is" : `The ${n} Spaces are`} deleted from your account and won't come back. ${them} on ${node.name}, which is offline, until you delete them there.` : `Nothing is deleted from ${node.name}.${back}`,
+    box: n === 0 ? null : `Also delete the ${n === 1 ? "Space" : `${n} Spaces`}`,
+    confirm: alsoDelete ? `Remove and delete` : `Remove ${node.name}`,
   };
 }
 
@@ -295,7 +301,7 @@ export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClos
   const machines = useMachines();
   const [alsoDelete, setAlsoDelete] = useState(false);
   const [busy, setBusy] = useState(false);
-  const text = removeText(node);
+  const text = removeText(node, alsoDelete);
   const r = machines.view?.machines.find((m) => m.id === node.machine?.id)?.remove ?? null;
   const run = async () => {
     setBusy(true);

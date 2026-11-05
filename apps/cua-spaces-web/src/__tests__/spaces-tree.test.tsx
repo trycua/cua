@@ -195,6 +195,9 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     calls.length = 0;
     dialog = await open();
     fireEvent.click(q("[data-tree-also-delete]")!);
+    // Ticked, it says what really happens: the Spaces leave the account, their files stay on the offline computer.
+    expect(dialog.textContent).toContain("The 2 Spaces are deleted from your account and won't come back. Their files stay on Linux box, which is offline, until you delete them there.");
+    expect(q("[data-tree-remove-confirm]")?.textContent).toBe("Remove and delete");
     fireEvent.click(q("[data-tree-remove-confirm]")!);
     await waitFor(() => expect(calls.map(([op]) => op)).toEqual(["spaces.delete", "spaces.delete", "machines.remove"]));
     expect(calls.slice(0, 2).map(([, a]) => a.spaceId).sort()).toEqual(["relay:linux-box/ubuntu-build", "relay:linux-box/windows-legacy"]);

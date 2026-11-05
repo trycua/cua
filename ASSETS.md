@@ -85,3 +85,15 @@ CUA-3318 first run screenshots: <img width="1872" height="676" alt="first-run-1-
  <img width="2796" height="676" alt="first-run-2-where" src="https://github.com/user-attachments/assets/703dec3d-b970-4e5e-8b82-99c52ae6e98f" />
  <img width="2796" height="676" alt="first-run-3-agent" src="https://github.com/user-attachments/assets/6ef9de48-c8a4-4064-a734-ed253b050e49" />
  <img width="2796" height="676" alt="first-run-4-6-ready-next" src="https://github.com/user-attachments/assets/27f7089d-297a-4b0a-961b-d2f99948afae" />
+<img width="2732" height="1800" alt="spaces-1b-before-tree" src="https://github.com/user-attachments/assets/493cce49-1409-42cc-ba10-66ffd5496da3" />
+
+<img width="2732" height="1800" alt="spaces-1b-after-tree" src="https://github.com/user-attachments/assets/e8696e1d-df1b-4d88-9eef-79d70d64306b" />
+
+<img width="2732" height="3800" alt="spaces-1b-before-many" src="https://github.com/user-attachments/assets/8a3216fd-4abf-4111-96b1-aa1ab70aefbd" />
+
+<img width="2732" height="3800" alt="spaces-1b-after-many" src="https://github.com/user-attachments/assets/696fd177-a26d-4ffa-ae96-eeb2bf19b9a3" />
+
+<img width="2732" height="3800" alt="spaces-1b-after-many-open" src="https://github.com/user-attachments/assets/3f79ceaf-dce9-463c-bbea-c1b0ecc5118b" />
+
+
+trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (alt text is the source filename).

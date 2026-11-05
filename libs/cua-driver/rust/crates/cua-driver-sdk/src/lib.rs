@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical typed Cua Driver SDK and UniFFI export boundary.
 //!
 //! [`CuaDriver::create`] owns the platform runtime in the importing process.

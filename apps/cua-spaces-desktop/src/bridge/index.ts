@@ -25,6 +25,7 @@ import { joinMethods } from "./join-with-code";
 import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
+import { driverMethods } from "./driver";
 import { notificationsMethods } from "./notifications";
 import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
@@ -86,6 +87,7 @@ export const AREAS = [
   ciMethods,
   threadMethods,
   agentThreadsMethods,
+  driverMethods,
   presenceMethods,
 ];
 

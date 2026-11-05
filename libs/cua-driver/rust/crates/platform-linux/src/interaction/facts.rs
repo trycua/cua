@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Facts an adapter reports to the shared policy, each one known or
 //! unknown with the reason it could not be observed.
 

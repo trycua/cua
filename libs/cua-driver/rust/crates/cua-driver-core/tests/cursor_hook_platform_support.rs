@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The cursor hook must publish its platform limitation explicitly.
 //!
 //! `AGENTS.md`: "When a platform cannot support the same contract, return or

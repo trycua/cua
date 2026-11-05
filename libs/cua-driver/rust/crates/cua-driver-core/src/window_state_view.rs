@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Response shaping for `get_window_state`, shared by every platform backend.
 //!
 //! A backend walks its accessibility API and builds the complete legacy

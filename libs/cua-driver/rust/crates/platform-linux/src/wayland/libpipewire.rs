@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! libpipewire, loaded when a portal recording starts instead of linked.
 //!
 //! Linking it would stop cua-driver and the SDK library from loading at all on

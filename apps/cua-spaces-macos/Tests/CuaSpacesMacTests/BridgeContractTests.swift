@@ -336,6 +336,9 @@ struct BridgeContractTests {
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
+            // A test runner carries no Cua Driver: null and an empty list.
+            ("driver.status", [:]),
+            ("driver.list", [:]),
         ]
     }
 
@@ -399,6 +402,12 @@ struct BridgeContractTests {
         "thread.joinCodeList": "answers the daemon's thread_join_code_list as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.joinCodeCancel": "answers the daemon's thread_join_code_cancel as-is (the page ignores it); ThreadBridgeTests covers the arguments",
         "thread.settings": "answers the daemon's thread_settings as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "driver.config": "needs the bundled Cua Driver running (embedded-driver-vm-check.sh); EmbeddedDriverTests covers the socket",
+        "driver.setConfig": "as driver.config",
+        "driver.test": "as driver.config (it moves the agent pointer)",
+        "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
+        "driver.setup": "writes the coding agents' configs and restarts the driver",
+        "driver.setApp": "as driver.setup, for one agent",
     ]
 
     static func shapes() throws -> [String: Any] {

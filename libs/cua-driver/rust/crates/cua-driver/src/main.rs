@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![recursion_limit = "256"]
 
 //! cua-driver-rs — cross-platform background computer-use automation daemon.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trajectory recording session.
 //!
 //! When enabled, every non-read-only, non-recording tool call writes a

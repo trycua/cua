@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AT-SPI accessibility tree walking for Linux.
 //!
 //! AT-SPI2 is exposed over D-Bus. We talk to it natively in Rust via the

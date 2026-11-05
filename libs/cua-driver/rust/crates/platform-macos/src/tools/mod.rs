@@ -1063,6 +1063,7 @@ pub fn register_all(
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
     cua_driver_core::snapshot_store::register_runtime_store(&state.snapshots);
+    crate::recording_hooks::install();
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;

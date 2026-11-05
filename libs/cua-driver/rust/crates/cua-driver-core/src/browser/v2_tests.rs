@@ -94,6 +94,8 @@ pub(super) struct FixtureState {
     dom_click_generation: u64,
     dom_click_focused: bool,
     dom_click_reads_before_failure: Option<usize>,
+    /// Answer every post-snapshot semantic readback after this delay.
+    dom_click_readback_delay: Option<std::time::Duration>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -137,6 +139,7 @@ impl Default for FixtureState {
             dom_click_generation: 0,
             dom_click_focused: false,
             dom_click_reads_before_failure: None,
+            dom_click_readback_delay: None,
             calls: Vec::new(),
         }
     }
@@ -780,7 +783,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let value = json!({
                     "innerText": format!("counter={}", st.dom_click_generation)
                 });
-                MockReply::ok(json!({ "result": { "value": value } }))
+                let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
+                reply.delay = st.dom_click_readback_delay;
+                reply
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -3254,6 +3259,40 @@ async fn dom_event_click_bounds_stalled_readbacks() {
         assert!(public["evidence"].is_null());
         assert_eq!(public["escalation"]["reason"], "effect_unconfirmed");
     }
+}
+
+#[tokio::test]
+async fn dom_event_click_keeps_readback_when_reads_are_slow() {
+    // Each read answers in 150 ms, so the third post-click read starts with
+    // only ~50 ms of the 400 ms window left. It must still be waited for:
+    // a slow page whose state did not change is "unchanged", not
+    // "readback unavailable".
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_readback_delay = Some(std::time::Duration::from_millis(150));
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result.action_record.unwrap().public_result().unwrap();
+    let public = serde_json::to_value(public).unwrap();
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
 }
 
 #[tokio::test]

@@ -275,16 +275,16 @@ def _build_image_wsl2(
             return False
 
     def _boot_and_monitor():
-        # Phase 1: boot keypresses. "Press any key to boot from CD" appears between ten and sixty seconds after power on,
-        # depending on how long the firmware takes; keys sent before it are lost and the machine falls into the EFI shell.
-        # Setup's own window needs more than ninety seconds to appear, so these keys cannot land on its Cancel button.
-        time.sleep(8)
-        for i in range(30):
-            time.sleep(2)
+        # Phase 1: boot keypresses. "Press any key to boot from CD" stays up for only a few seconds, and when it is missed
+        # the firmware falls into the EFI shell (the disk is blank). Press Enter every half second from the start, for a
+        # minute; the installer's own window needs far longer than that to appear, so nothing here can reach its buttons.
+        for i in range(120):
             if _qmp_cmd(
                 b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'
             ):
-                logger.info(f"Sent boot keypress ({i+1}/30)")
+                if i % 20 == 0:
+                    logger.info(f"Sent boot keypress ({i+1}/120)")
+            time.sleep(0.5)
 
         # Phase 2: wait for CUA server (KVM is much faster, ~15-30 min)
         logger.info(f"Waiting for cua-spacesd on port {proc_port}...")

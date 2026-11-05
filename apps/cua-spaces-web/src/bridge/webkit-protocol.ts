@@ -208,6 +208,7 @@ export const WEBKIT_METHODS = [
   "driver.pause",
   "driver.setup",
   "driver.setApp",
+  "driver.permissions",
   "resources.get",
   "machines.rename",
   "machines.remove",

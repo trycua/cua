@@ -15,18 +15,21 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 
 import { folderLabel, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import type { HostStatus } from "@/bridge/contracts/host";
+import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { AppPermissionList } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
+  afterWhere,
   agentView,
   chosenAgent,
   dotStep,
@@ -54,12 +57,11 @@ import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { FloatKeys } from "./float-keys";
+import { CARD, GLASS_CHIP, GREY } from "./hero";
 import { OsMark } from "./os-marks";
 
 /* ---- The site's pieces ------------------------------------------------------------------ */
 
-/** The hero's grey for second lines. */
-const GREY = "text-[#8d8d8d]";
 /** The site's white button (the dark hero's Download pill). */
 const WHITE_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
@@ -68,15 +70,9 @@ const WHITE_BUTTON =
 const GLASS_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
   "inline-flex h-12 items-center justify-center rounded-full bg-white/[0.08] px-6 text-[15px] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
-/** The site's Sign up chip (Skip for now, a row's Add). */
-const GLASS_CHIP =
-  "inline-flex items-center justify-center rounded-full bg-white/[0.08] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
 /** The site's underlined text link, in white. */
 // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
 const LINK = "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
-/** The list card: the Sign up glass with the download menu's corners. */
-// design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-const CARD = "w-full max-w-[480px] rounded-[20px] bg-white/[0.08] p-1.5 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md";
 
 function Title({ children }: { children: ReactNode }) {
   return (
@@ -135,47 +131,79 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
 const Divider = () => <div className="mx-3 my-1.5 h-px bg-white/[0.14]" />;
 const Label = ({ children }: { children: ReactNode }) => <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>;
 
-/** How far above the footer the list fades out. */
+/** How far above the footer the content fades out. */
 const FADE_PX = 28;
 
 /**
- * Fades `content` out just above `footer` while the window is too short for both, so the list never runs
- * under Continue. A mask on the content, never a background on the footer: nothing covers the stars or keys.
+ * A screen's action row. It sits at the bottom of the content area on every screen and every window size, so the
+ * primary button never moves between steps: short content leaves space above it (`mt-auto` in the page's full-height
+ * column), long content scrolls under it (`sticky`). It has no background of its own, so the stars and keys show
+ * through; the content fades out just above it instead (`useFadeUnder`).
  */
-function useFadeUnder(content: RefObject<HTMLElement | null>, footer: RefObject<HTMLElement | null>) {
+function Actions({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("sticky bottom-0 z-10 mt-auto pt-[min(20px,2.2vh)] pb-3", className)} data-new-run-footer="">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Fades the screen's content out just above its action row (`Actions`) while the window is too short for both, so
+ * nothing runs under the buttons. A mask on each block above the row, never a background on the row: nothing covers
+ * the stars or keys. One for the whole page (`scroller` is its `main`), so every screen gets it; `screen` re-reads
+ * the row when the screen changes.
+ */
+function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
   useLayoutEffect(() => {
-    const c = content.current;
-    const f = footer.current;
-    if (!c || !f) return;
-    const scroller = c.closest("main") ?? c.parentElement;
+    const main = scroller.current;
+    if (!main) return;
     let frame = 0;
+    const masked = new Set<HTMLElement>();
+    const clear = (el: HTMLElement) => {
+      el.style.removeProperty("mask-image");
+      el.style.removeProperty("-webkit-mask-image");
+      delete el.dataset.faded;
+      masked.delete(el);
+    };
     const update = () => {
       frame = 0;
-      const box = c.getBoundingClientRect();
-      const cut = f.getBoundingClientRect().top - box.top;
-      const under = box.height > 0 && cut < box.height - 1;
-      const mask = under ? `linear-gradient(to bottom, #000 ${Math.max(0, cut - FADE_PX)}px, transparent ${Math.max(0, cut)}px)` : "";
-      c.style.setProperty("mask-image", mask);
-      c.style.setProperty("-webkit-mask-image", mask);
-      if (under) c.dataset.faded = "";
-      else delete c.dataset.faded;
+      const footer = main.querySelector<HTMLElement>("[data-new-run-footer]");
+      const above = footer ? [...(footer.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING)) : [];
+      for (const el of [...masked]) if (!above.includes(el)) clear(el);
+      if (!footer) return;
+      const top = footer.getBoundingClientRect().top;
+      for (const el of above) {
+        const box = el.getBoundingClientRect();
+        const cut = top - box.top;
+        if (!(box.height > 0 && cut < box.height - 1)) {
+          if (masked.has(el)) clear(el);
+          continue;
+        }
+        const mask = `linear-gradient(to bottom, #000 ${Math.max(0, cut - FADE_PX)}px, transparent ${Math.max(0, cut)}px)`;
+        el.style.setProperty("mask-image", mask);
+        el.style.setProperty("-webkit-mask-image", mask);
+        el.dataset.faded = "";
+        masked.add(el);
+      }
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
     update();
-    scroller?.addEventListener("scroll", schedule, { passive: true });
+    main.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    ro?.observe(c);
-    if (scroller) ro?.observe(scroller);
+    ro?.observe(main);
+    if (main.firstElementChild) ro?.observe(main.firstElementChild);
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      scroller?.removeEventListener("scroll", schedule);
+      main.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
       ro?.disconnect();
+      for (const el of [...masked]) clear(el);
     };
-  }, [content, footer]);
+  }, [scroller, screen]);
 }
 
 /**
@@ -225,11 +253,11 @@ export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
-      <div className="mt-9">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
           {WELCOME.primary}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -255,7 +283,7 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
           {view.waiting}
         </div>
       ) : null}
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <Actions className="flex flex-wrap items-center gap-3">
         <button type="button" className={view.tryAgainPrimary ? WHITE_BUTTON : GLASS_BUTTON} onClick={onTryAgain} data-new-run-try-again="">
           {view.tryAgain}
         </button>
@@ -264,7 +292,7 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
             {view.useCode}
           </button>
         ) : null}
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -290,13 +318,10 @@ export function WhereScreen({
   const sep = view.separate;
   const fold = view.offlineFold;
   const [showOffline, setShowOffline] = useState(false);
-  const content = useRef<HTMLDivElement>(null);
-  const footer = useRef<HTMLDivElement>(null);
-  useFadeUnder(content, footer);
   const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
   return (
     <div data-new-run="where">
-      <div ref={content} data-new-run-content="">
+      <div data-new-run-content="">
         <Title>{view.title}</Title>
         <Line>{view.line}</Line>
         <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
@@ -415,13 +440,11 @@ export function WhereScreen({
           ) : null}
         </div>
       </div>
-      {/* Stays in view at the bottom of the window however long the list is. It has no background of its own, so the
-          stars and keys show through; the list fades out just above it instead (`useFadeUnder`). */}
-      <div ref={footer} className="sticky bottom-0 z-10 mt-2 pt-[min(20px,2.2vh)] pb-3" data-new-run-footer="">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
           Continue
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -457,23 +480,24 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
       ) : null}
       {view.install ? (
         <>
-          <div className="mt-9 flex flex-wrap items-center gap-6">
+          <p className={cn("mt-[min(28px,3vh)] max-w-[480px] text-[13.5px] font-medium", GREY)}>{view.install.note}</p>
+          <Actions className="flex flex-wrap items-center gap-6">
             <button type="button" className={WHITE_BUTTON} onClick={() => onInstall("claude-code")} data-new-run-install="claude-code">
               {view.install.primary}
             </button>
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
-          </div>
-          <p className={cn("mt-4 max-w-[480px] text-[13.5px] font-medium", GREY)}>{view.install.note}</p>
+          </Actions>
         </>
-      ) : view.state !== "looking" ? (
-        <div className="mt-[min(28px,3vh)]">
+      ) : (
+        // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
+        <Actions>
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
-        </div>
-      ) : null}
+        </Actions>
+      )}
     </div>
   );
 }
@@ -542,11 +566,11 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
       </div>
       {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
       {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
-      <div className="mt-6">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -578,36 +602,27 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
           );
         })}
       </div>
-      <div className="mt-[min(28px,3vh)]">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
 
-/** "Let agents use apps on this Mac", opened: the two permissions, each through the app's guide (PermissionGuide). */
-export function AppsPermissions({ rows, onAllow }: { rows: { id: string; title: string; granted: boolean; url: string }[]; onAllow: (url: string) => void }) {
-  // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-  const box = "mx-3 mb-2 flex flex-col gap-1 border-t border-white/[0.14] pt-2 pl-10";
+/** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
+export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
   return (
-    <div className={box} data-new-run-apps="">
-      {rows.map((r) => (
-        <div key={r.id} className="flex min-h-9 items-center gap-3" data-new-run-permission={r.id} data-granted={String(r.granted)}>
-          <span className="min-w-0 flex-1 text-[14px] font-medium text-white">{r.title}</span>
-          {r.granted ? (
-            <span className="flex items-center gap-1 text-[13.5px] font-medium text-white">
-              <CheckIcon className="size-3.5" /> Allowed
-            </span>
-          ) : (
-            <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={() => onAllow(r.url)}>
-              Allow
-            </button>
-          )}
-        </div>
-      ))}
-      <p className={cn("pb-1 text-[12.5px] font-medium", GREY)}>Allow opens System Settings, where you turn on Cua Spaces.</p>
+    <div data-new-run="permissions">
+      <Title>{view.title}</Title>
+      <Line>{view.line}</Line>
+      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} />
+      <Actions>
+        <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
+          {view.primary.label}
+        </button>
+      </Actions>
     </div>
   );
 }
@@ -616,11 +631,6 @@ export function AppsPermissions({ rows, onAllow }: { rows: { id: string; title: 
 
 /** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
 const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
-
-const PERMISSIONS = [
-  { id: "screen-recording", title: "See the screen", url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" },
-  { id: "accessibility", title: "Use the mouse and keyboard", url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
-];
 
 /** The new first run's whole page. */
 export function NewFirstRun() {
@@ -655,7 +665,8 @@ export function NewFirstRun() {
   const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
-  const [host, setHost] = useState<HostStatus | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  useFadeUnder(mainRef, s.screen);
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
   // step dots, focus stays on the dots instead.
@@ -751,24 +762,13 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // Screen 6's permissions, read while they show.
+  // 2b and screen 6's apps row: Cua Spaces' permissions, read while they show. A host with none to give (not a
+  // Mac, an older app) has no step: it goes on to the coding agent.
+  const perms = useAppPermissions(s.screen === "permissions" || (s.screen === "next" && appsOpen));
   useEffect(() => {
-    if (!appsOpen || !adapter) return;
-    let live = true;
-    const read = () =>
-      void adapter
-        .call("host.status", {})
-        .then((h) => live && setHost(h))
-        .catch(() => {});
-    read();
-    const t = setInterval(read, 2_500);
-    window.addEventListener("focus", read);
-    return () => {
-      live = false;
-      clearInterval(t);
-      window.removeEventListener("focus", read);
-    };
-  }, [appsOpen, adapter]);
+    if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen, perms.loading, perms.available]);
 
   // The separate computer: this page's create, followed in the Spaces list.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
@@ -931,9 +931,12 @@ export function NewFirstRun() {
           onSignIn={startSignIn}
           onAddAnother={() => setAddOpen(true)}
           onSeparate={makeSeparate}
-          onContinue={() => go("agent")}
+          onContinue={() => go(afterWhere(os))}
         />
       );
+      break;
+    case "permissions":
+      body = <PermissionsScreen view={permissionsStepView({ appName: perms.data?.appName ?? "Cua Spaces", allGranted: perms.allGranted })} perms={perms} onContinue={() => go("agent")} />;
       break;
     case "agent":
       body = (
@@ -955,7 +958,6 @@ export function NewFirstRun() {
       ) : null;
       break;
     case "next": {
-      const granted = (id: string) => Boolean(host?.permissions.find((p) => p.id === id)?.granted);
       body = (
         <NextScreen
           view={nextView({ os })}
@@ -966,12 +968,8 @@ export function NewFirstRun() {
           }}
           onDone={() => void finish()}
           apps={
-            appsOpen ? (
-              <AppsPermissions
-                rows={PERMISSIONS.map((p) => ({ ...p, granted: granted(p.id), url: host?.permissions.find((x) => x.id === p.id)?.settingsUrl ?? p.url }))}
-                onAllow={(url) => void adapter?.call("host.openSettings", { url }).catch(() => {})}
-              />
-            ) : null
+            // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+            appsOpen ? <AppPermissionList perms={perms} variant="hero" inset className="mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7" /> : null
           }
         />
       );
@@ -982,8 +980,9 @@ export function NewFirstRun() {
   return (
     <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-window-surface="#050607" data-new-first-run="" data-step={s.screen}>
       <FloatKeys copyRight={544} />
-      <header className="relative z-30 flex shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
-        <span className="flex items-center gap-1.5">
+      {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
+      <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
+        <span className="flex items-center gap-1.5" data-new-run-logo="">
           <CuaLogo className="size-5" />
           <span className="font-display text-[19px] font-medium tracking-[-0.01em] text-white">Cua</span>
         </span>
@@ -993,16 +992,16 @@ export function NewFirstRun() {
           </button>
         ) : null}
       </header>
-      <main className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16">
-        <div aria-hidden className="min-h-0 shrink-0 grow basis-0" />
-        <div className="flex w-full max-w-[600px] shrink-0 flex-col py-2">{body}</div>
-        <div aria-hidden className="min-h-2 shrink-0 grow-[1.4] basis-0" />
+      {/* Every screen starts at the same height under the header (never centred: screens differ in height, and a
+          centred one moved the title and the button between steps). The screen fills the area, so its action row
+          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. */}
+      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16" data-new-run-main="">
+        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col">{body}</div>
       </main>
-      {dots ? (
-        <StepDots dots={dots} onGo={goDot} />
-      ) : (
-        <div className="h-8 shrink-0" />
-      )}
+      {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
+      <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
+        {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
+      </div>
       <AddComputerSheet open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );

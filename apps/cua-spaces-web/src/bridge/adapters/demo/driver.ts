@@ -72,7 +72,7 @@ function setPath(config: DriverConfig, key: string, value: unknown): void {
 }
 
 export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<
-  "driver.status" | "driver.list" | "driver.config" | "driver.setConfig" | "driver.test" | "driver.pause" | "driver.setApp" | "driver.setup" | "driver.update"
+  "driver.status" | "driver.list" | "driver.config" | "driver.setConfig" | "driver.test" | "driver.pause" | "driver.setApp" | "driver.setup" | "driver.update" | "driver.permissions"
 > {
   const d = () => state.driver;
   const permissions = (): DriverPermission[] =>
@@ -94,6 +94,7 @@ export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoConte
       lastTest: d().lastTest ? { ...d().lastTest! } : null,
       lastError: null,
       permissions: perms,
+      appName: "Cua Spaces",
       apps: d().apps.map((a) => ({ ...a })),
       activity: allowed && !d().paused && d().lastTest ? [{ app: "Claude Code", target: "Xcode" }] : [],
       canPause: true,
@@ -136,6 +137,7 @@ export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoConte
       const s = status();
       return [{ machineId: "this-mac", name: "This Mac", os: "macos", thisMachine: true, state: s.state, version: s.version, update: s.update?.version ?? null }, ...d().others.map((m) => ({ ...m }))];
     },
+    "driver.permissions": () => ({ appName: "Cua Spaces", permissions: permissions() }),
     "driver.config": () => structuredClone(d().config),
     "driver.setConfig": ({ changes }) => {
       for (const [k, v] of Object.entries(changes)) setPath(d().config, k, v);

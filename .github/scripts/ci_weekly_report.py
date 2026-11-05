@@ -103,7 +103,7 @@ def pr_metrics(pr: dict, runs: List[dict]) -> Optional[dict]:
     gates = [r for r in done if r["name"] == "CI: gate" and r["conclusion"] == "success"]
     if not gates:
         return None
-    gate = max(gates, key=lambda r: ts(r["updated"]))
+    gate = min(gates, key=lambda r: ts(r["updated"]))  # the first green; later ones are label or edit re-runs
     gate_start, gate_end = ts(gate["started"]), ts(gate["updated"])
     others = [r for r in done if r["name"] != "CI: gate" and not any(i in (r.get("path") or "") for i in GATE_IGNORES)
               and r["conclusion"] != "cancelled"]

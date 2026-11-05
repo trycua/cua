@@ -114,7 +114,8 @@ private final class FakeDriver: @unchecked Sendable {
 
     init(path: String, answer: @escaping @Sendable ([String: Any]) -> [String: Any]) throws {
         self.path = path
-        fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
+        fd = sock
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8)
@@ -123,13 +124,12 @@ private final class FakeDriver: @unchecked Sendable {
             raw[bytes.count] = 0
         }
         let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sock, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard bound == 0, listen(fd, 8) == 0 else { throw EmbeddedDriver.CallError(message: "bind \(errno)") }
-        let fd = fd
+        guard bound == 0, listen(sock, 8) == 0 else { throw EmbeddedDriver.CallError(message: "bind \(errno)") }
         thread = Thread {
             while true {
-                let c = accept(fd, nil, nil)
+                let c = accept(sock, nil, nil)
                 if c < 0 { return }
                 var data = Data()
                 var buf = [UInt8](repeating: 0, count: 4096)

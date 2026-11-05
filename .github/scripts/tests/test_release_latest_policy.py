@@ -1,7 +1,8 @@
 """GitHub has one repo-wide "Latest" release and trycua/cua publishes many
-packages. Only Cua Spaces may take it; every other release workflow must opt
-out explicitly, and nothing may resolve "latest of package X" through the
-repo-wide `releases/latest` endpoint (resolve by tag prefix instead)."""
+packages. Nothing depends on it (test_no_latest_consumers.py guards that), so
+which release carries the badge is cosmetic. We pin it to Cua Spaces, the app
+people browsing the repository expect; every other release workflow opts out
+explicitly so the badge does not flip between packages."""
 
 import re
 import subprocess

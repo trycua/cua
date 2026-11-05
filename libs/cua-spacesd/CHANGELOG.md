@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.0...cua-spacesd-v0.12.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **spacesd:** volume attach no longer deadlocks a 1 vCPU Space ([#6565](https://github.com/trycua/cua/issues/6565)) ([8a708ab](https://github.com/trycua/cua/commit/8a708abf6a60b76894df8d95ff94450436a3032f))
+
 ## [0.12.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.11.0...cua-spacesd-v0.12.0) (2026-11-05)
 
 

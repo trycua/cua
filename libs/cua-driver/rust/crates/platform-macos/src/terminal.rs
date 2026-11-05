@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Terminal-emulator detection for the macOS `type_text` path.
 //!
 //! Terminal emulators expose an `AXTextArea` for their grid, but

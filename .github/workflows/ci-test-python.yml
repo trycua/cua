@@ -48,8 +48,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   test:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Test ${{ matrix.package }}
     runs-on: ubuntu-latest
 
@@ -116,7 +122,8 @@ jobs:
         continue-on-error: true
 
   cua-sandbox:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
     # so the native library and the MockServer fixture are built first. The
     # hermetic suite never touches the host or a cloud;

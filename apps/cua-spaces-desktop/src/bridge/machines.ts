@@ -129,15 +129,20 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
       if (!machineId) throw Failure.badArgs("this machine is not on the relay");
       await relayCall(model, () => model.devices.renameMachine(machineId, name));
       if (id === "this-mac") await model.host.refresh();
+      // The Spaces list and the registry hold the name too (the SDK updated the copies on disk by the machine id): read them again so the computer shows the new name, still online, everywhere at once.
+      await model.refresh();
       return null;
     },
     // Remove from account: the machine leaves the relay directory, then
     // the device on it is revoked; the Spaces and machines are read again.
+    // The Spaces made on it are detached (they come back when it is added
+    // again), or with `deleteSpaces` deleted with it.
     "machines.remove": async (args) => {
       const machine = optionalString(args, "machine");
       const device = optionalString(args, "device");
+      const deleteSpaces = args.deleteSpaces === true;
       if (!machine && !device) throw Failure.badArgs("machine or device");
-      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine));
+      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine, deleteSpaces));
       if (device) await relayCall(model, () => model.devices.revoke(device));
       else await model.devices.refresh();
       await model.refresh();

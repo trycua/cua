@@ -521,9 +521,16 @@ public final class AppModel {
 
     /// Remove from account: `machine` leaves the relay directory, then
     /// `device` is revoked. This Mac's own host setup is the host's
-    /// `remove` instead.
-    public func removeMachine(machine: String?, device: String?) async throws {
-        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+    /// `remove` instead. The Spaces made on the machine are detached (they
+    /// come back when it is added again), or with `deleteSpaces` deleted too.
+    public func removeMachine(machine: String?, device: String?, deleteSpaces: Bool = false) async throws {
+        if let machine {
+            if deleteSpaces {
+                try await backend.relayUnregisterComputer(id: "relay:\(machine)", deleteSpaces: true)
+            } else {
+                try await backend.relayUnregister(id: "relay:\(machine)")
+            }
+        }
         if let device {
             guard let relay = devices.devices else {
                 throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
@@ -557,7 +564,7 @@ public final class AppModel {
 
     /// Your Spaces: neither This machine nor one of your machines.
     var realSpaces: [AppSpace] {
-        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost && !$0.hidden }
     }
 
     /// Where "Add a computer" opens: the New UI's sheet (one row per way to
@@ -1973,7 +1980,7 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app) as
+    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
@@ -1983,13 +1990,15 @@ public final class AppModel {
             || kept.askFirst != settings.experiments.askFirst
             || kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile else { return }
+            || kept.mobile != settings.experiments.mobile
+            || kept.warmPools != settings.experiments.warmPools else { return }
         settings.experiments.secureSpaces = kept.secureSpaces
         settings.experiments.childSpaces = kept.childSpaces
         settings.experiments.askFirst = kept.askFirst
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
+        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.

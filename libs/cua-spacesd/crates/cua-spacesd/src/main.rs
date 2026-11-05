@@ -7,6 +7,11 @@
 
 #[cfg(not(cua_headless))]
 mod doctor;
+#[cfg(all(target_os = "macos", not(cua_headless)))]
+// The app reads the driver's status, settings and permissions from the
+// driver's own socket; only `spawn` and the supervisor run here.
+#[allow(dead_code)]
+mod embedded_driver;
 #[cfg(not(cua_headless))]
 mod legacy;
 mod phone;
@@ -950,6 +955,14 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     // block on the host).
     #[cfg(target_os = "macos")]
     cua_spacesd::vsock_agent::start();
+    // Cua Driver for the coding agents on this Mac, as this process's own
+    // child (on unless CUA_SPACESD_EMBEDDED_DRIVER=0; see embedded_driver).
+    #[cfg(all(target_os = "macos", not(cua_headless)))]
+    let _embedded_driver = if no_desktop {
+        None
+    } else {
+        embedded_driver::spawn(shutdown.clone())
+    };
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {
@@ -1231,6 +1244,64 @@ mod tests {
     }
 
     use super::*;
+
+    #[cfg(all(target_os = "linux", not(cua_headless)))]
+    #[tokio::test]
+    async fn fallback_platform_tools_install_recording_support() {
+        if std::env::var_os("CUA_TEST_RECORDING_WIRING").is_none() {
+            let home = tempfile::tempdir().unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::fallback_platform_tools_install_recording_support",
+                    "--nocapture",
+                ])
+                .env("CUA_TEST_RECORDING_WIRING", "1")
+                .env("HOME", home.path())
+                .env_remove("DISPLAY")
+                .env_remove("WAYLAND_DISPLAY")
+                .env_remove("CUA_WAYLAND_NEST")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let tools = platform_tools().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let video_error =
+            match cua_driver_core::video::start_video(&directory.path().join("probe.mp4")) {
+                Ok(video) => {
+                    let _ = video.stop();
+                    String::new()
+                }
+                Err(error) => error.to_string(),
+            };
+        for (name, args) in [
+            (
+                "start_recording",
+                serde_json::json!({"output_dir": directory.path()}),
+            ),
+            ("set_config", serde_json::json!({"max_image_dimension": 0})),
+            ("stop_recording", serde_json::json!({})),
+        ] {
+            let result = tools.invoke_tool(name, args).await.unwrap();
+            assert_ne!(result["isError"], true, "{result}");
+        }
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("turn-00001/evidence.json")).unwrap(),
+        )
+        .unwrap();
+        for phase in ["before", "after"] {
+            assert_ne!(
+                evidence[phase]["screenshot"]["classification"], "capture_hook_unavailable",
+                "{evidence}"
+            );
+        }
+        assert!(
+            !video_error.contains("no video backend registered"),
+            "{video_error}"
+        );
+    }
 
     /// The WireGuard library's retry/expiry messages stay out of the log
     /// (also when a service was installed with `CUA_ENV_LOG=info`), unless

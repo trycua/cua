@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read-only Hyprland identity and geometry, adapted from #3052.
 //!
 //! Native IDs are full compositor addresses, never title matches or truncated

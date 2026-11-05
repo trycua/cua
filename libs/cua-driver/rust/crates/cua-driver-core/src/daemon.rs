@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared Cua Driver daemon wire protocol and synchronous client.
 //!
 //! The daemon, CLI, MCP proxy, and imported SDK all use these exact request,

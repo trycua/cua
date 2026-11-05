@@ -596,6 +596,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
   });
 
+  it("keeps which coding apps the agent menu shows in the app settings (`settings.update`), across a restart", async () => {
+    const before = (await call("settings.get")) as { agentMenu: { shown: string[]; hidden: string[]; seen: string[] } };
+    expect(before.agentMenu).toEqual({ shown: [], hidden: [], seen: [] });
+    const menu = { shown: ["goose"], hidden: ["hermes"], seen: ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"] };
+    const after = (await call("settings.update", { agentMenu: menu })) as typeof before;
+    expect(after.agentMenu).toEqual(menu);
+    const kept = native.appSettingsLoad(model.settingsPath);
+    expect([kept.agentMenuShown, kept.agentMenuHidden, kept.agentMenuSeen]).toEqual([menu.shown, menu.hidden, menu.seen]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { agentMenu: { shown: [], hidden: "hermes", seen: [] } })).toBe("bad_args");
+    expect(await code("settings.update", { agentMenu: null })).toBe("bad_args");
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });
@@ -974,6 +987,33 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     // The count is the Spaces on or starting among them (never a stopped one).
     expect(items[0]!.label).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
+  });
+
+  it("the home warming for Home's prompt box is in no top bar view until a person writes into it", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const base = backend.rowsNow[2]!;
+    const home = { ...base, id: "local:home-claude-code", name: "home-claude-code", provider: "local", host: undefined, reachable: true, power: undefined, powerState: undefined };
+    backend.rowsNow = [...backend.rowsNow, { ...home, hidden: true }];
+    await model.refresh();
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const tiles = () => {
+      const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+      const opened = core.appNotchReduce(shown.state, { tag: "Click" });
+      return wireView(core.appNotchView(opened.state, model.spaces));
+    };
+    // Warming: the list the SDK returns keeps it (marked), the menu, the tray and the notch do not.
+    expect(model.spaces.find((s) => s.id === home.id)?.hidden).toBe(true);
+    expect(realSpaces(model.spaces).map((s) => s.id)).not.toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).not.toContain(home.id);
+    const before = menuItems(bridge.context)[0]!.label;
+    expect(before).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
+    // The first message: the daemon clears the mark and the next list has it.
+    backend.rowsNow = backend.rowsNow.map((r) => (r.id === home.id ? { ...r, hidden: false } : r));
+    await model.refresh();
+    expect(realSpaces(model.spaces).map((s) => s.id)).toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).toContain(home.id);
+    expect(menuItems(bridge.context)[0]!.label).not.toBe(before);
   });
 
   it("the notch lists the Spaces, never a machine that only provides them (CUA-1619)", async () => {

@@ -248,6 +248,8 @@ Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
 direct-capture prompt. Then add Terminal under System Settings > Privacy &
 Security > Accessibility: the `bring_to_front` oracles raise fixture windows and
 read `AXFocusedWindow` through System Events UI scripting, which needs it. The
+switch is saved only after the admin-password dialog accepts the account
+password; until then the runner's `AXRole` probe still fails. The
 runner checks both Terminal grants before it builds. CuaDriverLocal app enumeration must not ask for System
 Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not

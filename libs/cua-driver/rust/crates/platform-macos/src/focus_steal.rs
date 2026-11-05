@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Layer-3 focus-steal preventer — Rust port of Swift's
 //! `SystemFocusStealPreventer.swift` plus the PR #1521 4-layer hardening
 //! (closure scope, RAII lease, 5s monotonic deadline, 1s janitor).

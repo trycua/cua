@@ -5744,6 +5744,128 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "connect": line(&[&v["connectLabel"], &v["empty"]]),
         }));
     }
+    for step in f["agents"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.agents", json!({ "input": step["input"] }))?;
+        let groups: Vec<String> = v["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let accounts: Vec<String> = g["accounts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| {
+                        let models: Vec<String> = a["models"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|m| line(&[&m["id"], &m["fast"], &m["default"]]))
+                            .collect();
+                        format!(
+                            "{} :: {}",
+                            line(&[
+                                &a["provider"],
+                                &a["env"],
+                                &a["slot"],
+                                &a["line"],
+                                &a["via"],
+                                &a["selected"],
+                                &a["defaultModel"]
+                            ]),
+                            models.join(" / ")
+                        )
+                    })
+                    .collect();
+                format!(
+                    "{} :: {}",
+                    line(&[
+                        &g["harness"],
+                        &g["app"],
+                        &g["label"],
+                        &g["state"],
+                        &g["signInLabel"]
+                    ]),
+                    accounts.join(" // ")
+                )
+            })
+            .collect();
+        frames.push(json!({
+            "agents": step["step"],
+            "groups": groups,
+            "default": line(&[&v["default"]["harness"], &v["default"]["env"], &v["default"]["slot"], &v["default"]["model"]]),
+            "empty": v["empty"],
+        }));
+    }
+    // Which coding apps the agent menu shows (`agentMenu.*`, Settings, Connections): what the menu lists,
+    // the rows of the switches and the result of each switch in turn.
+    for step in f["agentMenu"].as_array().into_iter().flatten() {
+        let menu = step.get("menu").cloned().unwrap_or(json!({}));
+        let view = c(
+            h,
+            "connectors.agents",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let menu_apps: Vec<String> = view["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| line(&[&g["app"], &g["state"]]))
+            .collect();
+        let rows = c(
+            h,
+            "agentMenu.view",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let row_lines: Vec<String> = rows["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                line(&[
+                    &r["app"],
+                    &r["label"],
+                    &r["shown"],
+                    &r["status"],
+                    &r["locked"],
+                ])
+            })
+            .collect();
+        let mut current = menu.clone();
+        let mut choices: Vec<String> = vec![];
+        for ch in step["choose"].as_array().into_iter().flatten() {
+            let r = c(
+                h,
+                "agentMenu.choose",
+                json!({ "input": step["input"], "menu": current, "app": ch["app"], "on": ch["on"] }),
+            )?;
+            choices.push(format!(
+                "{} {} :: shown {} / hidden {} :: {}",
+                ch["app"].as_str().unwrap_or(""),
+                if ch["on"].as_bool().unwrap_or(false) {
+                    "on"
+                } else {
+                    "off"
+                },
+                r["prefs"]["shown"],
+                r["prefs"]["hidden"],
+                line(&[&r["refused"]])
+            ));
+            current = r["prefs"].clone();
+        }
+        frames.push(json!({
+            "agentMenu": step["step"],
+            "menu": menu_apps,
+            "default": line(&[&view["default"]["harness"], &view["default"]["env"], &view["default"]["slot"], &view["default"]["model"]]),
+            "title": rows["title"],
+            "switch": rows["switchLabel"],
+            "help": rows["help"],
+            "rows": row_lines,
+            "lastNote": rows["lastNote"],
+            "choices": choices,
+            "synced": c(h, "agentMenu.sync", json!({ "input": step["input"], "menu": menu }))?,
+        }));
+    }
     for os in ["macos", "linux"] {
         let s = c(h, "connectors.importSheet", json!({ "hostOs": os }))?;
         let options: Vec<String> = s["options"]

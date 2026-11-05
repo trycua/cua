@@ -70,8 +70,14 @@ jobs:
   # always run there. Any doubt means "run everything": see
   # .github/scripts/ci_reuse_pr_result.py. Rollback: set the repository
   # variable CI_REUSE_PR_RESULTS to "off".
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   reuse:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: reuse PR results
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -250,7 +256,10 @@ jobs:
           -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
-          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli --test-threads 4
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
+          -p cua-auth -p cua-bindgen -p cua-connections -p cua-crash -p cua-create-failure -p cua-disk -p cua-home
+          -p cua-hotspot -p cua-machine-seal -p cua-mock-llm -p cua-push -p cua-repo-cache -p cua-share
+          -p cua-snapshot-sync -p cua-spaces-contract -p cua-spaces-transcript -p cua-agent-threads --test-threads 4
         env:
           # Teleport send acts only on fake hosts in tests; anything that
           # reaches the real host fails closed.
@@ -799,7 +808,8 @@ jobs:
 
   swift:
     name: swift smoke (macOS)
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full'))) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
     runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 60

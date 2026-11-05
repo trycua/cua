@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Typed contracts and result reporting for desktop E2E cells.
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -113,12 +113,50 @@ impl Scoped {
             .into_iter()
             .filter(|r| below.contains(&r.id))
             .collect();
-        for r in &mut records {
+        self.fill(&mut records);
+        Ok(records)
+    }
+
+    /// Power, stop reason and the rest of a record's live fields.
+    fn fill(&self, records: &mut [pb::Space]) {
+        for r in records.iter_mut() {
             (r.power, r.power_state) = self.spaces().power_of(&r.id);
             r.stop_reason = self.spaces().stop_reason_of(&r.id);
         }
-        self.spaces().fill_records(&mut records);
-        crate::spaces_svc::imp::mark_children(self.spaces(), &mut records);
+        self.spaces().fill_records(records);
+        crate::spaces_svc::imp::mark_children(self.spaces(), records);
+    }
+
+    /// What an agent home reaches beyond its tree (none for any other Space).
+    fn home_scope(&self) -> super::home::HomeScope {
+        // What the home was made with, plus what the person approved since.
+        self.own_meta()
+            .map(|m| super::home::HomeScope::from_labels(&m.labels))
+            .unwrap_or_default()
+            .with_grants(super::home::read_grants(
+                self.spaces().home_dir(),
+                &self.space,
+            ))
+    }
+
+    /// The Spaces outside the caller's subtree that an agent home may see:
+    /// the ones the person @mentioned, or all once the person approved
+    /// listing all. Read only: they are never resolved by the calls that
+    /// change or connect to a Space.
+    fn granted_records(&self, seen: &[pb::Space]) -> Result<Vec<pb::Space>, Status> {
+        let scope = self.home_scope();
+        if !scope.is_home {
+            return Ok(Vec::new());
+        }
+        let mut records: Vec<pb::Space> = self
+            .spaces()
+            .registry()
+            .list()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .filter(|r| !seen.iter().any(|s| s.id == r.id) && scope.may_list(&r.id, &r.name))
+            .collect();
+        self.fill(&mut records);
         Ok(records)
     }
 
@@ -203,6 +241,17 @@ impl Scoped {
                 return Err(Status::failed_precondition(format!(
                     "a child goes on this computer, `auto`, one of your computers \
                      (`host:<name>`) or a linked cloud; on={location:?} is not one"
+                )));
+            }
+        }
+        // An agent home puts children on the person's computers only where
+        // the person said so (an approval, or an @mention).
+        if let On::Host(machine) = &on {
+            let scope = self.home_scope();
+            if scope.is_home && !scope.may_use_machine(machine) {
+                return Err(refused(&format!(
+                    "use the computer {machine:?} once the person lets this agent use it \
+                     (ask them, or have them @mention it); for now it can make children here or with `auto`"
                 )));
             }
         }
@@ -549,8 +598,11 @@ impl SpaceService for Scoped {
     }
 
     async fn list_spaces(&self, _: Request<pb::ListSpacesRequest>) -> R<pb::ListSpacesResponse> {
+        let mut spaces = self.subtree_records()?;
+        let granted = self.granted_records(&spaces)?;
+        spaces.extend(granted);
         Ok(Response::new(pb::ListSpacesResponse {
-            spaces: self.subtree_records()?,
+            spaces,
             ..Default::default()
         }))
     }

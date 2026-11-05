@@ -410,7 +410,7 @@ except FileNotFoundError:
         from cua_driver import CuaDriver, DriverExecutionMode
 
         async def scenario() -> None:
-            driver = CuaDriver.create()
+            driver = CuaDriver.create(embedded=True)
             self.assertEqual(driver.execution_mode(), DriverExecutionMode.EMBEDDED)
             self.assertEqual(driver.socket_path(), "")
             self.assertTrue(driver.is_available())

@@ -17105,6 +17105,12 @@ public struct AppExperiments: Equatable, Hashable {
      * is kept in the cua home).
      */
     public var mobile: Bool
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var warmPools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17151,7 +17157,12 @@ public struct AppExperiments: Equatable, Hashable {
          * Mobile: the computer answers the Cua Spaces phone app (its tools and
          * push events). Off unless turned on; the daemon enforces it (the switch
          * is kept in the cua home).
-         */mobile: Bool) {
+         */mobile: Bool,
+        /**
+         * Warm pools: one Linux Space kept ready, with its coding apps
+         * installed, so the next Create from Home starts at once. Off unless
+         * turned on; the daemon enforces it (the switch is kept in the cua home).
+         */warmPools: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
@@ -17162,6 +17173,7 @@ public struct AppExperiments: Equatable, Hashable {
         self.ciRunners = ciRunners
         self.tcpShares = tcpShares
         self.mobile = mobile
+        self.warmPools = warmPools
     }
 
 
@@ -17189,7 +17201,8 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 askFirst: FfiConverterBool.read(from: &buf),
                 ciRunners: FfiConverterBool.read(from: &buf),
                 tcpShares: FfiConverterBool.read(from: &buf),
-                mobile: FfiConverterBool.read(from: &buf)
+                mobile: FfiConverterBool.read(from: &buf),
+                warmPools: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17204,6 +17217,7 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.ciRunners, into: &buf)
         FfiConverterBool.write(value.tcpShares, into: &buf)
         FfiConverterBool.write(value.mobile, into: &buf)
+        FfiConverterBool.write(value.warmPools, into: &buf)
     }
 }
 
@@ -35868,6 +35882,24 @@ public struct AppSettings: Equatable, Hashable {
      * older settings file without it reads as tips on, none done.
      */
     public var tips: AppTipsState
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    public var agentMenuShown: [String]
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    public var agentMenuHidden: [String]
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    public var agentMenuSeen: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35949,7 +35981,22 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
          * older settings file without it reads as tips on, none done.
-         */tips: AppTipsState) {
+         */tips: AppTipsState,
+        /**
+         * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+         * Home's agent menu shows although the default hides them (an app
+         * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+         */agentMenuShown: [String],
+        /**
+         * The apps the menu hides although the default shows them. Nothing is
+         * signed out: a hidden app keeps its sign-ins and stays on the Agents
+         * page and available by name.
+         */agentMenuHidden: [String],
+        /**
+         * The working accounts the menu last saw (`app|variable|slot`): a new
+         * one is a connect, which shows its app again
+         * ([`crate::agent_menu::sync`]).
+         */agentMenuSeen: [String]) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -35968,6 +36015,9 @@ public struct AppSettings: Equatable, Hashable {
         self.autoConnect = autoConnect
         self.currentTeamId = currentTeamId
         self.tips = tips
+        self.agentMenuShown = agentMenuShown
+        self.agentMenuHidden = agentMenuHidden
+        self.agentMenuSeen = agentMenuSeen
     }
 
 
@@ -36003,7 +36053,10 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
                 currentTeamId: FfiConverterOptionString.read(from: &buf),
-                tips: FfiConverterTypeAppTipsState.read(from: &buf)
+                tips: FfiConverterTypeAppTipsState.read(from: &buf),
+                agentMenuShown: FfiConverterSequenceString.read(from: &buf),
+                agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -36026,6 +36079,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.currentTeamId, into: &buf)
         FfiConverterTypeAppTipsState.write(value.tips, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
     }
 }
 
@@ -38417,6 +38473,14 @@ public struct AppSpace: Equatable, Hashable {
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
     public var access: AppSpaceAccess?
+    /**
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
+     */
+    public var hidden: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38507,7 +38571,14 @@ public struct AppSpace: Equatable, Hashable {
         /**
          * Who it belongs to, who else has it and what you may do with it
          * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
-         */access: AppSpaceAccess?) {
+         */access: AppSpaceAccess?,
+        /**
+         * The home that warms in the background for Home's prompt box, until a
+         * person writes into it: no list shows it (not the Spaces list, the
+         * sidebar, the palette, the menu bar item or the notch; see
+         * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+         * SDK and `cua spaces ls` still return it, marked.
+         */hidden: Bool) {
         self.id = id
         self.name = name
         self.os = os
@@ -38534,6 +38605,7 @@ public struct AppSpace: Equatable, Hashable {
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
         self.access = access
+        self.hidden = hidden
     }
 
 
@@ -38577,7 +38649,8 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
                 cloud: FfiConverterOptionString.read(from: &buf),
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
                 cloudDelete: FfiConverterOptionString.read(from: &buf),
-                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf)
+                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -38608,6 +38681,7 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloudPlace, into: &buf)
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
         FfiConverterOptionTypeAppSpaceAccess.write(value.access, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
     }
 }
 
@@ -40184,6 +40258,11 @@ public struct AppSpaceRow: Equatable, Hashable {
      */
     public var arch: String?
     /**
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
+     */
+    public var hidden: Bool
+    /**
      * Answered the last connect.
      */
     public var reachable: Bool
@@ -40282,6 +40361,10 @@ public struct AppSpaceRow: Equatable, Hashable {
          * `aarch64`, `amd64`, `x86_64`).
          */arch: String?,
         /**
+         * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+         * for Home's prompt box. No list shows it ([`Space::hidden`]).
+         */hidden: Bool,
+        /**
          * Answered the last connect.
          */reachable: Bool,
         /**
@@ -40333,6 +40416,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.imageDigest = imageDigest
         self.kind = kind
         self.arch = arch
+        self.hidden = hidden
         self.reachable = reachable
         self.error = error
         self.host = host
@@ -40376,6 +40460,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 imageDigest: FfiConverterOptionString.read(from: &buf),
                 kind: FfiConverterOptionTypeAppSpaceKind.read(from: &buf),
                 arch: FfiConverterOptionString.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf),
                 reachable: FfiConverterBool.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
@@ -40405,6 +40490,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.imageDigest, into: &buf)
         FfiConverterOptionTypeAppSpaceKind.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.arch, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
         FfiConverterBool.write(value.reachable, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)

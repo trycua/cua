@@ -353,6 +353,12 @@ pub struct AppSpace {
     /// Who it belongs to, who else has it and what you may do with it
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     pub access: Option<AppSpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    pub hidden: bool,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -390,6 +396,9 @@ pub struct AppSpaceRow {
     /// The guest's CPU architecture, when known (any spelling: `arm64`,
     /// `aarch64`, `amd64`, `x86_64`).
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.
@@ -6991,6 +7000,10 @@ pub struct AppExperiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
+    /// Warm pools: one Linux Space kept ready, with its coding apps
+    /// installed, so the next Create from Home starts at once. Off unless
+    /// turned on; the daemon enforces it (the switch is kept in the cua home).
+    pub warm_pools: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
@@ -7155,6 +7168,18 @@ pub struct AppSettings {
     /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
     /// older settings file without it reads as tips on, none done.
     pub tips: AppTipsState,
+    /// Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+    /// Home's agent menu shows although the default hides them (an app
+    /// outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+    pub agent_menu_shown: Vec<String>,
+    /// The apps the menu hides although the default shows them. Nothing is
+    /// signed out: a hidden app keeps its sign-ins and stays on the Agents
+    /// page and available by name.
+    pub agent_menu_hidden: Vec<String>,
+    /// The working accounts the menu last saw (`app|variable|slot`): a new
+    /// one is a connect, which shows its app again
+    /// ([`crate::agent_menu::sync`]).
+    pub agent_menu_seen: Vec<String>,
 }
 
 /// A pressed key combination.

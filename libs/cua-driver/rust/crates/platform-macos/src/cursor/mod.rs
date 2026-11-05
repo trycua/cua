@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Agent cursor overlay — transparent click-through window.
 //!
 //! Public surface:

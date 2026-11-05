@@ -2070,6 +2070,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-agent-threads"
+version = "0.10.1"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "cua-agents"
 version = "0.10.1"
 dependencies = [
@@ -2236,6 +2247,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
  "cua-byoc",
  "cua-cluster",
  "cua-create-failure",
@@ -2592,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2868,6 +2880,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "cua-agent-threads",
  "cua-agents",
  "cua-auth",
  "cua-chromium-storage",
@@ -2953,7 +2966,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3010,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -3020,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",

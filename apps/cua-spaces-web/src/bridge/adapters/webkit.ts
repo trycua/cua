@@ -43,6 +43,9 @@ import {
   type SettingsSnapshot,
   type SettingsValues,
   type NetworkEventWire,
+  type ServiceWire,
+  type TreeBudgetWire,
+  type TreeNodeWire,
   type SpaceNetworkWire,
 } from "../protocol";
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
@@ -54,6 +57,7 @@ import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sh
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
 import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitThreadOps } from "../ops/thread";
+import { webkitAgentThreadsOps } from "../ops/agent-threads";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
 import { webkitGithubOps } from "../ops/github";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
@@ -63,6 +67,7 @@ import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DefaultSpace, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
@@ -71,6 +76,7 @@ import type { LinkCreate, ShareLink, ShareSettings } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { webkitDriverOps } from "../ops/driver";
 import type { CliInstallPlan } from "../contracts/first-run";
 import type { BulkResult } from "../contracts/spaces-page";
 import type { CreatingElsewhere, ListStatus, SpaceAccess, SpaceRow, SpaceSharingFacts } from "../contracts/spaces";
@@ -293,6 +299,7 @@ function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageR
 }
 
 const rowsById = (s: WkSettings) => new Map(s.page.sections.flatMap((sec) => sec.rows).map((r) => [r.id, r] as const));
+const only = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const active = (r: WkSettingsRow | undefined) => r?.options.find((o) => o.active)?.id;
 const lockedBy = (r: WkSettingsRow | undefined) => (r && !r.enabled && r.help?.startsWith("Set by ") ? r.help.slice(7) : undefined);
 
@@ -322,6 +329,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(s.agentMenu ? { agentMenu: { shown: only(s.agentMenu.shown), hidden: only(s.agentMenu.hidden), seen: only(s.agentMenu.seen) } } : {}),
       ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
@@ -624,6 +632,19 @@ export function createWebkitAdapter(
       await request("spaces.setAccess", args);
       return null;
     },
+    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
+    "children.set": async (args) => {
+      await request("children.set", args);
+      return null;
+    },
+    "budget.get": ({ spaceId }) => request<TreeBudgetWire>("budget.get", { spaceId }),
+    "budget.set": (args) => request<TreeBudgetWire>("budget.set", args),
+    "services.list": ({ spaceId }) => request<ServiceWire[]>("services.list", { spaceId }),
+    "services.control": async (args) => {
+      await request("services.control", args);
+      return null;
+    },
     "spaces.open": async ({ spaceId }) => {
       await request("spaces.open", { id: spaceId });
       return null;
@@ -669,6 +690,7 @@ export function createWebkitAdapter(
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
         case "notchPinned":
+        case "agentMenu":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();
@@ -752,6 +774,7 @@ export function createWebkitAdapter(
     ...webkitTelemetryNoticeOps(request),
     ...webkitAgentDetailOps(request),
     ...webkitThreadOps(request),
+    ...webkitAgentThreadsOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitGithubOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
@@ -773,10 +796,15 @@ export function createWebkitAdapter(
       await request("machines.checkHealth");
       return null;
     },
-    "machines.remove": async ({ machine, device }) => {
-      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+    "machines.remove": async ({ machine, device, deleteSpaces }) => {
+      // `deleteSpaces` only when asked: an older host never sees it.
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null, ...(deleteSpaces ? { deleteSpaces: true } : {}) });
       return null;
     },
+    // The default Space (ops/spaces-settings.ts): the relay's own words.
+    "spaces.settings": () => request<SpacesSettings | null>("spaces.settings"),
+    "spaces.setSettings": ({ defaultSpace, fallback, fallbackOn }) => request<SpacesSettings | null>("spaces.setSettings", { defaultSpace, fallback: [...(fallback ?? [])], fallbackOn: fallbackOn ?? true }),
+    "spaces.resolveDefault": () => request<DefaultSpace | null>("spaces.resolveDefault"),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
@@ -815,6 +843,8 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),
+    // Cua Driver inside Cua Spaces: the Mac app's embedded driver (ops/driver.ts).
+    ...webkitDriverOps(request),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

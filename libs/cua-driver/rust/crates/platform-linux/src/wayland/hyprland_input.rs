@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local Hyprland input after the common Driver registry admits the action.
 //! Production v3 uses per-action target binding, not a second approval system.
 //! Protocol 0 remains an explicitly selected, nonshipping test experiment.

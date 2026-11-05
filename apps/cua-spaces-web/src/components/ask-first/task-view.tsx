@@ -19,10 +19,12 @@ import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
+import { ImportedTaskView } from "./imported-task";
 import { StateDot, taskRun } from "./home";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
+import { useTreeWhere } from "./tree-where";
 
 /** What the agent is told when the person hands the computer back. */
 /** How long a sent reply may take to show in the run before the thread trusts the run's status again (ms). */
@@ -48,6 +50,8 @@ export function AskFirstTask({ taskId }: { taskId: string }) {
       </div>
     );
   }
+  // A chat picked from "Pick up where you left off" (CUA-3319): its earlier messages and the box to continue it.
+  if (task.imported) return <ImportedTaskView task={{ ...task, imported: task.imported }} />;
   return <TaskView task={task} />;
 }
 
@@ -299,6 +303,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
     if (outcome === "connected") onRetry();
   };
   const { kinds, spaces } = useWhereOptions();
+  const tree = useTreeWhere();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
   return (
@@ -332,6 +337,7 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
             onOpenChange={setOpen}
             kinds={kinds}
             spaces={spaces}
+            tree={tree}
             trigger={
               <Button variant={view.action === "change-computer" ? "default" : "outline"} className="h-10 px-4" data-ask-change-computer="">
                 Change computer <ChevronDownIcon />

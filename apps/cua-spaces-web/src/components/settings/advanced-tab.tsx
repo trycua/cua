@@ -20,7 +20,7 @@ const SELF_HOSTED = "self-hosted";
 const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
 
 /**
  * Settings, Advanced: early releases, Labs, which software runs Spaces on
@@ -149,6 +149,7 @@ function Labs() {
   const { data, chooseExperiment } = useExperiments();
   const askFirst = useFlag("spaces_ask_first_home");
   const newSetup = useFlag("spaces_new_onboarding");
+  const tree = useFlag("spaces_tree");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
@@ -159,6 +160,7 @@ function Labs() {
     "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
     "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
     "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
+    "experiment:warm_pools": "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once.",
   };
   return (
     <SettingsGroup title="Labs">
@@ -172,6 +174,14 @@ function Labs() {
         description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
         onChoose={(_, option) => {
           setFlagOverride("spaces_new_onboarding", option === "on");
+          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
+        }}
+      />
+      <CoreSettingsRow
+        row={flagRow("spaces_tree", "Spaces as a tree", tree && askFirst)}
+        description="Your computers and the Spaces made on them in one list. New tasks run on your default Space. Turns on the new Home too. On this device only."
+        onChoose={(_, option) => {
+          setFlagOverride("spaces_tree", option === "on");
           if (option === "on") setFlagOverride("spaces_ask_first_home", true);
         }}
       />

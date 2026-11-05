@@ -96,12 +96,12 @@ export function experimentsPage(model: AppModel) {
   return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
 }
 
-/** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+/** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
 export function refreshDaemonExperiments(model: AppModel): void {
   const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
   const now = model.settings.experiments;
-  if (kept.secureSpaces === now.secureSpaces && kept.childSpaces === now.childSpaces && kept.askFirst === now.askFirst && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
-  model.settings = { ...model.settings, experiments: { ...now, secureSpaces: kept.secureSpaces, childSpaces: kept.childSpaces, askFirst: kept.askFirst, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
+  if (kept.secureSpaces === now.secureSpaces && kept.childSpaces === now.childSpaces && kept.askFirst === now.askFirst && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile && kept.warmPools === now.warmPools) return;
+  model.settings = { ...model.settings, experiments: { ...now, secureSpaces: kept.secureSpaces, childSpaces: kept.childSpaces, askFirst: kept.askFirst, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile, warmPools: kept.warmPools } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
@@ -124,6 +124,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
     // The Spaces and machine desktops pinned to the notch, in pin order.
     notchPinned: [...model.settings.notchPinned],
+    // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+    agentMenu: { shown: [...model.settings.agentMenuShown], hidden: [...model.settings.agentMenuHidden], seen: [...model.settings.agentMenuSeen] },
   };
 }
 
@@ -141,6 +143,14 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const ids = args.notchPinned;
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
     patch.notchPinned = ids as string[];
+  }
+  if ("agentMenu" in args) {
+    const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
+    const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen)) throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    patch.agentMenuShown = m.shown as string[];
+    patch.agentMenuHidden = m.hidden as string[];
+    patch.agentMenuSeen = m.seen as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;

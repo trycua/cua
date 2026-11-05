@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::capture_runtime::{
     CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
     EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,

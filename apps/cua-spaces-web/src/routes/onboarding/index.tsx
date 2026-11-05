@@ -5,11 +5,12 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useBridge, useFirstRun, useNewOnboarding, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
+import { NewFirstRun } from "@/components/first-run-new/first-run-new";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -41,8 +42,13 @@ export const Route = createFileRoute("/onboarding/")({
     if (search.fresh) writeSavedOnboarding(null);
     else if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
   },
-  component: OnboardingPage,
+  component: OnboardingRoute,
 });
+
+/** With the new setup on (Settings, Advanced, Labs), the new first run (CUA-3318); otherwise the first run every install has. */
+function OnboardingRoute() {
+  return useNewOnboarding() ? <NewFirstRun /> : <OnboardingPage />;
+}
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your

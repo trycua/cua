@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows tool implementations.
 //!
 //! On Windows, delegates to real win32/uia/input/capture implementations.

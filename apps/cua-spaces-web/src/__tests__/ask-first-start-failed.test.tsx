@@ -42,7 +42,7 @@ async function pickThisMac() {
 }
 
 async function startJob(text: string) {
-  fireEvent.change(screen.getByLabelText("What do you want to do?"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: text } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
     await pickThisMac();
     await screen.findByText("Work on this Mac?");
-    expect(screen.getByText(/Claude Code will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
+    expect(screen.getByText(/Codex will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Use this Mac" }));
     });

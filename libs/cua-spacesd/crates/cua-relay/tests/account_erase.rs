@@ -304,6 +304,19 @@ impl Acct {
         (status, r.json().await.unwrap_or(Value::Null))
     }
 
+    async fn put(&self, base: &str, path: &str, body: Value) -> (StatusCode, Value) {
+        let r = reqwest::Client::new()
+            .put(format!("{base}{path}"))
+            .bearer_auth(&self.token)
+            .header(SESSION, &self.session)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = r.status();
+        (status, r.json().await.unwrap_or(Value::Null))
+    }
+
     async fn machines(&self, base: &str) -> Vec<Value> {
         let (s, v) = self.get(base, "/v1/machines").await;
         assert_eq!(s, StatusCode::OK, "{v}");
@@ -419,7 +432,7 @@ async fn an_unknown_account_is_a_200_with_zero_counts() {
     ] {
         assert_eq!(v[k], 0, "{k}: {v}");
     }
-    for k in ["usage", "plan_cache", "pool"] {
+    for k in ["usage", "plan_cache", "pool", "spaces_settings"] {
         assert_eq!(v[k], false, "{k}: {v}");
     }
     assert_eq!(
@@ -530,6 +543,17 @@ async fn it_erases_one_account_everywhere_and_nobody_elses_and_survives_a_restar
         "ada's pool directory exists"
     );
 
+    // Her default Space.
+    let (s, set) = ada
+        .put(
+            &env.base,
+            "/v1/spaces/settings",
+            json!({"default_space": format!("relay:{a}")}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{set}");
+    assert!(!files_with(env.dir.path(), ADA).is_empty());
+
     // Mesh: Ada's host and laptop, Bob's host.
     let m_a = mesh_node(
         &env.base,
@@ -590,6 +614,7 @@ async fn it_erases_one_account_everywhere_and_nobody_elses_and_survives_a_restar
     assert!(v["mesh_nodes"].as_u64().unwrap() >= 2, "{v}");
     assert_eq!(v["usage"], true, "{v}");
     assert_eq!(v["pool"], true, "{v}");
+    assert_eq!(v["spaces_settings"], true, "{v}");
     assert_eq!(
         v["teams"], 4,
         "T1 passed on, T2 left, T3 invite scrubbed, T4 deleted: {v}"
@@ -694,7 +719,7 @@ async fn it_erases_one_account_everywhere_and_nobody_elses_and_survives_a_restar
     ] {
         assert_eq!(again[k], 0, "{k}: {again}");
     }
-    for k in ["usage", "plan_cache", "pool"] {
+    for k in ["usage", "plan_cache", "pool", "spaces_settings"] {
         assert_eq!(again[k], false, "{k}: {again}");
     }
 

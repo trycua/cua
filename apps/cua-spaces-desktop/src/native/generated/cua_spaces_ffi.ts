@@ -13263,7 +13263,15 @@ export type AppSpace = {
      * Who it belongs to, who else has it and what you may do with it
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
-    access?: AppSpaceAccess
+    access?: AppSpaceAccess,
+    /**
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
+     */
+    hidden: boolean
 }
 
 /**
@@ -13312,7 +13320,8 @@ const FfiConverterTypeAppSpace = (() => {
                 cloud: FfiConverterOptionalString.read(from),
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
-                access: FfiConverterOptionalTypeAppSpaceAccess.read(from)
+                access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
+                hidden: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13342,6 +13351,7 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalString.write(value.cloudPlace, into);
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
+            FfiConverterBool.write(value.hidden, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13369,7 +13379,8 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloud) +
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
-             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access);
+             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
+             FfiConverterBool.allocationSize(value.hidden);
 
         }
     };
@@ -14603,7 +14614,13 @@ export type AppExperiments = {
      * push events). Off unless turned on; the daemon enforces it (the switch
      * is kept in the cua home).
      */
-    mobile: boolean
+    mobile: boolean,
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    warmPools: boolean
 }
 
 /**
@@ -14636,7 +14653,8 @@ const FfiConverterTypeAppExperiments = (() => {
                 askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
-                mobile: FfiConverterBool.read(from)
+                mobile: FfiConverterBool.read(from),
+                warmPools: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14650,6 +14668,7 @@ const FfiConverterTypeAppExperiments = (() => {
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
+            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
@@ -14661,7 +14680,8 @@ const FfiConverterTypeAppExperiments = (() => {
              FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
-             FfiConverterBool.allocationSize(value.mobile);
+             FfiConverterBool.allocationSize(value.mobile) +
+             FfiConverterBool.allocationSize(value.warmPools);
 
         }
     };
@@ -40878,7 +40898,25 @@ export type AppSettings = {
      * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
      * older settings file without it reads as tips on, none done.
      */
-    tips: AppTipsState
+    tips: AppTipsState,
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    agentMenuShown: Array<string>,
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    agentMenuHidden: Array<string>,
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    agentMenuSeen: Array<string>
 }
 
 /**
@@ -40919,7 +40957,10 @@ const FfiConverterTypeAppSettings = (() => {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
                 autoConnect: FfiConverterBool.read(from),
                 currentTeamId: FfiConverterOptionalString.read(from),
-                tips: FfiConverterTypeAppTipsState.read(from)
+                tips: FfiConverterTypeAppTipsState.read(from),
+                agentMenuShown: FfiConverterSequenceString.read(from),
+                agentMenuHidden: FfiConverterSequenceString.read(from),
+                agentMenuSeen: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -40941,6 +40982,9 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterBool.write(value.autoConnect, into);
             FfiConverterOptionalString.write(value.currentTeamId, into);
             FfiConverterTypeAppTipsState.write(value.tips, into);
+            FfiConverterSequenceString.write(value.agentMenuShown, into);
+            FfiConverterSequenceString.write(value.agentMenuHidden, into);
+            FfiConverterSequenceString.write(value.agentMenuSeen, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -40960,7 +41004,10 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
              FfiConverterBool.allocationSize(value.autoConnect) +
              FfiConverterOptionalString.allocationSize(value.currentTeamId) +
-             FfiConverterTypeAppTipsState.allocationSize(value.tips);
+             FfiConverterTypeAppTipsState.allocationSize(value.tips) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
 
         }
     };
@@ -44323,6 +44370,11 @@ export type AppSpaceRow = {
      */
     arch?: string,
     /**
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
+     */
+    hidden: boolean,
+    /**
      * Answered the last connect.
      */
     reachable: boolean,
@@ -44408,6 +44460,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 imageDigest: FfiConverterOptionalString.read(from),
                 kind: FfiConverterOptionalTypeAppSpaceKind.read(from),
                 arch: FfiConverterOptionalString.read(from),
+                hidden: FfiConverterBool.read(from),
                 reachable: FfiConverterBool.read(from),
                 error: FfiConverterOptionalString.read(from),
                 host: FfiConverterOptionalString.read(from),
@@ -44436,6 +44489,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.imageDigest, into);
             FfiConverterOptionalTypeAppSpaceKind.write(value.kind, into);
             FfiConverterOptionalString.write(value.arch, into);
+            FfiConverterBool.write(value.hidden, into);
             FfiConverterBool.write(value.reachable, into);
             FfiConverterOptionalString.write(value.error, into);
             FfiConverterOptionalString.write(value.host, into);
@@ -44463,6 +44517,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.imageDigest) +
              FfiConverterOptionalTypeAppSpaceKind.allocationSize(value.kind) +
              FfiConverterOptionalString.allocationSize(value.arch) +
+             FfiConverterBool.allocationSize(value.hidden) +
              FfiConverterBool.allocationSize(value.reachable) +
              FfiConverterOptionalString.allocationSize(value.error) +
              FfiConverterOptionalString.allocationSize(value.host) +

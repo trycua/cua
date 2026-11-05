@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Compatibility admission for the initial native Hyprland input package.
 //! This is not a security boundary against same-user code. Unknown package
 //! versions refuse until the native operation matrix is qualified for them.

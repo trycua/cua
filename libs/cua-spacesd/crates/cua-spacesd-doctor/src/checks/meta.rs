@@ -161,7 +161,8 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
             .skip_reason("not_applicable");
         };
         let exe_s = exe.to_string_lossy().into_owned();
-        match crate::sys::run_local(&exe_s, &["--print-config"], &[], Duration::from_secs(15)).await
+        match crate::sys::run_local_keeping_token(&exe_s, &["--print-config"], Duration::from_secs(15))
+            .await
         {
             Ok(out) if out.ok() => match serde_json::from_str::<serde_json::Value>(&out.stdout) {
                 Ok(json) => {

@@ -264,14 +264,15 @@ def test_gate_runs_the_scope_step_first_and_passes_its_output_to_the_wait_step()
     gate = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())
     steps = gate['jobs']['ci-gate']['steps']
     assert steps[2]['id'] == 'scope'
-    assert steps[3]['env']['IGNORE_RE'] == '${{ steps.scope.outputs.ignore_re }}'
+    wait = next(st for st in steps if st.get('name', '').startswith('Wait for every other'))
+    assert wait['env']['IGNORE_RE'] == '${{ steps.scope.outputs.ignore_re }}'
     assert 'labeled' in gate[True]['pull_request']['types']
     assert 'edited' in gate[True]['pull_request']['types']
     assert 'merge_group' in gate[True]
 
 
 def test_gate_run_filter_drops_only_ignored_workflows():
-    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps'][3]['run']
+    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps'][4]['run']
     jq_filter = next(line.split("='", 1)[1].rsplit("'", 1)[0]
                      for line in script.splitlines() if line.strip().startswith('scope_jq='))
     runs = [{'path': '.github/workflows/cd-image-linux.yml@refs/pull/1/merge'},

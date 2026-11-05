@@ -26,6 +26,8 @@ import { SidebarUpdateButton } from "./update-indicator";
 import { SidebarTip } from "@/components/tips";
 import { useMachinesAccount } from "@/components/machines/account-parts";
 import { AccountLine, ProBanner } from "./account-area";
+import { SidebarTree } from "./sidebar-tree";
+import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -41,7 +43,10 @@ export function Sidebar() {
   const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   // Machines waiting to be added show beside the item, so they are seen from every page.
   const { pending } = useMachinesAccount();
-  const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
+  // Spaces as a tree (Labs): your computers and the Spaces on them, counted together, under Spaces.
+  const { tree } = useSpacesTreeData();
+  const treeCount = tree && listStatus.loaded ? tree.computers + tree.spaces : undefined;
+  const counts: Partial<Record<string, number>> = { "/spaces": tree ? treeCount : spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 
@@ -58,7 +63,7 @@ export function Sidebar() {
           // A host without the feed has no Notifications page.
           if (item.to === "/notifications" && notifications.unsupported) return null;
           const shortcut = item.command ? bindingFor(item.command) : undefined;
-          return (
+          const link = (
             <Link
               key={item.to}
               to={item.to}
@@ -87,6 +92,14 @@ export function Sidebar() {
                 </>
               )}
             </Link>
+          );
+          return item.to === "/spaces" && tree ? (
+            <div key={item.to} className="flex flex-col gap-px">
+              {link}
+              <SidebarTree tree={tree} />
+            </div>
+          ) : (
+            link
           );
         })}
       </nav>

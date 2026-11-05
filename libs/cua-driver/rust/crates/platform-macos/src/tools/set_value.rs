@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! set_value tool — matches the Swift reference in SetValueTool.swift.
 //!
 //! Two modes, determined by the element's AXRole:

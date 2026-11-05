@@ -63,10 +63,11 @@ extension WebUIBridge {
             return NSNull()
         case "driver.setup":
             let driver = try needDriver()
-            try await setUpDriverAgents(driver, agents: driverAgents)
-            // A driver that isn't running starts; one whose permission
-            // answer is stale starts again.
+            // A driver that isn't running starts first, so the page answers
+            // even when connecting the agents fails below.
             await startDriverIfNeeded(driver)
+            try await setUpDriverAgents(driver, agents: driverAgents)
+            // A driver whose permission answer is stale starts again.
             await restartDriverIfStale(driver, force: true)
             _ = await driverLiveTest(driver)
             return await driverStatus(driver)

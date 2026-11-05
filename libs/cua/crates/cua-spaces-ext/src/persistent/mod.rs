@@ -2341,6 +2341,33 @@ impl RoutineRunner for Runner {
     }
 }
 
+/// How long the supervisor stays quiet about an error it already logged.
+const ERROR_REPEAT: Duration = Duration::from_secs(300);
+
+/// Logs each supervisor error once per [`ERROR_REPEAT`]: a stopped Space
+/// makes every pass (about once a second) fail the same way for every agent
+/// in it, which used to fill the daemon log with ~9 lines a second.
+#[derive(Default)]
+struct ErrorThrottle {
+    seen: HashMap<String, Instant>,
+}
+
+impl ErrorThrottle {
+    fn should_say(&mut self, error: &str, now: Instant) -> bool {
+        if self.seen.len() > 1024 {
+            self.seen
+                .retain(|_, at| now.duration_since(*at) < ERROR_REPEAT);
+        }
+        match self.seen.get(error) {
+            Some(at) if now.duration_since(*at) < ERROR_REPEAT => false,
+            _ => {
+                self.seen.insert(error.to_string(), now);
+                true
+            }
+        }
+    }
+}
+
 /// Persistent agents on a [`Spaces`] runtime that registered the
 /// [`crate::DriveExtension`].
 pub trait SpacesPersistent {
@@ -2362,10 +2389,13 @@ pub trait SpacesPersistent {
         let p = p.detached();
         let wake = crate::thread::supervisor_wake();
         tokio::spawn(async move {
+            let mut said = ErrorThrottle::default();
             loop {
                 let r = p.tick().await;
                 for e in &r.errors {
-                    tracing::warn!("persistent agents: {e}");
+                    if said.should_say(e, Instant::now()) {
+                        tracing::warn!("persistent agents: {e}");
+                    }
                 }
                 tokio::select! {
                     () = tokio::time::sleep(every) => {}
@@ -2459,6 +2489,20 @@ pub fn parse_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_repeated_supervisor_error_is_logged_once_per_window() {
+        let mut t = ErrorThrottle::default();
+        let t0 = Instant::now();
+        assert!(t.should_say("sandbox a is Stopped", t0));
+        assert!(!t.should_say("sandbox a is Stopped", t0 + Duration::from_secs(1)));
+        assert!(t.should_say("sandbox b is Stopped", t0 + Duration::from_secs(1)));
+        assert!(!t.should_say(
+            "sandbox a is Stopped",
+            t0 + ERROR_REPEAT - Duration::from_secs(1)
+        ));
+        assert!(t.should_say("sandbox a is Stopped", t0 + ERROR_REPEAT));
+    }
 
     // An events.jsonl line as the runner writes it.
     fn ev(kind: &str, turn: u32, text: Option<&str>) -> ag::AgentEvent {

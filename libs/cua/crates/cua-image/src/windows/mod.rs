@@ -13,6 +13,8 @@
 //! * [`build`] - the build plan, cache layout and orchestration.
 
 pub mod iso;
+pub mod joliet;
 pub mod table;
+pub mod unattend;
 
 pub use table::{WindowsArch, WindowsVersion, lookup, normalize_version, versions};

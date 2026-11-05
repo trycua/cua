@@ -136,6 +136,25 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     await waitFor(() => expect(calls.filter((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toHaveLength(2));
   });
 
+  it("says plainly when an @ names nobody in the Space (never a silent no-op)", { timeout: 40000 }, async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await inAFreshSpace({
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
+    calls.length = 0;
+    await compose("@ghost are you there");
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), { timeout: 15000 });
+    const note = await found("[data-wake-note=ghost]", 15000);
+    expect(note.textContent).toContain("Nobody called @ghost is in this Space");
+    expect(note.textContent).toContain("Only visible to you");
+    // Nothing to connect or send again: it is not an agent that failed to start.
+    expect(q("[data-wake-connect]")).toBeNull();
+    expect(q("[data-wake-retry]")).toBeNull();
+    expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
+  });
+
   it("says why and posts nothing more (a message no agent reads would look sent)", { timeout: 40000 }, async () => {
     const posts: string[] = [];
     let armed = false;

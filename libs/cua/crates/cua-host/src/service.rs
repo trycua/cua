@@ -1182,6 +1182,14 @@ impl WindowsTask {
             .join(crate::driver::binary_name())
     }
 
+    /// Whether a task by this home's name exists and runs this home
+    /// (`Some(false)`: the name is another's, such as another Windows user's
+    /// production host, since task names are machine-wide; never ended,
+    /// replaced or deleted from here).
+    fn task_is_ours(&self) -> Option<bool> {
+        task_xml(&self.task()).map(|xml| self.names.owns(&xml))
+    }
+
     fn kill_home_driver(&self) {
         for pid in windows_procs::pids_of(&self.home_driver()) {
             let _ = run(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]));
@@ -1194,9 +1202,7 @@ fn run_entry(name: &str) -> Option<String> {
     let out = no_window(Command::new("reg").args(["query", WINDOWS_RUN_KEY, "/v", name]))
         .output()
         .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status.success().then(|| console_text(&out.stdout))
 }
 
 /// The XML of the scheduled task `name`, when it exists.
@@ -1204,9 +1210,36 @@ fn task_xml(name: &str) -> Option<String> {
     let out = no_window(Command::new("schtasks").args(["/Query", "/TN", name, "/XML"]))
         .output()
         .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status.success().then(|| console_text(&out.stdout))
+}
+
+/// What `schtasks` and `reg` print into a pipe: UTF-8 when it is, else the
+/// console (OEM) code page, so a user folder with letters outside ASCII
+/// (`C:\Users\José`) still matches [`ServiceNames::owns`].
+fn console_text(bytes: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::{CP_OEMCP, MultiByteToWideChar};
+        let Ok(len) = i32::try_from(bytes.len()) else {
+            return String::from_utf8_lossy(bytes).into_owned();
+        };
+        // SAFETY: the input and output buffers are sized and their lengths
+        // passed; the first call only measures.
+        unsafe {
+            let n = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+            if n > 0 {
+                let mut wide = vec![0u16; n as usize];
+                let n = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), n);
+                if n > 0 {
+                    return String::from_utf16_lossy(&wide[..n as usize]);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn system_root() -> String {
@@ -1300,6 +1333,13 @@ impl ServiceManager for WindowsTask {
         }
         std::fs::write(&self.xml_path, bytes)?;
         remove_legacy_task();
+        if self.task_is_ours() == Some(false) {
+            // Task names are machine-wide: this one is another Windows
+            // user's host. Never replaced; this user's runs from the logon
+            // entry instead.
+            tracing::info!(task = %self.task(), "the task name is another user's; using the logon entry");
+            return self.install_run_entry(spec);
+        }
         let created = run(Command::new("schtasks").args([
             "/Create",
             "/TN",
@@ -1322,6 +1362,13 @@ impl ServiceManager for WindowsTask {
     }
     fn start(&self) -> Result<()> {
         if !self.run_entry_installed() {
+            if self.task_is_ours() == Some(false) {
+                return Err(Error::Service(format!(
+                    "the scheduled task {} runs another Windows user's host; run `{} host setup` again",
+                    self.task(),
+                    crate::cli()
+                )));
+            }
             let _ = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
             return run(Command::new("schtasks").args(["/Run", "/TN", &self.task()])).map(drop);
         }
@@ -1329,6 +1376,9 @@ impl ServiceManager for WindowsTask {
     }
     fn stop(&self) -> Result<()> {
         if !self.run_entry_installed() {
+            if self.task_is_ours() == Some(false) {
+                return Ok(());
+            }
             return run(Command::new("schtasks").args(["/End", "/TN", &self.task()])).map(drop);
         }
         if let Ok(spec) = self.spec() {
@@ -1344,8 +1394,10 @@ impl ServiceManager for WindowsTask {
             let _ = self.stop();
         }
         self.remove_run_entry();
-        let _ = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
-        let _ = run(Command::new("schtasks").args(["/Delete", "/TN", &self.task(), "/F"]));
+        if self.task_is_ours() == Some(true) {
+            let _ = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
+            let _ = run(Command::new("schtasks").args(["/Delete", "/TN", &self.task(), "/F"]));
+        }
         // `/End` stops only the task's own process (conhost): the cmd.exe
         // and the driver under it keep running, the driver still online and
         // cmd.exe holding driver.log open, so ~/.cua/host could not be
@@ -1420,7 +1472,9 @@ impl ServiceManager for WindowsTask {
         ]))
         .output();
         let (installed, text) = match out {
-            Ok(o) if o.status.success() => (true, String::from_utf8_lossy(&o.stdout).to_string()),
+            Ok(o) if o.status.success() && self.task_is_ours() != Some(false) => {
+                (true, String::from_utf8_lossy(&o.stdout).to_string())
+            }
             _ => (false, String::new()),
         };
         ServiceState {

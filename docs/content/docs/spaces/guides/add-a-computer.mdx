@@ -166,7 +166,10 @@ cua devices audit      # who opened which machine, from which machine, and when
 cua devices revoke dev_0123456789abcdef01234567
 ```
 
-A computer that is gone: `cua machines rm <name>` removes it from your relay directory and revokes its sign-in.
+A computer that is gone: `cua spaces rm <name>` removes it from your relay directory and revokes its sign-in.
+The Spaces it provided stay on your account, hidden, and come back unchanged if the computer is added
+again under the same id. `cua spaces rm <name> --delete-spaces` deletes them too, and their files on
+that computer when it can be reached. (`cua machines rm` still works for one more release and says so.)
 
 In the app, the **Computers** tab holds all of it. A computer that asks to join waits under
 **Waiting for you** with **Add computer** and **Not me** (Add computer asks for Touch ID or your login

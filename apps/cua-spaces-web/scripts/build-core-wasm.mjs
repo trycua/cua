@@ -32,6 +32,17 @@ const out = join(app, "src", "bridge", "core", "wasm")
 const WASM_BINDGEN = "0.2.126"
 const optional = process.argv.includes("--optional")
 
+// CI builds the core once (ci-cua-spaces-web.yml `core-wasm` job) and the other
+// jobs download it: skip the build when told it is prebuilt and present.
+if (process.env.CORE_WASM_PREBUILT === "1") {
+  if (existsSync(join(out, "core_bg.wasm")) && existsSync(join(out, "core.js"))) {
+    console.log(`app core wasm: prebuilt, using ${out}`)
+    process.exit(0)
+  }
+  console.error(`app core wasm: CORE_WASM_PREBUILT=1 but ${out} has no core.js/core_bg.wasm`)
+  process.exit(1)
+}
+
 function give_up(message) {
   console.error(`app core wasm: ${message}`)
   if (optional) {

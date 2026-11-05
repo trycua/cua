@@ -191,17 +191,15 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     expect(calls.some(([op]) => op === "spaces.delete")).toBe(false);
     expect(calls.find(([op]) => op === "machines.remove")![1]).not.toHaveProperty("deleteSpaces", true);
 
-    // Ticked: each Space is deleted through the computer first, then the computer goes with them.
+    // Ticked: the computer goes with its Spaces in one call; the relay keeps them for the computer to delete when it's back.
     calls.length = 0;
     dialog = await open();
     fireEvent.click(q("[data-tree-also-delete]")!);
-    // Ticked, it says what really happens: the Spaces leave the account, their files stay on the offline computer.
-    expect(dialog.textContent).toContain("The 2 Spaces are deleted from your account and won't come back. Their files stay on Linux box, which is offline, until you delete them there.");
+    expect(dialog.textContent).toContain("The 2 Spaces leave your account now and won't come back. Linux box deletes them, with their files, the next time it comes online.");
     expect(q("[data-tree-remove-confirm]")?.textContent).toBe("Remove and delete");
     fireEvent.click(q("[data-tree-remove-confirm]")!);
-    await waitFor(() => expect(calls.map(([op]) => op)).toEqual(["spaces.delete", "spaces.delete", "machines.remove"]));
-    expect(calls.slice(0, 2).map(([, a]) => a.spaceId).sort()).toEqual(["relay:linux-box/ubuntu-build", "relay:linux-box/windows-legacy"]);
-    expect(calls[2]![1]).toMatchObject({ machine: "linux-box", deleteSpaces: true });
+    await waitFor(() => expect(calls.map(([op]) => op)).toEqual(["machines.remove"]));
+    expect(calls[0]![1]).toMatchObject({ machine: "linux-box", deleteSpaces: true });
   });
 });
 

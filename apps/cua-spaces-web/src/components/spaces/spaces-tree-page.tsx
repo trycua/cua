@@ -49,13 +49,16 @@ export function removeText(
       ? "It leaves your Spaces list, and your team can't use it any more."
       : `It leaves your Spaces list, and your team can't use it any more. The ${plural(n, "Space")} made on it leave${n === 1 ? "s" : ""} the list with it:`;
   const back = n === 0 ? "" : n === 1 ? " Add it again and it comes back." : ` Add it again and all ${n} come back.`;
-  // Stopgap (CUA-3413): a computer can only be removed while it is offline, so its Spaces can't be deleted on it. Ticked,
-  // they leave your account and their files stay on the computer until it deletes them. Say exactly that.
-  const them = n === 1 ? "Its files stay" : "Their files stay";
+  // A computer is removed while it is offline (CUA-3479): ticked, its Spaces leave the account now, and the relay keeps
+  // them as pending deletions that the computer carries out, files included, the next time it comes online.
+  const deleted =
+    n === 1
+      ? `The Space leaves your account now and won't come back. ${node.name} deletes it, with its files, the next time it comes online.`
+      : `The ${n} Spaces leave your account now and won't come back. ${node.name} deletes them, with their files, the next time it comes online.`;
   return {
     title: `Remove ${node.name}?`,
     lead,
-    keep: alsoDelete ? `${n === 1 ? "The Space is" : `The ${n} Spaces are`} deleted from your account and won't come back. ${them} on ${node.name}, which is offline, until you delete them there.` : `Nothing is deleted from ${node.name}.${back}`,
+    keep: alsoDelete ? deleted : `Nothing is deleted from ${node.name}.${back}`,
     box: n === 0 ? null : `Also delete the ${n === 1 ? "Space" : `${n} Spaces`}`,
     confirm: alsoDelete ? `Remove and delete` : `Remove ${node.name}`,
   };
@@ -293,11 +296,11 @@ export function SpacesTreePage() {
 
 /**
  * f9: removing a computer names each Space made on it and any task that
- * stops. They are only detached unless "Also delete" is ticked: then each is
- * deleted through the computer first, and the relay forgets them with it.
+ * stops. They are only detached unless "Also delete" is ticked: then the
+ * relay forgets them at once and the computer deletes them, files included,
+ * the next time it comes online (pending deletions, CUA-3479).
  */
 export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClose: () => void }) {
-  const { deleteSpace } = useSpaces();
   const machines = useMachines();
   const [alsoDelete, setAlsoDelete] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -306,18 +309,6 @@ export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClos
   const run = async () => {
     setBusy(true);
     try {
-      if (alsoDelete) {
-        for (const c of node.children) {
-          if (!c.space) continue;
-          try {
-            await deleteSpace(c.space.id);
-          } catch (e) {
-            // A Space that couldn't be deleted stops here: the computer stays, so nothing is half-removed.
-            toastError(`Couldn't delete ${c.name}, so ${node.name} wasn't removed`)(e);
-            return;
-          }
-        }
-      }
       await machines.remove(r?.machine ?? node.machine!.id, r?.device ?? null, alsoDelete);
       toast(`Removed ${node.name}`, { type: "success" });
       onClose();

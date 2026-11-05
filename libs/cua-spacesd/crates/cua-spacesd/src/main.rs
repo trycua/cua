@@ -1038,6 +1038,27 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
                 .pin_jwks_json(json)
                 .map_err(|e| format!("CUA_RELAY_JWKS_JSON: {e}"))?;
         }
+        // A host deletes the Spaces its owner deleted while it was removed
+        // from the account, each time it dials the relay
+        // (cua_spacesd_server::pending_deletions).
+        if let Some(policy) = host_policy.clone() {
+            let dialing = Arc::new(tokio::sync::Notify::new());
+            join_config.dialing = Some(dialing.clone());
+            let mut pending = cua_spacesd_server::pending_deletions::PendingDeletionsConfig::new(
+                join.relay.clone(),
+                machine_id.clone(),
+                join.relay_token.clone().unwrap_or_default(),
+                dialing,
+            );
+            pending.relay_token_file = join.relay_token_file.clone();
+            tokio::spawn(cua_spacesd_server::pending_deletions::run(
+                pending,
+                Arc::new(cua_spacesd_server::pending_deletions::DaemonDeleter::new(
+                    policy,
+                )),
+                shutdown.clone(),
+            ));
+        }
         // Account mode: relay-signed principal assertions authorize
         // callers (in addition to the local token).
         ctx.auth().set_external(Arc::new(

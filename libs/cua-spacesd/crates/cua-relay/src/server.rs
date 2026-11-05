@@ -411,6 +411,8 @@ pub struct Relay {
     pub(crate) pairing: Arc<crate::pairing::PairingStore>,
     /// Each account's default Space and fallback order.
     pub(crate) spaces: Arc<crate::spaces::SpacesSettings>,
+    /// Removed computers' Spaces still to delete on them.
+    pub(crate) pending_deletions: Arc<crate::pending_deletions::PendingDeletions>,
     pub(crate) key: Arc<RelayKey>,
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
@@ -538,6 +540,13 @@ impl Relay {
             )?,
             None => crate::spaces::SpacesSettings::in_memory(),
         };
+        let pending_deletions = match &config.state_file {
+            Some(path) => crate::pending_deletions::PendingDeletions::open_with(
+                path.with_extension("pending-deletions.json"),
+                storage.clone(),
+            )?,
+            None => crate::pending_deletions::PendingDeletions::in_memory(),
+        };
         let key = config
             .signing_key
             .clone()
@@ -593,6 +602,7 @@ impl Relay {
             grants: Arc::new(grants),
             pairing: Arc::new(pairing),
             spaces: Arc::new(spaces),
+            pending_deletions: Arc::new(pending_deletions),
             key,
             global_streams: Arc::default(),
             mesh,
@@ -650,6 +660,7 @@ impl Relay {
             .merge(self.hosted_routes())
             .merge(crate::pairing::routes())
             .merge(crate::spaces::routes())
+            .merge(crate::pending_deletions::routes())
             .merge(crate::tcp_shares::routes())
             .merge(if self.share_web_enabled() {
                 crate::share_web::routes()

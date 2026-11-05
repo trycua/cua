@@ -3,7 +3,7 @@
 
 import { BellIcon, BotIcon, HardDriveIcon, HouseIcon, KeyRoundIcon, MonitorIcon, SettingsIcon, WorkflowIcon, type LucideIcon } from "lucide-react";
 
-import { useExperimentFlags, useFlag } from "@/bridge";
+import { useExperimentFlags } from "@/bridge";
 import type { KeybindingCommand } from "@/lib/keybindings";
 
 export interface NavItem {
@@ -29,16 +29,15 @@ const VOLUME_ITEM: NavItem = { to: "/volume", label: "Volume", icon: HardDriveIc
 /** The sidebar's CI Runners entry, after Computers, while the CI runners experiment is on. */
 const CI_ITEM: NavItem = { to: "/ci", label: "CI Runners", icon: WorkflowIcon };
 
-/** The "Ask first" Home, first while its experiment flag is on (`spaces_ask_first_home`). */
+/** Home, always first. */
 const HOME_ITEM: NavItem = { to: "/home", label: "Home", icon: HouseIcon };
 
 /**
- * The nav, with Volume while the Cua Volume experiment is on, CI Runners while its experiment is, and Home while the
- * Ask-first flag is. Cua Driver is one of This Mac's settings, on its page under Computers.
+ * The nav: Home first, then the rest, with Volume while the Cua Volume experiment is on and CI Runners while its
+ * experiment is. Cua Driver is one of This Mac's settings, on its page under Computers.
  */
 export function useNavItems(): NavItem[] {
   const experiments = useExperimentFlags();
-  const home = useFlag("spaces_ask_first_home");
   let items = NAV_ITEMS;
   if (experiments?.cuaVolume) {
     const i = items.findIndex((n) => n.to === "/agents") + 1;
@@ -48,5 +47,5 @@ export function useNavItems(): NavItem[] {
     const i = items.findIndex((n) => n.to === "/spaces") + 1;
     items = [...items.slice(0, i), CI_ITEM, ...items.slice(i)];
   }
-  return home ? [HOME_ITEM, ...items] : items;
+  return [HOME_ITEM, ...items];
 }

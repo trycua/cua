@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The "Ask first" Home's tasks (CUA-2346, behind `spaces_ask_first_home`):
+ * Home's tasks (CUA-2346):
  * one job asked for on Home, the computer made for it, and the coding
  * agent's run on that computer.
  *

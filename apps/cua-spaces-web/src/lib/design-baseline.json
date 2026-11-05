@@ -168,12 +168,6 @@
     "partial-line": 6,
     "dot-chain": 1
   },
-  "routes/onboarding/index.tsx": {
-    "pill": 14,
-    "outlined-box": 7,
-    "partial-line": 2,
-    "radius": 5
-  },
   "routes/settings/about.tsx": {
     "partial-line": 1
   },

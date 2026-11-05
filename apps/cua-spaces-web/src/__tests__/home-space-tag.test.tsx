@@ -7,7 +7,6 @@
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { forgetHome, rememberHome, resetHomes } from "@/lib/agent-home/home-space";
 import { mountApp, stubBrowserApis } from "./app-harness";
@@ -16,7 +15,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetHomes();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(cleanup);
 

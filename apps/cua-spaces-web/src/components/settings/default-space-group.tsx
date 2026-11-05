@@ -36,7 +36,7 @@ export function moved<T>(list: readonly T[], from: number, to: number): T[] {
 }
 
 /**
- * Settings, General (Labs "Spaces as a tree", f3): where new agent tasks run.
+ * Settings, General: where new agent tasks run.
  * The same setting as "Make this my default" in Home's picker; the relay
  * keeps it for the account, so every computer and the CLI agree.
  */

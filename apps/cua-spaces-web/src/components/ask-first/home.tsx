@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
@@ -88,7 +88,7 @@ export function AskFirstHome() {
   // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
   // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
-  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  // The first Space being prepared after the first run: silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
@@ -128,11 +128,18 @@ export function AskFirstHome() {
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
-  const { chats } = useAgentChats(attempts);
+  const { chats, loading: chatsLoading } = useAgentChats(attempts);
   // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
   // is asked for, the welcome and its suggestions stay.
   const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
   const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
+  // Nothing is drawn until the Spaces have loaded and, when there are some, their agents have answered (at most
+  // 0.8 s): otherwise the welcome turns into the lists, or the agents push the Spaces down, as the page loads.
+  // Once drawn, it stays drawn: a later read of the agents never blanks the page again.
+  const waited = useElapsed(800);
+  const shown = useRef(false);
+  shown.current ||= spaces !== undefined && (waited || listed.counted.length === 0 || (chats !== null && chatsLoading === 0));
+  if (!shown.current) return <div className="h-full" data-ask-first-home="" aria-busy="true" />;
 
   return (
     <div className="h-full scroll-y-stable" data-ask-first-home="">
@@ -204,4 +211,14 @@ export function AskFirstHome() {
       {pick.dialog}
     </div>
   );
+}
+
+/** True once `ms` have passed since the first render. */
+function useElapsed(ms: number): boolean {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(t);
+  }, [ms]);
+  return done;
 }

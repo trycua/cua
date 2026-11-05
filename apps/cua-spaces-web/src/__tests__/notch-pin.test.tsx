@@ -11,7 +11,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetHiddenDesktops } from "@/lib/hidden-desktops";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
@@ -20,7 +19,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetHiddenDesktops();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(cleanup);
 

@@ -8,7 +8,7 @@
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { BridgeProvider, setFlagOverride } from "@/bridge";
+import { BridgeProvider } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -18,7 +18,6 @@ import { routeTree } from "../routeTree.gen";
 import { stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
-afterEach(() => setFlagOverride("spaces_ask_first_home", null));
 stubBrowserApis();
 
 async function mount(path: string, options: DemoOptions = {}) {
@@ -85,7 +84,6 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
   });
 
   it("gives a Space's tile on Home the core's power button, and pressing it turns the Space off", async () => {
-    setFlagOverride("spaces_ask_first_home", true);
     const { calls } = await mount("/home");
     const tile = (await found<HTMLElement>('[data-space-id][data-state="running"]')).parentElement!;
     const power = await waitFor(() => {

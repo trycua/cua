@@ -8,14 +8,11 @@
 // at that app.
 
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
-import { setFlagOverride } from "@/bridge/flags";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 afterEach(cleanup);
-beforeEach(() => setFlagOverride("spaces_ask_first_home", true));
-afterEach(() => setFlagOverride("spaces_ask_first_home", null));
 stubBrowserApis();
 
 const RUNNING = "relay:mac-mini/qa-windows";

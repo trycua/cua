@@ -83,7 +83,8 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await waitFor(() => expect(q("[data-spaces-tree]")).not.toBeNull());
     const sidebar = q("aside[aria-label=Sidebar]")!;
     const nav = [...sidebar.querySelectorAll("nav a")].map((a) => a.textContent ?? "");
-    expect(nav[0]).toMatch(/^Computers/);
+    expect(nav[0]).toMatch(/^Home/);
+    expect(nav[1]).toMatch(/^Computers/);
     expect(nav.some((t) => /Machines|Spaces|Cua Driver/.test(t))).toBe(false);
     expect(document.querySelector("h1")?.textContent).toBe("Computers");
   });
@@ -217,11 +218,11 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
 });
 
 describe.skipIf(!wasmBuilt)("Labs and Settings with your computers as a tree", () => {
-  it("Labs has no Spaces as a tree switch any more", { timeout: 30000 }, async () => {
+  it("Labs has no Spaces as a tree, new Home or new setup switch any more; Home's own setting stays", { timeout: 30000 }, async () => {
     await mountApp("/settings/advanced", host([]));
-    await waitFor(() => expect(q('[data-setting-row="flag:spaces_ask_first_home"]')).not.toBeNull());
-    expect(q('[data-setting-row="flag:spaces_tree"]')).toBeNull();
-    expect(document.body.textContent).not.toContain("Spaces as a tree");
+    await waitFor(() => expect(q('[data-setting-row="ask-first:this-mac"]')).not.toBeNull());
+    for (const flag of ["spaces_tree", "spaces_ask_first_home", "spaces_new_onboarding"]) expect(q(`[data-setting-row="flag:${flag}"]`)).toBeNull();
+    for (const text of ["Spaces as a tree", "Try the new Home", "Try the new setup"]) expect(document.body.textContent).not.toContain(text);
   });
 
   it("General has the default Space, If it's offline and the order to try", { timeout: 30000 }, async () => {

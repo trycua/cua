@@ -65,8 +65,6 @@ export function GeneralTab() {
 
   return (
     <div data-settings-tab="general">
-      {/* Labs "Spaces as a tree": the default Space and the order to try (nothing while it's off). */}
-      <DefaultSpaceGroup />
       <SettingsGroup
         title="Everyday"
         footer={
@@ -134,6 +132,8 @@ export function GeneralTab() {
       <CliSettingsSection />
       <SharingGroup />
       <RepoCacheGroup />
+      {/* Last: it shows once your computers have loaded, so nothing above it moves when it does. */}
+      <DefaultSpaceGroup />
     </div>
   );
 }

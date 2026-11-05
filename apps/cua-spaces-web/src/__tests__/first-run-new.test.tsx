@@ -9,7 +9,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache } from "@/bridge/first-run";
@@ -459,12 +458,8 @@ beforeEach(() => {
   resetFirstRunCache();
   resetConnectedAppsState();
   resetPrepare();
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
-  setFlagOverride("spaces_ask_first_home", null);
-  setFlagOverride("spaces_new_onboarding", null);
   resetPrepare();
 });
 

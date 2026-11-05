@@ -36,7 +36,6 @@ import { THIS_COMPUTER } from "@/lib/machines";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
-import { useFlag } from "@/bridge/flags";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
 import { NetworkSheet } from "@/components/network/network-sheet";
 import { BlockedNotice, ExitDownNotice, NetworkNotice, NetworkRow, ParentLine, RunsOnMachinesRow, SecurityRows, WithClipboardPrompt } from "@/components/network/space-security";
@@ -111,7 +110,6 @@ function SpaceDetailPage() {
   // The Space's thread (CUA-2155). A daemon without it answers unsupported,
   // and the page keeps its classic layout; a create still in progress has none yet.
   const thread = useSpaceThread(space && !space.id.startsWith("pending:") ? space.id : null);
-  const askFirstOn = useFlag("spaces_ask_first_home");
   // Ask first's tasks: a Space being made for one draws as the Space page in its creating state.
   const tasks = useAskTasks();
   // The first Space being prepared while the person was in onboarding: its page shows what is happening.
@@ -327,7 +325,7 @@ function SpaceDetailPage() {
       <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
     </div>
   );
-  const preparing = askFirstOn && space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
+  const preparing = space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
   const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={onPrepareAction} /> : null;
   const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
@@ -441,7 +439,7 @@ function SpaceDetailPage() {
   const powerError = detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null;
   // One tip at a time (the core's `tips.view`, place `space`).
   // A Space made for an Ask-first job is busy with its agent: no tip (it would also appear once ready and move the page).
-  const askSpace = askFirstOn && tasks.some((t) => t.pendingId === space.id || (t.inSpace && t.spaceId === space.id));
+  const askSpace = tasks.some((t) => t.pendingId === space.id || (t.inSpace && t.spaceId === space.id));
   const tip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
   // In the call layout the tip sits directly on the stage and the rail: no gap under it, so the rail meets it flush.
   const callTip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
@@ -452,7 +450,7 @@ function SpaceDetailPage() {
   // A create still in progress has no thread yet: its progress shows on the classic page.
   // A Space being made for an Ask-first job: the same page in its creating state (progress on
   // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
-  const creating = space.id.startsWith("pending:") && askFirstOn && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((t) => t.pendingId === space.id) || preparing != null);
+  const creating = space.id.startsWith("pending:") && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((t) => t.pendingId === space.id) || preparing != null);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = "Available once the Space is ready";
   // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.

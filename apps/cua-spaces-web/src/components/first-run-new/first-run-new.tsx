@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318), phase 1 of the approved storyboard
+ * The first run (CUA-3318), phase 1 of the approved storyboard
  * (CUA-3193): drawn on the spaces.cua.ai hero (its starfield, keys, Outfit title, white button and
  * the Cua lockup). The words and choices are `lib/first-run-new.ts`; this file reads the app's state
  * (sign-in, the account's computers, this computer's agents and whether it can make a separate
@@ -19,7 +19,7 @@ import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permis
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
-import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
+import { onboardingInitial, onboardingTelemetry, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { AppPermissionList } from "@/components/app-permissions";
@@ -633,6 +633,27 @@ export function PermissionsScreen({ view, perms, onContinue }: { view: Permissio
 /** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
 const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
 
+/**
+ * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
+ * Ready and Next end the run and are counted by its finish, not as a step.
+ */
+const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
+  welcome: "welcome",
+  signin: "sign_in",
+  where: "create_space",
+  permissions: "permissions",
+  agent: "connect_agent",
+};
+
+/** Usage events never get in the way of the run. */
+function track(send: () => void): void {
+  try {
+    send();
+  } catch {
+    // An older core that reads the state differently: no event.
+  }
+}
+
 /** The new first run's whole page. */
 export function NewFirstRun() {
   const navigate = useNavigate();
@@ -671,6 +692,30 @@ export function NewFirstRun() {
   const [appsOpen, setAppsOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+
+  // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
+  const core = ctx?.core ?? null;
+  const telemetry = settings.data?.telemetry ?? null;
+  const funnelState = (c: NonNullable<typeof core>) => ({
+    ...onboardingInitial(c, session.data?.identity ?? null),
+    step: s.screen === "welcome" || s.screen === "signin" ? ("welcome" as const) : ("agents" as const),
+    runCounted: true,
+    telemetry: telemetry ? onboardingTelemetry(telemetry) : null,
+  });
+  const runStarted = useRef(false);
+  useEffect(() => {
+    if (runStarted.current || !store || !core || !telemetry) return;
+    runStarted.current = true;
+    track(() => store.trackOnboarding({ ...onboardingInitial(core, null), telemetry: onboardingTelemetry(telemetry) }, { type: "start" }));
+  }, [store, core, telemetry]);
+  useEffect(() => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed"));
+  }, [store, s.screen]);
+  const funnel = (action: string, detail = "none") => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, action, detail));
+  };
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
   // step dots, focus stays on the dots instead.
@@ -871,6 +916,8 @@ export function NewFirstRun() {
   const open = (url: string) => void session.openExternal(url).catch(() => {});
 
   const leave = () => {
+    funnel("step_skipped", "step");
+    if (store && core) track(() => store.trackOnboardingSkipped(funnelState(core)));
     session.cancelSignIn();
     writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     writeFirstRun({ finishedLater: true });
@@ -878,17 +925,23 @@ export function NewFirstRun() {
   };
   const skip = () => {
     if (s.screen === "welcome" || s.screen === "signin") {
+      funnel("step_skipped", "step");
       session.cancelSignIn();
       go("where");
     } else leave();
   };
+  const finished = () => {
+    if (store && core) track(() => store.trackOnboardingFinished(funnelState(core)));
+  };
   const finish = async () => {
+    finished();
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
     writeFirstRun({ finishedLater: false, todosClosed: false });
     await navigate({ to: "/home" });
   };
   // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
   const continueChat = async (task: AskTask) => {
+    finished();
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
     writeFirstRun({ finishedLater: false, todosClosed: false });
     await navigate({ to: "/home/$taskId", params: { taskId: task.id } });

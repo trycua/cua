@@ -285,7 +285,8 @@ export interface HostOperations
   "network.get": { args: { spaceId: string }; result: SpaceNetworkWire };
   /** Replaces a Space's network (`cua network set`): `network` is the
    * preset word (`internet`, `none`, `localhost:5432,3000`, `localhost:all`,
-   * `lan`, `custom`, `custom:none`, `unprotected`); `widen` lets a child
+   * `lan`, `localhost+lan:5432,3000` (both extras), `custom`, `custom:none`,
+   * `unprotected`); `widen` lets a child
    * reach more than its parent (the user's own choice, recorded). */
   "network.set": {
     args: {

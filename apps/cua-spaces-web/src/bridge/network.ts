@@ -52,7 +52,7 @@ export function reasonWords(reason: string): string {
 
 /** The page's network settings from the host's answer. */
 export function networkFromWire(w: SpaceNetworkWire, parentName?: string): SpaceNetwork {
-  const preset = (["internet", "none", "localhost", "lan", "custom"] as const).includes(w.preset as NetworkPreset)
+  const preset = (["internet", "none", "localhost", "lan", "localhost+lan", "custom"] as const).includes(w.preset as NetworkPreset)
     ? (w.preset as NetworkPreset)
     : "internet";
   return {
@@ -117,7 +117,8 @@ export function topologyFromJson(text: string | undefined): SpaceTopology | unde
 export function networkWord(n: SpaceNetwork): string {
   switch (n.preset) {
     case "localhost":
-      return n.localhostPorts && n.localhostPorts.length > 0 ? `localhost:${n.localhostPorts.join(",")}` : "localhost:all";
+    case "localhost+lan":
+      return n.localhostPorts && n.localhostPorts.length > 0 ? `${n.preset}:${n.localhostPorts.join(",")}` : `${n.preset}:all`;
     case "custom":
       return n.base === "none" ? "custom:none" : "custom";
     default:

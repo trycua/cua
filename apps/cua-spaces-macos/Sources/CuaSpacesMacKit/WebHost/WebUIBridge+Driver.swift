@@ -39,7 +39,7 @@ extension WebUIBridge {
             guard let driver = EmbeddedDriver.current() else { return [Any]() }
             let s = await driverStatus(driver)
             return [["machineId": s["machineId"] ?? "", "name": s["machineName"] ?? "", "os": "macos", "thisMachine": true,
-                     "state": s["state"] ?? "stopped", "version": s["version"] ?? NSNull(), "update": NSNull()]]
+                     "state": s["state"] ?? "stopped", "version": orNull(s["version"]), "update": NSNull()]]
         case "driver.config":
             return try await driverCall(try needDriver(), "get_config")
         case "driver.setConfig":
@@ -127,18 +127,18 @@ extension WebUIBridge {
             "machineName": model.host.computerName() ?? "This Mac",
             "thisMachine": true,
             "state": state,
-            "version": meta?.version ?? NSNull(),
+            "version": orNull(meta?.version),
             "update": NSNull(),
-            "lastTest": DriverPageState.shared.lastTest ?? NSNull(),
-            "lastError": lastError ?? NSNull(),
+            "lastTest": orNull(DriverPageState.shared.lastTest),
+            "lastError": orNull(lastError),
             "permissions": [
-                ["id": "screen", "granted": screen, "settingsUrl": PermissionGuide.settingsURL(for: .screenRecording) ?? NSNull()],
-                ["id": "accessibility", "granted": accessibility, "settingsUrl": PermissionGuide.settingsURL(for: .accessibility) ?? NSNull()],
+                ["id": "screen", "granted": screen, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .screenRecording))],
+                ["id": "accessibility", "granted": accessibility, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .accessibility))],
             ],
             "activity": [Any](),
             "canPause": true,
         ]
-        status["apps"] = await driverApps(driver) ?? NSNull()
+        status["apps"] = orNull(await driverApps(driver))
         return status
     }
 
@@ -178,7 +178,7 @@ extension WebUIBridge {
         let test: [String: Any] = [
             "passed": failure == nil,
             "atMs": (started.timeIntervalSince1970 * 1000).rounded(),
-            "failure": failure ?? NSNull(),
+            "failure": orNull(failure),
             "tookMs": (Date().timeIntervalSince(started) * 1000).rounded(),
         ]
         DriverPageState.shared.lastTest = test
@@ -240,6 +240,9 @@ extension WebUIBridge {
         }
     }
 }
+
+/// A JSON value, or JSON null.
+private func orNull(_ value: Any?) -> Any { value ?? NSNull() }
 
 /// Tool arguments are plain JSON values, safe to hand to a detached task.
 private struct SendableArgs: @unchecked Sendable {

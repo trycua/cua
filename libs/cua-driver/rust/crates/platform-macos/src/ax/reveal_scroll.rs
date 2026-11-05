@@ -35,7 +35,7 @@ pub struct RevealOutcome {
 /// `[x, y, w, h]` in screen points.
 type Rect = [f64; 4];
 
-fn intersect(a: Rect, b: Rect) -> Option<Rect> {
+pub(crate) fn intersect(a: Rect, b: Rect) -> Option<Rect> {
     let left = a[0].max(b[0]);
     let top = a[1].max(b[1]);
     let right = (a[0] + a[2]).min(b[0] + b[2]);

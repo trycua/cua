@@ -54,6 +54,10 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 const AMOUNT_MIN: u64 = 1;
 const AMOUNT_MAX: u64 = 50;
 
+fn element_wheel_point(rect: [f64; 4], window: [f64; 4]) -> Option<(f64, f64)> {
+    crate::ax::reveal_scroll::intersect(rect, window).map(|[x, y, w, h]| (x + w / 2.0, y + h / 2.0))
+}
+
 fn clamp_amount(requested: u64) -> usize {
     requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
 }
@@ -361,9 +365,9 @@ impl Tool for ScrollTool {
             } else {
                 Ok(())
             };
-            // Element path: wheel at the element's screen-space center. Both AX
-            // coordinates and window bounds are logical top-left points, so no
-            // Retina scaling is needed here.
+            // Element path: wheel at the center of the element's part inside the
+            // window. Both AX coordinates and window bounds are logical top-left
+            // points, so no Retina scaling is needed here.
             let wid = window_id;
             let target_guard = pre_focus_guard.clone();
             let target_task = tokio::task::spawn_blocking(move || {
@@ -385,10 +389,13 @@ impl Tool for ScrollTool {
                 let rect = unsafe {
                     crate::ax::bindings::element_screen_rect(element_ptr as AXUIElementRef)
                 };
-                Ok(center.map(|(cx, cy)| {
-                    let win_local = wid
-                        .and_then(crate::windows::window_bounds_by_id)
-                        .map(|b| (cx - b.x, cy - b.y));
+                let bounds = wid.and_then(crate::windows::window_bounds_by_id);
+                let point = rect
+                    .zip(bounds.as_ref())
+                    .and_then(|(rect, b)| element_wheel_point(rect, [b.x, b.y, b.width, b.height]))
+                    .or(center);
+                Ok(point.map(|(cx, cy)| {
+                    let win_local = bounds.as_ref().map(|b| (cx - b.x, cy - b.y));
                     WheelTarget {
                         screen_x: cx,
                         screen_y: cy,
@@ -842,5 +849,37 @@ mod tests {
         assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
         assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
         assert_eq!(clamp_amount(3), 3);
+    }
+
+    #[test]
+    fn element_wheel_point_is_the_center_of_an_element_inside_the_window() {
+        assert_eq!(
+            element_wheel_point([100.0, 100.0, 200.0, 100.0], [0.0, 0.0, 800.0, 600.0]),
+            Some((200.0, 150.0))
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_stays_inside_a_window_shorter_than_the_element() {
+        assert_eq!(
+            element_wheel_point([0.0, 50.0, 800.0, 3000.0], [0.0, 0.0, 800.0, 600.0]),
+            Some((400.0, 325.0))
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_uses_the_visible_part_of_an_element_above_the_window() {
+        assert_eq!(
+            element_wheel_point([100.0, -400.0, 200.0, 600.0], [0.0, 100.0, 800.0, 600.0]),
+            Some((200.0, 150.0))
+        );
+    }
+
+    #[test]
+    fn element_wheel_point_is_none_for_an_element_outside_the_window() {
+        assert_eq!(
+            element_wheel_point([0.0, 900.0, 200.0, 100.0], [0.0, 0.0, 800.0, 600.0]),
+            None
+        );
     }
 }

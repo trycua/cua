@@ -31,7 +31,7 @@ export interface Seen {
   ticketPolicy?: number;
 }
 
-export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses touch with these words (gRPC PermissionDenied). */ touchRefused?: string; /** The relay refuses the thread calls with these words (gRPC PermissionDenied). */ threadRefused?: string; tools: (name: string, args: Record<string, unknown>) => unknown; isError?: (name: string) => boolean; /** Other REST calls (push registrations): an answer, or undefined to fall through. */ rest?: (method: string, path: string, body: unknown) => { status?: number; body?: unknown } | undefined }) {
+export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses touch with these words (gRPC PermissionDenied). */ touchRefused?: string; /** The relay refuses the thread calls with these words (gRPC PermissionDenied). */ threadRefused?: string; /** Per computer: the thread calls to that computer's id fail with this gRPC status (4 deadline, 14 unavailable, 7 refused). */ threadFails?: Record<string, { status: number; message: string }>; tools: (name: string, args: Record<string, unknown>) => unknown; isError?: (name: string) => boolean; /** Other REST calls (push registrations): an answer, or undefined to fall through. */ rest?: (method: string, path: string, body: unknown) => { status?: number; body?: unknown } | undefined }) {
   const seen: Seen[] = [];
   const grpc = <S extends DescMessage>(schema: S, msg: MessageShape<S>) =>
     new Response(new Uint8Array([...frame(0, toBinary(schema, msg)), ...frame(0x80, new TextEncoder().encode("grpc-status: 0\r\n"))]), { status: 200, headers: { "content-type": "application/grpc-web+proto" } });
@@ -53,6 +53,10 @@ export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses 
       if (r) return new Response(r.body === undefined || r.status === 204 ? null : JSON.stringify(r.body), { status: r.status ?? 200 });
     }
     const body = init?.body ? new Uint8Array(init.body as ArrayBuffer) : new Uint8Array();
+    const failing = opts.threadFails?.[path.split("/")[2] ?? ""];
+    if (failing && path.endsWith("/cua.env.v1.HostThreadService/CallThreadTool")) {
+      return new Response(null, { status: 200, headers: { "content-type": "application/grpc-web+proto", "grpc-status": String(failing.status), "grpc-message": encodeURIComponent(failing.message) } });
+    }
     if (opts.threadRefused && path.endsWith("/cua.env.v1.HostThreadService/CallThreadTool")) {
       return new Response(null, { status: 200, headers: { "content-type": "application/grpc-web+proto", "grpc-status": "7", "grpc-message": encodeURIComponent(opts.threadRefused) } });
     }

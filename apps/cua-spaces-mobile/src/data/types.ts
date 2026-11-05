@@ -78,8 +78,12 @@ export interface SpaceList {
   computers?: import("../core/views").ComputerRow[];
   /** The core's words around the lists: while reading, and when there is nothing to show. */
   words?: { reachingLine: string | null; empty: { title: string; body: string } | null };
-  /** Some machines did not answer yet. */
+  /** Some computers did not answer. */
   incomplete: boolean;
+  /** Which computers did not answer and why (needs an update, took too long, could not be reached). */
+  problems?: import("./live/reach").ReachProblem[];
+  /** This phone is waiting for an enrolled computer to approve it; the Spaces cannot be read until then. */
+  waiting?: import("./live/reach").WaitingApproval | null;
   reaching: number;
   /** Agent rows for the conversation list (the core's order and words). */
   agents: import("../core/views").AgentListRow[];

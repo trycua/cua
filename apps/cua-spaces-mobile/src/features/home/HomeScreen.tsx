@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cacheLine } from "../../core/phone";
 import type { AgentListRow } from "../../core/views";
 import type { SpaceSummary } from "../../data/types";
+import { approveCommand, problemLines } from "../../data/live/reach";
 import { useBackend, useSpaceList } from "../../state/backend";
 import { useOutbox } from "../../state/stores";
 import { useTheme } from "../../theme/theme";
@@ -91,7 +92,9 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
   // Offline: what is shown was saved or last loaded, and the line says when (the core's words).
   const offlineLine = error && list ? (cacheLine(cached?.savedMs ?? syncedMs, now, true) ?? "You're offline.") : "";
   // The core's words around the lists: while it reads, and when there is nothing to show (never a computer faked as a Space).
-  const reachingLine = status === "loading" ? "Loading Spaces…" : (list?.words?.reachingLine ?? (list?.incomplete ? "Some computers did not answer. Pull down to try again." : null));
+  // Which computers did not answer and why, one line each (a generic line only when nothing says which).
+  const problems = list?.problems?.length ? problemLines(list.problems) : list?.incomplete && !list.waiting ? ["Some computers did not answer. Pull down to try again."] : [];
+  const reachingLine = status === "loading" ? "Loading Spaces…" : (list?.words?.reachingLine ?? null);
 
   const actions = {
     onSleep: (s: SpaceSummary) => backend.sleep(s.id).then(refresh, (e) => Alert.alert("Could not put it to sleep", String(e?.message ?? e))),
@@ -149,6 +152,18 @@ export function HomeScreen({ onOpen, onSettings, onNewTask }: HomeProps) {
         </Pressable>
       ) : null}
       {waiting?.banner && waiting.rows.length ? <Text variant="footnote" color="muted" style={{ marginHorizontal: 16, marginBottom: 8 }} accessibilityLiveRegion="polite" testID="home-outbox">{waiting.banner}</Text> : null}
+      {list?.waiting ? (
+        <View style={{ marginHorizontal: 16, marginBottom: 10, padding: 12, borderRadius: 10, backgroundColor: c.muted, gap: 6 }} testID="home-waiting" accessibilityLiveRegion="polite">
+          <Text variant="headline">This phone is waiting for approval</Text>
+          {list.waiting.code ? <Text variant="subhead" color="muted">Code {list.waiting.code}</Text> : null}
+          <Text variant="subhead" color="muted">On a computer that is already signed in, run:</Text>
+          <Text variant="mono" selectable testID="home-waiting-command">{approveCommand(list.waiting.code)}</Text>
+          <Text variant="footnote" color="muted">Pull down to check again.</Text>
+        </View>
+      ) : null}
+      {problems.map((line) => (
+        <Text key={line} variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 6 }} accessibilityLiveRegion="polite" testID="home-problem">{line}</Text>
+      ))}
       {reachingLine && status !== "loading" ? (
         <Text variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingBottom: 6 }} accessibilityLiveRegion="polite">{reachingLine}</Text>
       ) : null}

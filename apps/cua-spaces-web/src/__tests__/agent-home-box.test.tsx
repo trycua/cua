@@ -59,12 +59,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
 
   it("sends the job to the agent's Home Space on the slim image, with the spawn capability and a briefing", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    // No agent has a Home yet: the demo's Claude Code Home is not listed (any listed Home would be reused).
-    const { router } = await mountApp("/home", {
-      ...HOME,
-      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
-      answer: (op, out) => (op === "spaces.list" ? (out as { id: string }[]).filter((r) => r.id !== "local:agent-home-demo") : out),
-    });
+    const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
     fireEvent.change(box, { target: { value: "test my project on a Mac and a Windows computer" } });

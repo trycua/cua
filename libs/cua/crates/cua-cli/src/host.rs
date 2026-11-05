@@ -1967,6 +1967,11 @@ pub async fn run_spaces_sdk(
                 "`cua spaces ls` runs over the registry directly".into(),
             ));
         }
+        SpacesCmd::Default { .. } => {
+            return Err(CuaError::Internal(
+                "`cua spaces default` runs against the relay directly".into(),
+            ));
+        }
     }
     Ok(0)
 }

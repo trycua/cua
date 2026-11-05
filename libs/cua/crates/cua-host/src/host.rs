@@ -3569,10 +3569,33 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
     if manager.state().kind == "fake" {
         return Ok(());
     }
-    let settle = std::env::var("CUA_HOST_START_SETTLE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(4000);
+    let ms = |var: &str, default: u64| {
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(default)
+    };
+    // First it must start. A freshly downloaded driver can take seconds to
+    // appear (Windows scans a new executable on its first run), so a check
+    // a second after the start found no process and reported a host that
+    // then ran (CUA-3513).
+    let start_wait = std::time::Duration::from_millis(ms("CUA_HOST_START_WAIT_MS", 20_000));
+    let started = std::time::Instant::now();
+    while !manager.state().running {
+        if started.elapsed() >= start_wait {
+            let st = manager.state();
+            let tail = log_tail(log);
+            return Err(Error::Service(format!(
+                "the host service did not start within {} s ({}); last log lines: {}",
+                start_wait.as_secs(),
+                st.detail.trim(),
+                if tail.is_empty() { "none" } else { &tail }
+            )));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    // Then it must stay up.
+    let settle = ms("CUA_HOST_START_SETTLE_MS", 4000);
     let step = std::time::Duration::from_millis((settle / 3).max(1));
     for _ in 0..3 {
         tokio::time::sleep(step).await;

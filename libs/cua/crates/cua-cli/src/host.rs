@@ -3190,6 +3190,20 @@ pub async fn run_host_to(
                 );
             } else {
                 render(&s, out);
+                if s.configured {
+                    let spaces = cua_spaces::Spaces::builder()
+                        .home(home)
+                        .relay(cua_spaces::RelayAccount::new(
+                            relay_url(None, home),
+                            Arc::new(SessionTokens),
+                        ))
+                        .build();
+                    if let Ok(list) = spaces.list() {
+                        for l in spaces.relay_publish_status(&list).await.notes() {
+                            line(out, format!("  {l}"));
+                        }
+                    }
+                }
                 for l in crate::resources_view::this_mac_lines(&resources) {
                     line(out, l);
                 }
@@ -4276,6 +4290,11 @@ pub async fn run_spaces(
         own_machine: spaces.this_relay_machine_id(),
     };
     let on_account = spaces.relay_states(&list);
+    let publish_notes = if spaces.relay_account().is_some() {
+        spaces.relay_publish_status(&list).await.notes()
+    } else {
+        Vec::new()
+    };
     if json {
         let mut rows = ls_json(&list);
         // Never holds the list up: signed out or a relay that does not
@@ -4294,7 +4313,8 @@ pub async fn run_spaces(
             }
         }
         let mut body = serde_json::json!({ "spaces": rows, "machines": hosts, "durable": durable,
-                                          "relay_error": relay_error });
+                                          "relay_error": relay_error,
+                                          "account_notes": publish_notes });
         if let (Some(o), Some(extra)) = (
             body.as_object_mut(),
             crate::resources_view::ls_extras(&resources)
@@ -4337,6 +4357,9 @@ pub async fn run_spaces(
     }
     for line_text in hidden_notes(&list) {
         line(out, line_text);
+    }
+    for line_text in publish_notes {
+        line(out, format!("({line_text})"));
     }
     let stay_off: Vec<&str> = list
         .iter()

@@ -162,7 +162,9 @@ struct Attached {
 }
 
 mod publish;
-pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport, breaker_wait, jitter};
+pub use publish::{
+    CHANGED as PUBLISH_CHANGED, Off, PublishReport, PublishStatus, breaker_wait, jitter,
+};
 
 /// Normalizes an invitee: an email (lowercased) or an account id. Teams and
 /// organizations are not relay principals, so `team:` / `org:` entries are

@@ -653,7 +653,13 @@ fn vault(os: SpaceOs) -> Option<&'static str> {
     }
 }
 
-fn notice(input: &ConnectorsInput) -> Option<String> {
+/// The warning shown beside working buttons (keys kept unencrypted).
+fn warning(input: &ConnectorsInput) -> Option<String> {
+    input.keys.warning.as_ref().map(|w| format!("{w}."))
+}
+
+/// What turns the buttons off, in words (credentials can't be read or saved).
+fn blocked(input: &ConnectorsInput) -> Option<String> {
     input
         .keys
         .error
@@ -666,6 +672,11 @@ fn notice(input: &ConnectorsInput) -> Option<String> {
                 .as_ref()
                 .map(|why| format!("Sign-ins can't be saved here: {why}."))
         })
+}
+
+/// The notice: why the buttons are off, else the unencrypted-keys warning.
+fn notice(input: &ConnectorsInput) -> Option<String> {
+    blocked(input).or_else(|| warning(input))
 }
 
 fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
@@ -909,7 +920,7 @@ pub fn view(input: &ConnectorsInput) -> ConnectorsView {
 /// [`view`] in a shell on `os`.
 pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
     let notice = notice(input);
-    let can_edit = notice.is_none();
+    let can_edit = blocked(input).is_none();
     // Every agent harness (installed here or not), then the other apps found here.
     let apps: Vec<ConnectorAppRow> = HARNESS_APPS
         .iter()
@@ -2308,7 +2319,7 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
     let row = app_row(input, a);
     // An agent harness that is not on this machine has no local tools to switch.
     let local = a.installed || a.configured;
-    let can_edit = notice(input).is_none();
+    let can_edit = blocked(input).is_none();
     let busy = input.busy(&format!("app:{agent}")).is_some();
     let mut toggles = vec![];
     if local {
@@ -3307,6 +3318,22 @@ mod tests {
             Some("Couldn't read your sign-ins: the daemon isn't running")
         );
         assert!(v.providers.iter().all(|p| !p.button.enabled));
+    }
+
+    #[test]
+    fn the_unencrypted_keys_warning_shows_while_buttons_stay_on() {
+        let mut i = input();
+        i.keys.warning = Some("Keychain not available in this development build".into());
+        let v = view(&i);
+        assert!(v.can_edit);
+        assert_eq!(
+            v.notice.as_deref(),
+            Some("Keychain not available in this development build.")
+        );
+        assert!(v.providers.iter().any(|p| p.button.enabled));
+        i.keys.unavailable = Some("no Keychain".into());
+        let v = view(&i);
+        assert!(!v.can_edit && v.notice.unwrap().starts_with("Sign-ins can't be saved here"));
     }
 
     fn keyed(env: &str, provider: &str) -> AgentKeyInput {

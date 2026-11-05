@@ -260,6 +260,14 @@ impl CuaChannel {
         self == Self::Local
     }
 
+    /// Whether this channel may keep agent keys in an unencrypted 0600 file
+    /// when the OS vault is not available (an ad hoc signed development
+    /// build). Only the Local channel: Stable never saves a key to a file.
+    /// Every caller asks the channel, so no other code decides this.
+    pub fn allows_insecure_dev_store(self) -> bool {
+        matches!(self, Self::Local)
+    }
+
     // ----- environment -----------------------------------------------------
 
     /// The deployment when `CUA_ENV` is not set: Stable keeps
@@ -716,6 +724,15 @@ fn user_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_local_channel_may_keep_keys_in_a_file() {
+        for c in CuaChannel::ALL {
+            assert_eq!(c.allows_insecure_dev_store(), c == CuaChannel::Local, "{c:?}");
+        }
+        assert!(!CuaChannel::Stable.allows_insecure_dev_store());
+        assert!(!CuaChannel::default().allows_insecure_dev_store());
+    }
+
     use super::*;
 
     fn paths(p: &[&str]) -> Vec<PathBuf> {

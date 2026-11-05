@@ -294,7 +294,7 @@ export function connectorsInputOf(
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
     })),
-    keys: { keys: keys.keys, unavailable: keys.unavailable, error: keys.error },
+    keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
     ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
     ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],

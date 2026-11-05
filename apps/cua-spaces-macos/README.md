@@ -389,6 +389,18 @@ the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
 again after every rebuild; the script says so, and clears the stale rows for the
 Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
 
+The certificate lives in a Keychain the script owns,
+`~/Library/Keychains/cua-spaces-local-signing.keychain-db`, with an empty password
+(it only signs development builds of Cua Spaces Local on this Mac), so a locked
+login Keychain, SSH or a VM does not stop it and nothing is asked to unlock it. The
+script writes nothing to your login Keychain and leaves the search list alone; it
+keeps using a stable local certificate that is already in the login Keychain, or the
+`cua-driver-signing` Keychain of Cua Driver's local install, so permissions already
+granted survive. `CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0` turns the owned Keychain off. When
+nothing works the app is signed ad hoc and the script says why in one line, with the
+command to run (`--setup-signing` for the one-time trust prompt, or
+`security unlock-keychain ...` when an SSH session left the Keychain locked).
+
 On a new Keychain the certificate is created but codesign cannot use it until
 macOS trusts it for code signing, its Keychain is in your search list and
 codesign may use its key. The script checks that with a real signing. When it

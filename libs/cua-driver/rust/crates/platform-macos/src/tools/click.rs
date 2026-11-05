@@ -727,7 +727,7 @@ impl Tool for ClickTool {
                 return match result {
                     Ok(Ok(())) => middle_click_result(pid, idx, foreground_hid),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
-                    Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
 

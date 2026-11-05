@@ -687,9 +687,18 @@ pub struct LoginCommand {
 pub fn login_command(agent: &str) -> Option<LoginCommand> {
     let id = registry::find(agent)?.id;
     match id {
-        "codex" => Some(LoginCommand { args: &["login"], terminal: false }),
-        "claude-code" => Some(LoginCommand { args: &["auth", "login"], terminal: false }),
-        "hermes" => Some(LoginCommand { args: &["model"], terminal: true }),
+        "codex" => Some(LoginCommand {
+            args: &["login"],
+            terminal: false,
+        }),
+        "claude-code" => Some(LoginCommand {
+            args: &["auth", "login"],
+            terminal: false,
+        }),
+        "hermes" => Some(LoginCommand {
+            args: &["model"],
+            terminal: true,
+        }),
         _ => None,
     }
 }
@@ -723,7 +732,9 @@ pub fn sign_in_failure(name: &str, code: Option<i32>, said: &str) -> String {
         .map(|l| l.chars().take(200).collect::<String>());
     match (last, code) {
         (Some(l), _) => format!("{name}'s sign-in stopped: {l}"),
-        (None, Some(c)) => format!("{name}'s sign-in stopped (exit code {c}). Try signing in from its own app."),
+        (None, Some(c)) => {
+            format!("{name}'s sign-in stopped (exit code {c}). Try signing in from its own app.")
+        }
         (None, None) => format!("{name}'s sign-in was stopped. Try again."),
     }
 }
@@ -890,7 +901,10 @@ pub fn start_device_sign_in(
     let said = plain(&seen);
     let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
     Err(CopyRefusal::Failed(match last {
-        Some(l) => format!("Codex didn't show a sign-in code. It said: {}", l.chars().take(200).collect::<String>()),
+        Some(l) => format!(
+            "Codex didn't show a sign-in code. It said: {}",
+            l.chars().take(200).collect::<String>()
+        ),
         None => "Codex didn't show a sign-in code. Try again.".into(),
     }))
 }

@@ -1503,15 +1503,29 @@ fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
     let mut t = T::new();
     let bin = t.home.join("bin");
     let log = t.home.join("claude-argv.log");
-    common::write_executable(&bin, "claude", &format!("printf '%s\\n' \"$*\" >> '{}'\nsleep 0.3\nexit 0", log.display()));
+    common::write_executable(
+        &bin,
+        "claude",
+        &format!(
+            "printf '%s\\n' \"$*\" >> '{}'\nsleep 0.3\nexit 0",
+            log.display()
+        ),
+    );
     t.env.path = vec![bin.clone(), "/bin".into(), "/usr/bin".into()];
     t.env.run_agent_clis = true;
     t.setup().sign_in("claude-code").unwrap();
     assert_eq!(t.read(&log).trim(), "auth login");
     // A login that stops with an error at once: its own last line, in words.
-    common::write_executable(&bin, "claude", "echo 'opening the browser' >&2\necho '\x1b[31mNo browser found\x1b[0m' >&2\nexit 1");
+    common::write_executable(
+        &bin,
+        "claude",
+        "echo 'opening the browser' >&2\necho '\x1b[31mNo browser found\x1b[0m' >&2\nexit 1",
+    );
     let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
-    assert!(e.contains("Claude Code's sign-in stopped: No browser found"), "{e}");
+    assert!(
+        e.contains("Claude Code's sign-in stopped: No browser found"),
+        "{e}"
+    );
     // No output: the exit code.
     common::write_executable(&bin, "claude", "exit 7");
     let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
@@ -1519,7 +1533,11 @@ fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
     // One still waiting for the browser is not started twice (last: it stays
     // registered while it runs).
     let runs = t.home.join("claude-runs.log");
-    common::write_executable(&bin, "claude", &format!("echo run >> '{}'\nsleep 5", runs.display()));
+    common::write_executable(
+        &bin,
+        "claude",
+        &format!("echo run >> '{}'\nsleep 5", runs.display()),
+    );
     t.setup().sign_in("claude-code").unwrap();
     t.setup().sign_in("claude-code").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -1533,12 +1551,19 @@ fn hermes_signs_in_in_terminal() {
     let bin = t.home.join("bin");
     let log = t.home.join("osascript.log");
     common::write_executable(&bin, "hermes", "exit 0");
-    common::write_executable(&bin, "osascript", &format!("printf '%s' \"$*\" > '{}'", log.display()));
+    common::write_executable(
+        &bin,
+        "osascript",
+        &format!("printf '%s' \"$*\" > '{}'", log.display()),
+    );
     t.env.path = vec![bin];
     t.env.run_agent_clis = true;
     t.setup().sign_in("hermes").unwrap();
     let said = t.read(&log);
-    assert!(said.contains("Terminal") && said.contains("hermes") && said.contains("model"), "{said}");
+    assert!(
+        said.contains("Terminal") && said.contains("hermes") && said.contains("model"),
+        "{said}"
+    );
 }
 
 /// Cua's own setup (its entry in a new `~/.claude.json`, its skills under

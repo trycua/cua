@@ -779,8 +779,14 @@ impl AgentSetup {
         // What it prints, kept (the last lines) so a failure can say why.
         let tail = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         for pipe in [
-            child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
-            child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
         ]
         .into_iter()
         .flatten()
@@ -822,7 +828,9 @@ impl AgentSetup {
             if !s.success() {
                 let said = tail.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 return Err(Error::InvalidArgument(signin::sign_in_failure(
-                    a.name, s.code(), &said,
+                    a.name,
+                    s.code(),
+                    &said,
                 )));
             }
             return Ok(());
@@ -846,7 +854,10 @@ impl AgentSetup {
         if self.env.os != Os::MacOs {
             return Err(Error::InvalidArgument(format!(
                 "{name} signs in by asking questions: open a terminal and run `{} {}`.",
-                program.file_name().and_then(|n| n.to_str()).unwrap_or("hermes"),
+                program
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("hermes"),
                 args.join(" ")
             )));
         }

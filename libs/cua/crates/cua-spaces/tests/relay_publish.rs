@@ -848,3 +848,117 @@ async fn a_throttled_relay_is_left_alone() {
     }
     assert_eq!(w.relay.requests(), 1, "asked again while paused");
 }
+
+/// A running Space that is not on the account is never a mystery: the
+/// status says how many and why (an old driver, a relay that fails, signed
+/// out, the switch, sharing stopped), and stopped Spaces are counted as
+/// waiting until they run.
+#[tokio::test]
+async fn running_spaces_that_are_not_on_the_account_say_why() {
+    let w = World::new().await;
+    w.create("good", "linux", Kind::Container).await;
+    // A driver that cannot join the relay (it predates `relay_attach`).
+    let old = MockServer::start(MockAuth::default()).await;
+    let port: u16 = old.url().rsplit(':').next().unwrap().parse().unwrap();
+    w.rt.spacesd.lock().unwrap().insert("old".into(), port);
+    let old_id = w
+        .spaces
+        .create(SpaceCreate {
+            on: Some(On::Local),
+            image: Some("linux".into()),
+            name: Some("old".into()),
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .ready()
+        .unwrap()
+        .id;
+    w.age(&old_id);
+    w.create("sleeper", "linux", Kind::Container).await;
+    w.power("sleeper", "stopped");
+
+    w.spaces.publish_to_relay().await.unwrap();
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, None);
+    assert_eq!((st.running, st.listed, st.stopped), (2, 1, 1), "{st:?}");
+    assert_eq!(st.not_listed.len(), 1, "{st:?}");
+    assert_eq!(st.not_listed[0].0, "old");
+    let notes = st.notes().join("\n");
+    assert!(
+        notes.contains("1 running Space is not on your account: old (")
+            && notes.contains("1 stopped Space shows"),
+        "{notes}"
+    );
+
+    // Signed out: one plain reason for all of them.
+    *w.account.0.lock().unwrap() = None;
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, Some(cua_spaces::share::Off::SignedOut));
+    assert!(st.notes()[0].contains("2 running Spaces are not on your account: you are signed out"));
+
+    // The switch.
+    *w.account.0.lock().unwrap() = Some("ada-token".into());
+    std::fs::write(
+        w.home.path().join("config.toml"),
+        "[relay]\nspaces = \"off\"\n",
+    )
+    .unwrap();
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, Some(cua_spaces::share::Off::Setting));
+    std::fs::remove_file(w.home.path().join("config.toml")).unwrap();
+}
+
+/// A relay that fails is told, from another process too (`cua spaces ls`
+/// reads what the daemon's pass recorded), and the note goes once listing
+/// works again.
+#[tokio::test]
+async fn a_failing_relay_is_told_and_forgotten_when_listing_works() {
+    let w = World::new().await;
+    w.create("a", "linux", Kind::Container).await;
+    w.relay.set_reads_down(true);
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert!(!r.failed.is_empty(), "{r:?}");
+    let infos = w.spaces.list().unwrap();
+    // Another process: same home, no shared memory.
+    let other = Spaces::builder()
+        .home(w.home.path())
+        .sandboxes(
+            Sandboxes::builder()
+                .local(w.rt.clone())
+                .state_dir(w.state.path())
+                .build(),
+        )
+        .relay(RelayAccount::new(&w.relay.url, w.account.clone()))
+        .build();
+    let st = other.relay_publish_status(&infos).await;
+    assert_eq!(st.not_listed.len(), 1, "{st:?}");
+    assert!(
+        st.not_listed[0].1.contains("relay did not answer")
+            || st.not_listed[0].1.contains("not listed yet"),
+        "{st:?}"
+    );
+
+    w.relay.set_reads_down(false);
+    let started = std::time::Instant::now();
+    loop {
+        let r = w.spaces.publish_to_relay().await.unwrap();
+        if !r.published.is_empty() {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(20), "never resumed");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let st = other.relay_publish_status(&w.spaces.list().unwrap()).await;
+    assert_eq!((st.listed, st.not_listed.len()), (1, 0), "{st:?}");
+}

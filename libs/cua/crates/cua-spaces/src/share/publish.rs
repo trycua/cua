@@ -150,6 +150,105 @@ pub struct PublishReport {
     pub more: bool,
 }
 
+const STATUS_FILE: &str = "relay-publish.json";
+/// How long what the daemon last failed to list is still told.
+const STATUS_FRESH: u64 = 600;
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Saved {
+    at: u64,
+    failed: BTreeMap<String, String>,
+}
+
+fn load_saved(home: &std::path::Path) -> Saved {
+    std::fs::read(home.join(STATUS_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Where this computer's running Spaces stand on the account.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PublishStatus {
+    /// Why nothing is listed at all, when that is so.
+    pub off: Option<Off>,
+    /// Running Spaces that did not opt out.
+    pub running: usize,
+    /// Of those, listed on the account.
+    pub listed: usize,
+    /// Stopped Spaces (listed once they run).
+    pub stopped: usize,
+    /// Running Spaces that are not listed, with why (name, reason).
+    pub not_listed: Vec<(String, String)>,
+}
+
+impl Off {
+    /// Why, in words for the person.
+    pub fn why(self) -> &'static str {
+        match self {
+            Off::NoAccount => "no cua.ai account is set up on this computer",
+            Off::SignedOut => {
+                "you are signed out of cua.ai (sign in from the app or run `cua auth login`)"
+            }
+            Off::Setting => "the relay.spaces setting (or CUA_RELAY_SPACES) is off",
+            Off::NotSharing => {
+                "this computer stopped sharing (turn sharing on in the app or run `cua host start`)"
+            }
+        }
+    }
+}
+
+impl PublishStatus {
+    /// Plain lines for `cua spaces ls` and `cua host status`; none when all
+    /// is well and there is nothing to say.
+    pub fn notes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let plural = |n: usize| if n == 1 { "Space is" } else { "Spaces are" };
+        if let Some(off) = self.off {
+            if self.running > 0 {
+                out.push(format!(
+                    "{} running {} not on your account: {}.",
+                    self.running,
+                    plural(self.running),
+                    off.why()
+                ));
+            }
+            return out;
+        }
+        if !self.not_listed.is_empty() {
+            let items: Vec<String> = self
+                .not_listed
+                .iter()
+                .map(|(n, w)| format!("{n} ({w})"))
+                .collect();
+            out.push(format!(
+                "{} running {} not on your account: {}.",
+                self.not_listed.len(),
+                plural(self.not_listed.len()),
+                items.join("; ")
+            ));
+        }
+        if self.stopped > 0 {
+            out.push(format!(
+                "{} stopped {} on your account once running.",
+                self.stopped,
+                if self.stopped == 1 {
+                    "Space shows"
+                } else {
+                    "Spaces show"
+                }
+            ));
+        }
+        out
+    }
+}
+
 /// Why nothing is listed now, or `None` when Spaces may be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Off {
@@ -253,8 +352,13 @@ impl Spaces {
         {
             return false;
         }
-        // Opted out itself or through a parent.
-        let mut at = Some(info.id.clone());
+        !Self::opted_out(&info.id, meta) && !Self::network_blocks_relay(&info.id, meta)
+    }
+
+    /// Whether the Space `id` (or a parent) opted out of the account's relay
+    /// (`--no-relay`, `cua.relay=off`) or is hidden.
+    fn opted_out(id: &str, meta: &BTreeMap<String, crate::registry::SpaceMeta>) -> bool {
+        let mut at = Some(id.to_string());
         let mut seen = BTreeSet::new();
         while let Some(id) = at {
             if !seen.insert(id.clone()) {
@@ -268,20 +372,22 @@ impl Spaces {
                         crate::registry::RelaySetting::parse(v).is_ok_and(|s| !s.is_on())
                     })
             }) {
-                return false;
+                return true;
             }
             at = m.and_then(|m| m.parent.clone());
         }
-        // The Space dials the relay itself: with no network it never reaches
-        // it (`custom` starts from `internet` or `none`).
+        false
+    }
+
+    /// The Space dials the relay itself: with no network it never reaches
+    /// it (`custom` starts from `internet` or `none`).
+    fn network_blocks_relay(id: &str, meta: &BTreeMap<String, crate::registry::SpaceMeta>) -> bool {
         use cua_vmm::network::NetworkPreset as P;
-        let no_network = meta
-            .get(&info.id)
+        meta.get(id)
             .and_then(|m| m.network.as_ref())
             .is_some_and(|n| {
                 n.preset == P::None || (n.preset == P::Custom && n.custom_base == P::None)
-            });
-        !no_network
+            })
     }
 
     /// Where each local Space of `infos` stands on the account: `on` (listed
@@ -324,6 +430,12 @@ impl Spaces {
     ///   growing, jittered time that is never shorter than its `Retry-After`;
     ///   Spaces keep being made here meanwhile.
     pub async fn publish_to_relay(&self) -> Result<PublishReport> {
+        let report = self.publish_pass().await?;
+        self.record_outcome(&report);
+        Ok(report)
+    }
+
+    async fn publish_pass(&self) -> Result<PublishReport> {
         let mut report = PublishReport::default();
         let home = self.home_dir().to_path_buf();
         let gate = self.relay_publishing().await;
@@ -726,6 +838,87 @@ impl Spaces {
                 false
             }
         }
+    }
+
+    /// Remembers, for `cua spaces ls` and `cua host status` (other
+    /// processes), which Spaces the last passes could not list and why.
+    fn record_outcome(&self, report: &PublishReport) {
+        let home = self.home_dir();
+        let mut saved = load_saved(home);
+        let before = saved.failed.clone();
+        let clean = memo(home, |m| m.settled.is_some() && m.breaker.fails == 0);
+        if clean {
+            saved.failed.clear();
+        }
+        for id in report.published.iter().chain(&report.unpublished) {
+            saved.failed.remove(id);
+        }
+        for (id, why) in &report.failed {
+            saved.failed.insert(id.clone(), why.clone());
+        }
+        if saved.failed != before {
+            saved.at = unix_now();
+            let _ = std::fs::write(
+                home.join(STATUS_FILE),
+                serde_json::to_vec(&saved).unwrap_or_default(),
+            );
+        }
+    }
+
+    /// Where this computer's running Spaces stand on the account, in plain
+    /// words for the person: which are not listed and why (nothing is
+    /// silent). Reads the same rules a pass follows.
+    pub async fn relay_publish_status(&self, infos: &[crate::SpaceInfo]) -> PublishStatus {
+        let off = self.relay_publishing().await.err();
+        let meta = self.inner.registry.all_meta();
+        let attached = self.attached();
+        let provided = self.provided_here();
+        let saved = load_saved(self.home_dir());
+        let fresh = unix_now().saturating_sub(saved.at) < STATUS_FRESH;
+        let mut st = PublishStatus {
+            off,
+            ..Default::default()
+        };
+        for info in infos
+            .iter()
+            .filter(|i| i.id.starts_with("local:") && !provided.contains(&i.id))
+        {
+            if self.is_off(info) {
+                st.stopped += 1;
+                continue;
+            }
+            if !self.recorded_running(info) || Self::opted_out(&info.id, &meta) {
+                continue;
+            }
+            st.running += 1;
+            if attached.get(&info.id).is_some_and(|a| a.auto) {
+                st.listed += 1;
+                continue;
+            }
+            if off.is_some() {
+                continue;
+            }
+            let why = if !info
+                .features
+                .iter()
+                .any(|f| f == super::RELAY_ATTACH_FEATURE)
+            {
+                crate::space::unreported_feature_limitation(
+                    &info.spacesd_version,
+                    super::RELAY_ATTACH_FEATURE,
+                )
+            } else if Self::network_blocks_relay(&info.id, &meta) {
+                "its network cannot reach the relay".to_string()
+            } else if let Some(e) = saved.failed.get(&info.id).filter(|_| fresh) {
+                format!("not listed yet: {e}")
+            } else if let Some(e) = saved.failed.get("").filter(|_| fresh) {
+                format!("the relay did not answer: {e}")
+            } else {
+                "waiting for the next check".to_string()
+            };
+            st.not_listed.push((info.shown_name().to_string(), why));
+        }
+        st
     }
 
     /// Makes a hidden Space ([`crate::registry::HIDDEN_LABEL`]) visible: the

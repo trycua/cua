@@ -149,8 +149,9 @@ struct FileAttrs {
 
 /// Users the mock's guest has. `run_as` of any other user is
 /// `INVALID_ARGUMENT`, like a real guest without that account; `locked` is a
-/// user the agent may not act as (`PERMISSION_DENIED`).
-pub const MOCK_USERS: &[&str] = &["root", "mock", "cua", "alice", "bob"];
+/// user the agent may not act as (`PERMISSION_DENIED`). `daytona` is the
+/// sandbox user the Daytona gateway creates on a real guest.
+pub const MOCK_USERS: &[&str] = &["root", "mock", "cua", "alice", "bob", "daytona"];
 /// The user whose identity the mock's agent refuses to take.
 pub const MOCK_LOCKED_USER: &str = "locked";
 /// The user the mock agent runs as unless `run_as_mode` is `root`, like the

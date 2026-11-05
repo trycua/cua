@@ -208,6 +208,7 @@ async fn dispatch(
                 .into_iter()
                 .map(|h| h.space)
                 .collect();
+            let default = spaces.default_space_id().await;
             let rows: Vec<Value> = spaces
                 .list_all()
                 .await?
@@ -222,7 +223,10 @@ async fn dispatch(
                     } else {
                         PHASE_READY
                     };
-                    with(info, row_extra(info, &direct_hosts, phase))
+                    with(
+                        info,
+                        row_extra(info, &direct_hosts, phase, default.as_deref()),
+                    )
                 })
                 .collect();
             Ok(ToolOutcome::json(&rows))
@@ -291,7 +295,7 @@ async fn dispatch(
             };
             let row = |created: SpaceCreated| match created {
                 SpaceCreated::Ready { info, reused } => {
-                    let mut extra = row_extra(&info, &[], PHASE_READY);
+                    let mut extra = row_extra(&info, &[], PHASE_READY, None);
                     extra["reused"] = json!(reused);
                     with(&info, extra)
                 }
@@ -983,8 +987,10 @@ async fn dispatch(
         }
         #[cfg(feature = "spaces-agents")]
         "relay_unregister_space" => {
-            let a: i::SpaceOnly = args(tool, a)?;
-            let unregistered = spaces.relay_unregister(&a.space).await?;
+            let a: i::RelayUnregisterSpace = args(tool, a)?;
+            let unregistered = spaces
+                .relay_unregister_computer(&a.space, a.delete_spaces.unwrap_or(false))
+                .await?;
             let space = spaces.resolve(&a.space)?.to_string();
             Ok(ToolOutcome::json(
                 &json!({"space": space, "unregistered": unregistered}),
@@ -1068,8 +1074,18 @@ async fn hotspot_start(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutc
     Ok(ToolOutcome::json(&status))
 }
 
-fn row_extra(info: &crate::SpaceInfo, direct_hosts: &[String], phase: &str) -> Value {
-    let mut extra = json!({ "phase": phase, "clipboard": info.clipboard.as_str() });
+fn row_extra(
+    info: &crate::SpaceInfo,
+    direct_hosts: &[String],
+    phase: &str,
+    default: Option<&str>,
+) -> Value {
+    let mut extra = json!({
+        "phase": phase,
+        "clipboard": info.clipboard.as_str(),
+        "parent": info.parent_space_id(),
+        "default": default == Some(info.id.as_str()),
+    });
     let via = if direct_hosts.contains(&info.id) || info.host.starts_with("direct:") {
         Some("direct")
     } else if !info.host.is_empty() {

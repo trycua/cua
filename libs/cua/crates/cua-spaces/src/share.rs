@@ -1019,6 +1019,30 @@ impl Spaces {
     /// A host that is connected now is taken off with `cua host remove` on
     /// it instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
+        self.relay_unregister_computer(space, false).await
+    }
+
+    /// [`Spaces::relay_unregister`]. A computer's own Spaces stay on the
+    /// account, detached (they come back when it registers again);
+    /// `delete_spaces` deletes them instead, first through the computer
+    /// while it answers (their files go), then their records on the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: &str,
+        delete_spaces: bool,
+    ) -> Result<bool> {
+        self.relay_unregister_computer(space, false).await
+    }
+
+    /// [`Spaces::relay_unregister`]. A computer's own Spaces stay on the
+    /// account, detached (they come back when it registers again);
+    /// `delete_spaces` deletes them instead, first through the computer
+    /// while it answers (their files go), then their records on the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: &str,
+        delete_spaces: bool,
+    ) -> Result<bool> {
         // A Space that is already gone here but was left on the relay (its
         // delete could not reach the relay, CUA-2841): its machine is still
         // remembered, so `relay-unregister local:<name>` removes it.
@@ -1039,7 +1063,7 @@ impl Spaces {
         };
         let canonical = id.to_string();
         if let SpaceId::Relay { machine_id } = &id {
-            let removed = self.forget_relay_machine(machine_id).await?;
+            let removed = self.forget_relay_machine(machine_id, delete_spaces).await?;
             if removed.is_some() {
                 self.audit_share("forget", &canonical, &format!("machine={machine_id}"));
             }

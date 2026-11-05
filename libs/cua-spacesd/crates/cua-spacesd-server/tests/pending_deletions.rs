@@ -254,42 +254,56 @@ struct FakeDaemon {
     forwarded: Arc<Mutex<Vec<String>>>,
 }
 
-macro_rules! unused {
-    ($name:ident, $req:ty, $resp:ty) => {
-        async fn $name(
-            &self,
-            _: tonic::Request<$req>,
-        ) -> Result<tonic::Response<$resp>, tonic::Status> {
-            Err(tonic::Status::unimplemented(stringify!($name)))
-        }
-    };
-}
-
 #[tonic::async_trait]
 impl HostSpacesService for FakeDaemon {
-    unused!(get_host_spaces, GetHostSpacesRequest, GetHostSpacesResponse);
-    unused!(
-        create_host_space,
-        CreateHostSpaceRequest,
-        CreateHostSpaceResponse
-    );
-    unused!(
-        cancel_host_space,
-        CancelHostSpaceRequest,
-        CancelHostSpaceResponse
-    );
-    unused!(
-        set_host_space_power,
-        SetHostSpacePowerRequest,
-        SetHostSpacePowerResponse
-    );
-    unused!(set_host_warm, SetHostWarmRequest, SetHostWarmResponse);
-    unused!(
-        set_host_space_egress,
-        SetHostSpaceEgressRequest,
-        SetHostSpaceEgressResponse
-    );
-    unused!(diagnose_host, DiagnoseHostRequest, DiagnoseHostResponse);
+    async fn get_host_spaces(
+        &self,
+        _: tonic::Request<GetHostSpacesRequest>,
+    ) -> Result<tonic::Response<GetHostSpacesResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("get_host_spaces"))
+    }
+
+    async fn create_host_space(
+        &self,
+        _: tonic::Request<CreateHostSpaceRequest>,
+    ) -> Result<tonic::Response<CreateHostSpaceResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("create_host_space"))
+    }
+
+    async fn cancel_host_space(
+        &self,
+        _: tonic::Request<CancelHostSpaceRequest>,
+    ) -> Result<tonic::Response<CancelHostSpaceResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("cancel_host_space"))
+    }
+
+    async fn set_host_space_power(
+        &self,
+        _: tonic::Request<SetHostSpacePowerRequest>,
+    ) -> Result<tonic::Response<SetHostSpacePowerResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("set_host_space_power"))
+    }
+
+    async fn set_host_warm(
+        &self,
+        _: tonic::Request<SetHostWarmRequest>,
+    ) -> Result<tonic::Response<SetHostWarmResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("set_host_warm"))
+    }
+
+    async fn set_host_space_egress(
+        &self,
+        _: tonic::Request<SetHostSpaceEgressRequest>,
+    ) -> Result<tonic::Response<SetHostSpaceEgressResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("set_host_space_egress"))
+    }
+
+    async fn diagnose_host(
+        &self,
+        _: tonic::Request<DiagnoseHostRequest>,
+    ) -> Result<tonic::Response<DiagnoseHostResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("diagnose_host"))
+    }
 
     async fn delete_host_space(
         &self,

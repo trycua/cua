@@ -97,7 +97,7 @@ const RecentThreadShape = ref(
 const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
 const DriverStatusShape = ref(
   "DriverStatus",
-    obj<DriverStatus>()({
+  obj<DriverStatus>()({
     machineId: str,
     machineName: str,
     thisMachine: bool,

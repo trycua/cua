@@ -486,13 +486,11 @@ mod tests {
     #[test]
     fn uses_the_bundled_driver_and_the_channels_names() {
         let (_dir, exe) = exe_with_driver();
-        let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Stable)
-            .unwrap();
+        let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Stable).unwrap();
         assert_eq!(c.binary, exe.parent().unwrap().join("cua-driver"));
         assert_eq!(c.host_bundle_id, "com.trycua.spaces.macos");
         assert_eq!(c.socket, CuaChannel::Stable.embedded_driver_socket());
-        let l =
-            EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Local).unwrap();
+        let l = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Local).unwrap();
         assert_eq!(l.host_bundle_id, "com.trycua.spaces.macos.local");
         assert_eq!(l.socket, CuaChannel::Local.embedded_driver_socket());
     }

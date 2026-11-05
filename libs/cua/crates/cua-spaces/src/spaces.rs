@@ -2181,7 +2181,7 @@ impl Spaces {
                 // runtime still bringing the Space back (a restart
                 // publishes the ports a moment later), not an image
                 // without it: mark it so the next use dials again.
-                if matches!(id, SpaceId::Local { .. }) && self.record_expects_spacesd(&id) {
+                if matches!(id, SpaceId::Local { .. }) && self.record_expects_spacesd(id) {
                     unavailable = Some((
                         String::new(),
                         "the Space's cua-spacesd port is not published yet".into(),

@@ -236,6 +236,15 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
   "startup.act": { action: "allowAccess" },
+  "driver.status": {},
+  "driver.list": {},
+  "driver.config": {},
+  "driver.setConfig": { changes: { "cursor.float": "off" } },
+  "driver.test": {},
+  "driver.pause": { paused: false },
+  "driver.setApp": { app: "codex", on: true },
+  "driver.setup": {},
+  "driver.update": {},
 };
 
 /** Operations the demo host refuses on purpose, and why. */

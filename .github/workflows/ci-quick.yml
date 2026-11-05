@@ -60,14 +60,7 @@ jobs:
           enable-cache: true
       - name: Install actionlint
         if: steps.marker.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          VERSION=1.7.12
-          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \
-            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
-          mkdir -p "$RUNNER_TEMP/bin"
-          tar xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/bin" actionlint
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-actionlint
       - name: bin/ci --quick
         if: steps.marker.outputs.cache-hit != 'true'
         # --no-install: a check that needs a package's node_modules is skipped here (its own workflow

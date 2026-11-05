@@ -88,7 +88,8 @@ jobs:
           RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
-          gh release download "cua-driver-rs-v${VERSION}" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "cua-driver-rs-v${VERSION}" \
             --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-darwin-*.tar.gz" \
@@ -140,7 +141,8 @@ jobs:
           RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
-          gh release download "cua-driver-rs-v${VERSION}" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "cua-driver-rs-v${VERSION}" \
             --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-windows-*.zip"

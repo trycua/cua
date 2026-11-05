@@ -174,7 +174,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends git ca-certificates curl build-essential \
             pkg-config unzip python3 xz-utils cmake
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://deb.nodesource.com/setup_22.x | bash -
           apt-get install -y nodejs
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
@@ -830,7 +830,12 @@ jobs:
           cp "$xcframework" release/
           cosign sign-blob --yes --bundle release/CuaSDKFFI.xcframework.zip.sigstore.json \
             release/CuaSDKFFI.xcframework.zip >/dev/null
-          gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY"
+          # This job has no checkout: retry inline so a GitHub 5xx does not fail the attach.
+          for attempt in 1 2 3 4 5; do
+            gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY" && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep $((attempt * 3))
+          done
           (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
           grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
           gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"

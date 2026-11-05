@@ -104,7 +104,7 @@ jobs:
           npm ci
           node ../scripts/stage-uniffi-library.mjs --only=node
           npm run build
-          command -v wasm-pack >/dev/null || curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          command -v wasm-pack >/dev/null || curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
           command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
           npm run build:browser
       - name: Test the sample

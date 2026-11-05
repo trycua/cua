@@ -348,7 +348,8 @@ jobs:
 
           # Installers no feed names any more go (the fixed-name downloads stay).
           mkdir -p "$RUNNER_TEMP/live"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" \
             --dir "$RUNNER_TEMP/live" --clobber
           keep="$(python3 -I - "$RUNNER_TEMP/live" <<'PY'
           import os, re, sys, urllib.parse
@@ -388,7 +389,8 @@ jobs:
             { echo "::error::$TAG is not a prerelease"; exit 1; }
           # Every installer a nightly feed names, and every fixed-name download, resolves.
           dir="$RUNNER_TEMP/check"; mkdir -p "$dir"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" --dir "$dir" --clobber
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" --dir "$dir" --clobber
           [ ! -f "$dir/$APPCAST" ] || python3 -I .github/scripts/sparkle_feed.py nightly "$dir/$APPCAST"
           urls="$( { grep -hoE 'https://[^"'"'"' ]+' "$dir"/*.yml 2>/dev/null || true; \
                      grep -hoE 'url="https://[^"]+"' "$dir"/*.xml 2>/dev/null | sed 's/^url="//; s/"$//' || true; } | sort -u)"

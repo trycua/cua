@@ -36,13 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install actionlint
+        uses: ./.github/actions/install-actionlint
       - name: Run actionlint
         run: |
           set -euo pipefail
-          VERSION=1.7.12
-          curl -fsSL -o actionlint.tgz \
-            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
-          tar xzf actionlint.tgz actionlint
           # shellcheck findings inside `run:` blocks are advisory here; the
           # expression/context errors that kill a workflow outright are not.
-          ./actionlint -shellcheck= -pyflakes=
+          actionlint -shellcheck= -pyflakes=

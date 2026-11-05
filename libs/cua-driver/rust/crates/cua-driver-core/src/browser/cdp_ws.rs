@@ -1361,6 +1361,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_detached_dialog_session_drops_its_dialog_record() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "Dialog.open" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogOpening".into(),
+                session_id: call.session_id.clone(),
+                params: json!({ "type": "alert" }),
+            }]),
+            "Target.detachFromTarget" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Target.detachedFromTarget".into(),
+                session_id: None,
+                params: json!({ "sessionId": call.params["sessionId"], "targetId": "page-target" }),
+            }]),
+            _ => MockReply::ok(json!({})),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.register_dialog_session("tab-session-a", "page-target");
+        conn.call(Some("tab-session-a"), "Dialog.open", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("page-target").is_some());
+        conn.call(
+            None,
+            "Target.detachFromTarget",
+            json!({ "sessionId": "tab-session-a" }),
+        )
+        .await
+        .unwrap();
+        assert!(conn.dialog_state("page-target").is_none());
+        assert!(!conn.has_dialog_session("page-target"));
+    }
+
+    #[tokio::test]
     async fn out_of_order_replies_route_to_the_right_callers() {
         // Raw server: read two requests, reply to the SECOND first.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

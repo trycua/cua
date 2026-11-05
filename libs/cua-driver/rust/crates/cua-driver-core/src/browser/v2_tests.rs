@@ -61,6 +61,10 @@ pub(super) struct FixtureState {
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
+    /// The renderer dropped its dialog without `Page.javascriptDialogClosed`
+    /// (a crash, a lost event): resolving it answers Chromium's
+    /// `No dialog is showing`.
+    dialog_vanished: bool,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
@@ -120,6 +124,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             click_opens_dialog: false,
+            dialog_vanished: false,
             page_sessions: Vec::new(),
             semantic_large_page: false,
             semantic_html_style: String::new(),
@@ -808,6 +813,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     return MockReply::hang().with_events(events);
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
+            }
+            "Page.handleJavaScriptDialog" if is_tab && st.dialog_vanished => {
+                MockReply::err(-32602, "No dialog is showing")
             }
             "Page.handleJavaScriptDialog" if is_tab => {
                 MockReply::ok(json!({})).with_events(vec![MockEvent {
@@ -3941,4 +3949,53 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
     let t = structured(&trusted);
     assert_eq!(t["refusal"]["code"], "browser_action_unavailable", "{t}");
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn a_dialog_chromium_no_longer_shows_stops_locking_the_tab() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    let dialog_id = structured(&first)["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    {
+        // The renderer drops the dialog and Chromium never says it closed.
+        let mut state = f.state.lock().unwrap();
+        state.click_opens_dialog = false;
+        state.dialog_vanished = true;
+    }
+
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["present"], false, "{d}");
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&inspected)["present"], false);
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 }

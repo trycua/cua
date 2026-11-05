@@ -369,7 +369,7 @@ def test_workflow_wiring():
     assert checkout["with"]["fetch-depth"] == 2
     assert changes["steps"][1]["env"]["EVENT"] == "${{ github.event_name }}"
     # The nightly lane is not behind the scope job.
-    assert "needs" not in live
+    assert live["needs"] == "quick"  # the quick stage only; not behind the scope job
     assert "github.event_name == 'schedule'" in live["if"] and "needs.changes" not in live["if"]
     assert set(WORKFLOW[True]) == {"pull_request", "schedule", "workflow_dispatch"}
 

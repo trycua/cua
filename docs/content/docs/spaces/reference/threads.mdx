@@ -90,11 +90,14 @@ Posts as you (the daemon stamps the author; it is never an argument). `@name` of
 | `answer` | `object` | none | Answer an approval entry. |
 | `answer.approval` | `integer` | required | The `seq` of the approval entry. At least 0. |
 | `answer.approve` | `boolean` | required | Approve (true) or deny (false). |
+| `answer.client_id` | `string` | none | A key of the caller's for this answer. Sending the same answer again after a lost connection returns the first one (`replayed: true`) and never writes a second; a different decision for an approval already answered is refused. |
 | `answer.note` | `string` | `null` | A note for the agent. |
+| `answer.scope` | `string` | none | `once` (default): this approval only. `space`: allow this kind of request from this agent in this Space from now on; the daemon answers the same request itself, and the grant can be taken back. Only for an approval whose `scope_choices` lists it (an agent's own request; never a push, a sign-in, a join or an ability request), and never with `approve: false`. |
 | `approval` | `object` | none | Ask the people in the thread to approve something. |
 | `approval.action` | `string` | required | What would happen, in a few words ("buy", "deploy"). |
 | `approval.details` | `string` | `null` | The details the person reads before answering. |
 | `attachments` | `string[]` | `[]` | Up to 16 files: Cua Volume paths, or (for this machine's own user) local file paths, which are copied into `spaces/<space>/thread/files/<entry id>/`. |
+| `client_id` | `string` | none | A key of the caller's for this post: the same key from the same author again (a retry after a lost connection) returns the first entry (`replayed: true`) and writes nothing. Kept on the entry as `client_id`. |
 | `reply_to` | `integer` | none | The `seq` of the entry this answers. At least 0. |
 | `space` | `string` | required | Space id or name. |
 | `text` | `string` | required | The message (up to 32 KiB). `@name` of an agent member of the Space makes it a task for that agent. |

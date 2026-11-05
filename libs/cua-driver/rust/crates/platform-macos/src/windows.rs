@@ -220,10 +220,9 @@ fn enumerate_windows(
     }
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
-    let total = raw.len() as usize;
     let mut results = Vec::new();
 
-    for (idx, item) in raw.iter().enumerate() {
+    for item in raw.iter() {
         let item = *item;
         // Each item should be a CFDictionary.
         let dict_type = CFDictionary::<*const c_void, *const c_void>::type_id();
@@ -323,9 +322,6 @@ fn enumerate_windows(
                 })
         };
 
-        // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = cua_driver_core::window_target::z_index_from_front_to_back(total, idx);
-
         results.push(WindowInfo {
             window_id,
             pid,
@@ -333,13 +329,15 @@ fn enumerate_windows(
             title,
             bounds,
             layer,
-            z_index,
+            z_index: 0,
             is_on_screen,
             current_space_id: None,
             on_current_space: None,
             space_ids: None,
         });
     }
+
+    normalize_z_indices(&mut results);
 
     if let Some(query) = &space_query {
         for window in &mut results {
@@ -354,6 +352,16 @@ fn enumerate_windows(
     WindowEnumeration {
         windows: results,
         current_space_id,
+    }
+}
+
+/// Number a front-to-back window list with the shared `z_index` contract.
+/// Run it after every filter so the returned values stay contiguous.
+pub(crate) fn normalize_z_indices(windows: &mut [WindowInfo]) {
+    let total = windows.len();
+    for (position, window) in windows.iter_mut().enumerate() {
+        window.z_index =
+            cua_driver_core::window_target::z_index_from_front_to_back(total, position);
     }
 }
 

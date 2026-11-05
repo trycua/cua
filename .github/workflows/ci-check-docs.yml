@@ -55,7 +55,14 @@ jobs:
   # Route once on Linux, then start only the generator rows this change can
   # affect. Unaffected rows previously booted a macOS or Windows runner just to
   # decide to skip.
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   scope:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Select affected generators
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -130,10 +137,12 @@ jobs:
       run:
         shell: bash
     steps:
-      # The generators read release tags to record the documented version.
+      # The generators read release tags to record the documented version, so
+      # they need history and tags but not every old file's contents.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       # The cua SDK generators build cua-sdk, cua-spaces-ffi and cua-bindgen
       # in debug; with the restored cache that fills the hosted runner's disk

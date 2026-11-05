@@ -999,6 +999,12 @@ impl Spaces {
         SessionRoom::of(&usage, here, inflight)
     }
 
+    /// Whether any linked cloud could supply a Space (the callers that must not
+    /// spend one unasked, such as a task started from a phone, check this first).
+    pub async fn has_linked_clouds(&self) -> bool {
+        self.elastic_has_clouds().await
+    }
+
     /// Whether any linked cloud supplies the elastic pool (machines to add,
     /// or Spaces priced per Space).
     pub(crate) async fn elastic_has_clouds(&self) -> bool {

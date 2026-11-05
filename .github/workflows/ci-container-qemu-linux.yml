@@ -15,7 +15,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   build:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/docker-reusable-build.yml
     with:
       image_name: cua-qemu-linux

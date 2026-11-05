@@ -254,7 +254,23 @@ async fn dispatch(
                     "count {count}: create 1 to {MAX_CREATE_COUNT} Spaces at a time"
                 )));
             }
+            // The network: tightening only (anything opening more than
+            // Internet only is the user's to choose).
+            let network_settings = match (&a.network, &a.allow, &a.deny) {
+                (None, None, None) => None,
+                _ => {
+                    let s = crate::network::parse_network(
+                        a.network.as_deref().unwrap_or("internet"),
+                        a.allow.as_deref().unwrap_or_default(),
+                        a.deny.as_deref().unwrap_or_default(),
+                    )?;
+                    crate::network::refuse_widening_by_agent(&s, None)?;
+                    Some(s)
+                }
+            };
             let one = |name: Option<String>| SpaceCreate {
+                network_settings: network_settings.clone(),
+                parent: a.parent.clone(),
                 image: a.image.clone(),
                 on: on.clone(),
                 kind,
@@ -326,6 +342,16 @@ async fn dispatch(
             let a: i::SpaceOnly = args(tool, a)?;
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
         }
+        "network_show" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_info(&a.space).await?))
+        }
+        "network_log" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_events(&a.space).await?))
+        }
+        // Boxed: its locals stay out of this function's frame.
+        "network_set" => Box::pin(network_set(spaces, tool, a)).await,
         "stop_space" => {
             let a: i::StopSpace = args(tool, a)?;
             if a.suspend.unwrap_or(false) {
@@ -646,6 +672,20 @@ async fn dispatch(
             let t = Duration::from_secs(a.timeout.unwrap_or(60).clamp(1, 24 * 3600));
             Ok(ToolOutcome::text(s.bash(&a.command, t).await?.render()))
         }
+        "space_service" => {
+            let a: i::SpaceService = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            Ok(ToolOutcome::json(&space_service(&s, a).await?))
+        }
+        "space_job" => {
+            let a: i::SpaceJob = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            let mut out = s.job(&a).await?;
+            if a.action == "start" && a.notify.unwrap_or(false) {
+                out["notify"] = crate::space_jobs::watch(spaces, &s, &out, &a).await;
+            }
+            Ok(json_of(&out))
+        }
         "space_write" => {
             let a: i::SpaceWrite = args(tool, a)?;
             let s = space_for(spaces, tool, &a.space).await?;
@@ -895,21 +935,7 @@ async fn dispatch(
         }
         // --- hotspot ----------------------------------------------------------
         #[cfg(feature = "spaces-hotspot")]
-        "hotspot_start" => {
-            let a: i::HotspotStart = args(tool, a)?;
-            space_for(spaces, tool, &a.space).await?;
-            let status = spaces
-                .hotspot_start(
-                    &a.space,
-                    crate::hotspot::HotspotOptions {
-                        set_system_proxy: a.set_system_proxy.unwrap_or(true),
-                        bypass: a.bypass.unwrap_or_default(),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(ToolOutcome::json(&status))
-        }
+        "hotspot_start" => Box::pin(hotspot_start(spaces, tool, a)).await,
         #[cfg(feature = "spaces-hotspot")]
         "hotspot_stop" => {
             let a: i::HotspotTarget = args(tool, a)?;
@@ -977,8 +1003,73 @@ async fn dispatch(
 /// `phase`, and for a host added by its direct address or a Space on a
 /// host, `via`: `direct` (its Tailscale or LAN address, no relay) or
 /// `relay`.
+async fn network_set(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::NetworkSet = args(tool, a)?;
+    let current = spaces.network_info(&a.space).await?.settings;
+    let mut s = crate::network::parse_network(
+        &a.network,
+        a.allow.as_deref().unwrap_or_default(),
+        a.deny.as_deref().unwrap_or_default(),
+    )?;
+    // The exit: as asked, else the one it has.
+    s = match a.via.as_deref() {
+        Some(word) => crate::network::with_via(s, word)?,
+        None => crate::network::with_via(
+            s,
+            &current
+                .via
+                .as_ref()
+                .map(|v| v.as_word())
+                .unwrap_or_default(),
+        )?,
+    };
+    crate::network::refuse_widening_by_agent(&s, Some(&current))?;
+    crate::network::refuse_exit_by_agent(&s, Some(&current))?;
+    let tree = a.tree.unwrap_or(false);
+    let applied = spaces.set_network(&a.space, &s, false, tree).await?;
+    Ok(ToolOutcome::json(&json!({
+        "applied": match applied {
+            crate::network::Applied::Now => "now",
+            crate::network::Applied::NextStart => "next_start",
+        },
+        "network": spaces.network_info(&a.space).await?,
+    })))
+}
+
+#[cfg(feature = "spaces-hotspot")]
+async fn hotspot_start(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::HotspotStart = args(tool, a)?;
+    space_for(spaces, tool, &a.space).await?;
+    crate::hotspot::require_confirmed(a.confirm)?;
+    let secure = cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure;
+    // Under Secure Spaces, "this computer" is the exit for this run:
+    // the Space's own rules apply first (the internet only unless
+    // they allow more). Without the experiment it is as it was.
+    let dialer = if secure {
+        let rules = match spaces.network_info(&a.space).await {
+            Ok(info) => crate::exit::ExitPolicy::of(&info.settings)?,
+            Err(_) => crate::exit::ExitPolicy::default_internet(),
+        };
+        crate::exit::this_machine(std::sync::Arc::new(rules))
+    } else {
+        crate::hotspot::direct_dialer()
+    };
+    let status = spaces
+        .hotspot_start(
+            &a.space,
+            crate::hotspot::HotspotOptions {
+                set_system_proxy: a.set_system_proxy.unwrap_or(!secure),
+                bypass: a.bypass.unwrap_or_default(),
+                dialer,
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(ToolOutcome::json(&status))
+}
+
 fn row_extra(info: &crate::SpaceInfo, direct_hosts: &[String], phase: &str) -> Value {
-    let mut extra = json!({ "phase": phase });
+    let mut extra = json!({ "phase": phase, "clipboard": info.clipboard.as_str() });
     let via = if direct_hosts.contains(&info.id) || info.host.starts_with("direct:") {
         Some("direct")
     } else if !info.host.is_empty() {
@@ -1135,6 +1226,16 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             // The caller's env, the env_from_host keys, and the keys saved
             // in Cua Spaces that this harness reads.
             let (opts, missing) = ag::start_options(&a)?;
+            // An agent run may make child Spaces of its own Space: this
+            // machine keeps the Space's spawn channel while that is on
+            // (only for a Space this computer runs).
+            let id = s.id().to_string();
+            if id.starts_with("local:")
+                && spaces.registry().get(&id).ok().flatten().is_some()
+                && let Err(e) = spaces.set_children(&id, true)
+            {
+                tracing::warn!(space = %id, error = %e, "could not turn on child Spaces");
+            }
             let started = agents.start(&a.agent, &a.prompt, opts).await;
             // The MCP `agent_start`, the SDKs' `Space.agent_start` and the
             // Spaces app all arrive here.
@@ -1195,9 +1296,13 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             if a.force.unwrap_or(false) {
                 agents.interrupt(&a.run_id).await?;
             }
+            let steered = a.force.unwrap_or(false);
             let st = agents.send(&a.run_id, &a.text, vec![]).await?;
             Ok(ToolOutcome::json(&json!({
                 "delivered": true, "run_id": a.run_id, "status": st.status, "phase": st.phase,
+                // `queued` behind the running turn, `steered` (the running turn
+                // was interrupted first) or `started` (a turn of its own).
+                "mode": if steered { "steered" } else if st.phase == "working" { "queued" } else { "started" },
                 "reason": if st.phase == "working" { "queued after the running turn" } else { "a new turn in the same session" },
             })))
         }
@@ -1342,4 +1447,65 @@ async fn show(s: &crate::Space, run_dir: &str, run_id: &str) {
     {
         h.detach();
     }
+}
+
+/// `space_service`.
+async fn space_service(s: &crate::Space, a: i::SpaceService) -> Result<Value> {
+    use crate::keep::{Probe, Restart, ServiceControl, ServiceDef};
+    let name = || {
+        a.name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .ok_or_else(|| Error::InvalidArgument(format!("{} needs `name`", a.action)))
+    };
+    Ok(match a.action.as_str() {
+        "add" => {
+            let restart = match a.restart.as_deref() {
+                None => Restart::Always,
+                Some(r) => Restart::parse(r).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "restart {r:?}: use always, on-failure or never"
+                    ))
+                })?,
+            };
+            let probe = (a.http.is_some() || a.tcp.is_some() || a.check.is_some()).then(|| Probe {
+                http: a.http.clone(),
+                tcp: a.tcp.clone(),
+                command: a.check.clone(),
+                ..Default::default()
+            });
+            let def = ServiceDef {
+                name: name()?,
+                command: a
+                    .command
+                    .clone()
+                    .ok_or_else(|| Error::InvalidArgument("add needs `command`".into()))?,
+                restart,
+                probe,
+                start_on_boot: a.start_on_boot.unwrap_or(true),
+                ..Default::default()
+            };
+            serde_json::to_value(s.put_service(&def).await?).unwrap_or(Value::Null)
+        }
+        "list" => json!({ "services": s.kept_services().await? }),
+        "start" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Start).await?)
+            .unwrap_or(Value::Null),
+        "stop" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Stop).await?)
+            .unwrap_or(Value::Null),
+        "restart" => {
+            serde_json::to_value(s.control_service(&name()?, ServiceControl::Restart).await?)
+                .unwrap_or(Value::Null)
+        }
+        "remove" => {
+            let n = name()?;
+            s.delete_service(&n).await?;
+            json!({ "removed": n })
+        }
+        "logs" => json!({ "logs": s.service_logs(&name()?, a.tail_bytes.unwrap_or(0)).await? }),
+        other => {
+            return Err(Error::InvalidArgument(format!(
+                "action {other:?}: use add, list, start, stop, restart, remove or logs"
+            )));
+        }
+    })
 }

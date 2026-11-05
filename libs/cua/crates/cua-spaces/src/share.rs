@@ -152,7 +152,17 @@ pub struct ShareAudit {
 struct Attached {
     /// The relay machine id of an attached (non-host) Space.
     machine: String,
+    /// Listed on the relay by Cua itself ([`publish`]), not by hand: Cua
+    /// also takes it off again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    auto: bool,
+    /// The account (its id) that listed it, for an automatic one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    account: String,
 }
+
+mod publish;
+pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport, breaker_wait, jitter};
 
 /// Normalizes an invitee: an email (lowercased) or an account id. Teams and
 /// organizations are not relay principals, so `team:` / `org:` entries are
@@ -367,6 +377,26 @@ impl Spaces {
             .collect()
     }
 
+    /// The relay machines Cua listed itself for Spaces on this computer
+    /// ([`publish`]): the Space is listed once, as the local one.
+    pub(crate) fn auto_published_machines(&self) -> std::collections::HashSet<String> {
+        self.attached()
+            .into_values()
+            .filter(|a| a.auto)
+            .map(|a| a.machine)
+            .collect()
+    }
+
+    /// Changes the attached Spaces under a lock, so Spaces attached side by
+    /// side do not overwrite each other.
+    fn update_attached(&self, f: impl FnOnce(&mut BTreeMap<String, Attached>)) -> Result<()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = self.attached();
+        f(&mut all);
+        self.save_attached(&all)
+    }
+
     fn save_attached(&self, all: &BTreeMap<String, Attached>) -> Result<()> {
         let path = self.shares_path();
         cua_home::guard_write(&path)?;
@@ -484,26 +514,8 @@ impl Spaces {
                 cua_host::Error::PermissionDenied(_) => refused(),
                 e => e.into(),
             })?;
-        for m in self
-            .inner
-            .relay_cache
-            .lock()
-            .expect("relay cache")
-            .iter_mut()
-            .filter(|m| m.id == machine)
-        {
-            m.name = name.to_string();
-        }
-        // A `relay:` Space added to this device's registry lists its record.
-        if relay_space && let Some(mut record) = self.inner.registry.get(&info.id)? {
-            record.name = name.to_string();
-            let credential = self
-                .inner
-                .registry
-                .credential(&info.id)?
-                .unwrap_or_default();
-            self.inner.registry.upsert(record, credential)?;
-        }
+        // Every copy of the name on this device, found by the machine id.
+        self.adopt_relay_machine_name(&machine, name);
         Ok(())
     }
 
@@ -512,6 +524,14 @@ impl Spaces {
     /// Space's driver is attached (registered on first share, re-attached
     /// after the Space restarted).
     async fn ensure_shared_machine(&self, space: &str) -> Result<String> {
+        self.ensure_shared_machine_with(space, true).await
+    }
+
+    /// [`Self::ensure_shared_machine`]; with `wait` false it asks the relay
+    /// for nothing it does not need: no read of the machine first (the caller
+    /// has the directory) and no polling until the driver is online (the
+    /// next pass sees it), so one Space costs the relay one registration.
+    async fn ensure_shared_machine_with(&self, space: &str, wait: bool) -> Result<String> {
         let id = self.resolve(space)?;
         let canonical = id.to_string();
         let relay = self.relay()?;
@@ -528,12 +548,13 @@ impl Spaces {
         }
         let s = self.space(&canonical).await?;
         s.require(RELAY_ATTACH_FEATURE)?;
-        let mut all = self.attached();
+        let all = self.attached();
         let machine = match all.get(&canonical) {
             Some(a) => a.machine.clone(),
             None => format!("space-{:016x}", rand::random::<u64>()),
         };
-        if let Ok(m) = client.machine(&token, &machine).await
+        if wait
+            && let Ok(m) = client.machine(&token, &machine).await
             && m.online
             && m.role == "owner"
         {
@@ -581,17 +602,15 @@ impl Spaces {
             })
             .await
             .map_err(|e| Error::Env(cua_spacesd_client::Error::from(e)))?;
-        all.insert(
-            canonical.clone(),
-            Attached {
-                machine: machine.clone(),
-            },
-        );
-        self.save_attached(&all)?;
+        // Re-read under the lock: Spaces attach side by side, and a Space
+        // listed before keeps what was recorded about it.
+        self.update_attached(|all| {
+            all.entry(canonical.clone()).or_default().machine = machine.clone();
+        })?;
         self.audit_share("attach", &canonical, &format!("machine={machine}"));
         // The driver dials out on its own: wait (bounded) until the relay
         // lists it online.
-        for _ in 0..100 {
+        for _ in 0..if wait { 100 } else { 0 } {
             if client
                 .machine(&token, &machine)
                 .await
@@ -678,9 +697,10 @@ impl Spaces {
                 "nothing here can ask you to confirm; share from the Cua app or run `cua spaces share` in a terminal",
             )
         })?;
+        let label = self.space_label(&canonical);
         let reason = match role {
-            ShareRole::Viewer => format!("Let {who} watch {canonical}"),
-            ShareRole::Editor => format!("Let {who} use {canonical} (see and control it)"),
+            ShareRole::Viewer => format!("let {who} watch \"{label}\""),
+            ShareRole::Editor => format!("let {who} use \"{label}\" (see and control it)"),
         };
         tokio::task::spawn_blocking(move || consent.confirm(&reason))
             .await
@@ -761,6 +781,17 @@ impl Spaces {
             });
         }
         self.shares_of(&canonical, &machine).await
+    }
+
+    /// The name people gave a Space, for prompts; the id only when it has
+    /// no name.
+    fn space_label(&self, canonical: &str) -> String {
+        self.list()
+            .ok()
+            .and_then(|l| l.into_iter().find(|i| i.id == canonical))
+            .map(|i| i.shown_name().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| canonical.to_string())
     }
 
     /// The consent prompt, run off the async runtime.
@@ -854,12 +885,16 @@ impl Spaces {
             .filter(|o| !o.is_empty())
             .unwrap_or_default();
         let label = listed.map(|i| i.name).unwrap_or_default();
+        let space_label = self.space_label(&canonical);
         self.confirm_share(match role {
             ShareRole::Viewer => {
-                format!("Let every member of team {} watch {canonical}", org.label())
+                format!(
+                    "let every member of team {} watch \"{space_label}\"",
+                    org.label()
+                )
             }
             ShareRole::Editor => format!(
-                "Let every member of team {} use {canonical} (see and control it)",
+                "let every member of team {} use \"{space_label}\" (see and control it)",
                 org.label()
             ),
         })

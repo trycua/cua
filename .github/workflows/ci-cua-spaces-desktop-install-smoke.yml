@@ -29,7 +29,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   resolve:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Find a run with live artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -22,6 +22,7 @@ on:
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/fetch-under-test/**"
       - ".github/actions/linux-rust-prep/**"
       - ".github/workflows/ci-cua-sandbox-doctor.yml"
       # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
@@ -41,6 +42,7 @@ on:
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/fetch-under-test/**"
       - ".github/actions/linux-rust-prep/**"
       - ".github/workflows/ci-cua-sandbox-doctor.yml"
       # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
@@ -63,15 +65,52 @@ env:
   IMAGE: ghcr.io/trycua/linux:24.04
 
 jobs:
+  # The three builds are independent and the slowest ones dominate, so they
+  # run in parallel jobs and the doctor jobs below pick up the binaries.
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
+  build:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    name: build ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: cua
+            binary: libs/cua/target/debug/cua
+          - component: cua-spacesd
+            binary: libs/cua-spacesd/target/release/cua-spacesd
+          - component: cua-driver
+            binary: libs/cua-driver/rust/target/release/cua-driver
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/build-cua-under-test
+        with:
+          components: ${{ matrix.component }}
+          cache-key: cua-under-test-${{ matrix.component }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: under-test-${{ matrix.component }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 1
+
   doctor:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: build
-        uses: ./.github/actions/build-cua-under-test
+        uses: ./.github/actions/fetch-under-test
       - id: sandbox
         uses: ./.github/actions/cua-sandbox
         with:
@@ -111,12 +150,13 @@ jobs:
   stale:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: The bundled builds are reported stale
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: build
-        uses: ./.github/actions/build-cua-under-test
+        uses: ./.github/actions/fetch-under-test
         with:
           components: cua
       - uses: ./.github/actions/cua-sandbox

@@ -58,6 +58,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
       - "scripts/install/install.ps1"
       - "scripts/ci/**"
+      - "bin/ci"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
       - "libs/cua-s1/ci/**"
@@ -98,7 +99,14 @@ permissions:
   contents: read
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   macos-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: macOS uninstall regressions
     runs-on: macos-26
     timeout-minutes: 10
@@ -124,6 +132,8 @@ jobs:
         run: /bin/bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
 
   windows-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
@@ -140,6 +150,8 @@ jobs:
         run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -161,6 +173,13 @@ jobs:
         run: |
           cd .github/scripts
           pytest tests/ -v
+
+      # bin/ci mirrors workflow commands; this fails when a workflow stops
+      # running one of them, so local and hosted checks cannot drift apart.
+      - name: Test bin/ci and its sync with the workflows
+        run: |
+          python3 -m unittest discover -s scripts/ci/tests -v
+          python3 bin/ci --verify-sync
 
       - name: Test Cua Driver install and uninstall scripts
         run: python -m pytest libs/cua-driver/scripts/tests/ -v
@@ -192,6 +211,8 @@ jobs:
             node .github/scripts/tests/release_please_spaces_preview.cjs
           NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
             node .github/scripts/tests/release_please_enrolled_preview.cjs
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_tagging_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

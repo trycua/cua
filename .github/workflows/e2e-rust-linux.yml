@@ -69,7 +69,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   source:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: "Resolve exact source"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -110,7 +117,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-shared
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -153,11 +160,14 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      # Own family: in libs-cua-driver-rust the day's entry is saved first by
+      # debug-only unit jobs, this job then gets an exact hit and never saves,
+      # so its release driver and Tauri units missed on every run.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
-          key: e2e-shared
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          shared-key: cua-driver-e2e-shared
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -206,7 +216,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-native
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -256,7 +266,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-capture
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -306,7 +316,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-installer
-          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
+          save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - name: Install Rust build dependencies
         uses: ./.github/actions/apt-install
         with:

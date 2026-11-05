@@ -4522,7 +4522,9 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
     }
 
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
     return ((__rb: Uint8Array) => {
@@ -4585,7 +4587,8 @@ export function appSettingsResolveNewUi(settings: AppSettings, version: string):
     }
 
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 export function appSettingsSave(path: string, settings: AppSettings): void /*throws*/ {uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
@@ -14565,7 +14568,48 @@ export type AppExperiments = {
      * The shared web UI is the main window. Always on in the macOS shell
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
-    webUi: boolean
+    webUi: boolean,
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    secureSpaces: boolean,
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    childSpaces: boolean,
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    askFirst: boolean,
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    ciRunners: boolean,
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    tcpShares: boolean,
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    mobile: boolean,
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    warmPools: boolean
 }
 
 /**
@@ -14592,7 +14636,14 @@ const FfiConverterTypeAppExperiments = (() => {
                 cuaVolume: FfiConverterBool.read(from),
                 yourCloud: FfiConverterBool.read(from),
                 sharing: FfiConverterBool.read(from),
-                webUi: FfiConverterBool.read(from)
+                webUi: FfiConverterBool.read(from),
+                secureSpaces: FfiConverterBool.read(from),
+                childSpaces: FfiConverterBool.read(from),
+                askFirst: FfiConverterBool.read(from),
+                ciRunners: FfiConverterBool.read(from),
+                tcpShares: FfiConverterBool.read(from),
+                mobile: FfiConverterBool.read(from),
+                warmPools: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14600,12 +14651,26 @@ const FfiConverterTypeAppExperiments = (() => {
             FfiConverterBool.write(value.yourCloud, into);
             FfiConverterBool.write(value.sharing, into);
             FfiConverterBool.write(value.webUi, into);
+            FfiConverterBool.write(value.secureSpaces, into);
+            FfiConverterBool.write(value.childSpaces, into);
+            FfiConverterBool.write(value.askFirst, into);
+            FfiConverterBool.write(value.ciRunners, into);
+            FfiConverterBool.write(value.tcpShares, into);
+            FfiConverterBool.write(value.mobile, into);
+            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
              FfiConverterBool.allocationSize(value.yourCloud) +
              FfiConverterBool.allocationSize(value.sharing) +
-             FfiConverterBool.allocationSize(value.webUi);
+             FfiConverterBool.allocationSize(value.webUi) +
+             FfiConverterBool.allocationSize(value.secureSpaces) +
+             FfiConverterBool.allocationSize(value.childSpaces) +
+             FfiConverterBool.allocationSize(value.askFirst) +
+             FfiConverterBool.allocationSize(value.ciRunners) +
+             FfiConverterBool.allocationSize(value.tcpShares) +
+             FfiConverterBool.allocationSize(value.mobile) +
+             FfiConverterBool.allocationSize(value.warmPools);
 
         }
     };
@@ -40822,7 +40887,25 @@ export type AppSettings = {
      * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
      * older settings file without it reads as tips on, none done.
      */
-    tips: AppTipsState
+    tips: AppTipsState,
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    agentMenuShown: Array<string>,
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    agentMenuHidden: Array<string>,
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    agentMenuSeen: Array<string>
 }
 
 /**
@@ -40863,7 +40946,10 @@ const FfiConverterTypeAppSettings = (() => {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
                 autoConnect: FfiConverterBool.read(from),
                 currentTeamId: FfiConverterOptionalString.read(from),
-                tips: FfiConverterTypeAppTipsState.read(from)
+                tips: FfiConverterTypeAppTipsState.read(from),
+                agentMenuShown: FfiConverterSequenceString.read(from),
+                agentMenuHidden: FfiConverterSequenceString.read(from),
+                agentMenuSeen: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -40885,6 +40971,9 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterBool.write(value.autoConnect, into);
             FfiConverterOptionalString.write(value.currentTeamId, into);
             FfiConverterTypeAppTipsState.write(value.tips, into);
+            FfiConverterSequenceString.write(value.agentMenuShown, into);
+            FfiConverterSequenceString.write(value.agentMenuHidden, into);
+            FfiConverterSequenceString.write(value.agentMenuSeen, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -40904,7 +40993,10 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
              FfiConverterBool.allocationSize(value.autoConnect) +
              FfiConverterOptionalString.allocationSize(value.currentTeamId) +
-             FfiConverterTypeAppTipsState.allocationSize(value.tips);
+             FfiConverterTypeAppTipsState.allocationSize(value.tips) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
 
         }
     };
@@ -71753,7 +71845,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 42027) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 56775) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
@@ -71762,7 +71854,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() !== 48081) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 30129) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 62204) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_save");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() !== 34252) {

@@ -140,8 +140,8 @@ impl<'a> Writer<'a> {
         user: &str,
         driver: &str,
     ) -> Result<Writer<'a>, FsError> {
-        let staged = driver != "root";
-        let created_from = if driver == "root" && !user.is_empty() && user != "root" {
+        let staged = !crate::guest::without_sudo(driver);
+        let created_from = if !staged && !user.is_empty() && user != "root" {
             first_missing(c, path).await
         } else {
             None
@@ -158,6 +158,12 @@ impl<'a> Writer<'a> {
             create_parents: true,
             expected_size: 0,
             expected_sha256: String::new(),
+            // An agent that switches users itself may not be root: name it.
+            run_as: if driver == "root" {
+                "root".into()
+            } else {
+                String::new()
+            },
             ..Default::default()
         };
         let sink = if c.transport() == Transport::Native {

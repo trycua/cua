@@ -5,6 +5,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 | Image | Contents | Used for |
 |---|---|---|
 | `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
+| `agent-home` | The slim `linux` image plus the **cua** CLI (`cua spaces create`, `ls`, `delete` reach the Space's spawn channel on their own) | A home for an agent that makes child Spaces; the children case of the runtime conformance suite runs in it. `ghcr.io/trycua/agent-home:24.04[-disk]` (not published yet; the catalog lists it as unpublished) <!-- cua-image-unverified --> |
 | `plain/ubuntu-xfce-vnc` | Ubuntu 24.04, XFCE on Xvnc `:1` (RFB `:5901`) and nothing else | Proving that sandboxes don't need cua daemons (VNC only) |
 | `plain/ubuntu-server` | Ubuntu 24.04 and OpenSSH | Proving that sandboxes don't need cua daemons (SSH only) |
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
@@ -59,6 +60,26 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 - **TCC:** `files/seed-tcc.sh` writes Accessibility, Screen Recording and PostEvent rows to the system TCC database with a csreq derived from the installed bundle (`codesign -d -r-`; for an ad-hoc signature that is its cdhash, so the rows hold for exactly the binary shipped), and seeds the ReplayKit approval ledger so no capture alert appears.
 - **Identity:** `/etc/cua-image/manifest.json` (from `image.json` claims and `cua-spacesd build-info`), `/etc/cua-image/spacesd-source`, `/etc/cua-image/variant` (`lume`).
 - **Gate:** `doctor-gate.sh` runs `cua-spacesd doctor --strict` in the guest over `lume ssh` after a reboot, then `tools/ax_probe.py` (the official MCP SDK against the image's `/mcp`: permissions, an AX tree read, CGEvent clicks in Calculator and a session-keyed `move_cursor` that must return). The build fails unless both pass. The release's `input/arm64/lume` gate (`live-input-gate.sh`) then boots a clone of the built VM and runs `libs/cua/crates/cua-spaces-ext/tests/e2e_macos_input.rs`: a Dock click on a whole-display stream must be delivered and change the screen. The pushed VM itself never boots again after its sanitize.
+
+## agent-home
+
+`agent-home/` is `FROM ghcr.io/trycua/linux:24.04-slim` (override with `--build-arg BASE=`) plus `/usr/local/bin/cua`, so it has every runtime the slim image has: a container rootfs for docker, gVisor and the microVM runtimes, and the VM disk derived from it for QEMU and KubeVirt. Inside a Space with child Spaces on, `cua` finds the Space's spawn channel without configuration and the image holds no token.
+
+`CUA_CLI_SOURCE` selects where the CLI comes from, the way `CUA_SPACESD_SOURCE` does for the driver:
+
+| Value | Behaviour |
+|---|---|
+| `local` (default) | Copies `agent-home/dist/<arch>/cua`. `agent-home/build-cua-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`, natively or under emulation. |
+| `release` | Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` from the `cua-sdk-v<version>` release (`CUA_CLI_VERSION`, or `latest`; `CUA_CLI_RELEASE_URL` has `{version}` and `{arch}`; `CUA_CLI_SHA256` checks it). The release must be cua-sdk 0.10.1 or later, the first with child Spaces. |
+| `none` | No CLI: the slim image. |
+
+```bash
+libs/images/agent-home/build-cua-linux.sh                       # host arch CLI into dist/<arch>/
+libs/images/build.sh agent-home --outputs rootfs,disk           # cua-e2e-local/agent-home:docker-local-<arch>
+libs/images/build.sh agent-home --build-arg CUA_CLI_SOURCE=release --build-arg CUA_CLI_VERSION=0.10.1
+```
+
+`libs/cua/scripts/conformance/run.py` makes its home Spaces from this image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/agent-home:24.04`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build. <!-- cua-image-unverified -->
 
 ## Built-in Linux runtime (`runtime-gvisor`)
 

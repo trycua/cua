@@ -220,8 +220,60 @@ export function demoDmEntries(entries: readonly Json[], me: string, with_: strin
   return out;
 }
 
+/** The card the host posts for a push (`export:repo.push`), as `host_tools::card` writes it for this made-up push (a drift test in
+ * `cua-spaces-ext` reads these two lines). Fake data: no such repository or branch. */
+export const DEMO_PUSH_TEXT = "hermes wants to push a branch and open a pull request on acme/app.";
+export const DEMO_PUSH_DETAILS =
+  "Branch fix/retry-backoff on acme/app from commit 0a1b2c3d. 2 files changed, 12 insertions(+), 3 deletions(-). Built in release-checks. Cua pushes it from this computer as ada, signed in with gh; the Space holds no GitHub access.";
+
+/** The card data a push carries (`ExportCardInput`; the host measures it in the Space). Made up. */
+export const DEMO_PUSH_CARD = {
+  agent: "Claude Code",
+  repo: "acme/app",
+  branch: "fix/retry-backoff",
+  base: "main",
+  head: "0a1b2c3d4e5f60718293",
+  files: [
+    { path: "src/net/ws_reconnect.py", status: "modified", additions: 9, deletions: 3, binary: false },
+    { path: "tests/test_ws_reconnect.py", status: "added", additions: 21, deletions: 0, binary: false },
+    { path: "docs/retry-notes.md", status: "deleted", additions: 0, deletions: 14, binary: false },
+    { path: "src/net/transport.py", oldPath: "src/net/http.py", status: "renamed", additions: 2, deletions: 2, binary: false },
+    { path: "assets/status.png", status: "modified", additions: null, deletions: null, binary: true },
+  ],
+  filesTotal: 5,
+  additionsTotal: 32,
+  deletionsTotal: 19,
+  commits: [
+    { sha: "0a1b2c3d4e5f60718293", author: "Claude Code", subject: "Back off between reconnect retries" },
+    { sha: "9f8e7d6c5b4a39281706", author: "Claude Code", subject: "Test the reconnect delays" },
+  ],
+  commitsTotal: 2,
+  pr: { title: "Back off between reconnect retries", body: "Reconnects now wait 1s, 2s, 4s.\n\nFixes the flaky sync test.\nAdds tests/test_ws_reconnect.py." },
+  linkOnly: false,
+  account: "ada, signed in with gh",
+  from: "ubuntu-build",
+};
+
+/** A push of only a branch (no pull request): the card says Push, shows no preview. Made up. */
+export const DEMO_PUSH_ONLY_CARD = {
+  agent: "Hermes",
+  repo: "acme/docs",
+  branch: "notes/release-0-9-4",
+  base: "main",
+  head: "5e4d3c2b1a",
+  files: [{ path: "notes/0.9.4.md", status: "added", additions: 38, deletions: 0, binary: false }],
+  filesTotal: 1,
+  additionsTotal: 38,
+  deletionsTotal: 0,
+  commits: [{ sha: "5e4d3c2b1a0f9e8d7c6b", author: "Hermes", subject: "Draft the 0.9.4 release notes" }],
+  commitsTotal: 1,
+  pr: null,
+  account: "ada, signed in with gh",
+  from: "release-checks",
+};
+
 /** release-checks and design-review: Ada's Hermes asks to tag a release; Ada's Codex asks which branch (Agents tab, pp. 17–19). */
-function demoSideThreads(now: number, me: { id: string; name: string }): [string, DemoThread][] {
+function demoSideThreads(now: number, me: { id: string; name: string }, pushCard = false): [string, DemoThread][] {
   const min = (m: number) => now - m * 60_000;
   const build = (space: string, folder: string, fill: (add: (e: Json) => number) => DemoMember[], readAt: number): [string, DemoThread] => {
     let seq = 0;
@@ -262,7 +314,8 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
         attachments: [{ path: "spaces/release-checks/thread/files/01JBSIDERC003/notes-0.9.4.md", name: "notes-0.9.4.md", size: 2_000, mime: "text/markdown" }],
       });
       add({ ts_ms: min(7), author: sys, kind: "task_update", update: { task: t, state: "done", session: 1, note: null } });
-      add({ ts_ms: min(3), author: H, kind: "approval", text: "Can I tag v0.9.4 and publish the notes?", approval: { action: "Tag v0.9.4 and publish a release", details: "git tag v0.9.4 && gh release create v0.9.4 -F notes-0.9.4.md", state: "open" } });
+      if (pushCard) add({ ts_ms: min(3), author: { kind: "system", id: "system:host", name: "host" }, kind: "approval", text: DEMO_PUSH_TEXT, approval: { action: "export:repo.push", details: DEMO_PUSH_DETAILS, state: "open" } });
+      else add({ ts_ms: min(3), author: H, kind: "approval", text: "Can I tag v0.9.4 and publish the notes?", approval: { action: "Tag v0.9.4 and publish a release", details: "git tag v0.9.4 && gh release create v0.9.4 -F notes-0.9.4.md", state: "open" } });
       return [{ name: "hermes", harness: "hermes", status: "waiting", activity: "Waiting for you in release-checks", sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: id }];
     }, 2),
     build("local:design-review", "DR", (add) => {
@@ -278,7 +331,7 @@ function demoSideThreads(now: number, me: { id: string; name: string }): [string
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean } = {}): DemoThread {
+function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean; cards?: boolean } = {}): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -386,6 +439,25 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
       }
     }
   }
+  if (opts.cards) {
+    // What the host writes itself: a push it asks about (the card's data is the host's, measured in the Space) and a notice after an earlier one. All made up.
+    const HOST = { kind: "system", id: "system:host", name: "Cua" };
+    add({ ts_ms: min(6), author: HOST, text: "Pushed fix/flaky-sync to acme/app. Pull request #481 is open.", attachments: [] });
+    add({
+      ts_ms: min(2),
+      author: HOST,
+      kind: "approval",
+      text: "Claude Code wants to push a branch and open a pull request on acme/app.",
+      approval: { action: "export:repo.push", details: "Branch fix/retry-backoff on acme/app.", state: "open", card: DEMO_PUSH_CARD },
+    });
+    add({
+      ts_ms: min(1),
+      author: HOST,
+      kind: "approval",
+      text: "Hermes wants to push a branch on acme/docs.",
+      approval: { action: "export:repo.push", details: "Branch notes/release-0-9-4 on acme/docs.", state: "open", card: DEMO_PUSH_ONLY_CARD },
+    });
+  }
   if (opts.paused) {
     // Agents asked each other three times in a row; the fourth ask is posted, wakes nobody, and the daemon says so once.
     const ask = (from: ReturnType<typeof agent>, to: string, text: string, ts: number, hops: number) =>
@@ -459,6 +531,8 @@ export function demoThreadHandlers({
   joinRedeemMs,
   joinExpireMs,
   request = false,
+  pushCard = false,
+  cards = false,
 }: {
   now: () => number;
   wait(ms: number): Promise<void>;
@@ -479,9 +553,13 @@ export function demoThreadHandlers({
   joinExpireMs?: number;
   /** `?demo=thread-request`: Linus's OpenClaw asks to join. */
   request?: boolean;
+  /** `?demo=thread-push`: the host asks whether Hermes may push a branch (the release-checks Space). */
+  pushCard?: boolean;
+  /** `?demo=thread-cards`: the host asks about a push on a card and posts a notice. */
+  cards?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME) : [])]);
+  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused, cards })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME, pushCard) : [])]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };
@@ -804,14 +882,17 @@ export function demoThreadHandlers({
       }
       return agentMemberFromTool(memberJson(m));
     },
-    "thread.agentAdd": async ({ spaceId, name, harness }) => {
+    "thread.agentAdd": async ({ spaceId, name, harness, standby }) => {
       if (role === "guest") throw denied(GUEST);
       const t = thread(spaceId);
       const handle = name.trim().toLowerCase();
       if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(handle)) throw new HostError("Use 1 to 63 lowercase letters, digits, dots, dashes or underscores.", "invalid_argument");
-      if (t.members.some((m) => m.name === handle)) throw new HostError(`@${handle} is taken here. Pick another name.`, "invalid_argument");
+      // Adding the member of the same harness again is the same member (the daemon does the same).
+      const existing = t.members.find((m) => m.name === handle);
+      if (existing && existing.harness === harness) return agentMemberFromTool(memberJson(existing));
+      if (existing) throw new HostError(`@${handle} is taken here. Pick another name.`, "invalid_argument");
       await wait(stepMs);
-      const member: DemoMember = { name: handle, harness, status: "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: startedIdentity(handle, harness) };
+      const member: DemoMember = { name: handle, harness, status: standby ? "idle" : "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: startedIdentity(handle, harness) };
       join(spaceId, member);
       return agentMemberFromTool(memberJson(member));
     },

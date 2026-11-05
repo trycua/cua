@@ -74,7 +74,7 @@ Astron Token Plan, add `--text-only` to the filter's `args`. The filter then
 requests `get_window_state` without a screenshot and replaces any remaining
 image content with a short text note, so the model works through the
 accessibility tree and its `element_token` values. Leave pixel-only tools such
-as `screenshot` and `zoom` out of the allowlist. Without `--text-only`, a
+as `zoom` out of the allowlist. Without `--text-only`, a
 provider that rejects images fails every request once a screenshot reaches
 the conversation. Apps that expose no usable accessibility elements (canvas,
 video, custom-drawn surfaces) need a vision model instead.

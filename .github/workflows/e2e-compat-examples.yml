@@ -58,9 +58,15 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   hermetic:
     name: manifest, pins and licenses
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -81,7 +87,8 @@ jobs:
 
   nightly:
     name: examples on real Spaces (QEMU)
-    if: github.event_name != 'pull_request'
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     steps:

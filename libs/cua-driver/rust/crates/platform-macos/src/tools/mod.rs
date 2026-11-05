@@ -940,7 +940,11 @@ pub(super) fn target_pid(
         .get("element_token")
         .is_some_and(|token| !token.is_null())
     {
-        return Err(cua_driver_core::element_token::stale_token_without_pid());
+        // The token is gone, but a recently retired snapshot still says whose
+        // it was, so the refusal can name what is current for that process.
+        return Err(cua_driver_core::element_token::stale_token_without_pid(
+            state.snapshots.token_owner(args),
+        ));
     }
     Err(cua_driver_core::protocol::ToolResult::error(
         "Missing required integer field: pid. Pass pid, or pass an element_token from the \
@@ -986,10 +990,8 @@ pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolRes
     }))
 }
 
-/// Register all macOS tools into the registry. `compat=true` swaps the
-/// regular `screenshot` tool for the Claude Code computer-use compat
-/// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
-/// note telling the caller to use pixel-addressed tools.
+/// Register all macOS tools into the registry. `compat` is retained for
+/// launch compatibility but currently has no effect on the tool surface.
 pub fn register_all(
     registry: &mut ToolRegistry,
     compat: bool,
@@ -1151,14 +1153,10 @@ pub fn register_all(
         registry,
         Arc::new(clipboard::MacosClipboard::new()),
     );
-    // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
-    // screenshot the Claude Code computer-use compat loop relies on now comes
-    // from `get_window_state` (which always returns BOTH the tree AND a
-    // screenshot — perception is mode-agnostic; `capture_mode` is deprecated/
-    // ignored) for a window, or `get_desktop_state` for the whole screen.
-    // `compat` no longer gates a tool swap here — the flag's live purpose is to
-    // register the MCP server under the `cua-computer-use` name, which is what
-    // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
+    // The standalone `screenshot` tool was removed in #1692. Window capture
+    // now comes from `get_window_state` (tree plus screenshot by default), while
+    // `get_desktop_state` handles explicit full-display capture. `capture_mode`
+    // is deprecated and ignored. `compat` no longer gates a tool swap here.
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(
@@ -1223,6 +1221,29 @@ pub fn register_all(
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();
+}
+
+#[cfg(test)]
+mod registry_surface_tests {
+    use super::*;
+
+    fn names(compat: bool) -> Vec<String> {
+        let mut registry = ToolRegistry::new();
+        register_all(&mut registry, compat, false, false, None);
+        registry.tool_names().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn default_and_legacy_compat_surfaces_have_no_screenshot_tool() {
+        let default = names(false);
+        let compat = names(true);
+        assert!(!default.iter().any(|name| name == "screenshot"));
+        assert!(!compat.iter().any(|name| name == "screenshot"));
+        assert_eq!(
+            default, compat,
+            "legacy compat flag must remain surface-neutral"
+        );
+    }
 }
 
 #[cfg(test)]

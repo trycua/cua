@@ -45,12 +45,15 @@ use tokio_util::sync::CancellationToken;
 use crate::assertion::{self, AssertionClaims, RelayKey, ASSERTION_HEADER};
 use crate::auth_log::{self, Reason, Route};
 use crate::devices::{DevicePolicy, DeviceStore, DEVICE_SESSION_HEADER};
-use crate::directory::{Directory, MACHINE_TOKEN_PREFIX};
+use crate::directory::{Directory, MachineRecord, MACHINE_TOKEN_PREFIX};
 use crate::meter::{Meter, MeterStream};
 use crate::mux::{self, Counted, Counters, MuxHandle};
 use crate::oidc::{Identity, OidcValidator};
 use crate::ws::WsIo;
-use crate::{valid_machine_id, CONNECT_PATH, HEARTBEAT_BYTE, MACHINE_ID_HEADER, VERSION_HEADER};
+use crate::{
+    valid_machine_id, CONNECT_PATH, HEARTBEAT_BYTE, MACHINE_ID_HEADER, PHONE_SUPPORT_HEADER,
+    VERSION_HEADER,
+};
 
 /// Header a client may use for its account token instead of
 /// `authorization` (so an env token can travel in `authorization`).
@@ -88,6 +91,9 @@ pub struct RelayConfig {
     /// origin (see [`legacy_share_redirect`]). Off: a host domain turns
     /// path mode off (S6).
     pub keep_path_mode: bool,
+    /// Public TCP shares (a port per share from a pool; see
+    /// [`crate::tcp_shares`]). `None`: off.
+    pub tcp_shares: Option<crate::tcp_shares::TcpShareConfig>,
     /// Token for `/relay/v1/machines`.
     pub admin_token: Option<String>,
     /// Refuse client requests that carry no spacesd credential
@@ -143,6 +149,9 @@ pub struct RelayConfig {
     /// `<state>.usage.json` next to the state file.
     #[cfg(feature = "hosted")]
     pub meter: crate::meter::MeterConfig,
+    /// Push notifications for the phone app (`None`: off, the routes
+    /// answer 404). See [`crate::push_api`].
+    pub push: Option<crate::push_api::PushConfig>,
     /// Where team access comes from (`teams.json`, shadow, organizations)
     /// and how the Spaces API is reached.
     #[cfg(feature = "hosted")]
@@ -186,6 +195,7 @@ impl Default for RelayConfig {
             machine_idle_timeout: Duration::from_secs(90),
             host_domain: None,
             keep_path_mode: false,
+            tcp_shares: None,
             admin_token: None,
             require_client_credentials: true,
             oidc: None,
@@ -207,6 +217,7 @@ impl Default for RelayConfig {
             mesh: crate::mesh::MeshConfig::default(),
             mesh_file: None,
             storage_limits: crate::storage::StorageLimits::default(),
+            push: None,
             #[cfg(feature = "hosted")]
             meter: crate::meter::MeterConfig::default(),
             #[cfg(feature = "hosted")]
@@ -241,10 +252,15 @@ pub(crate) struct ClientPresence {
     pub last_seen: Instant,
 }
 
+/// Prefix of the cut-token key of a user's phone streams.
+const PHONE_CUT_PREFIX: &str = "phone:";
+
 pub(crate) struct Machine {
     pub(crate) id: String,
     pub(crate) registrant: Registrant,
     pub(crate) version: String,
+    /// The machine said it serves phones (`PHONE_SUPPORT_HEADER`).
+    pub(crate) phone_support: bool,
     pub(crate) connected_at: SystemTime,
     generation: u64,
     handle: MuxHandle,
@@ -289,17 +305,32 @@ impl Machine {
         self.clients.lock().expect("clients").remove(user);
     }
 
+    /// Cuts the streams of `user`'s phones only.
+    pub(crate) fn cut_phones_of(&self, user: &str) {
+        let key = format!("{PHONE_CUT_PREFIX}{user}");
+        if let Some(token) = self.user_cuts.lock().expect("user cuts").remove(&key) {
+            token.cancel();
+        }
+    }
+
     /// The token a new stream watches: its account's own (a child of the
     /// machine-wide one), or the machine-wide one when it is not attributed.
-    fn cut_token(&self, user: Option<&str>) -> CancellationToken {
+    fn cut_token(&self, user: Option<&str>, phone: bool) -> CancellationToken {
         let all = self.clients_cut.lock().expect("cut");
         let Some(user) = user else {
             return all.clone();
         };
+        // A phone's streams hang from their own token, so they can be cut without the
+        // account's computers' streams.
+        let key = if phone {
+            format!("{PHONE_CUT_PREFIX}{user}")
+        } else {
+            user.to_owned()
+        };
         self.user_cuts
             .lock()
             .expect("user cuts")
-            .entry(user.to_owned())
+            .entry(key)
             .or_insert_with(|| all.child_token())
             .clone()
     }
@@ -342,6 +373,7 @@ impl Machine {
                 name: c.name.clone(),
                 auth_time: None,
                 mfa: false,
+                azp: None,
                 orgs: Vec::new(),
             })
     }
@@ -377,6 +409,8 @@ pub struct Relay {
     pub(crate) grants: Arc<crate::grants::Grants>,
     /// Pairing codes ("add a machine" by link or QR).
     pub(crate) pairing: Arc<crate::pairing::PairingStore>,
+    /// Each account's default Space and fallback order.
+    pub(crate) spaces: Arc<crate::spaces::SpacesSettings>,
     pub(crate) key: Arc<RelayKey>,
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
@@ -397,6 +431,8 @@ pub struct Relay {
     started: Instant,
     /// Share links: browser sign-in state and public-link rate limits.
     pub(crate) share: Arc<crate::share_web::ShareState>,
+    /// Public TCP shares, when configured.
+    pub(crate) tcp: Option<Arc<crate::tcp_shares::TcpShares>>,
 }
 
 /// One row of `/relay/v1/machines`.
@@ -417,6 +453,17 @@ pub struct MachineStatus {
 }
 
 impl Relay {
+    /// The kinds of the account's audit log, oldest first (for tests and
+    /// diagnostics: the HTTP log needs device enrollment and a session).
+    #[doc(hidden)]
+    pub fn audit_kinds(&self, account: &str) -> Vec<String> {
+        self.devices
+            .audit_log(account, usize::MAX)
+            .into_iter()
+            .map(|e| e.event.kind)
+            .collect()
+    }
+
     /// Creates a relay. Panics if the configured state file is unreadable;
     /// use [`Relay::try_new`] to handle that.
     pub fn new(config: RelayConfig) -> Self {
@@ -484,6 +531,13 @@ impl Relay {
             )?,
             None => crate::pairing::PairingStore::in_memory(),
         };
+        let spaces = match &config.state_file {
+            Some(path) => crate::spaces::SpacesSettings::open_with(
+                path.with_extension("spaces.json"),
+                storage.clone(),
+            )?,
+            None => crate::spaces::SpacesSettings::in_memory(),
+        };
         let key = config
             .signing_key
             .clone()
@@ -511,6 +565,16 @@ impl Relay {
         } = crate::hosted::open(&config, &storage)?;
         #[cfg(not(feature = "hosted"))]
         let (meter, teams, org) = crate::free::open();
+        let tcp = match &config.tcp_shares {
+            Some(cfg) => Some(Arc::new(crate::tcp_shares::TcpShares::open(
+                cfg.clone(),
+                config
+                    .state_file
+                    .as_ref()
+                    .map(|p| p.with_extension("tcp.json")),
+            )?)),
+            None => None,
+        };
         let join_limiter = Arc::new(Mutex::new(crate::join_limit::JoinLimiter::new(
             config.join_rate_per_sec,
             config.join_burst,
@@ -528,6 +592,7 @@ impl Relay {
             plans,
             grants: Arc::new(grants),
             pairing: Arc::new(pairing),
+            spaces: Arc::new(spaces),
             key,
             global_streams: Arc::default(),
             mesh,
@@ -538,6 +603,7 @@ impl Relay {
             join_limiter,
             started: Instant::now(),
             share: Arc::default(),
+            tcp,
         };
         relay.sweep_retention();
         Ok(relay)
@@ -562,7 +628,7 @@ impl Relay {
     pub fn router(&self) -> Router {
         Router::new()
             // Liveness: the process answers. Never touches the disk.
-            .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
+            .route("/healthz", get(crate::route_marker::healthz))
             // The state volume: a write probe, free space, each store's
             // last write (503 when the probe or a store fails).
             .route("/readyz", get(readyz))
@@ -573,10 +639,18 @@ impl Relay {
             .route("/relay/v1/mesh", get(mesh_status))
             .merge(crate::api::routes())
             .merge(crate::device_api::routes())
-            .merge(crate::pool::routes())
+            .merge(crate::push_api::routes())
+            .merge(
+                crate::pool::routes().layer(axum::middleware::from_fn_with_state(
+                    self.clone(),
+                    crate::pool::phone_guard,
+                )),
+            )
             .merge(crate::meter::routes())
             .merge(self.hosted_routes())
             .merge(crate::pairing::routes())
+            .merge(crate::spaces::routes())
+            .merge(crate::tcp_shares::routes())
             .merge(if self.share_web_enabled() {
                 crate::share_web::routes()
             } else {
@@ -724,6 +798,7 @@ impl Relay {
                     name: c.name,
                     auth_time: None,
                     mfa: false,
+                    azp: None,
                     orgs: Vec::new(),
                 };
                 if role_of(&who).is_none() {
@@ -747,6 +822,13 @@ impl Relay {
     /// on `machines` (all when `None`) without changing its access: a
     /// device of it was revoked or denied, and tickets don't say which
     /// device they were minted for.
+    /// Cuts the streams of `user`'s phones on every machine (their computers' streams stay).
+    pub(crate) fn cut_phones(&self, user: &str) {
+        for machine in self.machines.lock().expect("machines").values() {
+            machine.cut_phones_of(user);
+        }
+    }
+
     pub(crate) fn cut_account(&self, account: &str, machines: Option<&[String]>) {
         let at = crate::grants::now_ms();
         let ids = match machines {
@@ -776,6 +858,16 @@ impl Relay {
         ticket: &crate::grants::TicketInfo,
     ) -> bool {
         use crate::grants::rank;
+        // A ticket dies with the device whose call minted it: a revoked, lost
+        // or expired device (a stolen phone) takes its tickets with it. With
+        // phone support on; machines that predate it mint none.
+        if self.config.push.is_some() {
+            if let Some(device) = &ticket.device {
+                if !self.devices.is_enrolled(device) {
+                    return false;
+                }
+            }
+        }
         if ticket.user.is_empty() {
             return true;
         }
@@ -931,9 +1023,16 @@ impl Relay {
         // not wait for Nagle: with delayed ACKs each relayed call took about
         // 80 ms longer than the network round trip.
         use axum::serve::ListenerExt as _;
-        let listener = listener.tap_io(|tcp| {
-            let _ = tcp.set_nodelay(true);
-        });
+        let (listener, bounded) = if self.config.push.is_some() {
+            (None, Some(listener))
+        } else {
+            (
+                Some(listener.tap_io(|tcp| {
+                    let _ = tcp.set_nodelay(true);
+                })),
+                None,
+            )
+        };
         self.meter.spawn();
         {
             let relay = self.clone();
@@ -950,9 +1049,16 @@ impl Relay {
         }
         #[cfg(feature = "hosted")]
         crate::team_sharing::spawn(&self);
+        crate::tcp_shares::spawn(&self);
         let handle = self.clone();
+        // With phone support on, the relay bounds what a client may hold open
+        // before it has said anything: a header that does not finish, or one
+        // that is too large, costs the relay nothing for long.
+        if let Some(listener) = bounded {
+            return self.serve_bounded(listener, shutdown).await;
+        }
         axum::serve(
-            listener,
+            listener.expect("the plain listener"),
             self.router()
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
@@ -970,6 +1076,75 @@ impl Relay {
             handle.meter.persist(true);
         })
         .await
+    }
+
+    /// [`Self::serve`] for a relay with phone support on: the same router, with a
+    /// time limit on a request's headers ([`HEADER_READ_TIMEOUT`]) and a bound on
+    /// their size ([`MAX_HEADER_BYTES`]).
+    async fn serve_bounded(
+        self,
+        listener: tokio::net::TcpListener,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> std::io::Result<()> {
+        use hyper_util::rt::TokioTimer;
+        use hyper_util::server::conn::auto::Builder;
+        use tower::ServiceExt as _;
+        let router = self.router();
+        let tracker = tokio_util::task::TaskTracker::new();
+        let stop = {
+            let handle = self.clone();
+            async move {
+                shutdown.await;
+                // Machines and mesh nodes reconnect at once, to the relay that
+                // replaces this one (CUA-1774), instead of holding the shutdown
+                // open until the process exits.
+                let machines = handle.machine_ids().len();
+                let mesh = handle.mesh.connected();
+                handle.disconnect_all();
+                handle.mesh.disconnect_all();
+                tracing::info!(machines, mesh, "closed machine and mesh connections");
+                // Keep the last minutes of usage across a restart.
+                handle.meter.persist(true);
+            }
+        };
+        tokio::pin!(stop);
+        loop {
+            tokio::select! {
+                () = &mut stop => break,
+                accepted = listener.accept() => {
+                    let (tcp, remote) = match accepted {
+                        Ok(c) => c,
+                        Err(e) => {
+                            // Out of descriptors and the like: wait, do not spin.
+                            tracing::warn!(%e, "accept failed");
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            continue;
+                        }
+                    };
+                    let _ = tcp.set_nodelay(true);
+                    let router = router.clone();
+                    tracker.spawn(async move {
+                        let service = hyper::service::service_fn(move |mut request: http::Request<hyper::body::Incoming>| {
+                            request.extensions_mut().insert(axum::extract::ConnectInfo(remote));
+                            let router = router.clone();
+                            async move { router.oneshot(request.map(axum::body::Body::new)).await }
+                        });
+                        let mut builder = Builder::new(TokioExecutor::new());
+                        builder
+                            .http1()
+                            .timer(TokioTimer::new())
+                            .header_read_timeout(HEADER_READ_TIMEOUT)
+                            .max_buf_size(MAX_HEADER_BYTES);
+                        // Upgrades are needed for the machines' tunnels and WebSockets.
+                        let _ = builder.serve_connection_with_upgrades(TokioIo::new(tcp), service).await;
+                    });
+                }
+            }
+        }
+        // Let requests in flight finish, for a moment.
+        tracker.close();
+        let _ = tokio::time::timeout(Duration::from_secs(10), tracker.wait()).await;
+        Ok(())
     }
 
     pub(crate) fn token_index(&self, headers: &HeaderMap) -> Option<usize> {
@@ -1233,6 +1408,9 @@ async fn machine_connect_inner(
             .filter(|t| t.starts_with(MACHINE_TOKEN_PREFIX))
             .and_then(|t| relay.directory.machine_for_token(t));
         match record {
+            Some(record) if record.id == id && relay.directory.is_detached(&record) => {
+                return text(StatusCode::FORBIDDEN, crate::api::DETACHED_MESSAGE)
+            }
             Some(record) if record.id == id => Registrant::Account(record.owner.id),
             Some(_) => {
                 return text(
@@ -1258,6 +1436,10 @@ async fn machine_connect_inner(
         .chars()
         .take(64)
         .collect::<String>();
+    let phone_support = headers
+        .get(PHONE_SUPPORT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim() == "1");
     {
         let machines = relay.machines.lock().expect("machines");
         if let Registrant::Static(_) = registrant {
@@ -1305,6 +1487,7 @@ async fn machine_connect_inner(
                 id: id.clone(),
                 registrant,
                 version,
+                phone_support,
                 connected_at: SystemTime::now(),
                 generation,
                 handle,
@@ -1317,27 +1500,23 @@ async fn machine_connect_inner(
                 clients: Mutex::default(),
             });
             // The limit was checked before the upgrade, and joins that arrive together all
-            // pass it. Settle it here, where the machine is added: the oldest sessions of a
-            // token keep their places, a newer one over the limit is dropped (it retries).
+            // pass it. Settle it here, under the same lock as the insert: a join that would
+            // put its token past the limit is dropped (it retries), so the sessions already
+            // in keep their places. Counting by arrival here, not by `generation`, keeps a
+            // join that upgraded earlier but arrives later from pushing the count past it.
             let (replaced, over_limit) = {
                 let mut machines = relay.machines.lock().expect("machines");
-                let mut replaced = machines.insert(id.clone(), machine.clone());
-                let over_limit = matches!(machine.registrant, Registrant::Static(_)) && {
-                    let mut same: Vec<u64> = machines
+                let over_limit = matches!(machine.registrant, Registrant::Static(_))
+                    && machines
                         .values()
-                        .filter(|m| m.registrant == machine.registrant)
-                        .map(|m| m.generation)
-                        .collect();
-                    same.sort_unstable();
-                    same.iter().position(|g| *g == generation).unwrap_or(0)
-                        >= relay.config.max_machines_per_token
+                        .filter(|m| m.registrant == machine.registrant && m.id != id)
+                        .count()
+                        >= relay.config.max_machines_per_token;
+                let replaced = if over_limit {
+                    None
+                } else {
+                    machines.insert(id.clone(), machine.clone())
                 };
-                if over_limit {
-                    machines.remove(&id);
-                    if let Some(old) = replaced.take() {
-                        machines.insert(id.clone(), old);
-                    }
-                }
                 (replaced, over_limit)
             };
             if over_limit {
@@ -1411,7 +1590,11 @@ async fn mesh_status(State(relay): State<Relay>, headers: HeaderMap) -> Response
 /// `GET /readyz`: writes, fsyncs and removes a small file in the state
 /// directory and reports free space and each store's last write; 503 when
 /// the probe fails or a store's last write failed. Liveness is `/healthz`.
-async fn readyz(State(relay): State<Relay>) -> Response {
+async fn readyz(State(relay): State<Relay>, headers: HeaderMap) -> Response {
+    // With phone support on, the details (disk space, store state, mesh size)
+    // are for the operator: without the admin token the answer is only
+    // whether the relay is ready.
+    let details = relay.config.push.is_none() || require_admin(&relay, &headers).is_ok();
     let storage = relay.storage.clone();
     let (ready, mut body) = tokio::task::spawn_blocking(move || storage.report())
         .await
@@ -1421,18 +1604,34 @@ async fn readyz(State(relay): State<Relay>) -> Response {
                 serde_json::json!({"ready": false, "error": e.to_string()}),
             )
         });
-    body["mesh_nodes_connected"] = serde_json::json!(relay.mesh.connected());
-    let status = if ready {
-        StatusCode::OK
+    if !details {
+        body = serde_json::json!({ "ready": ready });
     } else {
-        StatusCode::SERVICE_UNAVAILABLE
+        body["mesh_nodes_connected"] = serde_json::json!(relay.mesh.connected());
+    }
+    let (status, marker) = if ready {
+        (StatusCode::OK, crate::route_marker::RouteMarker::Ok)
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::route_marker::RouteMarker::NotReady,
+        )
     };
-    (status, axum::Json(body)).into_response()
+    let mut response = (status, axum::Json(body)).into_response();
+    crate::route_marker::stamp(&mut response, marker);
+    response
 }
 
 /// `GET /metrics`: the state counters in Prometheus text format (no
 /// account data).
-async fn metrics(State(relay): State<Relay>) -> Response {
+async fn metrics(State(relay): State<Relay>, headers: HeaderMap) -> Response {
+    // Operational counters are the operator's: with phone support on they
+    // need the admin token (a scrape sends it as a bearer).
+    if relay.config.push.is_some() {
+        if let Err(r) = require_admin(&relay, &headers) {
+            return r;
+        }
+    }
     let storage = relay.storage.clone();
     #[cfg_attr(not(feature = "hosted"), allow(unused_mut))]
     let mut text = tokio::task::spawn_blocking(move || storage.metrics())
@@ -1440,6 +1639,7 @@ async fn metrics(State(relay): State<Relay>) -> Response {
         .unwrap_or_default();
     text.push_str(&relay.conns.render());
     text.push_str(&relay.mesh.metrics());
+    text.push_str(&crate::auth_log::metrics());
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());
@@ -1678,20 +1878,84 @@ async fn share_hosts(
     next.run(request).await
 }
 
-fn has_client_credential(uri: &Uri, headers: &HeaderMap, forwarded_path: &str) -> bool {
+fn has_client_credential(
+    phone: bool,
+    method: &http::Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    forwarded_path: &str,
+) -> bool {
     if headers.contains_key(header::AUTHORIZATION)
         || headers.contains_key("x-cua-env-authorization")
     {
         return true;
     }
-    has_forwardable_credential(uri, headers, forwarded_path)
+    has_forwardable_credential(phone, method, uri, headers, forwarded_path)
+}
+
+/// Whether `forwarded` is a page or asset of the machine's web viewer
+/// (`/viewer`, `/viewer/...`), read with GET or HEAD. The viewer is a
+/// static page that carries no secret (its ticket lives in the URL
+/// fragment, which never reaches a server); everything it then does is a
+/// call that needs a ticket of its own, checked by the machine and by
+/// [`Relay::ticket_allowed`] here. Used while phone support is off; with it
+/// on, the relay serves its own viewer page (see `viewer`).
+fn viewer_page(method: &http::Method, forwarded: &str) -> bool {
+    if !matches!(*method, http::Method::GET | http::Method::HEAD) {
+        return false;
+    }
+    let path = forwarded.split('?').next().unwrap_or(forwarded);
+    if path != "/viewer" && !path.starts_with("/viewer/") {
+        return false;
+    }
+    // No path tricks into the rest of the machine.
+    let lower = path.to_ascii_lowercase();
+    !path.split('/').any(|seg| seg == ".." || seg == ".")
+        && !lower.contains("%2e")
+        && !lower.contains("%2f")
+        && !lower.contains('\\')
+}
+
+/// Whether a call that carries only a viewer ticket in its header is one
+/// the viewer makes: a gRPC-Web call (POST), its files, its media socket.
+/// The path goes through the strict viewer allowlist first.
+fn viewer_call_ok(method: &http::Method, forwarded: &str) -> bool {
+    let path = forwarded.split('?').next().unwrap_or(forwarded);
+    let Some(norm) = crate::viewer::normalize(path) else {
+        return false;
+    };
+    if norm.starts_with("/cua.env.v1.") {
+        // Only the calls a viewer makes: a machine bug cannot widen a ticket.
+        return *method == http::Method::POST
+            && crate::phone::VIEWER_GRPC_METHODS.contains(&norm.as_str());
+    }
+    if norm == "/files" || norm.starts_with("/files/") {
+        return matches!(
+            *method,
+            http::Method::GET
+                | http::Method::HEAD
+                | http::Method::PUT
+                | http::Method::POST
+                | http::Method::DELETE
+        );
+    }
+    norm == "/media" && *method == http::Method::GET
 }
 
 /// A credential that survives the relay stripping client credential
 /// headers from account-machine requests: a machine-minted ticket or signed
 /// URL (or the unauthenticated health probe). The machine validates it.
-fn has_forwardable_credential(uri: &Uri, headers: &HeaderMap, forwarded_path: &str) -> bool {
-    if forwarded_path == "/health" || forwarded_path.starts_with("/health?") {
+fn has_forwardable_credential(
+    phone: bool,
+    method: &http::Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    forwarded_path: &str,
+) -> bool {
+    // The unauthenticated liveness probe. With phone support on it is not
+    // one: whether an id is registered or online is not told to anyone
+    // without a credential.
+    if !phone && (forwarded_path == "/health" || forwarded_path.starts_with("/health?")) {
         return true;
     }
     let query = uri.query().unwrap_or("");
@@ -1701,6 +1965,17 @@ fn has_forwardable_credential(uri: &Uri, headers: &HeaderMap, forwarded_path: &s
     {
         return true;
     }
+    // The web viewer's own calls (gRPC-Web, files, media) carry its ticket
+    // in a header, which a phone's web view can set on a page's requests but
+    // not an account bearer. Only a live viewer ticket, only on those calls.
+    if phone {
+        if crate::grants::header_ticket(headers).is_some() && viewer_call_ok(method, forwarded_path)
+        {
+            return true;
+        }
+    } else if crate::grants::header_ticket_any(headers).is_some() {
+        return true;
+    }
     headers
         .get_all(header::SEC_WEBSOCKET_PROTOCOL)
         .iter()
@@ -1708,6 +1983,11 @@ fn has_forwardable_credential(uri: &Uri, headers: &HeaderMap, forwarded_path: &s
         // `rcdp.v2.ticket.` is the legacy media ticket form.
         .any(|v| v.contains("cua.ticket.") || v.contains("rcdp.v2.ticket."))
 }
+
+/// With phone support on: how long a client may take to send the headers of a request.
+pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// With phone support on: the most a request's headers may take (hyper's buffer for them).
+pub const MAX_HEADER_BYTES: usize = 32 * 1024;
 
 const HOP_BY_HOP: &[&str] = &[
     "connection",
@@ -1755,6 +2035,8 @@ pub(crate) struct AccountClient {
 /// Who a request let through to an account machine is.
 #[derive(Default)]
 pub(crate) struct Authorized {
+    /// The call is a phone's (its enrolled device is a phone).
+    pub(crate) phone: bool,
     /// The signed-in account (an account token).
     pub(crate) client: Option<AccountClient>,
     /// The account a machine-minted ticket was issued to, when the request
@@ -1762,6 +2044,15 @@ pub(crate) struct Authorized {
     pub(crate) ticket_user: Option<String>,
     /// When the request was authorized (ms).
     pub(crate) at: u64,
+}
+
+/// A machine nobody owns or shares, standing in for an id that does not exist
+/// so that asking about it is answered like asking about someone else's.
+fn absent_machine(id: &str) -> MachineRecord {
+    serde_json::from_value(serde_json::json!({
+        "id": id, "name": "", "owner": {"id": ""}, "token_sha256": "",
+    }))
+    .expect("an empty machine record")
 }
 
 #[allow(clippy::result_large_err)]
@@ -1780,7 +2071,15 @@ async fn authorize_account_client(
     // counts as later (see `Grants::record`).
     let authorized_at = crate::grants::now_ms();
     let headers = request.headers();
-    let Some(record) = relay.directory.get(id) else {
+    let record = match relay.directory.get(id) {
+        Some(record) => Some(record),
+        // An id nobody registered: the same answers as a machine of someone
+        // else's that is not shared with the caller (401 without a valid
+        // token, 403 with one), so a caller cannot find out which ids exist.
+        None if relay.config.push.is_some() => Some(absent_machine(id)),
+        None => None,
+    };
+    let Some(record) = record else {
         return Err(refuse(
             headers,
             StatusCode::BAD_GATEWAY,
@@ -1795,7 +2094,15 @@ async fn authorize_account_client(
         _ if share_session.is_some() => share_session.clone(),
         (Some(token), Some(oidc)) => match oidc.validate(token).await {
             Ok(identity) => Some(identity),
-            Err(e) if !has_forwardable_credential(request.uri(), headers, forwarded) => {
+            Err(e)
+                if !has_forwardable_credential(
+                    relay.config.push.is_some(),
+                    request.method(),
+                    request.uri(),
+                    headers,
+                    forwarded,
+                ) =>
+            {
                 auth_log::rejected(headers, Route::Proxy, e.reason, Some(&e.facts));
                 return Err(refuse(
                     headers,
@@ -1816,6 +2123,23 @@ async fn authorize_account_client(
             "the host stopped sharing this computer",
         ));
     }
+    // A Space whose computer was removed from the account is kept but
+    // refused. Someone it is not shared with gets the usual refusal below,
+    // so this does not tell them it exists.
+    if relay.directory.is_detached(&record)
+        && identity
+            .as_ref()
+            .is_none_or(|who| relay.machine_role(&record, who).is_some())
+    {
+        return Err(refuse(
+            headers,
+            StatusCode::FORBIDDEN,
+            GrpcCode::PermissionDenied,
+            crate::api::DETACHED_MESSAGE,
+        ));
+    }
+    let mut phone_call = false;
+    let mut ticket_phone = false;
     let mut gate = None;
     let mut ticket_user = None;
     let assertion = match &identity {
@@ -1969,6 +2293,66 @@ async fn authorize_account_client(
                     ))
                 }
             }
+            // A phone is a smaller kind of device: only the calls on its list
+            // are forwarded, and the machine is told it is a phone (it decides
+            // about the desktop). A relay without phone support never gets
+            // here with a phone (the device gate refuses it).
+            let phone_device = gate
+                .as_ref()
+                .and_then(|g| g.device())
+                .filter(|d| relay.devices.is_phone(d))
+                .map(str::to_owned);
+            if let Some(dev) = &phone_device {
+                if crate::phone::classify(request.method(), forwarded)
+                    == crate::phone::PhonePath::Refused
+                {
+                    // Seen by the account: an attack or an app bug, both worth
+                    // knowing (once per method and phone every ten minutes, so
+                    // a loop cannot push older events out of the log).
+                    let what = forwarded.split('?').next().unwrap_or(forwarded);
+                    let what: String = what.chars().take(120).collect();
+                    relay.devices.audit_throttled(
+                        &format!("mobile_denied:{dev}:{what}"),
+                        &who.account,
+                        crate::devices::AuditEvent::new("mobile_denied")
+                            .device(Some(dev.as_str()))
+                            .machine(id)
+                            .detail(what),
+                    );
+                    return Err(refuse(
+                        headers,
+                        StatusCode::FORBIDDEN,
+                        GrpcCode::PermissionDenied,
+                        "a phone cannot make this call",
+                    ));
+                }
+                // A computer that does not say it serves phones (Cua Spaces from
+                // before phones) would take a phone for a computer and do what
+                // it asked: it is sent nothing of a phone's.
+                let old = relay
+                    .machines
+                    .lock()
+                    .expect("machines")
+                    .get(id)
+                    .is_some_and(|m| !m.phone_support);
+                if old {
+                    relay.devices.audit_throttled(
+                        &format!("mobile_old_machine:{dev}:{id}"),
+                        &who.account,
+                        crate::devices::AuditEvent::new("mobile_denied")
+                            .device(Some(dev.as_str()))
+                            .machine(id)
+                            .detail("computer without phone support"),
+                    );
+                    return Err(refuse(
+                        headers,
+                        StatusCode::FORBIDDEN,
+                        GrpcCode::PermissionDenied,
+                        PHONE_OLD_COMPUTER,
+                    ));
+                }
+            }
+            phone_call = phone_device.is_some();
             let now = assertion::now_secs();
             let claims = AssertionClaims {
                 iss: relay.public_url(headers),
@@ -1993,6 +2377,12 @@ async fn authorize_account_client(
                 teams: teams.clone(),
                 space_role: thread_space.as_ref().map(|_| role.as_str().to_owned()),
                 space: thread_space,
+                // The enrolled device behind the call (the host attributes and
+                // binds tickets by it), and, for a phone, its class.
+                dev: gate.as_ref().and_then(|g| g.device()).map(str::to_owned),
+                dcls: phone_device
+                    .as_ref()
+                    .map(|_| crate::phone::CLASS_MOBILE.to_owned()),
             };
             Some(relay.key.sign(&claims))
         }
@@ -2002,7 +2392,14 @@ async fn authorize_account_client(
         // A ticket names the account it was minted for: refused when that
         // account's access was revoked after it may have been minted
         // (CUA-1416).
-        None if has_forwardable_credential(request.uri(), headers, forwarded) => {
+        None if has_forwardable_credential(
+            relay.config.push.is_some(),
+            request.method(),
+            request.uri(),
+            headers,
+            forwarded,
+        ) || (relay.config.push.is_none() && viewer_page(request.method(), forwarded)) =>
+        {
             for ticket in crate::grants::tickets_in(request.uri(), headers)
                 .iter()
                 .filter_map(|t| crate::grants::parse_ticket(t))
@@ -2016,6 +2413,13 @@ async fn authorize_account_client(
                         crate::grants::TICKET_REVOKED,
                     ));
                 }
+                if ticket
+                    .device
+                    .as_deref()
+                    .is_some_and(|d| relay.devices.is_phone(d))
+                {
+                    ticket_phone = true;
+                }
                 if !ticket.user.is_empty() {
                     ticket_user = Some(ticket.user);
                 }
@@ -2024,6 +2428,16 @@ async fn authorize_account_client(
         }
         None => {
             auth_log::rejected(headers, Route::Proxy, Reason::MissingToken, None);
+            // A viewer ticket on a call a viewer does not make: the answer does not depend on the id, and it
+            // says what is wrong (a ticket only lets someone look), as PermissionDenied.
+            if relay.config.push.is_some() && crate::grants::header_ticket(headers).is_some() {
+                return Err(refuse(
+                    headers,
+                    StatusCode::FORBIDDEN,
+                    GrpcCode::PermissionDenied,
+                    "this ticket only lets you look: sign in to do more",
+                ));
+            }
             return Err(refuse(
                 headers,
                 StatusCode::UNAUTHORIZED,
@@ -2033,8 +2447,25 @@ async fn authorize_account_client(
         }
     };
     let headers = request.headers_mut();
+    // A viewer's own ticket is the credential of a call that carries no
+    // account (the relay checked it above); the machine validates it, so it
+    // is forwarded. With an account, the relay's assertion replaces it.
+    let viewer_ticket = if assertion.is_none() {
+        if relay.config.push.is_some() {
+            crate::grants::header_ticket(headers)
+        } else {
+            crate::grants::header_ticket_any(headers)
+        }
+    } else {
+        None
+    };
     for name in CLIENT_CREDENTIAL_HEADERS {
         headers.remove(*name);
+    }
+    if let Some(t) = viewer_ticket {
+        if let Ok(value) = HeaderValue::from_str(&format!("Bearer {t}")) {
+            headers.insert(crate::grants::VIEWER_TICKET_HEADER, value);
+        }
     }
     if let Some(assertion) = assertion {
         if let Ok(value) = HeaderValue::from_str(&assertion) {
@@ -2042,6 +2473,7 @@ async fn authorize_account_client(
         }
     }
     Ok(Authorized {
+        phone: phone_call || ticket_phone,
         client: identity
             .zip(gate)
             .map(|(who, gate)| AccountClient { who, gate }),
@@ -2049,6 +2481,10 @@ async fn authorize_account_client(
         at: authorized_at,
     })
 }
+
+/// What a phone is told when the computer it asks runs Cua Spaces from before phones.
+pub const PHONE_OLD_COMPUTER: &str =
+    "this computer needs the latest Cua Spaces to be used from a phone: update it";
 
 /// Asks a machine for the thread of a Space it provides (its relay
 /// machine id; `relay:` optional), on behalf of a person that Space is
@@ -2142,6 +2578,8 @@ async fn proxy(state: State<Relay>, request: Request) -> Response {
     response
         .extensions_mut()
         .insert(crate::conn_metrics::Kind::Client);
+    // The probe contract (`x-cua-relay-route`, src/route_marker.rs).
+    crate::route_marker::stamp_client_route(&mut response);
     response
 }
 
@@ -2184,6 +2622,37 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
             .insert(crate::conn_metrics::Uncounted);
         return response;
     };
+    // The viewer's static page and its calls' preflights, for a request that
+    // carries no credential: the relay answers them itself, the same for
+    // every machine id (see `viewer`).
+    if share.is_none()
+        && relay.config.push.is_some()
+        && relay.config.oidc.is_some()
+        && !crate::viewer::carries_credential(request.headers(), request.uri().query())
+    {
+        if let Some(kind) = crate::viewer::classify(request.method(), &forwarded) {
+            let client = client_ip(&relay.config.trusted_proxies, &request);
+            let mut response = match relay.viewer_limits().take(&client) {
+                Ok(()) => crate::viewer::respond(kind, *request.method() == http::Method::HEAD),
+                Err(wait) => {
+                    let mut r = text(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "too many requests; slow down",
+                    );
+                    if let Ok(v) =
+                        HeaderValue::from_str(&wait.as_secs().saturating_add(1).to_string())
+                    {
+                        r.headers_mut().insert(header::RETRY_AFTER, v);
+                    }
+                    r
+                }
+            };
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::Uncounted);
+            return response;
+        }
+    }
     use crate::share_web::{Cookie, ShareKind};
     // The session endpoint of a private share origin: trades a login code
     // for the share's cookie (never forwarded to the machine).
@@ -2203,19 +2672,36 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
     // alone and never reach a machine.
     request.headers_mut().remove(ASSERTION_HEADER);
     request.headers_mut().remove("x-cua-share-caller");
+    // The headers the relay itself sets on a machine's connect response are
+    // never a client's to send (inert today; a later change must not be able
+    // to trust them).
+    if relay.config.push.is_some() {
+        request.headers_mut().remove(assertion::OWNER_HEADER);
+        request.headers_mut().remove(assertion::JWKS_HEADER);
+    }
     let device_session = request.headers_mut().remove(DEVICE_SESSION_HEADER);
     let machine = relay.machines.lock().expect("machines").get(&id).cloned();
     let account_machine = matches!(
         machine.as_ref().map(|m| &m.registrant),
         Some(Registrant::Account(_))
-    ) || (machine.is_none() && relay.directory.get(&id).is_some());
+    ) || (machine.is_none() && relay.directory.get(&id).is_some())
+        // With phone support on, an id nobody knows is answered as a machine
+        // that is not shared with the caller (see `authorize_account_client`),
+        // so a caller cannot tell which ids exist.
+        || (machine.is_none()
+            && share.is_none()
+            && relay.config.push.is_some()
+            && relay.config.oidc.is_some());
     // Share links (`/share/…` on an account machine): public ones carry
     // their own credential (the token), private ones are signed in with a
     // bearer token or, on their own origin, the share cookie.
     let mut session_identity = None;
     let mut public_share = false;
+    // A share edge (TCP shares in the user's own cloud): its one computer is
+    // the user's daemon, joined with the edge's token; public shares only.
+    let edge = relay.tcp.as_ref().is_some_and(|t| t.config().edge);
     if let Some(sh) = &share {
-        if !account_machine {
+        if !account_machine && !(edge && sh.kind == ShareKind::Public) {
             return refuse(
                 request.headers(),
                 StatusCode::NOT_FOUND,
@@ -2248,7 +2734,7 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
                     headers.remove(*name);
                 }
                 let record = relay.directory.get(&id);
-                if !record.is_some_and(|r| r.sharing) {
+                if !edge && !record.is_some_and(|r| r.sharing) {
                     return refuse(
                         request.headers(),
                         StatusCode::FORBIDDEN,
@@ -2302,7 +2788,41 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
             },
         }
     }
+    // A call that carries only a viewer ticket: its address is held to the
+    // number of tickets machines refuse (a guessed or stale ticket costs the
+    // machine a signature check, so the relay stops forwarding them).
+    let ticket_client = (account_machine
+        && relay.config.push.is_some()
+        && !public_share
+        && account_token(request.headers()).is_none()
+        // A ticket in a header, the query (`ticket=`, `sig=`) or a WebSocket
+        // subprotocol: one account of failures per client and machine, so
+        // one client's forged tickets for one machine cannot lock out anyone
+        // else, or the same client's other machines.
+        && (!crate::grants::tickets_in(request.uri(), request.headers()).is_empty()
+            || request.uri().query().is_some_and(|q| q.split('&').any(|p| p.starts_with("sig=")))))
+    .then(|| {
+        format!(
+            "{}|{id}",
+            client_ip(&relay.config.trusted_proxies, &request)
+        )
+    });
+    if let Some(client) = &ticket_client {
+        if let Some(wait) = relay.viewer_limits().ticket_blocked(client) {
+            let mut r = refuse(
+                request.headers(),
+                StatusCode::TOO_MANY_REQUESTS,
+                GrpcCode::ResourceExhausted,
+                "too many refused tickets; try again later",
+            );
+            if let Ok(v) = HeaderValue::from_str(&wait.as_secs().saturating_add(1).to_string()) {
+                r.headers_mut().insert(header::RETRY_AFTER, v);
+            }
+            return r;
+        }
+    }
     let mut identity = None;
+    let mut phone_call = false;
     let mut ticket_user = None;
     let mut authorized_at = 0;
     let mut grace = false;
@@ -2321,17 +2841,38 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
         .await
         {
             Ok(authorized) => {
+                if authorized.phone
+                    && forwarded.split('?').next() == Some(crate::phone::CREATE_VIEWER_TICKET)
+                {
+                    // Whatever the machine does with the request, a phone's ticket is
+                    // for looking: view only, five minutes, nothing of the computer.
+                    if let Err(why) = crate::phone::clamp_ticket_request(&mut request).await {
+                        return refuse(
+                            request.headers(),
+                            StatusCode::BAD_REQUEST,
+                            GrpcCode::InvalidArgument,
+                            why,
+                        );
+                    }
+                }
                 if let Some(client) = authorized.client {
                     grace = matches!(client.gate, crate::device_api::Gate::Grace);
                     identity = Some(client.who);
                 }
+                phone_call = authorized.phone;
                 ticket_user = authorized.ticket_user;
                 authorized_at = authorized.at;
             }
             Err(response) => return response,
         }
     } else if relay.config.require_client_credentials
-        && !has_client_credential(request.uri(), request.headers(), &forwarded)
+        && !has_client_credential(
+            relay.config.push.is_some(),
+            request.method(),
+            request.uri(),
+            request.headers(),
+            &forwarded,
+        )
     {
         auth_log::rejected(
             request.headers(),
@@ -2350,6 +2891,18 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
         Some(machine) => Some(machine),
         None => relay.await_reconnect(&id).await,
     };
+    // The capability is checked on the machine the call is about to be sent to, not
+    // only on the one found when it was authorized: a computer that reconnects during
+    // the grace after a relay start (an old one, without the header) is the one the
+    // request was waiting for.
+    if phone_call && machine.as_ref().is_some_and(|m| !m.phone_support) {
+        return refuse(
+            request.headers(),
+            StatusCode::FORBIDDEN,
+            GrpcCode::PermissionDenied,
+            PHONE_OLD_COMPUTER,
+        );
+    }
     let Some(machine) = machine else {
         let mut response = refuse(
             request.headers(),
@@ -2447,7 +3000,7 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
     });
     let metered_user = metered_as.filter(|_| metered.is_some()).map(|w| w.user);
     let stream_user = identity.as_ref().map(|w| w.user.clone()).or(ticket_user);
-    let cut = machine.cut_token(stream_user.as_deref());
+    let cut = machine.cut_token(stream_user.as_deref(), phone_call);
     let guard = ActiveGuard(
         machine.clone(),
         identity.map(|w| w.user),
@@ -2530,7 +3083,17 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
         request.headers_mut().remove(header::HOST);
         return match sender.send_request(request).await {
             Ok(mut response) => {
-                harden_response(response.headers_mut(), &forwarded, share.as_ref());
+                if let Some(client) = &ticket_client {
+                    if crate::viewer::refused_by_machine(response.status(), response.headers()) {
+                        relay.viewer_limits().ticket_failed(client);
+                    }
+                }
+                harden_response(
+                    response.headers_mut(),
+                    &forwarded,
+                    share.as_ref(),
+                    relay.config.push.is_some(),
+                );
                 if grace {
                     crate::device_api::flag_grace(&relay, response.headers_mut());
                 }
@@ -2576,7 +3139,17 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
         Ok(r) => r,
         Err(e) => return text(StatusCode::BAD_GATEWAY, format!("forward: {e}")),
     };
-    harden_response(response.headers_mut(), &forwarded, share.as_ref());
+    if let Some(client) = &ticket_client {
+        if crate::viewer::refused_by_machine(response.status(), response.headers()) {
+            relay.viewer_limits().ticket_failed(client);
+        }
+    }
+    harden_response(
+        response.headers_mut(),
+        &forwarded,
+        share.as_ref(),
+        relay.config.push.is_some(),
+    );
     if grace {
         crate::device_api::flag_grace(&relay, response.headers_mut());
     }
@@ -2642,7 +3215,18 @@ const KNOWN_VIEWER_PATH: &str = "/viewer";
 /// own origin may render the shared app's HTML (nothing else lives there);
 /// everywhere else the rules of [`harden_machine_response`] stand, with the
 /// share headers added for `/share/` paths.
-fn harden_response(headers: &mut HeaderMap, forwarded_path: &str, share: Option<&ShareCtx>) {
+fn harden_response(
+    headers: &mut HeaderMap,
+    forwarded_path: &str,
+    share: Option<&ShareCtx>,
+    phone: bool,
+) {
+    // The computer answered. It cannot claim to be the relay: whatever it
+    // sent under the probe-contract header is replaced.
+    headers.insert(
+        crate::route_marker::HEADER,
+        HeaderValue::from_static(crate::route_marker::RouteMarker::Forwarded.as_str()),
+    );
     match share {
         Some(sh) if sh.isolated => {
             headers.remove("service-worker-allowed");
@@ -2670,7 +3254,7 @@ fn harden_response(headers: &mut HeaderMap, forwarded_path: &str, share: Option<
             }
         }
         Some(_) => {
-            harden_machine_response(headers, forwarded_path);
+            harden_machine_response(headers, forwarded_path, phone);
             headers.insert(
                 header::REFERRER_POLICY,
                 HeaderValue::from_static("no-referrer"),
@@ -2680,11 +3264,11 @@ fn harden_response(headers: &mut HeaderMap, forwarded_path: &str, share: Option<
                 HeaderValue::from_static("noindex, nofollow"),
             );
         }
-        None => harden_machine_response(headers, forwarded_path),
+        None => harden_machine_response(headers, forwarded_path, phone),
     }
 }
 
-fn harden_machine_response(headers: &mut HeaderMap, forwarded_path: &str) {
+fn harden_machine_response(headers: &mut HeaderMap, forwarded_path: &str, phone: bool) {
     // spacesd sets no cookies (bearer tokens and tickets only); refuse one
     // that would ride the relay's own domain.
     headers.remove(header::SET_COOKIE);
@@ -2698,7 +3282,36 @@ fn harden_machine_response(headers: &mut HeaderMap, forwarded_path: &str) {
     headers.remove("service-worker");
     let path = forwarded_path.split('?').next().unwrap_or(forwarded_path);
     let is_known_viewer = path == KNOWN_VIEWER_PATH || path.starts_with("/viewer/");
-    if !is_known_viewer {
+    if is_known_viewer {
+        // With phone support on, a viewer page a machine serves (to a caller
+        // with a credential) runs in an opaque origin too: it cannot touch
+        // this origin whatever it contains.
+        if !phone {
+            return;
+        }
+        let csp = headers
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("default-src 'self'")
+            .to_owned();
+        // Whatever the machine wrote about `sandbox` is dropped (a word in a
+        // report-uri or a lax `sandbox allow-same-origin` must not count): the
+        // relay's own directive is the only one.
+        let mut directives: Vec<&str> = csp
+            .split(';')
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .filter(|d| {
+                !d.split_ascii_whitespace()
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("sandbox"))
+            })
+            .collect();
+        directives.push("sandbox allow-scripts");
+        if let Ok(v) = HeaderValue::from_str(&directives.join("; ")) {
+            headers.insert(header::CONTENT_SECURITY_POLICY, v);
+        }
+    } else {
         let is_html = headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
@@ -2949,18 +3562,39 @@ mod tests {
     #[test]
     fn anonymous_requests_are_refused_but_credentials_pass() {
         let h = HeaderMap::new();
-        assert!(!has_client_credential(&"/m/a/x".parse().unwrap(), &h, "/x"));
+        assert!(!has_client_credential(
+            true,
+            &http::Method::GET,
+            &"/m/a/x".parse().unwrap(),
+            &h,
+            "/x"
+        ));
+        // The liveness probe is a credential-less pass as it always was, and
+        // not with phone support on (it would tell which ids are online).
         assert!(has_client_credential(
+            false,
+            &http::Method::GET,
+            &"/m/a/health".parse().unwrap(),
+            &h,
+            "/health"
+        ));
+        assert!(!has_client_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/health".parse().unwrap(),
             &h,
             "/health"
         ));
         assert!(has_client_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/tunnel?ticket=v1.x".parse().unwrap(),
             &h,
             "/tunnel"
         ));
         assert!(has_client_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/files?path=a&sig=b".parse().unwrap(),
             &h,
             "/files"
@@ -2968,6 +3602,8 @@ mod tests {
         let mut auth = HeaderMap::new();
         auth.insert("x-cua-env-authorization", "Bearer t".parse().unwrap());
         assert!(has_client_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/x".parse().unwrap(),
             &auth,
             "/x"
@@ -2975,11 +3611,15 @@ mod tests {
         // Headers are stripped for account machines, so they are not a
         // credential that lets an anonymous request through there.
         assert!(!has_forwardable_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/x".parse().unwrap(),
             &auth,
             "/x"
         ));
         assert!(has_forwardable_credential(
+            true,
+            &http::Method::GET,
             &"/m/a/tunnel?ticket=v1.x".parse().unwrap(),
             &auth,
             "/tunnel"
@@ -2995,7 +3635,7 @@ mod tests {
         );
         h.append(header::SET_COOKIE, "b=2".parse().unwrap());
         h.insert(header::CONTENT_TYPE, "application/grpc".parse().unwrap());
-        harden_machine_response(&mut h, "/tunnel");
+        harden_machine_response(&mut h, "/tunnel", false);
         assert!(h.get(header::SET_COOKIE).is_none());
         assert_eq!(h.get(header::CONTENT_TYPE).unwrap(), "application/grpc");
     }
@@ -3005,7 +3645,7 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("service-worker-allowed", "/".parse().unwrap());
         h.insert("service-worker", "active".parse().unwrap());
-        harden_machine_response(&mut h, "/anything");
+        harden_machine_response(&mut h, "/anything", false);
         assert!(h.get("service-worker-allowed").is_none());
         assert!(h.get("service-worker").is_none());
     }
@@ -3017,7 +3657,7 @@ mod tests {
             header::CONTENT_TYPE,
             "text/html; charset=utf-8".parse().unwrap(),
         );
-        harden_machine_response(&mut h, "/phish?x=1");
+        harden_machine_response(&mut h, "/phish?x=1", false);
         assert_eq!(
             h.get(header::CONTENT_TYPE).unwrap(),
             "application/octet-stream"
@@ -3036,25 +3676,57 @@ mod tests {
             header::CONTENT_SECURITY_POLICY,
             "default-src 'self'".parse().unwrap(),
         );
-        harden_machine_response(&mut viewer, "/viewer/index.html");
+        let mut phone_viewer = viewer.clone();
+        harden_machine_response(&mut viewer, "/viewer/index.html", false);
         assert_eq!(
             viewer.get(header::CONTENT_TYPE).unwrap(),
             "text/html; charset=utf-8"
         );
+        // Without phone support the machine's CSP is left as it is.
         assert_eq!(
             viewer.get(header::CONTENT_SECURITY_POLICY).unwrap(),
             "default-src 'self'"
         );
+        // With it, the viewer runs sandboxed.
+        harden_machine_response(&mut phone_viewer, "/viewer/index.html", true);
+        // A machine cannot talk its way out: the word in a report URI, a lax
+        // directive of its own, several spellings.
+        for hostile in [
+            "script-src 'unsafe-inline'; report-uri /sandbox",
+            "default-src 'self'; sandbox allow-same-origin allow-scripts allow-top-navigation",
+            "Sandbox allow-same-origin; script-src 'self'",
+            "sandbox",
+        ] {
+            let mut h = HeaderMap::new();
+            h.insert(header::CONTENT_TYPE, "text/html".parse().unwrap());
+            h.insert(header::CONTENT_SECURITY_POLICY, hostile.parse().unwrap());
+            harden_machine_response(&mut h, "/viewer/", true);
+            let csp = h
+                .get(header::CONTENT_SECURITY_POLICY)
+                .unwrap()
+                .to_str()
+                .unwrap();
+            let sandboxes: Vec<&str> = csp
+                .split(';')
+                .map(str::trim)
+                .filter(|d| d.to_ascii_lowercase().starts_with("sandbox"))
+                .collect();
+            assert_eq!(sandboxes, ["sandbox allow-scripts"], "{hostile} -> {csp}");
+        }
+        assert_eq!(
+            phone_viewer.get(header::CONTENT_SECURITY_POLICY).unwrap(),
+            "default-src 'self'; sandbox allow-scripts"
+        );
         // Bare /viewer (no trailing slash) counts too.
         let mut bare = HeaderMap::new();
         bare.insert(header::CONTENT_TYPE, "text/html".parse().unwrap());
-        harden_machine_response(&mut bare, "/viewer");
+        harden_machine_response(&mut bare, "/viewer", false);
         assert_eq!(bare.get(header::CONTENT_TYPE).unwrap(), "text/html");
         // A path that merely starts with "/viewer" as a prefix of another
         // word does not count.
         let mut lookalike = HeaderMap::new();
         lookalike.insert(header::CONTENT_TYPE, "text/html".parse().unwrap());
-        harden_machine_response(&mut lookalike, "/viewership");
+        harden_machine_response(&mut lookalike, "/viewership", false);
         assert_eq!(
             lookalike.get(header::CONTENT_TYPE).unwrap(),
             "application/octet-stream"

@@ -36,7 +36,9 @@ def test_gate_wiring():
         'edited', 'labeled', 'unlabeled',
     ]
     assert 'concurrency' not in GATE
-    assert GATE['jobs']['ci-gate']['timeout-minutes'] == 360
+    # A wedged gate must not hold a required check for six hours. Three hours
+    # still leaves headroom over the longest gate run observed on main.
+    assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
     assert '(.event == \\"pull_request\\" or .event == \\"pull_request_target\\")' in SCRIPT
     assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
@@ -238,3 +240,156 @@ def test_gate_fails_on_a_merge_queue_ref_without_a_pull_request_number():
     completed = run_gate(DONE, queue_ref='refs/heads/gh-readonly-queue/main/odd')
     assert completed.returncode == 1
     assert 'build: pass' not in completed.stdout
+
+
+QUARANTINE_MOCK = MOCK.replace("    *) printf '999' ;;", """    *'--jq .run_attempt'*) cat "$STATE/attempt" ;;
+    *) printf '999' ;;""").replace("""    *'head_sha='*)""", """    *'head_sha='*)
+      if [[ -f "$STATE/reran" ]]; then printf '%s' "$ROWS_AFTER"; return; fi""") + '''
+gh() { if [[ "$*" == *rerun-failed-jobs* ]]; then touch "$STATE/reran"; echo 2 > "$STATE/attempt"; else return 1; fi; }
+'''
+
+
+def run_quarantine_gate(tmp_path, check, attempt='1', after='1\t11\tbuild\tsuccess\tcompleted'):
+    stub = tmp_path / 'flaky.py'
+    stub.write_text(f'import sys; sys.stdin.read(); print({check!r})\n')
+    (tmp_path / 'attempt').write_text(attempt)
+    return subprocess.run(
+        ['bash', '-e', '-c', QUARANTINE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
+        env={**os.environ, 'PR_SHA': 'abc', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+             'GITHUB_RUN_ID': '99', 'ROWS': '1\t11\tbuild\tfailure\tcompleted', 'ROWS_AFTER': after,
+             'JOBS': '5\tlinux-kvm (concurrent)', 'OLDER_JOBS': '', 'ROWS_DIR': '', 'STATE': str(tmp_path),
+             'FLAKY_PY': str(stub), 'QUARANTINE_FILE': 'q.json', 'MAX_SLEEPS': '12', 'MAX_SECONDS': str(10**9)},
+        capture_output=True, text=True, timeout=20,
+    )
+
+
+def test_gate_reruns_a_quarantined_flake_once_and_passes_when_it_passes(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'all')
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / 'reran').exists()
+    assert 'rerunning its failed jobs once' in done.stdout
+    assert done.stdout.strip().splitlines()[-1] == 'build: pass'
+
+
+def test_gate_does_not_fail_on_a_quarantined_flake_that_fails_again(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'all', after='1\t11\tbuild\tfailure\tcompleted')
+    assert done.returncode == 0, done.stderr
+    assert 'build: pass (quarantined flake' in done.stdout
+
+
+def test_gate_fails_a_failure_that_is_not_quarantined(tmp_path):
+    done = run_quarantine_gate(tmp_path, 'none')
+    assert done.returncode == 1
+    assert not (tmp_path / 'reran').exists()
+    assert 'build: fail' in done.stdout
+
+
+def test_gate_reads_the_quarantine_list_from_the_base_commit():
+    steps = GATE['jobs']['ci-gate']['steps']
+    base = steps[0]['with']['sparse-checkout'].split()
+    assert '/.github/flaky/quarantine.json' in base and '/.github/scripts/flaky/flaky.py' in base
+    env = STEPS['Wait for every other workflow on the pull request head']['env']
+    assert env['FLAKY_PY'].startswith('base/') and env['QUARANTINE_FILE'].startswith('base/')
+
+
+def test_gate_fails_a_run_whose_quick_job_failed_and_skipped_the_rest():
+    # `quick` failed; the heavy jobs were skipped (the jobs API lists them, the gate drops them).
+    # The run is a failure, so the gate must not read the skipped jobs as a pass.
+    completed = run_gate('1\t11\tbuild\tfailure\tcompleted', jobs='quick / quick\tfailure')
+    assert completed.returncode == 1
+    assert 'build: fail' in completed.stdout
+
+
+HEAVY_WORKFLOWS = sorted(
+    path for path in WORKFLOWS.glob('*.yml')
+    if 'quick' in (yaml.safe_load(path.read_text()).get('jobs') or {})
+    and path.name != 'ci-quick.yml'
+)
+
+
+def test_quick_stage_is_wired_into_heavy_workflows():
+    assert HEAVY_WORKFLOWS
+    for path in HEAVY_WORKFLOWS:
+        jobs = yaml.safe_load(path.read_text())['jobs']
+        assert jobs['quick']['uses'] == './.github/workflows/ci-quick.yml', path.name
+        for name, job in jobs.items():
+            if name == 'quick':
+                continue
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            # Every job waits for `quick`, directly or through the job it needs.
+            assert needs, f'{path.name}: {name} does not wait for quick'
+            if 'quick' in needs:
+                # Still runs on push and manual runs, where `quick` is skipped.
+                assert '!failure() && !cancelled()' in str(job['if']), f'{path.name}: {name}'
+
+
+LOCAL_CI = STEPS['Require local sign-off on agent pull requests']['run']
+GH_STUB = '''
+sleep() { :; }
+gh() {
+  case "$*" in
+    *'/pulls/'*) printf '%s\\t%s\\t%s\\t%s\\n' "$AUTHOR" "deadbeefcafe" "$REF" "$HEAD_REPO" ;;
+    *'/labels'*) printf '%s\\n' "$LABELS" ;;
+    *'/statuses'*) printf '%s\\n' "$STATE" ;;
+  esac
+}
+'''
+
+
+def run_local_ci(author='someone', labels='', ref='fix/x', head_repo='fork/repo', state='', require='true'):
+    return subprocess.run(
+        ['bash', '-e', '-c', GH_STUB + LOCAL_CI],
+        env={**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+             'AUTHOR': author, 'LABELS': labels, 'REF': ref, 'HEAD_REPO': head_repo, 'STATE': state,
+             'REQUIRE_LOCAL_CI': require},
+        capture_output=True, text=True, timeout=20,
+    )
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'author': 'cua-agents[bot]'},
+    {'labels': 'bug,agent'},
+    {'ref': 'agent/cua-1-x', 'head_repo': 'test/repo'},
+])
+def test_local_ci_is_required_for_agent_pull_requests(kwargs):
+    missing = run_local_ci(**kwargs)
+    assert missing.returncode == 1
+    assert 'Run bin/ci and bin/ci --signoff on this head commit.' in missing.stdout
+    assert run_local_ci(**kwargs, state='failure').returncode == 1
+    assert run_local_ci(**kwargs, state='success').returncode == 0
+
+
+@pytest.mark.parametrize('kwargs', [
+    {},
+    {'ref': 'agent/x', 'head_repo': 'fork/repo'},  # a fork cannot opt in or out by branch name
+    {'labels': 'agents,bug'},
+])
+def test_local_ci_is_not_required_for_community_pull_requests(kwargs):
+    done = run_local_ci(**kwargs)
+    assert done.returncode == 0, done.stdout
+    assert 'Not an agent pull request' in done.stdout
+
+
+def test_local_ci_is_report_only_until_the_switch_is_on():
+    for state in ('', 'failure'):
+        done = run_local_ci(author='cua-agents[bot]', state=state, require='')
+        assert done.returncode == 0, done.stdout
+        assert '::warning' in done.stdout
+        assert 'Run bin/ci and bin/ci --signoff on this head commit.' in done.stdout
+    assert run_local_ci(author='cua-agents[bot]', state='success', require='').returncode == 0
+
+
+def test_quick_stage_runs_once_per_commit():
+    steps = yaml.safe_load((WORKFLOWS / 'ci-quick.yml').read_text())['jobs']['quick']['steps']
+    restore, *middle, save = [s for s in steps if s.get('id') == 'marker' or 'if' in s or 'cache' in str(s.get('uses', ''))]
+    key = 'ci-quick-pass-${{ github.sha }}'
+    assert restore['uses'].startswith('actions/cache/restore@') and restore['with']['key'] == key
+    assert save['uses'].startswith('actions/cache/save@') and save['with']['key'] == key
+    assert steps[0] is restore
+    # Every step after the restore is skipped on a hit; the save runs last, after the checks passed
+    # (a failing step stops the job before it, so a failure is never cached).
+    for step in steps[1:]:
+        assert step['if'] == "steps.marker.outputs.cache-hit != 'true'", step.get('name', step.get('uses'))
+    assert steps[-1] is save
+    assert any('bin/ci --quick' in str(s.get('run', '')) for s in middle)

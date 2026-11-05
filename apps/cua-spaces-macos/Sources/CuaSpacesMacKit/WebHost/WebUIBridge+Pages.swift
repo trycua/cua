@@ -52,10 +52,43 @@ extension WebUIBridge {
             return ["links": try await model.backend.links().map { BridgeValue.encode($0) }] as [String: Any]
         case "links.create":
             let ttl = (args["ttlSeconds"] as? NSNumber).map { $0.uint32Value }
+            // A public TCP share (Labs): a TCP service in a Space at a public address (agents and the CLI ask for them).
+            if args["tcp"] as? Bool == true {
+                let options = TcpShareOptions(
+                    route: args["route"] as? String, allow: args["allow"] as? [String] ?? [],
+                    checkHost: args["checkHost"] as? Bool ?? false, consent: args["consent"] as? Bool ?? false)
+                return BridgeValue.encode(try await model.backend.createTcpLink(
+                    target: try string(args, "target"), service: args["service"] as? String, ttlSeconds: ttl, name: args["name"] as? String,
+                    options: options))
+            }
             return BridgeValue.encode(try await model.backend.createLink(
                 target: try string(args, "target"), access: args["access"] as? String, ttlSeconds: ttl, name: args["name"] as? String))
         case "links.stop":
             return ["stopped": try await model.backend.stopLink(id: try string(args, "id"))] as [String: Any]
+        // A waiting public TCP share (an agent asked, or the first through a
+        // share edge): the person's answer.
+        case "links.approve":
+            return BridgeValue.encode(try await model.backend.approveLink(id: try string(args, "id"), always: args["always"] as? Bool ?? false))
+        case "links.deny":
+            let id = try string(args, "id")
+            try await model.backend.denyLink(id: id)
+            return ["denied": id] as [String: Any]
+        case "shares.settings.get":
+            return BridgeValue.encode(try await model.backend.shareSettings())
+        case "shares.settings.set":
+            guard let s = args["settings"] as? [String: Any] else { throw Failure.badArgs("settings: object") }
+            let landing = s["landing"] as? String ?? "auto"
+            return BridgeValue.encode(try await model.backend.setShareSettings(ShareSettingsRow(
+                landing: ["only_my_cloud", "allow_relay"].contains(landing) ? landing : "auto",
+                relayFallback: s["relayFallback"] as? Bool ?? true,
+                dailyCapMib: (s["dailyCapMib"] as? NSNumber)?.uint64Value ?? 0,
+                defaultAllow: s["defaultAllow"] as? [String] ?? [],
+                approveAgentShares: s["approveAgentShares"] as? Bool ?? true,
+                alwaysAllowSpaces: s["alwaysAllowSpaces"] as? [String] ?? [],
+                edgeConsent: s["edgeConsent"] as? [String] ?? [],
+                usedToday: 0, edgeCloud: nil, edgeHost: nil, edgeMonthlyUsd: nil)))
+        case "shares.edge.remove":
+            return ["ended": try await model.backend.removeShareEdge()] as [String: Any]
         // The Space thread (CUA-2155): the daemon's tools, answered as-is;
         // the page maps them (`ops/thread.ts`).
         case "thread.read", "thread.post", "thread.members", "thread.setRights",
@@ -105,6 +138,11 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
             if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
             return try await model.agentKeys.call("agent_keys.use", useArgs)
+        // A saved key or sign-in gets a name (no slot: the first saved for env).
+        case "agentKeys.rename":
+            var renameArgs: [String: Any] = ["env": try string(args, "env"), "label": try string(args, "label")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { renameArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
         case "agentKeys.fromShell":
@@ -112,6 +150,18 @@ extension WebUIBridge {
             if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
             if let fields = args["fields"] as? [String: String], !fields.isEmpty { shellArgs["fields"] = fields }
             return try await model.agentKeys.call("agent_keys.from_shell", shellArgs)
+
+        // Settings, Connections, GitHub: the daemon's github.* app methods. They answer the hosts, the
+        // accounts, the source in use and the scopes of the sign-in the host uses for an approved push
+        // (never a token); the page maps them. Not `agentKeys`: these answers are not the key list.
+        case "github.status", "github.rescan": return try await tool(method)
+        case "github.use":
+            var useArgs: [String: Any] = ["host": try string(args, "host")]
+            if let login = args["login"] as? String, !login.isEmpty { useArgs["login"] = login }
+            return try await tool("github.use", useArgs)
+        case "github.enable":
+            guard let enabled = args["enabled"] as? Bool else { throw Failure.badArgs("enabled: boolean") }
+            return try await tool("github.enable", ["host": try string(args, "host"), "enabled": enabled])
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()
@@ -418,6 +468,34 @@ extension WebUIBridge {
         return try await model.persistent.daemonTool(name, args)
     }
 
+    /// `agents.recentThreads {limit?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). A daemon
+    /// without them answers `unsupported`, and the Ready screen hides the list.
+    func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
+        var out: [String: Any] = [:]
+        if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        let name: String
+        if method == "agents.threadHistory" {
+            guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+            guard let id = args["id"] as? String, !id.isEmpty else { throw Failure.badArgs("id: string") }
+            out["agent"] = agent
+            out["id"] = id
+            name = "agent_thread_read"
+        } else {
+            name = "agent_threads"
+        }
+        do {
+            return try await tool(name, out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon can't list your agents' chats; update Cua") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
     /// `thread.read`, `thread.post`, `thread.members`, `thread.setRights`,
     /// `thread.agentAdd`, `thread.agentRemove`, `thread.joinCodeCreate`,
     /// `thread.joinCodeList`, `thread.joinCodeCancel`, `thread.settings`: the operation's
@@ -487,6 +565,9 @@ extension WebUIBridge {
             guard let harness = args["harness"] as? String, !harness.isEmpty else { throw Failure.badArgs("harness: string") }
             out["name"] = name
             out["agent"] = harness
+            if let model = args["model"] as? String, !model.isEmpty { out["model"] = model }
+            if let standby = args["standby"] as? Bool { out["standby"] = standby }
+            if let brief = args["brief"] as? String, !brief.isEmpty { out["brief"] = brief }
             return ("agent_add", out)
         case "thread.agentRemove":
             // Member names are unique per machine: the tool takes the name.
@@ -519,7 +600,7 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 

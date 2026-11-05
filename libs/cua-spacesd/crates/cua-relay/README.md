@@ -170,7 +170,14 @@ without printing proxy credentials, relay URL queries or response bodies.
   `CUA_RELAY_DEVICE_REQUIRE_APPROVAL=true` restores the strict policy: a
   fresh sign-in then enrolls only the account's first device, a re-key of a
   machine it already has, or (verified email) a sign-in proving MFA; other
-  new devices wait for an approval. Devices report a machine id (a hash of
+  new devices wait for an approval. `CUA_RELAY_DEVICE_REQUIRE_APPROVAL=phones`
+  applies that strict rule to phone-class devices only (a device whose
+  sign-in token was issued to a `CUA_RELAY_PHONE_CLIENTS` client, or that
+  reports a phone platform, including the 30-day re-verification); every
+  other device (the CLI, the desktop app, per-browser devices of the account
+  app, unattended device-code installs) keeps the default policy. The relay
+  refuses to start with `phones` unless `CUA_RELAY_PUSH=on` and at least one
+  phone client is set. Devices report a machine id (a hash of
   the host's hardware or install identity, stored keyed per account): when
   a new key of the same machine enrolls, it replaces the machine's older
   records (revoked as superseded, audited as `device_rekeyed`, left out of
@@ -199,6 +206,20 @@ without printing proxy credentials, relay URL queries or response bodies.
   (`GET /v1/pairing-codes`, never the code) and revokes
   (`DELETE /v1/pairing-codes/{id}`) them. See `src/pairing.rs`.
 
+Removing a computer (`DELETE /v1/machines/{id}`) keeps the Spaces it provided
+(records whose `host` is that id) but detaches them: they are not listed and
+connections are refused (403, "its computer was removed from the account")
+until the computer registers again with the same id.
+`DELETE /v1/machines/{id}?spaces=delete` (owner) forgets them too and cuts
+their connections; deleting their files is the client's job, through the
+computer, before it removes it.
+
+Each account has a default Space and a fallback order, so the apps, CLI,
+phone and agents agree where to work: `GET`/`PUT /v1/spaces/settings` and
+`GET /v1/spaces/default?here=<machine-id>`, which resolves the default, then
+the fallback (or every online computer, oldest first), then `here` (see
+`src/spaces.rs`).
+
 The API: `/v1/machines` (directory, see `src/api.rs`), `/v1/pairing-codes`, `/v1/devices` and
 `/v1/audit` (see `src/device_api.rs`), `/v1/info`, `/healthz`, and
 `/relay/v1/machines` (connected machines, admin token only).
@@ -212,7 +233,7 @@ spacesd credential (bearer, ticket or signed URL).
 
 - **Hosting a machine exposes only that machine.** A machine token serves
   only its own machine: it reads its record, stops sharing (and undoes its
-  own stop) and unregisters. It cannot list, rename, reach other machines,
+  own stop) and unregisters. It cannot list, rename, reach other computers,
   change the allow-list, register machines or manage devices. Hosting never
   enrolls the machine as a client.
 - **Verified-email allow-lists.** Sharing is by account id or email (at most
@@ -307,6 +328,42 @@ Deploying a host domain needs DNS and TLS outside this repo:
    `CUA_RELAY_PUBLIC_URL` pointing at the account-API origin unchanged.
 4. **Clients.** Share links follow the `url` the directory API reports per
    machine; nothing to change.
+
+## Public TCP shares
+
+A raw TCP service in a Space (a game server such as Minecraft Java on 25565)
+can be shared publicly: game protocols carry no TLS or SNI, so each share
+gets its own port from a pool and, optionally, an SRV record so people type
+a name instead of a port. Off unless `CUA_RELAY_TCP_PORTS` is set; the cua
+daemon also keeps it behind an experiment switch.
+
+| Variable | Meaning |
+|---|---|
+| `CUA_RELAY_TCP_PORTS` | The pool, `26000-26063` |
+| `CUA_RELAY_TCP_HOST` | The host people connect to (`tcp.m.cua.sh`), and the SRV target |
+| `CUA_RELAY_TCP_PROXY_PROTOCOL` | `on` when a TCP proxy in front sends PROXY protocol v2 (client addresses for the limits); connections without it are refused |
+| `CUA_RELAY_TCP_PER_ACCOUNT`, `CUA_RELAY_TCP_PER_MACHINE` | Ports held at once (2, 4) |
+| `CUA_RELAY_TCP_CONN_RPS_PER_IP`, `CUA_RELAY_TCP_CONN_BURST_PER_IP` | New connections from one address (2/s, burst 10) |
+| `CUA_RELAY_TCP_MAX_CONNS`, `CUA_RELAY_TCP_BYTES_PER_SEC` | Per share: open connections (64), bytes per second both ways (4 MiB) |
+| `CUA_RELAY_TCP_MAX_TTL_HOURS` | Longest share (24) |
+| `CUA_RELAY_TCP_SRV_DOMAIN`, `CUA_RELAY_DNS_ZONE_ID`, `CUA_RELAY_DNS_API_TOKEN` | SRV names (`_minecraft._tcp.mc-<hex>.m.cua.sh`) in a Cloudflare zone, with a token scoped to it |
+
+The computer's daemon allocates a port (`POST /v1/machines/{id}/tcp-shares`
+with the share's 40-hex token and the Space port), renews its lease every few
+minutes (`…/{port}/keepalive`) and closes it (`DELETE …/{port}`). Each
+connection to the port becomes a WebSocket to the share's public path on the
+machine, opened through the relay's own router, so every rule of a public
+link applies, and the daemon's share gateway splices it to the one Space
+port the share names. Admin and remote-access ports (SSH, RDP, VNC, RCON
+25575, Docker and Kubernetes APIs, common databases) are refused.
+
+A reconcile sweep (at start and every 30 s) closes ports whose lease or end
+passed, or whose machine left the directory or stopped sharing, restarts
+listeners after a restart (allocations persist in `<state>.tcp.json`), and
+makes the zone's SRV records carrying this relay's tag
+(`cua-relay tcp-share <srv domain>`) match the live allocations exactly.
+Every open and close is a row in the owner's audit log (`tcp_share_opened`,
+`tcp_share_closed` with the reason).
 
 ## Share links (`cua share`)
 
@@ -424,7 +481,11 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_DEVICE_TTL_DAYS` | `30` | Days an enrollment lasts without use (each device session renews it). |
 | `CUA_RELAY_DEVICE_GRACE_DAYS` | `0` (ended) | Days unenrolled devices keep access after enrollment is first on. Set this only for a time-boxed rollout window (S3): a stolen account token alone reaches every machine while it is open. |
 | `CUA_RELAY_DEVICE_BOOTSTRAP_MAX_AUTH_AGE_SECS` | `600` | Max sign-in age that enrolls a device without an approval. |
-| `CUA_RELAY_DEVICE_REQUIRE_APPROVAL` | off | Strict enrollment: a fresh sign-in enrolls only an account's first device, a re-key of a known machine, or (verified email) a sign-in proving MFA; other new devices need an approval from an enrolled device. |
+| `CUA_RELAY_DEVICE_REQUIRE_APPROVAL` | `false` | `true`: strict enrollment: a fresh sign-in enrolls only an account's first device, a re-key of a known machine, or (verified email) a sign-in proving MFA; other new devices need an approval from an enrolled device. `phones`: the same rule for phone-class devices only (token issued to a `CUA_RELAY_PHONE_CLIENTS` client, or a phone platform), every other device keeps the default; needs `CUA_RELAY_PUSH=on` and a non-empty `CUA_RELAY_PHONE_CLIENTS`, else the relay refuses to start. Any other value is an error. |
+| `CUA_RELAY_PUSH` | `off` | Push notifications for the phone app (`on` needs account mode). On also turns on the phone viewer rules below. Off, `/v1/push/...` answers 404 and the relay behaves exactly as before. See "The phone app". |
+| `CUA_RELAY_PUSH_FILE` | next to the state file | The account's registered phones and preferences (`machines.json` gives `machines.push.json`; in memory without a state file). Holds device tokens: 0600, back it up with the devices file. |
+| `CUA_PUSH_APNS_KEY_FILE`, `CUA_PUSH_APNS_KEY_ID`, `CUA_PUSH_APNS_TEAM_ID`, `CUA_PUSH_APNS_TOPIC` | unset | The APNs authentication key (a `.p8` file from the Apple Developer account), its ids and the app's bundle id (default `ai.cua.spaces.mobile`). With push on and no key, phones register and alerts wait; a key file that is named but unreadable, or without its ids, stops the relay at start. Never put the key in the image or the repository: mount it as a secret. |
+| `CUA_PUSH_LOG_FILE` | unset | A local run without an Apple key: write each alert (no token) to this JSON-lines file instead of sending it. Never set in production. |
 | `CUA_RELAY_TOKENS` | unset | Static mode: comma-separated registration tokens. |
 | `CUA_RELAY_TOKEN_FILE` | unset | Static mode: one token per line (`#` comments). |
 | `CUA_RELAY_MAX_MACHINES_PER_TOKEN` | `16` | Static mode: machines per registration token. |
@@ -495,6 +556,7 @@ Everything the relay keeps lives next to the state file, on one volume:
 | Mesh registry | `<state>.mesh.json` | Compact JSON, one coalesced write per burst of changes (off the async workers), retried with backoff on failure. A new node waits for the write that covers it; a pairing is confirmed only once saved. Soft state: nodes register again on reconnect. Endpoint addresses nodes report are never written to it. |
 | Pools | `<state>.pool/<account>/` | `log.jsonl` and `terminal.txt` appended (fsynced) per append; `lease.json`, `keys.json`, `snapshot.bin` replaced whole. A failed append is cut back (no torn line) and answered `500 storage`. |
 | Pairing codes | `<state>.pairing.json` | Compact JSON, rewritten (streamed) per mint, spend or revoke. A failed write refuses the mint or spend (`500`); the code stays as it was. |
+| Space settings | `<state>.spaces.json` | Compact JSON of each account's default Space and fallback, rewritten (streamed) per change. A failed write refuses the change (`500`). |
 | Grants | `<state>.grants.json` | Compact JSON of who reached each machine and whose access was revoked, rewritten (streamed) on a change. A failed write is not rolled back (a revoke holds in memory, so old tickets stay refused) and is retried with the next authorization. |
 
 Every replaced file goes through a temp file (`.<name>.<uuid>.tmp`); startup
@@ -547,6 +609,35 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   `error` for a relay-side failure). No other label values exist, and all
   seven series are present from process start.
 - `GET /v1/info` keeps `state_writable` (false while a store is failing).
+
+**Probe contract (`x-cua-relay-route`).** External probes match the
+status code and this header, never the wording of a refusal: the text a
+person reads changes with the relay's mode (phone support on answers an
+unknown id as an account computer) and with copy edits. Every response of
+`/healthz` (on every listener), `/readyz` and the client route
+(`/m/<id>/...`, host mode, any path forwarded to a computer) carries one of
+these values (`src/route_marker.rs`):
+
+| Value | Meaning |
+|---|---|
+| `ok` | `/healthz` (204), or `/readyz` ready (200) |
+| `not-ready` | `/readyz` 503 |
+| `forwarded` | the computer answered; status and body are its own (a computer cannot set this header itself) |
+| `refused-auth` | relay 401: no credential or one it does not accept |
+| `refused-denied` | relay 403: not shared, stopped sharing, revoked ticket |
+| `refused-limit` | relay 429 or 503: plan, rate or capacity limit |
+| `refused` | any other relay 4xx |
+| `offline` | the computer is not connected (502) |
+| `error` | any other relay 5xx |
+| `relay` | the relay answered itself without refusing (a redirect, a page it serves) |
+
+gRPC refusals (HTTP 200 with `grpc-status`) carry the marker of the
+relay's own status. An anonymous `GET /m/00000000-0000-0000-0000-000000000000/healthz`
+answers `401` with `refused-auth` in every mode (phone support on or off,
+admin token set or not, account sign-in on or off), and an edge or
+load-balancer error page carries no marker at all. The values are fixed:
+`tests/probe_contract.rs` fails if one changes or disappears. Changing them
+means changing the probes in trycua/cloud in the same release.
 
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and
@@ -611,6 +702,178 @@ Restoring a backup brings back data the relay has since dropped.
   is backed up, and for how long, is on the "What the relay can see" docs page
   (`docs/content/docs/spaces/guides/relay-security.mdx`).
 
+## The phone app
+
+Two additions serve the Cua Spaces phone app. Both are off until
+`CUA_RELAY_PUSH=on`: a relay without it behaves exactly as before, including
+how it treats the viewer.
+
+**Push (`push_api`, the `cua-push` crate).** With `CUA_RELAY_PUSH=on`, an
+enrolled phone registers with the token its operating system gave the app
+(`PUT /v1/push/registrations/{device_id}`: `platform`, `provider`, `token`,
+`app_id`, `env`, `categories` (`needs_you`, `done`), `locale`; `DELETE` to
+remove it) and the account keeps preferences (`GET`/`PUT /v1/push/preferences`,
+`GET /v1/push`). A daemon of the account reports an event
+(`POST /v1/push/events` with the account's token: the event's kind, the Space
+and entry it is about, the agent's short name and a unique id), and the relay
+sends an alert to that account's phones only. The alert is built here from a
+fixed phrase per kind: no message text, tool output or file content ever
+reaches a phone. An event id is sent once however often it is reported, a
+token the provider says is gone is dropped, and an account may report 120
+events a minute. A phone registers only itself (the path's device id must be
+the one its device session is of). Without an APNs key, registrations are kept
+and alerts wait.
+
+**The web viewer from a phone's web view.** A web view can set headers on a
+page's first request but not on what the page then loads. In account mode with
+`CUA_RELAY_PUSH=on`, the relay therefore handles the viewer like this
+(`viewer.rs`). With it off, an anonymous viewer page request is forwarded to the
+machine and any well-formed ticket header is forwarded, as before:
+
+- A request **without any credential** for `GET`/`HEAD` `/m/<id>/viewer`,
+  `/viewer/` or `/viewer/<file>` is answered **by the relay itself** from the
+  viewer embedded in its build (`cua-spacesd-html5`, about 280 KB of static
+  files). It never reaches a machine, so a machine cannot serve its own page
+  under the relay's origin, and an unknown id, an offline machine, a machine
+  that is someone else's and one that stopped sharing all get the same bytes
+  with no lookup to time. The path is percent-decoded once and checked against
+  an allowlist (`A-Za-z0-9._~-` and `/`; no `%` left, backslash, NUL or control
+  character, `.` or `..` segment, or `//`). The responses carry
+  `Content-Security-Policy: <the viewer's policy>; sandbox allow-scripts` (no
+  `allow-same-origin`: the page runs in an opaque origin and cannot read this
+  origin's storage or call its API as the user), `X-Content-Type-Options:
+  nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on the
+  page. Each address may make 10 such requests a second (burst 40, then 429).
+- Because the sandboxed page is cross-origin to the relay, the relay answers
+  the CORS preflight (`OPTIONS`) of the viewer's own calls (`/cua.env.v1.*`,
+  `/files...`) itself, the same for every id.
+- The viewer's calls carry its machine-minted ticket in
+  `x-cua-env-authorization: Bearer v1.<claims>.<signature>`. The relay forwards
+  such a call only when the ticket is a **viewer** ticket that has **not
+  expired** (read from its claims; a viewer ticket names no machine, so a
+  ticket from another machine fails its signature there), is at most 2 KiB,
+  and the call is one the viewer makes (`POST /cua.env.v1.*`, `/files...`,
+  `GET /media`). Revocation is checked as for the media socket's ticket
+  (`grants`). An address whose tickets machines refuse 30 times in a minute is
+  answered 429 for the rest of the minute. A machine's own static token never
+  has that shape and is never forwarded.
+- With the account's own bearer, nothing changes: the relay's assertion
+  replaces every client credential header, and a viewer page a machine serves
+  to such a caller gets the same sandbox policy.
+
+What the sandbox takes from the viewer in a web view (the page works: it loads,
+reaches the relay with CORS and sends its ticket; checked in headless Chrome):
+`sessionStorage` (the ticket stays in the URL fragment, so a reload still
+works), the microphone uplink and the async clipboard (their permission
+policies name `self`, which an opaque origin is not), and the folder picker
+for file sync. If those are needed, serve the viewer from its own origin
+instead (a separate static host that holds nothing), rather than weakening the
+sandbox.
+
+The phone mints the ticket with its own authenticated call
+(`SystemService.CreateViewerTicket`, a machine that shares its desktop) and
+opens `<relay>/m/<id>/viewer/#ticket=<ticket>`.
+
+### A phone is a smaller kind of device
+
+With `CUA_RELAY_PUSH=on` the relay treats a device enrolled from the phone app
+as a **phone**: a device that reports `ios` or `android`, or whose sign-in
+token was issued to one of the phone client ids (`CUA_RELAY_PHONE_CLIENTS`,
+default `cua-spaces-mobile`). The mark is kept with the device and never
+removed: registering the same key again as a computer does not undo it.
+
+- **Short list.** A phone's calls reach a machine only if they are on the list
+  in `phone.rs`: the capabilities and health probes, a view-only viewer ticket,
+  the screen (`ListDisplays`, `Screenshot`) and the Space thread
+  (`CallThreadTool`). Everything else (processes, files, tunnels, the
+  clipboard, creating Spaces, every plain HTTP route) is refused here with
+  `a phone cannot make this call`, before it is forwarded. The machine checks
+  the same list again.
+- **A shared desktop is a Space.** `Pointer` and `Keyboard` are forwarded, and
+  the machine answers them only on a desktop it shares (`share_desktop`) and
+  only when the account's role may touch it (the owner's own phone and an
+  editor may; a view-only share may not). There is no second consent for a
+  phone: sharing the desktop is the consent, and stopping the share ends a
+  phone's running picture within a second. The computer's own services (files,
+  processes, tunnels, the driver, shutdown) are never a phone's.
+- **The assertion says so.** The machine gets the phone's device id and kind
+  (`dev`, `devk`) in the relay-signed assertion, from the verified device
+  session, never from anything the phone sends.
+- **A phone cannot enroll a computer.** Approving a device from a phone is
+  refused unless the device is a phone too.
+- **Revoking a phone ends its sessions at once**, like any device.
+- **Without `CUA_RELAY_PUSH=on`** a phone's device session is refused
+  (`this relay does not serve phones`): a phone is served only through these
+  rules.
+- **No enumeration.** With phone support on, an id nobody registered is
+  answered exactly like a machine that is not shared with the caller (401
+  without a valid token, 403 with one).
+- **Pin the clients.** `CUA_RELAY_OIDC_AUTHORIZED_PARTIES` (comma separated)
+  restricts account tokens to the listed OAuth clients (`azp`). Unset accepts
+  any client of the issuer, as before. With phone support on, set it to the
+  clients meant for this relay (the CLI, the apps and `cua-spaces-mobile`).
+- **The push key.** `CUA_PUSH_APNS_KEY_FILE` must be readable by its owner
+  only (`0600` or `0400`); the relay refuses to start with a looser one and
+  never logs the key.
+
+### Deployment requirements for phone support
+
+The relay refuses to start with `CUA_RELAY_PUSH=on` unless the two settings that make it safe are said (only a
+`--public-url` that is plain `http://`, a local run, is let off; https or no address at all is public):
+- **`CUA_RELAY_OIDC_AUTHORIZED_PARTIES`**: the OAuth clients allowed to sign in (the CLI, the desktop app and
+  `cua-spaces-mobile`). A token for any other client of the issuer is refused. `CUA_RELAY_PHONE_CLIENTS` names which
+  of them are phones; its default is the client id the phone app signs in with (`cua-spaces-mobile`), so the identity
+  provider's client for the phone app must have that id.
+- **`CUA_RELAY_TRUSTED_PROXIES`**: the ingress addresses, and the ingress must overwrite (not append to)
+  `X-Forwarded-For`; every rate limit keys on the caller's address. When clients reach the relay directly, say so
+  with `none`.
+
+Also required, and not something the relay can check: account mode with device enrollment, grace period 0, strict
+approval, `/metrics` and `/readyz` details off the public listener (they need the admin bearer; block them at the
+ingress too), and an identity provider where only those clients carry the relay's audience.
+
+- **Slow-header clients.** With phone support on, the relay drops a client that takes more than 10 seconds to send a
+  request's headers and refuses headers over 32 KiB (it serves through its own bounded listener).
+- **Computers that predate phones.** A computer says (`x-cua-phone-support`) that it serves phones when it connects.
+  One that does not is sent nothing of a phone's; the phone is told to update that computer. For the ones that do,
+  a phone's `CreateViewerTicket` is rewritten before it is forwarded: view only, five minutes at most, nothing else.
+- **Devices from before.** A device enrolled as an iPhone, iPad or Android before phones were a class is a phone.
+- **A phone and the account's control plane.** Resharing, stopping or starting sharing, removing or confirming a
+  computer, and minting a pairing code from a phone need a sign-in made in the last ten minutes. A phone never takes
+  part in the pool (`/v1/pool/*`) or reports events.
+- **Kill switches.** One phone: revoke it (ends its sessions, tickets, streams and alerts). Every phone of an
+  account: `POST /v1/devices/revoke-phones` (from a computer, or a phone with a recent sign-in), also a button in the
+  app. Every phone of the relay, keeping the hardening: `CUA_RELAY_PHONES=off`. One computer: `cua-spacesd phone off`,
+  or stop sharing its desktop: a running picture stops within a second.
+
+### What changes in the relay, and the deploy checklist
+
+What changes, all behind `CUA_RELAY_PUSH=on`: the routes `/v1/push/...`; the
+unauthenticated viewer path above (a new, bounded, relay-served answer for
+`/m/<id>/viewer...` and the preflight of the viewer's calls); header tickets
+are forwarded only when they are live viewer tickets on viewer calls (before,
+any syntactically valid ticket header was forwarded on any path and method);
+the relay now links the viewer's static files (`cua-spacesd-html5`).
+Everything else is unchanged.
+
+Checklist, on a pre-production relay first:
+1. Deploy with `CUA_RELAY_PUSH` unset and check nothing moved: an anonymous
+   `GET /m/<id>/viewer/` is answered by the machine, as before.
+   Then set `CUA_RELAY_PUSH=on` (account mode): `GET /m/<any id>/viewer/`
+   returns 200 and `content-security-policy` ending in `sandbox allow-scripts`;
+   the same for an id that does not exist; `GET /m/<id>/files` is still 401.
+2. With a real machine that shares its desktop and a phone's web view (or a
+   desktop browser), open `<relay>/m/<id>/viewer/#ticket=<ticket>`: the screen
+   appears and touch works; microphone and clipboard are expected to be off.
+3. Watch `cua_relay_connections_total{kind="client",outcome="rejected"}` and the
+   auth log for `ticket_revoked`: no rise outside tests.
+4. Add the APNs variables to the relay that has `CUA_RELAY_PUSH=on`; `GET /v1/push` with a
+   phone's token says `"configured": true`; register a phone, post an approval
+   in a Space, see the alert.
+5. Production the same way. To roll back, unset `CUA_RELAY_PUSH` and deploy the
+   previous image; nothing is stored that the old relay needs (`*.push.json` is
+   a new file next to the state file).
+
 ## Run and test
 
 ```bash
@@ -622,6 +885,15 @@ CUA_RELAY_OIDC_ISSUER=http://127.0.0.1:9000 cargo run -p cua-relay   # account m
 
 cargo test --locked -p cua-relay
 ```
+
+`examples/local-harness.rs` is the whole local setup for the phone app: a
+fake issuer and a relay (account mode, device enrollment, push with a log
+provider) on loopback ports, all state under one directory.
+`scripts/mobile-harness.sh start` adds a machine's daemon in an isolated home
+(no service is installed, nothing outside that directory is touched), and
+`scripts/phone-probe.py` plays the phone against it (`scripts/mobile-e2e.sh`
+runs the wire end to end). Never production: the issuer signs a token for
+anyone who asks.
 
 `examples/fake_oidc.rs` is a fake issuer that completes every `cua auth login`
 immediately and mints tokens for one user, for account-mode end to end runs. End to end in Docker:

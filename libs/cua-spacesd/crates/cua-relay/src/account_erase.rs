@@ -15,8 +15,9 @@
 //!   accounts' chains are separate and still verify), pairing codes;
 //! - **teams** (leave, delete the ones solely owned, scrub invites and the
 //!   audit log), who-reached-what rows (`grants`), usage and queued
-//!   analytics events, the cached plan, cached team-access answers, mesh
-//!   nodes and pairings, and the account's pool.
+//!   analytics events, the account's default Space settings, the cached
+//!   plan, cached team-access answers, mesh nodes and pairings, and the
+//!   account's pool.
 //!
 //! It needs the internal token (like every `/internal/v1/*` route), is
 //! idempotent (a second call, or an unknown account, answers 200 with zero
@@ -230,6 +231,10 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         .erase_account(sub, &machine_ids)
         .map_err(|e| failed("mesh", e))?;
     relay.mesh.changed();
+    let spaces_settings = relay
+        .spaces
+        .erase_account(sub)
+        .map_err(|e| failed("spaces", e))?;
     let pool = relay
         .pool
         .erase_account(sub)
@@ -245,6 +250,7 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         "usage": usage,
         "plan_cache": plan_cache,
         "pool": pool,
+        "spaces_settings": spaces_settings,
         "teams": teams,
         "grants": grants,
         "posthog_distinct_id": crate::meter::posthog_distinct_id(sub),

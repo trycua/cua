@@ -519,6 +519,28 @@ impl Directory {
             .collect()
     }
 
+    /// Whether `record` is a Space whose computer (its `host`) has no record:
+    /// the computer was removed from the account but its Spaces were kept.
+    /// A detached Space is not listed and cannot be reached; registering
+    /// the computer again with the same id brings it back unchanged.
+    pub fn is_detached(&self, record: &MachineRecord) -> bool {
+        match record.host.as_deref() {
+            Some(host) => !self.records.lock().expect("directory").contains_key(host),
+            None => false,
+        }
+    }
+
+    /// The records that name `host` as their computer.
+    pub fn children_of(&self, host: &str) -> Vec<MachineRecord> {
+        self.records
+            .lock()
+            .expect("directory")
+            .values()
+            .filter(|r| r.host.as_deref() == Some(host))
+            .cloned()
+            .collect()
+    }
+
     /// Every record `who` owns or is allowlisted on, with the role.
     pub fn visible_to(&self, who: &Identity) -> Vec<(MachineRecord, Role)> {
         self.records
@@ -681,6 +703,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }

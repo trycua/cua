@@ -220,12 +220,29 @@ jobs:
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+      # microVMs on Apple silicon: the static aarch64 guest init the app
+      # bundles (build-release.sh --skip-cargo takes it from here). Same
+      # step as cd-cua-spaces.yml.
+      - name: Build the microVM guest init (arm64)
+        if: matrix.arch == 'arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "target/${{ matrix.triple }}/release/"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
             libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
             libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+            libs/cua/target/${{ matrix.triple }}/release/cua-microvm-init
           if-no-files-found: error
           retention-days: 1
 
@@ -344,6 +361,10 @@ jobs:
             cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
             chmod +x "$dir/cua-spaces-cli"
           done
+          # The microVM guest init, where build-release.sh --skip-cargo looks.
+          musl=libs/cua/target/aarch64-unknown-linux-musl/release
+          mkdir -p "$musl"
+          mv libs/cua/target/aarch64-apple-darwin/release/cua-microvm-init "$musl/"
 
       # A throwaway keychain holds the Developer ID Application identity for
       # this job only (deleted in the last step).

@@ -17070,6 +17070,47 @@ public struct AppExperiments: Equatable, Hashable {
      * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
      */
     public var webUi: Bool
+    /**
+     * Secure Spaces: a Space reaches the internet and nothing else on the
+     * network unless it is opened. Off unless turned on; the daemon enforces
+     * it (the switch is kept in the cua home).
+     */
+    public var secureSpaces: Bool
+    /**
+     * Child Spaces: a Space may make Spaces of its own. Off unless turned
+     * on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var childSpaces: Bool
+    /**
+     * Ask first: an agent asks on a card before something leaves its Space
+     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var askFirst: Bool
+    /**
+     * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+     * and the CI Runners page). Off unless turned on; the daemon and the
+     * `cua` command enforce it (the switch is kept in the cua home).
+     */
+    public var ciRunners: Bool
+    /**
+     * Public TCP shares: a raw TCP service in a Space (a game server) at a
+     * public address. Off unless turned on; the daemon enforces it (the
+     * switch is kept in the cua home).
+     */
+    public var tcpShares: Bool
+    /**
+     * Mobile: the computer answers the Cua Spaces phone app (its tools and
+     * push events). Off unless turned on; the daemon enforces it (the switch
+     * is kept in the cua home).
+     */
+    public var mobile: Bool
+    /**
+     * Warm pools: one Linux Space kept ready, with its coding apps
+     * installed, so the next Create from Home starts at once. Off unless
+     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     */
+    public var warmPools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17087,11 +17128,52 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * The shared web UI is the main window. Always on in the macOS shell
          * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool) {
+         */webUi: Bool,
+        /**
+         * Secure Spaces: a Space reaches the internet and nothing else on the
+         * network unless it is opened. Off unless turned on; the daemon enforces
+         * it (the switch is kept in the cua home).
+         */secureSpaces: Bool,
+        /**
+         * Child Spaces: a Space may make Spaces of its own. Off unless turned
+         * on; the daemon enforces it (the switch is kept in the cua home).
+         */childSpaces: Bool,
+        /**
+         * Ask first: an agent asks on a card before something leaves its Space
+         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */askFirst: Bool,
+        /**
+         * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+         * and the CI Runners page). Off unless turned on; the daemon and the
+         * `cua` command enforce it (the switch is kept in the cua home).
+         */ciRunners: Bool,
+        /**
+         * Public TCP shares: a raw TCP service in a Space (a game server) at a
+         * public address. Off unless turned on; the daemon enforces it (the
+         * switch is kept in the cua home).
+         */tcpShares: Bool,
+        /**
+         * Mobile: the computer answers the Cua Spaces phone app (its tools and
+         * push events). Off unless turned on; the daemon enforces it (the switch
+         * is kept in the cua home).
+         */mobile: Bool,
+        /**
+         * Warm pools: one Linux Space kept ready, with its coding apps
+         * installed, so the next Create from Home starts at once. Off unless
+         * turned on; the daemon enforces it (the switch is kept in the cua home).
+         */warmPools: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
         self.webUi = webUi
+        self.secureSpaces = secureSpaces
+        self.childSpaces = childSpaces
+        self.askFirst = askFirst
+        self.ciRunners = ciRunners
+        self.tcpShares = tcpShares
+        self.mobile = mobile
+        self.warmPools = warmPools
     }
 
 
@@ -17113,7 +17195,14 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
                 cuaVolume: FfiConverterBool.read(from: &buf),
                 yourCloud: FfiConverterBool.read(from: &buf),
                 sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf)
+                webUi: FfiConverterBool.read(from: &buf),
+                secureSpaces: FfiConverterBool.read(from: &buf),
+                childSpaces: FfiConverterBool.read(from: &buf),
+                askFirst: FfiConverterBool.read(from: &buf),
+                ciRunners: FfiConverterBool.read(from: &buf),
+                tcpShares: FfiConverterBool.read(from: &buf),
+                mobile: FfiConverterBool.read(from: &buf),
+                warmPools: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -17122,6 +17211,13 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.yourCloud, into: &buf)
         FfiConverterBool.write(value.sharing, into: &buf)
         FfiConverterBool.write(value.webUi, into: &buf)
+        FfiConverterBool.write(value.secureSpaces, into: &buf)
+        FfiConverterBool.write(value.childSpaces, into: &buf)
+        FfiConverterBool.write(value.askFirst, into: &buf)
+        FfiConverterBool.write(value.ciRunners, into: &buf)
+        FfiConverterBool.write(value.tcpShares, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
+        FfiConverterBool.write(value.warmPools, into: &buf)
     }
 }
 
@@ -35786,6 +35882,24 @@ public struct AppSettings: Equatable, Hashable {
      * older settings file without it reads as tips on, none done.
      */
     public var tips: AppTipsState
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    public var agentMenuShown: [String]
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    public var agentMenuHidden: [String]
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    public var agentMenuSeen: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35867,7 +35981,22 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
          * older settings file without it reads as tips on, none done.
-         */tips: AppTipsState) {
+         */tips: AppTipsState,
+        /**
+         * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+         * Home's agent menu shows although the default hides them (an app
+         * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+         */agentMenuShown: [String],
+        /**
+         * The apps the menu hides although the default shows them. Nothing is
+         * signed out: a hidden app keeps its sign-ins and stays on the Agents
+         * page and available by name.
+         */agentMenuHidden: [String],
+        /**
+         * The working accounts the menu last saw (`app|variable|slot`): a new
+         * one is a connect, which shows its app again
+         * ([`crate::agent_menu::sync`]).
+         */agentMenuSeen: [String]) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -35886,6 +36015,9 @@ public struct AppSettings: Equatable, Hashable {
         self.autoConnect = autoConnect
         self.currentTeamId = currentTeamId
         self.tips = tips
+        self.agentMenuShown = agentMenuShown
+        self.agentMenuHidden = agentMenuHidden
+        self.agentMenuSeen = agentMenuSeen
     }
 
 
@@ -35921,7 +36053,10 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
                 currentTeamId: FfiConverterOptionString.read(from: &buf),
-                tips: FfiConverterTypeAppTipsState.read(from: &buf)
+                tips: FfiConverterTypeAppTipsState.read(from: &buf),
+                agentMenuShown: FfiConverterSequenceString.read(from: &buf),
+                agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -35944,6 +36079,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.currentTeamId, into: &buf)
         FfiConverterTypeAppTipsState.write(value.tips, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
     }
 }
 
@@ -80684,7 +80822,9 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 })
 }
 /**
- * Reads the settings file (defaults when missing or damaged).
+ * Reads the settings file (defaults when missing or damaged). The
+ * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
     return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
@@ -80717,7 +80857,8 @@ public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> A
 })
 }
 /**
- * Writes the settings file.
+ * Writes the settings file, and keeps the experiments the daemon enforces
+ * where it reads them (the cua home).
  */
 public func appSettingsSave(path: String, settings: AppSettings)throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(
@@ -82802,7 +82943,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 42027) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
@@ -82811,7 +82952,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 30129) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage() != 34252) {

@@ -579,8 +579,8 @@ fn click_debug_image_out() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn set_config_screenshot_resize() {
-    //! set_config(max_image_dimension=200) then screenshot — returned image must
-    //! have both dimensions ≤ 200. Verifies the ResizeRegistry pipeline end-to-end.
+    //! set_config(max_image_dimension=200) then get_window_state — the returned
+    //! window image must have both dimensions ≤ 200.
     let Some(mut d) = spawn_unrestricted() else {
         return;
     };
@@ -588,7 +588,7 @@ fn set_config_screenshot_resize() {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
-    // Set a tiny max_image_dimension so the full display screenshot will be resized.
+    // Set a tiny max_image_dimension so the window screenshot will be resized.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
         "params":{"name":"set_config","arguments":{"max_image_dimension":200}}
@@ -600,40 +600,104 @@ fn set_config_screenshot_resize() {
         "set_config returned error: {resp:?}"
     );
 
-    // Capture full display; must be ≤ 200 px in both dimensions.
+    // Find a visible window to capture through the canonical state tool.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
+        "params":{"name":"list_windows","arguments":{}}
     }));
-    let resp = d.recv();
-    assert!(resp["error"].is_null(), "screenshot failed: {resp:?}");
-    // A screenshot can be unavailable in a non-interactive session (Session 0 on
-    // Windows, no display) — there's nothing to resize, so skip rather than fail.
-    // (The old Windows mirror lacked this skip and asserted unconditionally; it
-    // had never been run in such an environment.)
-    if resp["result"]["isError"].as_bool().unwrap_or(false) {
-        eprintln!("screenshot unavailable — skipping resize assertion: {resp:?}");
-        return;
+    let listed = d.recv();
+    let windows = listed["result"]["structuredContent"]["windows"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut tried = 0usize;
+    let mut capture_errors = Vec::new();
+    let mut captured = false;
+    for target in windows
+        .iter()
+        .filter(|window| window["is_on_screen"].as_bool() == Some(true))
+        .take(5)
+    {
+        let (Some(pid), Some(window_id)) = (target["pid"].as_u64(), target["window_id"].as_u64())
+        else {
+            continue;
+        };
+        tried += 1;
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id":3 + tried as u64,"method":"tools/call",
+            "params":{"name":"get_window_state","arguments":{
+                "pid":pid,"window_id":window_id,"max_elements":10,"max_depth":2
+            }}
+        }));
+        let state = d.recv();
+        let structured = &state["result"]["structuredContent"];
+        match (
+            structured["screenshot_width"].as_u64(),
+            structured["screenshot_height"].as_u64(),
+        ) {
+            (Some(w), Some(h)) => {
+                assert!(
+                    !state["result"]["isError"].as_bool().unwrap_or(false),
+                    "get_window_state returned image dimensions with an error: {state:?}"
+                );
+                assert!(
+                    w > 0 && w <= 200,
+                    "screenshot width {w} should be in 1..=200"
+                );
+                assert!(
+                    h > 0 && h <= 200,
+                    "screenshot height {h} should be in 1..=200"
+                );
+                captured = true;
+                break;
+            }
+            _ => {
+                // macOS reports an object, Windows a string; either means the
+                // window was not capturable from this session.
+                let error = match &structured["screenshot_error"] {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(text) => Some(text.clone()),
+                    other => Some(other.to_string()),
+                };
+                capture_errors.push((window_id, error));
+            }
+        }
     }
-    let (Some(w), Some(h)) = (
-        resp["result"]["structuredContent"]["width"].as_u64(),
-        resp["result"]["structuredContent"]["height"].as_u64(),
-    ) else {
-        eprintln!("screenshot returned no dimensions — skipping resize assertion: {resp:?}");
-        return;
-    };
-    assert!(
-        w <= 200,
-        "screenshot width {w} should be ≤ 200 after max_image_dimension=200"
-    );
-    assert!(
-        h <= 200,
-        "screenshot height {h} should be ≤ 200 after max_image_dimension=200"
-    );
 
-    // get_config should reflect the updated value.
+    let describe = |errors: &[(u64, Option<String>)]| {
+        errors
+            .iter()
+            .map(|(id, error)| {
+                format!(
+                    "window_id={id}: {}",
+                    error
+                        .as_deref()
+                        .unwrap_or("no dimensions and no screenshot_error")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    if tried == 0 {
+        eprintln!("No on-screen windows found — skipping resize assertion");
+    } else if !captured && capture_errors.iter().all(|(_, error)| error.is_some()) {
+        // Capture is unavailable in this session (no Screen Recording grant,
+        // Windows Session 0): there is nothing to resize.
+        eprintln!(
+            "No visible window was capturable — skipping resize assertion. Errors: {}",
+            describe(&capture_errors)
+        );
+    } else {
+        assert!(
+            captured,
+            "Expected a capturable window with resized image dimensions. Errors: {}",
+            describe(&capture_errors)
+        );
+    }
+
+    // get_config should reflect the updated value even in a headless session.
     d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "jsonrpc":"2.0","id":100,"method":"tools/call",
         "params":{"name":"get_config","arguments":{}}
     }));
     let resp = d.recv();

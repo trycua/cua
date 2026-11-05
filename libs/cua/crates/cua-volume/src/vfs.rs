@@ -1338,6 +1338,8 @@ mod tests {
             Arc::new(FsBackend::new(dir.path().join("data"))),
             dir.path().join("state"),
         );
+        d.grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let v = Vfs::new(
             &d,
             Context::space("local:lab"),
@@ -1394,6 +1396,8 @@ mod tests {
             Arc::new(FsBackend::new(dir.path().join("data"))),
             dir.path().join("state"),
         );
+        d.grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let user = d.session(Context::user());
         for k in [
             "volumes/rw/a.txt",
@@ -1525,6 +1529,8 @@ mod tests {
     async fn agents_see_their_rules_and_secrets_are_refused_at_upload() {
         let dir = tempfile::tempdir().unwrap();
         let d = Drive::open_local(dir.path());
+        d.grant_migrated("agent:ada", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let v = Vfs::new(
             &d,
             Context::agent("ada", None),

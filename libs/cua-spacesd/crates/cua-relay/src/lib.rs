@@ -17,6 +17,8 @@
 //!   feature `hosted`, else nothing is metered).
 //! - [`devices`], [`device_api`]: enrollment of the client devices of an
 //!   account (second factor, TTL, audit log).
+//! - [`push_api`]: push notifications for the phone app (registration,
+//!   preferences, the daemon's events), served with `cua-push`.
 //! - [`pool`]: the account's machine pool: the lease that elects which
 //!   device coordinates batch work, the job log it appends under its epoch,
 //!   and the mailbox clients reach it through.
@@ -42,16 +44,23 @@ pub mod grants;
 pub mod handover;
 pub mod ident;
 pub mod join_limit;
+pub mod mc_handshake;
 pub mod mesh;
 pub mod mux;
 pub mod oidc;
 pub mod pairing;
+pub mod phone;
 pub mod pool;
 pub mod proxies;
+pub mod push_api;
+pub mod route_marker;
 pub mod server;
 pub mod share_web;
+pub mod spaces;
 pub mod storage;
+pub mod tcp_shares;
 mod transport;
+pub mod viewer;
 pub mod ws;
 
 // Optional hosted-relay features (Cargo feature `hosted`): plan metering,
@@ -89,6 +98,10 @@ pub const CONNECT_PATH: &str = "/relay/v1/connect";
 pub const MACHINE_ID_HEADER: &str = "x-cua-machine-id";
 /// Header carrying the spacesd version.
 pub const VERSION_HEADER: &str = "x-cua-env-driver-version";
+/// Header a machine sends (`1`) when it serves phones: it knows the phone class of the
+/// relay's assertion and clamps what a phone asks for. A machine that does not send it
+/// is not sent a phone's calls.
+pub const PHONE_SUPPORT_HEADER: &str = "x-cua-phone-support";
 /// Byte written and echoed on heartbeat streams.
 pub const HEARTBEAT_BYTE: u8 = 0x68;
 

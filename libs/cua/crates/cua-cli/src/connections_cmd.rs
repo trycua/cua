@@ -8,6 +8,9 @@
 //! cua connections add zai --region coding-global < key.txt
 //! cua connections test                         # ask each provider whether the saved keys still work
 //! cua connections remove deepseek
+//! cua connections github                       # the GitHub sign-in agents' pushes use
+//! cua connections github use bob               # which gh account, when gh has several
+//! cua connections github off --host ghe.example.com
 //! ```
 //!
 //! These are the daemon's app methods (`agent_keys.*`), not MCP tools: no
@@ -90,6 +93,113 @@ pub enum ConnectionsCmd {
     #[command(after_help = "Examples:
   cua connections remove deepseek")]
     Remove { provider: String },
+    /// The GitHub sign-in used for an approved push: what is signed in and a switch per host. An experiment: see `cua experiments`.
+    ///
+    /// When an agent asks to push a branch and open a pull request, the host does it after you say
+    /// yes on the card. This shows which account will be used and never prints a token.
+    ///
+    /// Cua tries, in order: a token saved in Settings, Connections; GH_TOKEN or
+    /// GITHUB_TOKEN in the Cua daemon's environment; the GitHub CLI
+    /// (`gh auth login`), read only when an approved push runs; then git's own
+    /// SSH key or credential helper for a repository with an SSH remote.
+    #[command(after_help = "Examples:
+  cua connections github
+  cua connections github rescan
+  cua connections github use bob
+  cua connections github use --auto --host github.com
+  cua connections github off --host ghe.example.com")]
+    Github {
+        #[command(subcommand)]
+        cmd: Option<GithubCmd>,
+    },
+}
+
+/// What `cua connections github` does.
+#[derive(Subcommand, Debug, Clone)]
+pub enum GithubCmd {
+    /// What is signed in on each host and which account will be used (the default).
+    #[command(after_help = "Examples:
+  cua connections github status")]
+    Status,
+    /// Look again: what gh is signed in with, and what a saved or environment
+    /// token may do (its account and scopes).
+    #[command(after_help = "Examples:
+  cua connections github rescan")]
+    Rescan,
+    /// Use this gh account for pushes and pull requests on a host.
+    #[command(after_help = "Examples:
+  cua connections github use bob
+  cua connections github use --auto --host github.com")]
+    Use {
+        /// The gh account (see `cua connections github`); omit with --auto.
+        login: Option<String>,
+        /// Go back to the account gh uses itself.
+        #[arg(long)]
+        auto: bool,
+        /// The GitHub host.
+        #[arg(long, default_value = "github.com")]
+        host: String,
+    },
+    /// Turn GitHub on for a host again.
+    #[command(after_help = "Examples:
+  cua connections github on --host ghe.example.com")]
+    On {
+        #[arg(long, default_value = "github.com")]
+        host: String,
+    },
+    /// Turn GitHub off for a host: Cua uses no sign-in there until you turn it on.
+    #[command(after_help = "Examples:
+  cua connections github off --host ghe.example.com")]
+    Off {
+        #[arg(long, default_value = "github.com")]
+        host: String,
+    },
+}
+
+/// The lines `cua connections github` prints for the daemon's `github.*` answer.
+pub fn github_lines(report: &serde_json::Value) -> Vec<String> {
+    let mut v = vec![];
+    let hosts = report["hosts"].as_array().cloned().unwrap_or_default();
+    let w = hosts
+        .iter()
+        .filter_map(|h| h["host"].as_str())
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    for h in &hosts {
+        v.push(format!(
+            "{:<w$}  {}",
+            h["host"].as_str().unwrap_or(""),
+            h["line"].as_str().unwrap_or("")
+        ));
+        if let Some(wn) = h["warning"].as_str() {
+            v.push(format!("{:<w$}  Warning: {wn}", ""));
+        }
+        let accounts = h["accounts"].as_array().cloned().unwrap_or_default();
+        if accounts.len() > 1 {
+            for a in &accounts {
+                v.push(format!(
+                    "{:<w$}    {} {}{}",
+                    "",
+                    if a["selected"] == true { "*" } else { " " },
+                    a["login"].as_str().unwrap_or(""),
+                    if a["active"] == true {
+                        " (gh's own)"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+        }
+    }
+    if report["gh"]["found"] == false {
+        v.push(hint("The GitHub CLI (gh) was not found on this computer."));
+    } else if report["gh"]["old"] == true {
+        v.push(hint(
+            "gh is older than 2.81: update it to choose between accounts.",
+        ));
+    }
+    v
 }
 
 /// One provider as `list` shows it.
@@ -331,6 +441,29 @@ pub fn plan(
             Ok(("agent_keys.check".into(), serde_json::json!({})))
         }
         ConnectionsCmd::List { .. } => Ok(("agent_keys.list".into(), serde_json::json!({}))),
+        ConnectionsCmd::Github { cmd } => match cmd.clone().unwrap_or(GithubCmd::Status) {
+            GithubCmd::Status => Ok(("github.status".into(), serde_json::json!({}))),
+            GithubCmd::Rescan => Ok(("github.rescan".into(), serde_json::json!({}))),
+            GithubCmd::Use { login, auto, host } => match (login, auto) {
+                (Some(l), false) => Ok((
+                    "github.use".into(),
+                    serde_json::json!({ "host": host, "login": l }),
+                )),
+                (None, true) => Ok(("github.use".into(), serde_json::json!({ "host": host }))),
+                _ => Err(CuaError::InvalidArgument(
+                    "name the gh account (cua connections github use <login>), or use --auto"
+                        .into(),
+                )),
+            },
+            GithubCmd::On { host } => Ok((
+                "github.enable".into(),
+                serde_json::json!({ "host": host, "enabled": true }),
+            )),
+            GithubCmd::Off { host } => Ok((
+                "github.enable".into(),
+                serde_json::json!({ "host": host, "enabled": false }),
+            )),
+        },
         ConnectionsCmd::Remove { provider } => {
             // The names saved for it are known only from the list: `run` resolves them.
             reg::provider(provider)
@@ -441,6 +574,17 @@ pub async fn run(
                 }
             }
             Ok(if bad { 1 } else { 0 })
+        }
+        ConnectionsCmd::Github { .. } => {
+            let report = call(cua, &method, args).await?;
+            if json {
+                line(out, report.to_string());
+            } else {
+                for l in github_lines(&report) {
+                    line(out, l);
+                }
+            }
+            Ok(0)
         }
         ConnectionsCmd::Remove { provider } => {
             let report = call(cua, &method, args).await?;
@@ -616,5 +760,62 @@ mod tests {
             ds.works_with.contains(&"Hermes".to_string())
                 && !ds.works_with.contains(&"Claude Code".to_string())
         );
+    }
+
+    #[test]
+    fn github_commands_become_daemon_calls() {
+        let no_key = |_| -> Result<String, CuaError> { Ok(String::new()) };
+        let p = |c: Option<GithubCmd>| plan(&ConnectionsCmd::Github { cmd: c }, no_key).unwrap();
+        assert_eq!(p(None).0, "github.status");
+        assert_eq!(p(Some(GithubCmd::Rescan)).0, "github.rescan");
+        let (m, a) = p(Some(GithubCmd::Use {
+            login: Some("bob".into()),
+            auto: false,
+            host: "github.com".into(),
+        }));
+        assert_eq!(
+            (m.as_str(), a["login"].as_str()),
+            ("github.use", Some("bob"))
+        );
+        let (_, a) = p(Some(GithubCmd::Off {
+            host: "ghe.example.com".into(),
+        }));
+        assert_eq!(a["enabled"], false);
+        assert_eq!(a["host"], "ghe.example.com");
+        assert!(
+            plan(
+                &ConnectionsCmd::Github {
+                    cmd: Some(GithubCmd::Use {
+                        login: None,
+                        auto: false,
+                        host: "github.com".into()
+                    })
+                },
+                no_key
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn github_lines_say_the_account_and_warn_in_plain_words() {
+        let report = serde_json::json!({
+            "gh": {"found": true, "old": false},
+            "hosts": [
+                {"host": "github.com", "line": "Signed in as ada with gh",
+                 "warning": "This sign-in can also change GitHub Actions workflows.",
+                 "accounts": [{"login": "ada", "selected": true, "active": true}, {"login": "bob", "selected": false, "active": false}]},
+                {"host": "ghe.example.com", "line": "Turned off: Cua will not use GitHub on this host", "accounts": []}
+            ]
+        });
+        let l = github_lines(&report);
+        assert!(l[0].starts_with("github.com") && l[0].ends_with("Signed in as ada with gh"));
+        assert!(
+            l.iter()
+                .any(|x| x.contains("Warning: This sign-in can also"))
+        );
+        assert!(l.iter().any(|x| x.contains("* ada (gh's own)")));
+        assert!(l.iter().any(|x| x.contains("  bob")));
+        assert!(l.iter().all(|x| !x.contains('\u{b7}')));
     }
 }

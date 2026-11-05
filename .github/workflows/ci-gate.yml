@@ -6,26 +6,55 @@ on:
   merge_group:
 
 permissions:
-  actions: read
+  # write: only to rerun the failed jobs of a run whose every failure is a quarantined
+  # flake (.github/flaky/quarantine.json), once. Fork PRs get a read-only token; their
+  # quarantined failures are reported without the rerun.
+  actions: write
   contents: read
   pull-requests: read
+  statuses: read
 
 jobs:
   ci-gate:
     name: ci-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
     steps:
-      # Which workflows this gate may ignore, from the paths the PR changes (area map:
-      # .github/ci-areas.json, docs/contributing/CI.md). The merge queue entry resolves the
-      # same pull request and reads the same file list, so both events compute one set.
+      # Which workflows this gate may ignore, from the paths the PR changes, the area map
+      # (.github/ci-areas.json) and the package graph (.github/scripts/ci_graph.py); see
+      # docs/contributing/CI.md. The map and both scripts come from the base commit, never
+      # from the pull request, so a PR cannot narrow its own gate by editing them (and any
+      # .github/** change waits for every workflow). The PR's manifests are read too, only
+      # to add the dependency edges it introduces. The merge queue entry resolves the same
+      # pull request and reads the same file list, so both events compute one set.
       # Any failure here fails the gate: nothing is skipped on error.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check out the selector from the base commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: base
           persist-credentials: false
+          filter: blob:none
           sparse-checkout: |
-            .github/ci-areas.json
-            .github/scripts/ci_gate_scope.py
+            /.github/ci-areas.json
+            /.github/scripts/ci_gate_scope.py
+            /.github/scripts/ci_graph.py
+            /.github/flaky/quarantine.json
+            /.github/scripts/flaky/flaky.py
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Check out the pull request's manifests
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: head
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
       - name: Scope the gate to the changed areas
         id: scope
@@ -33,6 +62,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          CI_GATE_HEAD_ROOT: ${{ github.workspace }}/head
         run: |
           set -euo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
@@ -47,13 +77,63 @@ jobs:
             --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
-          python3 .github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+          python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+      # Pull requests from our agents must carry a `local-ci` commit status on the head commit, set by
+      # `bin/ci --signoff` after a green local `bin/ci`. An agent PR is one opened by the Cua Agents
+      # GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch of this
+      # repository. Community PRs are not asked for it. The status usually lands a few seconds after
+      # the push, so the gate polls for it for five minutes before it fails.
+      # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
+      # set to "true"; that variable is the one switch that makes a missing status block the merge.
+      - name: Require local sign-off on agent pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.user.login, .head.sha, .head.ref, (.head.repo.full_name // "")] | @tsv')
+          IFS=$'\t' read -r author sha ref head_repo <<<"$info"
+          labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          why=
+          if [[ "$author" == "cua-agents[bot]" || "$author" == "cua-agents" ]]; then why="opened by $author"
+          elif [[ ",$labels," == *,agent,* ]]; then why="labelled agent"
+          elif [[ "$ref" == agent/* && "$head_repo" == "$GITHUB_REPOSITORY" ]]; then why="opened from the $ref branch"
+          fi
+          if [[ -z "$why" ]]; then echo "Not an agent pull request: no local-ci status required."; exit 0; fi
+          echo "Agent pull request ($why): requiring a successful local-ci status on ${sha:0:10}."
+          # Report-only: look once. Blocking: wait up to five minutes for the status.
+          tries=1
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=20
+          for _ in $(seq 1 "$tries"); do
+            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+            if [[ "$state" == success ]]; then echo "local-ci: success"; exit 0; fi
+            [[ "$state" == failure || "$state" == error ]] && break
+            sleep 15
+          done
+          msg="Run bin/ci and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
+            echo "::error title=local-ci missing::$msg"
+            exit 1
+          fi
+          echo "::warning title=local-ci missing (report-only)::$msg"
+          echo "local-ci is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."
+
       - name: Wait for every other workflow on the pull request head
         env:
           GH_TOKEN: ${{ github.token }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
           IGNORE_RE: ${{ steps.scope.outputs.ignore_re }}
+          FLAKY_PY: base/.github/scripts/flaky/flaky.py
+          QUARANTINE_FILE: base/.github/flaky/quarantine.json
         run: |
           set -uo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
@@ -84,8 +164,33 @@ jobs:
             else echo 60
             fi
           }
+          # Quarantined flakes (.github/flaky/quarantine.json, read from the base commit like the
+          # selector, so a PR cannot quarantine its own failure). When every failed job of a run
+          # matches a `job` entry and its log contains that entry's signature, the gate reruns the
+          # failed jobs once and waits again. If they fail the same way again, the run is reported
+          # as a quarantined flake and does not fail the gate. Any other failure fails it.
+          retried=
+          quarantine_verdict() {
+            qv=
+            local run=$1 name=$2 failed_jobs result attempt
+            [[ -n "${FLAKY_PY:-}" && -f "$FLAKY_PY" ]] || return 0
+            failed_jobs=$(api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id)\t\(.name)"') || return 0
+            [[ -n "$failed_jobs" ]] || return 0
+            result=$(python3 "$FLAKY_PY" gate-check --workflow "$name" --quarantine "$QUARANTINE_FILE" <<<"$failed_jobs") || return 0
+            [[ "$result" == all ]] || return 0
+            attempt=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_attempt) || return 0
+            if (( attempt < 2 )) && [[ " $retried " != *" $run "* ]] \
+                && gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/rerun-failed-jobs" >/dev/null; then
+              retried="$retried $run"
+              qv=retry
+            else
+              qv=quarantined
+            fi
+          }
           started=$SECONDS
           sleep 120
+          while :; do
           previous=
           while :; do
             current=$(runs) || exit 1
@@ -96,6 +201,7 @@ jobs:
             sleep "$(poll_interval)"
           done
           failed=0
+          again=0
           for workflow in $(cut -f1 <<<"$current" | sort -u); do
             verdict=skipped
             name=$(awk -F'\t' -v w="$workflow" '$1 == w {print $3; exit}' <<<"$current")
@@ -112,11 +218,19 @@ jobs:
               fi
               verdict=pass
               if [[ ! "$conclusion" =~ ^(success|neutral)$ ]]; then
-                verdict=fail
-                failed=1
+                quarantine_verdict "$run" "$name"
+                case "$qv" in
+                  retry) verdict="quarantined flake, rerunning its failed jobs once"; again=1 ;;
+                  quarantined) verdict="pass (quarantined flake, not blocking; see the job summary)"
+                    echo "::warning title=Quarantined flake::$name failed with a known flake listed in .github/flaky/quarantine.json" ;;
+                  *) verdict=fail; failed=1 ;;
+                esac
               fi
               break
             done
             echo "$name: $verdict"
+          done
+          (( again )) || break
+          sleep 30
           done
           exit $failed

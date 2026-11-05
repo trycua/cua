@@ -145,6 +145,10 @@ pub struct DownloadReport {
     pub sha256: Option<String>,
     /// Every segment verified by SHA-256 against the driver's.
     pub verified: bool,
+    /// Files marked as downloaded from elsewhere (`com.apple.quarantine` on
+    /// macOS, the internet zone on Windows), so the system asks before it
+    /// opens them. 0 where the platform has no such mark.
+    pub quarantined: usize,
 }
 
 /// How long opening a host file or folder may take before a transfer gives
@@ -694,6 +698,7 @@ impl Space {
                 .spacesd()?
                 .download_to_file(remote, &out, DownloadOptions::default())
                 .await?;
+            let quarantined = quarantine(&out);
             return Ok(DownloadReport {
                 source: remote.into(),
                 dest: out.display().to_string(),
@@ -702,6 +707,7 @@ impl Space {
                 bytes: res.size,
                 sha256: Some(res.sha256),
                 verified: true,
+                quarantined,
             });
         }
         let root = keep_both_path(&dest_dir.join(name));
@@ -735,6 +741,7 @@ impl Space {
                 bytes += res.size;
             }
         }
+        let quarantined = quarantine(&root);
         Ok(DownloadReport {
             source: remote.into(),
             dest: root.display().to_string(),
@@ -743,7 +750,25 @@ impl Space {
             bytes,
             sha256: None,
             verified: true,
+            quarantined,
         })
+    }
+}
+
+/// Marks what was just downloaded as coming from elsewhere. A failure to
+/// mark is logged and counted as not marked: the download itself is done.
+fn quarantine(path: &Path) -> usize {
+    // Part of Secure Spaces; without the experiment downloads are left as
+    // they were.
+    if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Legacy {
+        return 0;
+    }
+    match crate::quarantine::mark_tree(path) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "could not mark a download as quarantined");
+            0
+        }
     }
 }
 

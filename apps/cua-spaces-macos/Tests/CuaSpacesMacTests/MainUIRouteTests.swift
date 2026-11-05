@@ -21,7 +21,7 @@ struct MainUIRouteTests {
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
         return m
     }
 
@@ -59,8 +59,10 @@ struct MainUIRouteTests {
         router.openMain()
         m.onboarding.finish()
         router.openMain()
-        #expect(web == [.firstRunDue, .home])
+        // The model's state file does not exist yet: the app's first launch here.
+        #expect(web == [.firstLaunch, .home])
         #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
+        #expect(MainUIRouter.launchRoute(onboarded: false, firstLaunch: true) == .firstLaunch)
         #expect(MainUIRouter.launchRoute(onboarded: true) == nil)
     }
 

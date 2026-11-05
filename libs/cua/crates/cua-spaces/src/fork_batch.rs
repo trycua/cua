@@ -52,6 +52,15 @@ fn no_host_message(reason: &str, cpus: u32) -> String {
     m
 }
 
+/// `why`, followed by why the fork's earlier attempts failed: a retry that
+/// finds no machine left would otherwise hide the error that started it.
+fn with_earlier(why: String, earlier: &[String]) -> String {
+    if earlier.is_empty() {
+        return why;
+    }
+    format!("{why} (earlier attempts: {})", earlier.join("; "))
+}
+
 /// The machine the batch runs on, in reports.
 pub const THIS_MACHINE: &str = "local";
 
@@ -314,6 +323,9 @@ struct Item {
     source: String,
     name: String,
     attempt: u32,
+    /// Why each earlier attempt failed (`host: error`), so a fork that
+    /// ends with no machine left still says what went wrong first.
+    earlier: Vec<String>,
 }
 
 /// A step done once per batch (a checkpoint's copy to a machine, its
@@ -379,6 +391,7 @@ pub async fn run(
             source,
             name,
             attempt: 1,
+            earlier: Vec::new(),
         })
         .collect();
     let mut ok = 0u32;
@@ -392,7 +405,7 @@ pub async fn run(
         source: it.source.clone(),
         name: it.name.clone(),
         host: host.to_string(),
-        error: why,
+        error: with_earlier(why, &it.earlier),
         error_code: f.code().into(),
         attempt: it.attempt,
         elapsed_ms: started.elapsed().as_millis() as u64,
@@ -594,8 +607,11 @@ pub async fn run(
                     }
                     if f.retried() && round <= spec.retries {
                         tracing::info!(fork = %it.name, %host, "placing the fork again: {why}");
+                        let mut earlier = it.earlier;
+                        earlier.push(format!("{host}: {why}"));
                         retry.push(Item {
                             attempt: it.attempt + 1,
+                            earlier,
                             ..it
                         });
                     } else {
@@ -1378,6 +1394,30 @@ mod tests {
         assert_eq!((sum.ok, sum.failed), (0, 32));
         let its = items(&events);
         assert!(its.iter().all(|i| i.error_code == "host_failed"), "{its:?}");
+    }
+
+    /// The only machine fails its forks: the retry finds no machine left,
+    /// and each fork's error still says why the first attempt failed.
+    #[tokio::test]
+    async fn the_first_error_survives_a_retry_with_no_machine_left() {
+        let only = Arc::new(Fake {
+            name: "mac-b".into(),
+            holds: vec!["w0".into()],
+            mem_gb: 64,
+            dies_after: Some(0),
+            ..Default::default()
+        });
+        let (sum, events, _) = go(vec![only], spec(&["w0"], 2)).await;
+        assert_eq!((sum.ok, sum.failed), (0, 2), "{sum:?}");
+        for i in items(&events) {
+            assert_eq!(i.error_code, "no_host", "{i:?}");
+            assert!(i.error.contains("mac-b is not ready"), "{i:?}");
+            assert!(
+                i.error.contains("earlier attempts: mac-b:")
+                    && i.error.contains("connection refused"),
+                "{i:?}"
+            );
+        }
     }
 
     /// One fork that fails on its own is reported alone; the rest of the

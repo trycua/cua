@@ -707,6 +707,17 @@ pub struct ActionResult {
     /// or a call that keeps the user's window where it is).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_call: Option<ActionNextCall>,
+    /// Present only when the `fast_path` config key is `on`: the check cost,
+    /// the target class and the changed regions since the last read, as one
+    /// JSON object. Absent when the flag is off, so default results are
+    /// unchanged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_json_object_text"
+    )]
+    #[schemars(schema_with = "object_schema")]
+    pub fast_path: Option<String>,
 }
 
 /// A call an agent can make next: `{tool, arguments}`.
@@ -744,6 +755,33 @@ mod json_object_text {
                 "next_call arguments must be a JSON object",
             )),
         }
+    }
+}
+
+/// Serde adapter: an optional JSON object on the wire, JSON text in the record.
+mod optional_json_object_text {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S: Serializer>(
+        text: &Option<String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match text {
+            Some(text) => super::json_object_text::serialize(text, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        Ok(
+            Option::<Value>::deserialize(deserializer)?.and_then(|v| match v {
+                Value::Object(_) => Some(v.to_string()),
+                _ => None,
+            }),
+        )
     }
 }
 
@@ -903,6 +941,7 @@ mod tests {
             error: None,
             hint: None,
             next_call: None,
+            fast_path: None,
         }
     }
 
@@ -963,6 +1002,7 @@ mod tests {
                 "error",
                 "escalation",
                 "evidence",
+                "fast_path",
                 "hint",
                 "next_call",
                 "route",

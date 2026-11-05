@@ -100,6 +100,18 @@ pub struct AppSettings {
     /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
     /// older settings file without it reads as tips on, none done.
     pub tips: crate::tips::TipsState,
+    /// Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+    /// Home's agent menu shows although the default hides them (an app
+    /// outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+    pub agent_menu_shown: Vec<String>,
+    /// The apps the menu hides although the default shows them. Nothing is
+    /// signed out: a hidden app keeps its sign-ins and stays on the Agents
+    /// page and available by name.
+    pub agent_menu_hidden: Vec<String>,
+    /// The working accounts the menu last saw (`app|variable|slot`): a new
+    /// one is a connect, which shows its app again
+    /// ([`crate::agent_menu::sync`]).
+    pub agent_menu_seen: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -123,6 +135,9 @@ impl Default for AppSettings {
             auto_connect: true,
             current_team_id: None,
             tips: crate::tips::TipsState::default(),
+            agent_menu_shown: vec![],
+            agent_menu_hidden: vec![],
+            agent_menu_seen: vec![],
         }
     }
 }

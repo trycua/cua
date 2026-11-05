@@ -354,6 +354,8 @@ export interface SessionHook extends Resource<SessionData> {
   signOut(): Promise<void>;
   /** `launchAtLogin`: Done's checkbox, where the host applies it. */
   completeOnboarding(mode: OnboardingMode, launchAtLogin?: boolean): Promise<void>;
+  /** Forgets the first run (the host's file); `onboarding-reset.ts` clears the page's own. */
+  resetOnboarding(): Promise<void>;
   openExternal(url: string): Promise<void>;
 }
 
@@ -366,6 +368,7 @@ export function useSession(): SessionHook {
     cancelSignIn: () => void run((s) => s.cancelSignIn()),
     signOut: () => run((s) => s.signOut()),
     completeOnboarding: (mode, launchAtLogin) => run((s) => s.completeOnboarding(mode, launchAtLogin)),
+    resetOnboarding: () => run((s) => s.resetOnboarding()),
     openExternal: (url) => run((s) => s.openExternal(url)),
   };
 }

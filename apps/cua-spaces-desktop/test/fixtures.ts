@@ -21,7 +21,21 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { BulkResult, LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type {
+  BulkResult,
+  LocalRuntimes,
+  MachineHealthReport,
+  NetworkEventJson,
+  ServiceJson,
+  ShareLinkRow,
+  ShareSettingsRow,
+  SpaceNetworkJson,
+  SpaceThumbnailData,
+  SpacesBackend,
+  TreeBudgetJson,
+  TreeBudgetLimitsJson,
+  TreeNodeJson,
+} from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -314,10 +328,127 @@ export class FixtureSpacesBackend implements SpacesBackend {
       owner: "ada@example.com",
       createdAtUnix: 1_000,
       expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+      tcpConnectWith: null,
+      tcpAddress: null,
+      route: null,
+      routeLine: null,
+      allow: [],
+      waiting: null,
+      waitingText: null,
     };
     this.linksNow = [row, ...this.linksNow];
     return row;
   }
+  async approveLink(id: string, _always: boolean) {
+    const row: ShareLinkRow = this.linksNow.find((l) => l.id === id) ?? {
+      id,
+      url: "tcp://tcp.m.relay.example:26001",
+      name: null,
+      access: "public",
+      kind: "space_port",
+      target: "space:dev:25565",
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: 1_000 + 86_400,
+      tcpConnectWith: "tcp.m.relay.example:26001",
+      tcpAddress: "tcp.m.relay.example:26001",
+      route: "relay",
+      routeLine: "Through Cua",
+      allow: [],
+      waiting: null,
+      waitingText: null,
+    };
+    return { ...row, waiting: null, waitingText: null };
+  }
+  async denyLink(_id: string) {}
+  shareSettingsNow: ShareSettingsRow = {
+    landing: "auto",
+    relayFallback: true,
+    dailyCapMib: 2048,
+    defaultAllow: [],
+    approveAgentShares: true,
+    alwaysAllowSpaces: [],
+    edgeConsent: [],
+    usedToday: 0,
+    edgeCloud: null,
+    edgeHost: null,
+    edgeMonthlyUsd: null,
+  };
+  async shareSettings() {
+    return { ...this.shareSettingsNow };
+  }
+  async setShareSettings(s: ShareSettingsRow) {
+    const cur = this.shareSettingsNow;
+    this.shareSettingsNow = { ...s, usedToday: cur.usedToday, edgeCloud: cur.edgeCloud, edgeHost: cur.edgeHost, edgeMonthlyUsd: cur.edgeMonthlyUsd };
+    return { ...this.shareSettingsNow };
+  }
+  async removeShareEdge() {
+    return [] as string[];
+  }
+  async network(_id: string): Promise<SpaceNetworkJson> {
+    return {
+      preset: "internet",
+      localhostPorts: [],
+      allLocalhostPorts: false,
+      allow: [],
+      deny: [],
+      customBase: "",
+      widenedBy: null,
+      summary: "Internet only",
+      widenings: [],
+      enforcement: "enforced",
+      point: "the host firewall",
+      note: null,
+      parent: null,
+      root: null,
+      alwaysBlocked: [],
+      noticePending: false,
+      via: null,
+      topologyJson: "",
+      clipboard: "viewing",
+      volume: "own",
+    };
+  }
+  async setNetwork(_id: string, _word: string, _allow: string[], _deny: string[], _widen: boolean, _tree: boolean) {
+    return "now" as const;
+  }
+  async networkLog(_id: string): Promise<NetworkEventJson[]> {
+    return [];
+  }
+  async ackNetworkNotice(_id: string) {}
+  /** The Spaces whose exit is this computer, as `exitsThroughThisMachine` reports them. */
+  exitsNow: string[] = [];
+  async exitsThroughThisMachine() {
+    return [...this.exitsNow];
+  }
+  async setAccess(_id: string, _clipboard: string | null, _volume: string | null) {}
+  async spaceTree(): Promise<TreeNodeJson[]> {
+    return [{ id: "local:aurora", parent: null, depth: 0, children: false, home: null }];
+  }
+  async setChildren(_id: string, _enabled: boolean) {}
+  async treeBudget(id: string): Promise<TreeBudgetJson> {
+    return {
+      root: id,
+      set: {},
+      maxSpaces: 8,
+      maxVcpus: 16,
+      maxMemoryMb: 32768,
+      usdPerHour: 5,
+      usdTotal: null,
+      spaces: 1,
+      vcpus: 2,
+      memoryMb: 4096,
+      usdPerHourUsed: 0,
+      usdSpent: 0,
+    };
+  }
+  async setTreeBudget(id: string, limits: TreeBudgetLimitsJson): Promise<TreeBudgetJson> {
+    return { ...(await this.treeBudget(id)), set: limits };
+  }
+  async services(_id: string): Promise<ServiceJson[]> {
+    return [];
+  }
+  async controlService(_id: string, _name: string, _action: string) {}
   async stopLink(id: string) {
     const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
     this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));

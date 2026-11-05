@@ -25,7 +25,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   reproducible:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: reproducible image (linux/amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 120

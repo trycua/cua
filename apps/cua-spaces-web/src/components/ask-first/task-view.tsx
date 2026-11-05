@@ -19,6 +19,7 @@ import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
+import { ImportedTaskView } from "./imported-task";
 import { StateDot, taskRun } from "./home";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
@@ -48,6 +49,8 @@ export function AskFirstTask({ taskId }: { taskId: string }) {
       </div>
     );
   }
+  // A chat picked from "Pick up where you left off" (CUA-3319): its earlier messages and the box to continue it.
+  if (task.imported) return <ImportedTaskView task={{ ...task, imported: task.imported }} />;
   return <TaskView task={task} />;
 }
 

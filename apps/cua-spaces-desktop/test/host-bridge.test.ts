@@ -214,7 +214,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(problems).toEqual([]);
     // Every method of this area has its case (the first run's are checked below).
     // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
-    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
+    const checkedBelow = new Set(["onboarding.get", "onboarding.complete", "onboarding.reset", "host.joinWithCode"]);
     expect(HOST_METHODS.filter((m) => !checkedBelow.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
@@ -596,6 +596,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(native.appSettingsLoad(model.settingsPath).notchPinned).toEqual([]);
   });
 
+  it("keeps which coding apps the agent menu shows in the app settings (`settings.update`), across a restart", async () => {
+    const before = (await call("settings.get")) as { agentMenu: { shown: string[]; hidden: string[]; seen: string[] } };
+    expect(before.agentMenu).toEqual({ shown: [], hidden: [], seen: [] });
+    const menu = { shown: ["goose"], hidden: ["hermes"], seen: ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"] };
+    const after = (await call("settings.update", { agentMenu: menu })) as typeof before;
+    expect(after.agentMenu).toEqual(menu);
+    const kept = native.appSettingsLoad(model.settingsPath);
+    expect([kept.agentMenuShown, kept.agentMenuHidden, kept.agentMenuSeen]).toEqual([menu.shown, menu.hidden, menu.seen]);
+    expect(model.settings.tips).toEqual({ off: false, done: [] });
+    expect(await code("settings.update", { agentMenu: { shown: [], hidden: "hermes", seen: [] } })).toBe("bad_args");
+    expect(await code("settings.update", { agentMenu: null })).toBe("bad_args");
+  });
+
   it("keeps the page's tips in the app settings (`settings.update`), and Show tips and Reset tips", async () => {
     const before = (await call("settings.get")) as { tips: unknown };
     expect(before.tips).toEqual({ off: false, done: [] });
@@ -706,6 +719,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("settings.choose", { row: "welcome", option: "show" });
     expect(await call("onboarding.get")).toMatchObject({ completed: false });
     expect(events.some((e) => e.event === "session.changed")).toBe(true);
+  });
+
+  it("Reset & Show forgets the first run from its first step, and says so", async () => {
+    await call("onboarding.complete", { mode: "host" });
+    events.length = 0;
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
+    expect(await call("onboarding.get")).toEqual({ completed: false, mode: "client" });
+    expect(events.some((e) => e.event === "session.changed")).toBe(true);
+    // Twice is the same as once.
+    expect(await call("onboarding.reset")).toEqual({ completed: false, mode: "client" });
   });
 
   it("the Keyvault's switches show its state and run through the broker", async () => {

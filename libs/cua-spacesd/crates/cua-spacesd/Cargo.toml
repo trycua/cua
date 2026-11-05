@@ -60,6 +60,8 @@ cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
 # remote and agent cursors render on the ORIGIN desktop. See the comment on
 # `main` -- the overlay NSWindow cannot live on a spawned thread.
 platform-macos = { path = "../../../cua-driver/rust/crates/platform-macos" }
+# The guest end of a macOS VM's vsock host channel (`vsock_agent`).
+libc = "0.2"
 
 [target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 # The cua-driver tool registry behind DriverService and /mcp.

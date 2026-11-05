@@ -2,7 +2,7 @@
 //!
 //! `TunnelService.StartHotspot` starts a SOCKS5 listener on the guest's
 //! loopback and returns a ticketed WebSocket. This module keeps that socket
-//! open and serves it with `cua_hotspot::peer::serve_egress`, dialing each
+//! open and serves it with `cua_hotspot::peer::serve_streams`, dialing each
 //! of the guest's outbound connections from here. The hotspot lives as long
 //! as the [`Hotspot`] (in the daemon, until `hotspot_stop` or release), not
 //! as long as some app window: it no longer needs the Cua Spaces app.
@@ -16,20 +16,41 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 
+/// A connection the dialer made: TCP from this host, or a stream through
+/// an exit (a SOCKS5 proxy, another Space's exit).
+pub trait ExitIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> ExitIo for T {}
+
+/// A boxed [`ExitIo`].
+pub type ExitStream = Box<dyn ExitIo>;
+
+/// `s`, boxed as an [`ExitStream`].
+pub fn boxed(s: tokio::net::TcpStream) -> ExitStream {
+    Box::new(s)
+}
+
 /// How this machine dials the guest's outbound connections.
 pub type Dialer = Arc<
-    dyn Fn(
-            String,
-            u16,
-        ) -> Pin<Box<dyn Future<Output = std::io::Result<tokio::net::TcpStream>> + Send>>
+    dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = std::io::Result<ExitStream>> + Send>>
         + Send
         + Sync,
 >;
 
-/// The default dialer: plain TCP from this host.
+/// The default dialer. Under Secure Spaces it is TCP from this host with
+/// the default Space rules applied first ([`crate::exit::ExitPolicy`]): the
+/// internet only, never this computer's own services, its local network or
+/// cloud metadata. Without the experiment it is plain TCP from this host,
+/// as it always was.
 pub fn direct_dialer() -> Dialer {
+    if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+        return crate::exit::this_machine(Arc::new(crate::exit::ExitPolicy::default_internet()));
+    }
     Arc::new(|host, port| {
-        Box::pin(async move { tokio::net::TcpStream::connect((host.as_str(), port)).await })
+        Box::pin(async move {
+            tokio::net::TcpStream::connect((host.as_str(), port))
+                .await
+                .map(boxed)
+        })
     })
 }
 
@@ -38,7 +59,8 @@ pub fn direct_dialer() -> Dialer {
 pub struct HotspotOptions {
     /// Guest loopback SOCKS port (0 = 1080).
     pub socks_port: u32,
-    /// Point the guest's system proxy at the hotspot.
+    /// Point the guest's system proxy at the hotspot. Default false under
+    /// Secure Spaces (true without the experiment, as before).
     pub set_system_proxy: bool,
     /// Destinations that keep the guest's own network.
     pub bypass: Vec<String>,
@@ -50,7 +72,10 @@ impl Default for HotspotOptions {
     fn default() -> Self {
         Self {
             socks_port: 0,
-            set_system_proxy: true,
+            // Under Secure Spaces the guest's proxy settings stay as they
+            // are unless the caller asks: pointing every app in the Space
+            // at this computer's network is a choice, not a side effect.
+            set_system_proxy: cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Legacy,
             bypass: vec![],
             dialer: direct_dialer(),
         }
@@ -104,6 +129,23 @@ pub struct HotspotStatus {
     pub bytes_in: u64,
     /// Whether this process serves it.
     pub served_here: bool,
+}
+
+/// The refusal for a `hotspot_start` nobody confirmed: it opens this
+/// computer's network (and its local network) to the Space.
+pub fn require_confirmed(confirm: Option<bool>) -> Result<()> {
+    // Part of Secure Spaces: without the experiment `hotspot_start` is as it
+    // always was.
+    if confirm == Some(true) || cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Legacy
+    {
+        Ok(())
+    } else {
+        Err(Error::invalid(
+            "hotspot_start sends the Space's internet traffic out through this computer's network \
+             (its own rules still apply: the internet only unless they allow more). Ask the \
+             user, and call again with confirm=true only if they say yes.",
+        ))
+    }
 }
 
 impl Space {
@@ -170,9 +212,11 @@ impl Space {
         let dialer = options.dialer.clone();
         let space_id = self.id().to_string();
         let task = tokio::spawn(async move {
-            cua_hotspot::peer::serve_egress(Box::pin(source), Box::pin(sink), move |host, port| {
-                dialer(host, port)
-            })
+            cua_hotspot::peer::serve_streams(
+                Box::pin(source),
+                Box::pin(sink),
+                move |host, port| dialer(host, port),
+            )
             .await;
             tracing::info!(space = %space_id, "hotspot socket closed");
         });

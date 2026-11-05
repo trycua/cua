@@ -79,6 +79,32 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// Gives a Space a new name (`Spaces.rename`); its id stays the same.
     /// Only its owner can: a Space shared with you is refused.
     func rename(id: String, name: String) async throws
+    /// A Space's network, clipboard and Volume settings as the web page's
+    /// `network.get` answers them (`Spaces.network` and the Space's row).
+    func network(id: String) async throws -> [String: Any]
+    /// `network.set`: the preset word and lists (`Spaces.set_network`);
+    /// `now` or `next_start`.
+    func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String
+    /// `network.log`: what a Space tried to reach and its network blocked.
+    func networkLog(id: String) async throws -> [[String: Any]]
+    /// `network.ackNotice`: the one-time notice about the new default was shown.
+    func ackNetworkNotice(id: String) async throws
+    /// The Spaces on this machine whose "Exit through" is this machine (the
+    /// notch's hotspot indicator stays on while there are any).
+    func exitsThroughThisMachine() async -> [String]
+    /// `spaces.setAccess`: a Space's clipboard and/or Volume setting.
+    func setAccess(id: String, clipboard: String?, volume: String?) async throws
+    /// `spaces.tree`: every Space's parent, depth and whether it may make
+    /// children (`Spaces.list_known`).
+    func spaceTree() async throws -> [[String: Any]]
+    /// `children.set`: lets a Space make child Spaces, or stops it.
+    func setChildren(id: String, enabled: Bool) async throws
+    /// `budget.get` / `budget.set`: a Space's tree's budget and use.
+    func treeBudget(id: String) async throws -> [String: Any]
+    func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any]
+    /// `services.list` / `services.control`: the commands a Space keeps running.
+    func services(id: String) async throws -> [[String: Any]]
+    func controlService(id: String, name: String, action: String) async throws
     /// Takes one of your machines (`relay:<machine>`) off the relay
     /// directory (`Spaces.relay_unregister`): Remove from account on the
     /// Machines page. The relay refuses one that is online.
@@ -177,6 +203,111 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink
     /// Stops one link by id, or every link for `"all"`; the ids stopped.
     func stopLink(id: String) async throws -> [String]
+    /// Shares a TCP service in a Space (`space:NAME:PORT`) at a public
+    /// address (Labs: Public TCP shares).
+    func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink
+    /// A waiting TCP share goes live; `always`: its Space may share without
+    /// asking from now on.
+    func approveLink(id: String, always: Bool) async throws -> ShareLink
+    /// Turns down a waiting TCP share.
+    func denyLink(id: String) async throws
+    /// The public TCP share settings, with today's data and the share edge.
+    func shareSettings() async throws -> ShareSettingsRow
+    /// Saves the settings (the read-only fields are ignored); the saved ones.
+    func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow
+    /// Removes the share edge from the owner's cloud; the ids of the shares that ended.
+    func removeShareEdge() async throws -> [String]
+}
+
+extension SpacesBackend {
+    public func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+    public func approveLink(id: String, always: Bool) async throws -> ShareLink {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+    public func denyLink(id: String) async throws {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+    public func shareSettings() async throws -> ShareSettingsRow {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+    public func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+    public func removeShareEdge() async throws -> [String] {
+        throw FixtureError(message: "Public TCP shares are not available here")
+    }
+}
+
+/// Options of a public TCP share beyond its target and game.
+public struct TcpShareOptions: Equatable, Sendable {
+    /// `auto` (nil), `host`, `edge` or `relay`.
+    public var route: String?
+    /// Addresses (CIDRs) that may connect; empty: anyone.
+    public var allow: [String]
+    public var checkHost: Bool
+    /// Agrees to a share edge's cost now instead of being asked.
+    public var consent: Bool
+
+    public init(route: String? = nil, allow: [String] = [], checkHost: Bool = false, consent: Bool = false) {
+        (self.route, self.allow, self.checkHost, self.consent) = (route, allow, checkHost, consent)
+    }
+}
+
+/// The public TCP share settings, as the page's `shares.settings.*`
+/// operations carry them. The last four fields are read only.
+public struct ShareSettingsRow: Codable, Equatable, Sendable {
+    /// `auto`, `only_my_cloud` or `allow_relay`.
+    public var landing: String
+    public var relayFallback: Bool
+    public var dailyCapMib: UInt64
+    public var defaultAllow: [String]
+    public var approveAgentShares: Bool
+    public var alwaysAllowSpaces: [String]
+    public var edgeConsent: [String]
+    public var usedToday: UInt64
+    public var edgeCloud: String?
+    public var edgeHost: String?
+    public var edgeMonthlyUsd: Double?
+
+    public init(landing: String, relayFallback: Bool, dailyCapMib: UInt64, defaultAllow: [String], approveAgentShares: Bool, alwaysAllowSpaces: [String], edgeConsent: [String], usedToday: UInt64, edgeCloud: String?, edgeHost: String?, edgeMonthlyUsd: Double?) {
+        self.landing = landing
+        self.relayFallback = relayFallback
+        self.dailyCapMib = dailyCapMib
+        self.defaultAllow = defaultAllow
+        self.approveAgentShares = approveAgentShares
+        self.alwaysAllowSpaces = alwaysAllowSpaces
+        self.edgeConsent = edgeConsent
+        self.usedToday = usedToday
+        self.edgeCloud = edgeCloud
+        self.edgeHost = edgeHost
+        self.edgeMonthlyUsd = edgeMonthlyUsd
+    }
+
+    init(_ s: ShareSettings) {
+        let landing: String
+        switch s.landing {
+        case .auto: landing = "auto"
+        case .onlyMyCloud: landing = "only_my_cloud"
+        case .allowRelay: landing = "allow_relay"
+        }
+        self.init(landing: landing, relayFallback: s.relayFallback, dailyCapMib: s.dailyCapMib, defaultAllow: s.defaultAllow,
+                  approveAgentShares: s.approveAgentShares, alwaysAllowSpaces: s.alwaysAllowSpaces, edgeConsent: s.edgeConsent,
+                  usedToday: s.usedToday, edgeCloud: s.edgeCloud, edgeHost: s.edgeHost, edgeMonthlyUsd: s.edgeMonthlyUsd)
+    }
+
+    var sdk: ShareSettings {
+        let l: ShareLanding
+        switch landing {
+        case "only_my_cloud": l = .onlyMyCloud
+        case "allow_relay": l = .allowRelay
+        default: l = .auto
+        }
+        return ShareSettings(landing: l, relayFallback: relayFallback, dailyCapMib: dailyCapMib, defaultAllow: defaultAllow,
+                             approveAgentShares: approveAgentShares, alwaysAllowSpaces: alwaysAllowSpaces, edgeConsent: edgeConsent,
+                             usedToday: 0, edgeCloud: nil, edgeHost: nil, edgeMonthlyUsd: nil)
+    }
 }
 
 /// A link to something you run, as the page's `links.*` operations carry it.
@@ -190,10 +321,25 @@ public struct ShareLink: Codable, Equatable, Sendable {
     public var owner: String
     public var createdAtUnix: Int64?
     public var expiresAtUnix: Int64?
+    /// A public TCP share: what people connect to (a name or host:port).
+    public var tcpConnectWith: String?
+    /// A public TCP share: host:port on the relay.
+    public var tcpAddress: String?
+    /// A public TCP share's route: `host`, `edge` or `relay`.
+    public var route: String?
+    /// The route in plain words ("Through your AWS account", "Through Cua").
+    public var routeLine: String?
+    /// Addresses (CIDRs) that may connect; empty: anyone.
+    public var allow: [String]
+    /// `approval` or `consent` while the share is not live.
+    public var waiting: String?
+    public var waitingText: String?
 
-    public init(id: String, url: String, name: String?, access: String, kind: String, target: String, owner: String, createdAtUnix: Int64?, expiresAtUnix: Int64?) {
+    public init(id: String, url: String, name: String?, access: String, kind: String, target: String, owner: String, createdAtUnix: Int64?, expiresAtUnix: Int64?, tcpConnectWith: String? = nil, tcpAddress: String? = nil, route: String? = nil, routeLine: String? = nil, allow: [String] = [], waiting: String? = nil, waitingText: String? = nil) {
         (self.id, self.url, self.name, self.access, self.kind, self.target, self.owner) = (id, url, name, access, kind, target, owner)
         (self.createdAtUnix, self.expiresAtUnix) = (createdAtUnix, expiresAtUnix)
+        (self.tcpConnectWith, self.tcpAddress) = (tcpConnectWith, tcpAddress)
+        (self.route, self.routeLine, self.allow, self.waiting, self.waitingText) = (route, routeLine, allow, waiting, waitingText)
     }
 
     init(_ s: Share) {
@@ -204,7 +350,9 @@ public struct ShareLink: Codable, Equatable, Sendable {
         case .public: access = "public"
         }
         self.init(id: s.id, url: s.url, name: s.name, access: access, kind: s.kind, target: s.target, owner: s.owner,
-                  createdAtUnix: s.createdAtUnix, expiresAtUnix: s.expiresAtUnix)
+                  createdAtUnix: s.createdAtUnix, expiresAtUnix: s.expiresAtUnix,
+                  tcpConnectWith: s.tcpConnectWith, tcpAddress: s.tcpAddress,
+                  route: s.route, routeLine: s.routeLine, allow: s.allow, waiting: s.waiting, waitingText: s.waitingText)
     }
 }
 
@@ -278,6 +426,31 @@ public extension SpacesBackend {
     func rename(id: String, name: String) async throws {
         throw FixtureError(message: "Renaming a Space is not available here")
     }
+    func network(id: String) async throws -> [String: Any] {
+        throw FixtureError(message: "Network settings are not available here")
+    }
+    func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+        throw FixtureError(message: "Network settings are not available here")
+    }
+    func networkLog(id: String) async throws -> [[String: Any]] { [] }
+    func ackNetworkNotice(id: String) async throws {}
+    func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+        throw FixtureError(message: "These settings are not available here")
+    }
+    func spaceTree() async throws -> [[String: Any]] { [] }
+    func setChildren(id: String, enabled: Bool) async throws {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func treeBudget(id: String) async throws -> [String: Any] {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        throw FixtureError(message: "Child Spaces are not available here")
+    }
+    func services(id: String) async throws -> [[String: Any]] { [] }
+    func controlService(id: String, name: String, action: String) async throws {
+        throw FixtureError(message: "Services are not available here")
+    }
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
     func usage(id: String) async -> AppSpaceUsage? { nil }
@@ -344,6 +517,12 @@ func isCancelled(_ error: Error) -> Bool {
 /// The SDK's share rows as the app core reads them.
 func appShareRows(_ s: SpaceShares) -> [AppShareEntryInput] {
     s.shares.map { AppShareEntryInput(who: $0.who, role: $0.role, connected: $0.connected) }
+}
+
+extension SpacesBackend {
+    /// No Space exits through this machine (a backend with no network
+    /// settings).
+    public func exitsThroughThisMachine() async -> [String] { [] }
 }
 
 /// The live backend: the cua SDK in this process, connected to a running
@@ -483,11 +662,21 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func create(_ args: AppCreateSpaceArgs, createId: String,
                        progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
-        let options = SpaceCreateOptions(
+        var options = SpaceCreateOptions(
             image: args.image, on: args.on, kind: args.kind.word, runtime: args.runtime.word,
             name: args.name, cpus: args.cpus, memoryMb: args.memoryMb.map(UInt64.init),
             diskGb: args.diskGb, timeoutMs: nil, wait: nil, reuse: false, command: nil, env: [:], services: [:],
             spacesd: args.spacesd, gpu: args.gpu, createId: createId)
+        // The New Space's Network choice (`config.network`), by create id.
+        // Kept until the whole create is over: the model runs a failed one once more.
+        if let word = CreateNetworks.shared.get(createId) {
+            options.networkSettings = Self.networkSettings(word: word, allow: [], deny: [])
+        }
+        // An agent home: the spawn capability and its `cua.home.*` labels (CUA-2630).
+        if let extras = CreateExtras.shared.get(createId) {
+            if extras.children { options.children = true }
+            if !extras.labels.isEmpty { options.labels = extras.labels }
+        }
         let result = try await cua.spaces().createWithProgress(
             options: options, listener: CreateListener(progress))
         return result.space?.id ?? result.pendingId ?? ""
@@ -579,6 +768,153 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func rename(id: String, name: String) async throws {
         _ = try await cua.spaces().rename(space: id, name: name)
+    }
+
+    public func network(id: String) async throws -> [String: Any] {
+        let spaces = cua.spaces()
+        let n = try await spaces.network(space: id)
+        let row = (try? await spaces.listKnown())?.spaces.first { $0.id == id }
+        return [
+            "preset": n.settings.preset.isEmpty ? "internet" : n.settings.preset,
+            "localhostPorts": n.settings.localhostPorts.map(Int.init),
+            "allLocalhostPorts": n.settings.allLocalhostPorts,
+            "allow": n.settings.allow,
+            "deny": n.settings.deny,
+            "customBase": n.settings.customBase,
+            "widenedBy": n.settings.widenedBy as Any,
+            "summary": n.summary,
+            "widenings": n.widenings,
+            "enforcement": n.enforcement,
+            "point": n.point,
+            "note": n.note as Any,
+            "parent": n.parent as Any,
+            "root": n.root as Any,
+            "alwaysBlocked": n.alwaysBlocked,
+            "noticePending": n.noticePending,
+            "via": n.settings.via as Any,
+            "topologyJson": n.topologyJson,
+            "clipboard": row.map { $0.clipboard.isEmpty ? "viewing" : $0.clipboard } ?? "viewing",
+            "volume": row.map { $0.volume.isEmpty ? "own" : $0.volume } ?? "own",
+        ]
+    }
+
+    public func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+        let r = try await cua.spaces().setNetwork(
+            space: id, settings: Self.networkSettings(word: word, allow: allow, deny: deny, via: via), widen: widen, tree: tree)
+        return r.applied == "now" ? "now" : "next_start"
+    }
+
+    public func exitsThroughThisMachine() async -> [String] {
+        let spaces = cua.spaces()
+        guard let all = try? await spaces.list() else { return [] }
+        var out: [String] = []
+        for s in all where s.id.hasPrefix("local:") {
+            if let n = try? await spaces.network(space: s.id), n.settings.via == "this-machine" {
+                out.append(s.id)
+            }
+        }
+        return out
+    }
+
+    public func networkLog(id: String) async throws -> [[String: Any]] {
+        try await cua.spaces().networkLog(space: id).map { e in
+            [
+                "reason": e.reason, "dst": e.dst, "proto": e.proto as Any,
+                "count": Int(e.count), "lastUnix": e.lastUnix.map { Int($0) } as Any,
+            ]
+        }
+    }
+
+    public func ackNetworkNotice(id: String) async throws {
+        try await cua.spaces().ackNetworkNotice(space: id)
+    }
+
+    public func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+        if let clipboard { try await cua.spaces().setClipboard(space: id, clipboard: clipboard) }
+        if let volume { try await cua.spaces().setVolume(space: id, volume: volume) }
+    }
+
+    public func spaceTree() async throws -> [[String: Any]] {
+        try await cua.spaces().listKnown().spaces.map { s in
+            // `home`: the agent an agent home (labelled `cua.home`) was made for, so a home is found again by its label.
+            let home: Any = s.labels["cua.home"] == "1" ? (s.labels["cua.home.agent"] ?? "") : NSNull()
+            return ["id": s.id, "parent": s.parent as Any, "depth": Int(s.depth), "children": s.children, "home": home]
+        }
+    }
+
+    public func setChildren(id: String, enabled: Bool) async throws {
+        try await cua.spaces().setChildren(space: id, enabled: enabled)
+    }
+
+    public func treeBudget(id: String) async throws -> [String: Any] {
+        Self.budgetJSON(try await cua.spaces().treeBudget(space: id))
+    }
+
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        let n = { (k: String) -> Double? in (limits[k] as? NSNumber).map(\.doubleValue).flatMap { $0 >= 0 && $0.isFinite ? $0 : nil } }
+        let l = CuaSDK.TreeBudgetLimits(
+            maxSpaces: n("maxSpaces").map { UInt32(min($0, Double(UInt32.max))) },
+            maxVcpus: n("maxVcpus").map { UInt32(min($0, Double(UInt32.max))) },
+            maxMemoryMb: n("maxMemoryMb").map { UInt64($0) },
+            usdPerHour: n("usdPerHour"),
+            usdTotal: n("usdTotal"))
+        return Self.budgetJSON(try await cua.spaces().setTreeBudget(space: id, limits: l))
+    }
+
+    public func services(id: String) async throws -> [[String: Any]] {
+        try await cua.spaces().space(space: id).keptServices().map { s in
+            [
+                "name": s.name, "command": s.command, "state": s.state, "restarts": Int(s.restarts),
+                "lastEnd": s.lastEnd, "probeError": s.probeError,
+            ]
+        }
+    }
+
+    public func controlService(id: String, name: String, action: String) async throws {
+        let space = try await cua.spaces().space(space: id)
+        switch action {
+        case "start": _ = try await space.startService(name: name)
+        case "stop": _ = try await space.stopService(name: name)
+        case "restart": _ = try await space.restartService(name: name)
+        case "remove": try await space.deleteService(name: name)
+        default: throw FixtureError(message: "No service action \(action)")
+        }
+    }
+
+    /// The SDK's `TreeBudget` as the web page's `budget.get` answers it.
+    static func budgetJSON(_ b: CuaSDK.TreeBudget) -> [String: Any] {
+        [
+            "root": b.root,
+            "set": [
+                "maxSpaces": b.set.maxSpaces.map { Int($0) } as Any,
+                "maxVcpus": b.set.maxVcpus.map { Int($0) } as Any,
+                "maxMemoryMb": b.set.maxMemoryMb.map { Int($0) } as Any,
+                "usdPerHour": b.set.usdPerHour as Any,
+                "usdTotal": b.set.usdTotal as Any,
+            ] as [String: Any],
+            "maxSpaces": Int(b.maxSpaces), "maxVcpus": Int(b.maxVcpus), "maxMemoryMb": Int(b.maxMemoryMb),
+            "usdPerHour": b.usdPerHour, "usdTotal": b.usdTotal as Any,
+            "spaces": Int(b.spaces), "vcpus": Int(b.vcpus), "memoryMb": Int(b.memoryMb),
+            "usdPerHourUsed": b.usdPerHourUsed, "usdSpent": b.usdSpent,
+        ]
+    }
+
+    /// The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
+    /// `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
+    /// `unprotected`) and lists.
+    /// `via`: where its internet traffic leaves (`internet`, `this-machine`,
+    /// `space:<id>`, `socks5://...`); nil keeps the exit it has.
+    static func networkSettings(word: String, allow: [String], deny: [String], via: String? = nil) -> CuaSDK.NetworkSettings {
+        let parts = word.trimmingCharacters(in: .whitespaces).lowercased().split(separator: ":", maxSplits: 1).map(String.init)
+        let preset = parts.first ?? "internet"
+        let rest = parts.count > 1 ? parts[1] : ""
+        let all = preset == "localhost" && rest == "all"
+        let ports: [UInt16] = preset == "localhost" && !all
+            ? rest.split(separator: ",").compactMap { UInt16($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 > 0 }
+            : []
+        return CuaSDK.NetworkSettings(
+            preset: preset, localhostPorts: ports, allLocalhostPorts: all, allow: allow, deny: deny,
+            customBase: preset == "custom" && rest == "none" ? "none" : "", widenedBy: nil, via: via)
     }
 
     /// Through the Spaces connection, which forgets its handle to the Space
@@ -760,6 +1096,32 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         default: a = nil
         }
         return ShareLink(try await cua.share(target: target, access: a, ttlSeconds: ttlSeconds, name: name))
+    }
+
+    public func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink {
+        ShareLink(try await cua.shareTcp(target: target, service: service, ttlSeconds: ttlSeconds, name: name,
+                                         route: options.route, allow: options.allow.isEmpty ? nil : options.allow,
+                                         checkHost: options.checkHost, consent: options.consent))
+    }
+
+    public func approveLink(id: String, always: Bool) async throws -> ShareLink {
+        ShareLink(try await cua.approveShare(id: id, always: always))
+    }
+
+    public func denyLink(id: String) async throws {
+        try await cua.denyShare(id: id)
+    }
+
+    public func shareSettings() async throws -> ShareSettingsRow {
+        ShareSettingsRow(try await cua.shareSettings())
+    }
+
+    public func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow {
+        ShareSettingsRow(try await cua.setShareSettings(settings: settings.sdk))
+    }
+
+    public func removeShareEdge() async throws -> [String] {
+        try await cua.removeShareEdge()
     }
 
     public func stopLink(id: String) async throws -> [String] {
@@ -1040,11 +1402,66 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
         fixtureLinks.insert(link, at: 0)
         return link
     }
+    public func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink {
+        let id = "share-\(String(format: "%012x", fixtureLinks.count + 1))"
+        let link = ShareLink(id: id, url: "tcp://tcp.m.relay.example:26001", name: name, access: "public", kind: "space_port", target: target,
+                             owner: "ada@example.com", createdAtUnix: 1_000, expiresAtUnix: ttlSeconds.map { 1_000 + Int64($0) },
+                             tcpConnectWith: "tcp.m.relay.example:26001", tcpAddress: "tcp.m.relay.example:26001",
+                             route: options.route ?? "relay", routeLine: "Through Cua", allow: options.allow)
+        fixtureLinks.insert(link, at: 0)
+        return link
+    }
+    /// The Spaces whose exit is this machine, as `exitsThroughThisMachine` reports them.
+    public var fixtureExits: [String] = []
+    public func exitsThroughThisMachine() async -> [String] { fixtureExits }
     public func stopLink(id: String) async throws -> [String] {
         let gone = fixtureLinks.filter { id == "all" || $0.id == id }.map(\.id)
         fixtureLinks.removeAll { gone.contains($0.id) }
         return gone
     }
+    public func approveLink(id: String, always: Bool) async throws -> ShareLink {
+        ShareLink(id: id, url: "tcp://tcp.m.relay.example:26001", name: nil, access: "public", kind: "space_port",
+                  target: "space:dev:25565", owner: "ada@example.com", createdAtUnix: 1_000, expiresAtUnix: 1_000 + 86_400,
+                  tcpConnectWith: "tcp.m.relay.example:26001", tcpAddress: "tcp.m.relay.example:26001",
+                  route: "relay", routeLine: "Through Cua")
+    }
+    public func denyLink(id: String) async throws {}
+    public private(set) var fixtureShareSettings = ShareSettingsRow(
+        landing: "auto", relayFallback: true, dailyCapMib: 2048, defaultAllow: [], approveAgentShares: true,
+        alwaysAllowSpaces: [], edgeConsent: [], usedToday: 0, edgeCloud: nil, edgeHost: nil, edgeMonthlyUsd: nil)
+    public func shareSettings() async throws -> ShareSettingsRow { fixtureShareSettings }
+    public func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow {
+        var saved = settings
+        (saved.usedToday, saved.edgeCloud, saved.edgeHost, saved.edgeMonthlyUsd) =
+            (fixtureShareSettings.usedToday, fixtureShareSettings.edgeCloud, fixtureShareSettings.edgeHost, fixtureShareSettings.edgeMonthlyUsd)
+        fixtureShareSettings = saved
+        return saved
+    }
+    public func removeShareEdge() async throws -> [String] { [] }
+
+    // Network, child Spaces and kept commands: canned answers in the page's shapes.
+    public func network(id: String) async throws -> [String: Any] {
+        ["preset": "internet", "localhostPorts": [Int](), "allLocalhostPorts": false, "allow": [String](), "deny": [String](),
+         "customBase": "", "widenedBy": NSNull(), "summary": "Internet only", "widenings": [String](),
+         "enforcement": "enforced", "point": "the host firewall", "note": NSNull(), "parent": NSNull(), "root": NSNull(),
+         "alwaysBlocked": [String](), "noticePending": false, "clipboard": "viewing", "volume": "own"]
+    }
+    public func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String { "now" }
+    public func setAccess(id: String, clipboard: String?, volume: String?) async throws {}
+    public func spaceTree() async throws -> [[String: Any]] {
+        await MainActor.run { fixtureRows.map { ["id": $0.id, "parent": NSNull(), "depth": 0, "children": false] as [String: Any] } }
+    }
+    public func setChildren(id: String, enabled: Bool) async throws {}
+    public func treeBudget(id: String) async throws -> [String: Any] {
+        ["root": id, "set": [String: Any](), "maxSpaces": 8, "maxVcpus": 16, "maxMemoryMb": 32768, "usdPerHour": 5.0,
+         "usdTotal": NSNull(), "spaces": 1, "vcpus": 2, "memoryMb": 4096, "usdPerHourUsed": 0.0, "usdSpent": 0.0]
+    }
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        var b = try await treeBudget(id: id)
+        b["set"] = limits
+        return b
+    }
+    public func controlService(id: String, name: String, action: String) async throws {}
     public var fixtureRows: [AppSpaceRow]
     public private(set) var created: [AppCreateSpaceArgs] = []
     public private(set) var added: [String] = []
@@ -1439,5 +1856,69 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
             let name = URL(fileURLWithPath: p).lastPathComponent
             return AppSentFileInfo(name: name, dest: "/home/cua/Downloads/\(name)", bytes: 1024)
         }
+    }
+}
+
+/// The New Space's Network choice by create id, until its create runs
+/// (the web page sends it with `spaces.create`'s `config.network`).
+final class CreateNetworks: @unchecked Sendable {
+    static let shared = CreateNetworks()
+    private let lock = NSLock()
+    private var words: [String: String] = [:]
+
+    func set(_ id: String, _ word: String) {
+        lock.lock(); defer { lock.unlock() }
+        words[id] = word
+    }
+
+    func get(_ id: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return words[id]
+    }
+
+    func clear(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        words.removeValue(forKey: id)
+    }
+}
+
+/// What an agent home is created with besides the plan's fields (CUA-2630),
+/// by create id, until its create is over (the web page sends it with
+/// `spaces.create`'s `config.children` and `labels`).
+struct CreateExtrasValue: Equatable, Sendable {
+    var children = false
+    var labels: [String: String] = [:]
+
+    var isEmpty: Bool { !children && labels.isEmpty }
+
+    /// The extras in a `spaces.create` config; the wrong types are ignored and a label that is not text is dropped.
+    static func parse(_ config: [String: Any]) -> CreateExtrasValue {
+        var out = CreateExtrasValue()
+        out.children = config["children"] as? Bool == true
+        if let l = config["labels"] as? [String: Any] {
+            for (k, v) in l { if !k.isEmpty, let t = v as? String, !t.isEmpty { out.labels[k] = t } }
+        }
+        return out
+    }
+}
+
+final class CreateExtras: @unchecked Sendable {
+    static let shared = CreateExtras()
+    private let lock = NSLock()
+    private var values: [String: CreateExtrasValue] = [:]
+
+    func set(_ id: String, _ v: CreateExtrasValue) {
+        lock.lock(); defer { lock.unlock() }
+        values[id] = v
+    }
+
+    func get(_ id: String) -> CreateExtrasValue? {
+        lock.lock(); defer { lock.unlock() }
+        return values[id]
+    }
+
+    func clear(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        values.removeValue(forKey: id)
     }
 }

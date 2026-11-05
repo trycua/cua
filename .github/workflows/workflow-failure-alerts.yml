@@ -29,6 +29,7 @@ on:
       - "CD: Cua Driver (cross-platform)"
       - "CD: Cua Driver SDK packages"
       - "CD: Cua Spaces"
+      - "CD: Cua Spaces build (shadow)"
       - "CD: cua-spacesd"
       - "CD: Lume (macOS)"
       - "Release: Prepare component releases"
@@ -64,6 +65,7 @@ jobs:
         CD: Cua Driver (cross-platform)=release
         CD: Cua Driver SDK packages=release
         CD: Cua Spaces=release
+        CD: Cua Spaces build (shadow)=ci
         CD: cua-spacesd=release
         CD: Lume (macOS)=release
         Release: Prepare component releases=release

@@ -111,16 +111,6 @@ jobs:
         env:
           CUA_TELEMETRY_ENABLED: "false" # Disable telemetry during tests
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
-        if: always()
-        with:
-          file: ./libs/python/${{ matrix.package }}/coverage.xml
-          flags: ${{ matrix.package }}
-          name: codecov-${{ matrix.package }}
-          fail_ci_if_error: false
-        continue-on-error: true
-
   cua-sandbox:
     needs: quick
     if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}

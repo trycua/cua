@@ -184,6 +184,19 @@ run. Every setup in a run uses the same seed. Only complete task blocks are
 analysed. Rate-limit interruptions are retried with the same trial id;
 infrastructure failures are excluded after bounded retries and reported.
 
+**Harness errors are re-run, never scored.** A trial is scored only when the
+harness gave the agent a working environment: the tool server answered its
+preflight and was connected in the agent's session; after the reset, every app
+the task automates accepted Apple events, loopback and the task's local web app
+were up, and the checker's programs were on its PATH; the environment stayed up;
+and the export step and the evaluator produced a result. Otherwise the attempt is
+a harness error: it is re-run with the same seed and never counted as a pass or a
+fail, and a trial that keeps failing this way is excluded and reported. The checks
+and their exact rules are in [`fairness/SPEC.md`](fairness/SPEC.md), with a
+runner-agnostic reference implementation. Seeds are per task and run index
+(`int(sha256(f"{task}:{run_index}")[:8], 16) mod 10^6`, run index from 0), the
+same for every setup and for a re-run.
+
 ## Analysis
 
 `automated-eval/macos_bench/tools/analyze_v2.py`, written before any Bench v2

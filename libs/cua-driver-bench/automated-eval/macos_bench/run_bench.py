@@ -86,9 +86,19 @@ class StopRun(Exception):
 # ---------------------------------------------------------------- tasks
 
 
+def task_selector_files(probes_dir: Path) -> list[Path]:
+    """Selectors of this repository, plus those of the held-out pack when `CDB_TASKPACK_HELDOUT` is set
+    (`<held-out pack>/probes/<ID>/task.json`, `"split": "heldout"`)."""
+    files = sorted(probes_dir.glob("*/task.json"))
+    heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+    if heldout:
+        files += sorted((Path(heldout) / "probes").glob("*/task.json"))
+    return files
+
+
 def load_tasks(probes_dir: Path) -> dict[str, pilot.Task]:
     tasks: dict[str, pilot.Task] = {}
-    for meta in sorted(probes_dir.glob("*/task.json")):
+    for meta in task_selector_files(probes_dir):
         data = json.loads(meta.read_text("utf-8"))
         if data.get("status") == "dropped":
             continue  # kept on disk, not run (PREREGISTRATION.md, amendment of 6 Oct)
@@ -971,6 +981,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 windows=lambda win: place_window(ctx, win),
                 force_accessibility=ca.force_accessibility(arm),
             )
+            row["health"] = cdb.health_check()  # raises: a harness error, re-run, never scored
             if ca.force_accessibility(arm):
                 row["force_accessibility_apps"] = [
                     line.split(":", 1)[0]
@@ -1118,6 +1129,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "passed": False,
                 "score": None,
                 "error": f"{type(error).__name__}: {error}",
+            }
+        if evaluation.get("harness_error") and not failure.get("kind"):
+            # no export or no evaluator result: the harness failed, not the agent; re-run, never scored
+            failure = {
+                "kind": "harness_evaluator",
+                "message": f"{evaluation['harness_error']}: {evaluation.get('error', '')}",
             }
     except StopRun:
         raise
@@ -2258,14 +2275,27 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             add(name, status, detail)
     cdb_ids = [t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
     if cdb_ids:
-        want = ca.load_pins().get("cdb_pack", {}).get("tree_sha256", {})
+        want = dict(ca.load_pins().get("cdb_pack", {}).get("tree_sha256", {}))
+        want_heldout = cdb_adapter.heldout_pins()
+        kits_checked: set[str] = set()
         for tid in cdb_ids:
             spec = task_spec(ctx.tasks[tid])
+            pins_for = want_heldout if spec.get("split") == "heldout" else want
             try:
                 probe = cdb_adapter.CdbTask(spec, ctx.run_dir)
                 got = probe._digest_hidden() or cdb_adapter.tree_sha256(probe.bundle)
-                ok = got == want.get(spec["pack_task"])
+                ok = got == pins_for.get(spec["pack_task"])
                 add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got[:16])
+                kit = cdb_adapter.shared_kit(spec)
+                if kit is not None and str(kit) not in kits_checked:
+                    kits_checked.add(str(kit))
+                    kit_key = str(Path(spec["pack_task"]).parent / "_kit")
+                    got_kit = cdb_adapter.tree_sha256(kit)
+                    add(
+                        f"CDB shared kit {kit_key} matches its pinned digest",
+                        "pass" if got_kit == want.get(kit_key) else "fail",
+                        got_kit[:16],
+                    )
                 names = cdb_adapter.allowed_app_names(spec)
                 add(f"CDB {tid} descriptor readable", "pass", f"{len(names)} app names")
             except Exception as error:  # noqa: BLE001
@@ -2441,6 +2471,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--only-task", default=None)
     p.add_argument(
+        "--task-set",
+        default="v2",
+        help="with --bench-v2: v2 (the ten registered tasks, default), or v2-public / v2-heldout for one split "
+        "(see taskpack/v2-taskset.json)",
+    )
+    p.add_argument(
         "--phase1-runs",
         type=int,
         default=3,
@@ -2580,7 +2616,23 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     (run_dir / "trials").mkdir(exist_ok=True)
     tasks = load_tasks(HERE / "probes")
     bench_v2 = bool(getattr(args, "bench_v2", False))
-    defaults = list(v2.V2_TASKS) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
+    task_set = getattr(args, "task_set", "v2") or "v2"
+    sets = v2.task_sets()
+    if task_set not in sets:
+        raise SystemExit(f"unknown --task-set {task_set!r}; known {sorted(sets)}")
+    defaults = list(sets[task_set]) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
+    if bench_v2 and task_set != "v2":
+        # a set other than v2 honours each task's `conditions` (taskpack/v2-taskset.json)
+        manifest = {e["id"]: e for e in v2.load_taskset()["tasks"]}
+        condition = getattr(args, "condition", "foreground")
+        specs = {
+            t: {**(task_spec(tasks[t]) if t in tasks else {}), **manifest.get(t, {})}
+            for t in defaults
+        }
+        for t in defaults:  # a held-out entry carries no conditions; its selector does
+            if t in tasks and "conditions" in task_spec(tasks[t]):
+                specs[t]["conditions"] = task_spec(tasks[t])["conditions"]
+        defaults = v2.tasks_for_condition(defaults, condition, specs)
     selected = args.tasks or ([args.only_task] if args.only_task else defaults)
     if args.only_task and args.tasks is None:
         selected = [args.only_task]
@@ -2817,6 +2869,10 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "bench_version": v2.BENCH_VERSION if getattr(args, "bench_v2", False) else 1,
         "bench_v2": {
             "categories": v2.CATEGORIES,
+            "task_set": getattr(args, "task_set", "v2"),
+            "task_splits": {
+                t: task_spec(ctx.tasks[t]).get("split", "public") for t in ctx.task_ids
+            },
             "task_categories": {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids},
             "gui_only_enforce": getattr(args, "gui_only_enforce", True),
             "condition": getattr(args, "condition", "foreground"),

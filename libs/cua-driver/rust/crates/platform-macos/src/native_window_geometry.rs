@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use core_foundation::base::{CFType, TCFType};
 use cua_driver_core::native_window_geometry::{
     geometry_call_timeout, GeometryAssessment, GeometrySample, NativeWindowRect, PointTolerance,

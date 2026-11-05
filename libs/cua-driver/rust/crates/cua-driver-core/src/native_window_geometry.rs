@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;

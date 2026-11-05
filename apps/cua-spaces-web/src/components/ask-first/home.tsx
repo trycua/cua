@@ -135,7 +135,7 @@ export function AskFirstHome() {
   const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
+    <div className="h-full scroll-y-stable" data-ask-first-home="">
       <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
         {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
         <AskBox

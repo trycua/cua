@@ -135,47 +135,79 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
 const Divider = () => <div className="mx-3 my-1.5 h-px bg-white/[0.14]" />;
 const Label = ({ children }: { children: ReactNode }) => <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>;
 
-/** How far above the footer the list fades out. */
+/** How far above the footer the content fades out. */
 const FADE_PX = 28;
 
 /**
- * Fades `content` out just above `footer` while the window is too short for both, so the list never runs
- * under Continue. A mask on the content, never a background on the footer: nothing covers the stars or keys.
+ * A screen's action row. It sits at the bottom of the content area on every screen and every window size, so the
+ * primary button never moves between steps: short content leaves space above it (`mt-auto` in the page's full-height
+ * column), long content scrolls under it (`sticky`). It has no background of its own, so the stars and keys show
+ * through; the content fades out just above it instead (`useFadeUnder`).
  */
-function useFadeUnder(content: RefObject<HTMLElement | null>, footer: RefObject<HTMLElement | null>) {
+function Actions({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("sticky bottom-0 z-10 mt-auto pt-[min(20px,2.2vh)] pb-3", className)} data-new-run-footer="">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Fades the screen's content out just above its action row (`Actions`) while the window is too short for both, so
+ * nothing runs under the buttons. A mask on each block above the row, never a background on the row: nothing covers
+ * the stars or keys. One for the whole page (`scroller` is its `main`), so every screen gets it; `screen` re-reads
+ * the row when the screen changes.
+ */
+function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
   useLayoutEffect(() => {
-    const c = content.current;
-    const f = footer.current;
-    if (!c || !f) return;
-    const scroller = c.closest("main") ?? c.parentElement;
+    const main = scroller.current;
+    if (!main) return;
     let frame = 0;
+    const masked = new Set<HTMLElement>();
+    const clear = (el: HTMLElement) => {
+      el.style.removeProperty("mask-image");
+      el.style.removeProperty("-webkit-mask-image");
+      delete el.dataset.faded;
+      masked.delete(el);
+    };
     const update = () => {
       frame = 0;
-      const box = c.getBoundingClientRect();
-      const cut = f.getBoundingClientRect().top - box.top;
-      const under = box.height > 0 && cut < box.height - 1;
-      const mask = under ? `linear-gradient(to bottom, #000 ${Math.max(0, cut - FADE_PX)}px, transparent ${Math.max(0, cut)}px)` : "";
-      c.style.setProperty("mask-image", mask);
-      c.style.setProperty("-webkit-mask-image", mask);
-      if (under) c.dataset.faded = "";
-      else delete c.dataset.faded;
+      const footer = main.querySelector<HTMLElement>("[data-new-run-footer]");
+      const above = footer ? [...(footer.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING)) : [];
+      for (const el of [...masked]) if (!above.includes(el)) clear(el);
+      if (!footer) return;
+      const top = footer.getBoundingClientRect().top;
+      for (const el of above) {
+        const box = el.getBoundingClientRect();
+        const cut = top - box.top;
+        if (!(box.height > 0 && cut < box.height - 1)) {
+          if (masked.has(el)) clear(el);
+          continue;
+        }
+        const mask = `linear-gradient(to bottom, #000 ${Math.max(0, cut - FADE_PX)}px, transparent ${Math.max(0, cut)}px)`;
+        el.style.setProperty("mask-image", mask);
+        el.style.setProperty("-webkit-mask-image", mask);
+        el.dataset.faded = "";
+        masked.add(el);
+      }
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
     update();
-    scroller?.addEventListener("scroll", schedule, { passive: true });
+    main.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    ro?.observe(c);
-    if (scroller) ro?.observe(scroller);
+    ro?.observe(main);
+    if (main.firstElementChild) ro?.observe(main.firstElementChild);
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      scroller?.removeEventListener("scroll", schedule);
+      main.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
       ro?.disconnect();
+      for (const el of [...masked]) clear(el);
     };
-  }, [content, footer]);
+  }, [scroller, screen]);
 }
 
 /**
@@ -225,11 +257,11 @@ export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
-      <div className="mt-9">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
           {WELCOME.primary}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -255,7 +287,7 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
           {view.waiting}
         </div>
       ) : null}
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <Actions className="flex flex-wrap items-center gap-3">
         <button type="button" className={view.tryAgainPrimary ? WHITE_BUTTON : GLASS_BUTTON} onClick={onTryAgain} data-new-run-try-again="">
           {view.tryAgain}
         </button>
@@ -264,7 +296,7 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
             {view.useCode}
           </button>
         ) : null}
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -290,13 +322,10 @@ export function WhereScreen({
   const sep = view.separate;
   const fold = view.offlineFold;
   const [showOffline, setShowOffline] = useState(false);
-  const content = useRef<HTMLDivElement>(null);
-  const footer = useRef<HTMLDivElement>(null);
-  useFadeUnder(content, footer);
   const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
   return (
     <div data-new-run="where">
-      <div ref={content} data-new-run-content="">
+      <div data-new-run-content="">
         <Title>{view.title}</Title>
         <Line>{view.line}</Line>
         <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
@@ -415,13 +444,11 @@ export function WhereScreen({
           ) : null}
         </div>
       </div>
-      {/* Stays in view at the bottom of the window however long the list is. It has no background of its own, so the
-          stars and keys show through; the list fades out just above it instead (`useFadeUnder`). */}
-      <div ref={footer} className="sticky bottom-0 z-10 mt-2 pt-[min(20px,2.2vh)] pb-3" data-new-run-footer="">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
           Continue
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -457,23 +484,24 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
       ) : null}
       {view.install ? (
         <>
-          <div className="mt-9 flex flex-wrap items-center gap-6">
+          <p className={cn("mt-[min(28px,3vh)] max-w-[480px] text-[13.5px] font-medium", GREY)}>{view.install.note}</p>
+          <Actions className="flex flex-wrap items-center gap-6">
             <button type="button" className={WHITE_BUTTON} onClick={() => onInstall("claude-code")} data-new-run-install="claude-code">
               {view.install.primary}
             </button>
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
-          </div>
-          <p className={cn("mt-4 max-w-[480px] text-[13.5px] font-medium", GREY)}>{view.install.note}</p>
+          </Actions>
         </>
-      ) : view.state !== "looking" ? (
-        <div className="mt-[min(28px,3vh)]">
+      ) : (
+        // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
+        <Actions>
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
-        </div>
-      ) : null}
+        </Actions>
+      )}
     </div>
   );
 }
@@ -542,11 +570,11 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
       </div>
       {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
       {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
-      <div className="mt-6">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -578,11 +606,11 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
           );
         })}
       </div>
-      <div className="mt-[min(28px,3vh)]">
+      <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
         </button>
-      </div>
+      </Actions>
     </div>
   );
 }
@@ -655,6 +683,8 @@ export function NewFirstRun() {
   const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  useFadeUnder(mainRef, s.screen);
   const [host, setHost] = useState<HostStatus | null>(null);
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
@@ -982,8 +1012,9 @@ export function NewFirstRun() {
   return (
     <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-window-surface="#050607" data-new-first-run="" data-step={s.screen}>
       <FloatKeys copyRight={544} />
-      <header className="relative z-30 flex shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
-        <span className="flex items-center gap-1.5">
+      {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
+      <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
+        <span className="flex items-center gap-1.5" data-new-run-logo="">
           <CuaLogo className="size-5" />
           <span className="font-display text-[19px] font-medium tracking-[-0.01em] text-white">Cua</span>
         </span>
@@ -993,16 +1024,16 @@ export function NewFirstRun() {
           </button>
         ) : null}
       </header>
-      <main className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16">
-        <div aria-hidden className="min-h-0 shrink-0 grow basis-0" />
-        <div className="flex w-full max-w-[600px] shrink-0 flex-col py-2">{body}</div>
-        <div aria-hidden className="min-h-2 shrink-0 grow-[1.4] basis-0" />
+      {/* Every screen starts at the same height under the header (never centred: screens differ in height, and a
+          centred one moved the title and the button between steps). The screen fills the area, so its action row
+          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. */}
+      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16" data-new-run-main="">
+        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col">{body}</div>
       </main>
-      {dots ? (
-        <StepDots dots={dots} onGo={goDot} />
-      ) : (
-        <div className="h-8 shrink-0" />
-      )}
+      {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
+      <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
+        {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
+      </div>
       <AddComputerSheet open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );

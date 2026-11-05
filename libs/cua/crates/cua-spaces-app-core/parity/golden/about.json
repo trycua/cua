@@ -61,7 +61,7 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105.42%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": {
@@ -77,7 +77,7 @@
             "nightly"
           ]
         },
-        "version": "Version 0.3.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+        "version": "Version 0.3.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
       },
       "step": "nightly, checked before"
     },
@@ -89,7 +89,7 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105.42%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": {
@@ -103,7 +103,7 @@
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []
         },
-        "version": "Version 0.3.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+        "version": "Version 0.3.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
       },
       "step": "back on stable from a nightly"
     },
@@ -115,7 +115,7 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105.42%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": {
@@ -129,7 +129,7 @@
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []
         },
-        "version": "Version 0.3.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+        "version": "Version 0.3.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
       },
       "step": "checking"
     },
@@ -141,7 +141,7 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105.42%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": {
@@ -155,7 +155,7 @@
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []
         },
-        "version": "Version 0.3.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+        "version": "Version 0.3.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
       },
       "step": "no automatic checks"
     },
@@ -167,11 +167,11 @@
           "privacy Privacy Policy -> https://cua.ai/privacy-policy",
           "terms Terms of Service -> https://cua.ai/terms-of-service",
           "status System Status -> https://status.cua.ai",
-          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-nightly.20261105.42%2B55e1f5d%2C%20built%205%20Nov%202026%0AmacOS%2026.0%20%28arm64%29"
         ],
         "title": "Cua Spaces for macOS",
         "updates": null,
-        "version": "Version 0.3.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+        "version": "Version 0.3.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
       },
       "step": "no updater"
     },

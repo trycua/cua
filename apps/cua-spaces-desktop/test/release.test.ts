@@ -86,6 +86,7 @@ describe("release config", () => {
 
 describe("updater channels", () => {
   it("a suffixed version (a nightly, or a beta from before Nightly) is on Nightly", () => {
+    expect(buildChannel("0.21.0-nightly.20261105.42")).toBe("nightly");
     expect(buildChannel("0.21.0-nightly.20261105")).toBe("nightly");
     expect(buildChannel("0.8.0-beta.1")).toBe("nightly");
     expect(buildChannel("0.8.0-staging.3")).toBe("nightly");

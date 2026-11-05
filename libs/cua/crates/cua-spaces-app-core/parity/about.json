@@ -16,7 +16,7 @@
   "panes": [
     { "step": "first open" },
     { "step": "install automatically", "set": { "autoInstall": true } },
-    { "step": "nightly, checked before", "set": { "channel": "nightly", "version": "0.3.0-nightly.20261105+55e1f5d", "build": "0.2.0.202611050731", "lastCheck": "9/30/26, 3:04 PM" } },
+    { "step": "nightly, checked before", "set": { "channel": "nightly", "version": "0.3.0-nightly.20261105.42+55e1f5d", "build": "0.2.0.202611050731", "lastCheck": "9/30/26, 3:04 PM" } },
     { "step": "back on stable from a nightly", "set": { "channel": "stable" } },
     { "step": "checking", "set": { "checking": true } },
     { "step": "no automatic checks", "set": { "checking": false, "autoCheck": false } },

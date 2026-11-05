@@ -110,10 +110,10 @@ struct UpdatesTests {
 
     /// A nightly's About says when it was built, and its notes are the nightly release.
     @Test func aNightlyShowsItsBuildDayAndNotes() {
-        let info = AboutBundleInfo(version: "0.21.0-nightly.20261105+55e1f5d", build: "0.20.0.202611050731", os: "macOS 26.0 (arm64)")
+        let info = AboutBundleInfo(version: "0.21.0-nightly.20261105.42+55e1f5d", build: "0.20.0.202611050731", os: "macOS 26.0 (arm64)")
         let model = UpdatesModel(updater: FixtureUpdater(), channel: .nightly, info: info)
-        #expect(model.view.versionLine == "Version 0.21.0-nightly.20261105+55e1f5d, built 5 Nov 2026")
-        #expect(UpdateState.notesURL(version: "0.21.0-nightly.20261105+55e1f5d")
+        #expect(model.view.versionLine == "Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026")
+        #expect(UpdateState.notesURL(version: "0.21.0-nightly.20261105.42+55e1f5d")
             == "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly")
         #expect(UpdateState.notesURL(version: "0.20.0") == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.20.0")
     }

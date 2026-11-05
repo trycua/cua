@@ -105,8 +105,9 @@ pub fn feed_url(channel: UpdateChannel, stable_feed: &str) -> Option<String> {
     }
 }
 
-/// A nightly build's version (`0.21.0-nightly.20261105+55e1f5d`,
-/// `0.21.0-nightly.20261105`).
+/// A nightly build's version: `0.21.0-nightly.20261105.42+55e1f5d` (Mac),
+/// `0.21.0-nightly.20261105.42` (Windows, Linux), with `.42` the workflow
+/// run; nightlies before the run number had none.
 pub fn is_nightly_version(version: &str) -> bool {
     version
         .split('+')
@@ -637,15 +638,21 @@ mod tests {
 
     #[test]
     fn nightly_versions_carry_their_build_day() {
+        // Run number since #6545 (`.N`); earlier nightlies had none.
+        assert!(is_nightly_version("0.21.0-nightly.20261105.42+55e1f5d"));
+        assert!(is_nightly_version("0.21.0-nightly.20261105.42"));
         assert!(is_nightly_version("0.21.0-nightly.20261105+55e1f5d"));
         assert!(is_nightly_version("0.21.0-nightly.20261105"));
         assert!(!is_nightly_version("0.21.0-beta.7"));
         assert!(!is_nightly_version("0.21.0"));
         assert!(!is_nightly_version("0.21.0+nightly"));
-        assert_eq!(
-            nightly_build_date("0.21.0-nightly.20261105+55e1f5d").as_deref(),
-            Some("5 Nov 2026")
-        );
+        for v in [
+            "0.21.0-nightly.20261105.42+55e1f5d",
+            "0.21.0-nightly.20261105.42",
+            "0.21.0-nightly.20261105+55e1f5d",
+        ] {
+            assert_eq!(nightly_build_date(v).as_deref(), Some("5 Nov 2026"), "{v}");
+        }
         assert_eq!(
             nightly_build_date("0.21.0-nightly.20260101").as_deref(),
             Some("1 Jan 2026")
@@ -654,8 +661,8 @@ mod tests {
         assert_eq!(nightly_build_date("0.21.0-nightly"), None);
         assert_eq!(nightly_build_date("0.21.0-beta.20261105"), None);
         assert_eq!(
-            version_line("0.21.0-nightly.20261105+55e1f5d", "0.20.0.202611050731"),
-            "Version 0.21.0-nightly.20261105+55e1f5d, built 5 Nov 2026"
+            version_line("0.21.0-nightly.20261105.42+55e1f5d", "0.20.0.202611050731"),
+            "Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
         );
         assert_eq!(
             version_line("0.20.0", "0.20.0.512"),
@@ -682,7 +689,7 @@ mod tests {
         assert_eq!(u.channel_note, None);
 
         // Back on Stable from a nightly (or an old beta): it stays, and a download goes back now.
-        for version in ["0.21.0-nightly.20261105+55e1f5d", "0.21.0-beta.7"] {
+        for version in ["0.21.0-nightly.20261105.42+55e1f5d", "0.21.0-beta.7"] {
             i.version = version.into();
             i.channel = UpdateChannel::Stable;
             let u = view(&i).updates.unwrap();

@@ -54,6 +54,7 @@ describe("the update state machine", () => {
 
   it("points at the repository's release tag", () => {
     expect(releaseNotesUrl(" 0.9.3-rc.4 ")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3-rc.4");
+    expect(releaseNotesUrl("0.21.0-nightly.20261105.42")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-nightly");
     expect(releaseNotesUrl("0.21.0-nightly.20261105")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-nightly");
   });
 

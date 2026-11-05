@@ -548,7 +548,7 @@ Nightly reads the file instead of starting over, and every build reads `beta`
 as Nightly. A prerelease's first launch starts on Nightly. Back on Stable, a
 nightly build stays until the next stable release passes it; Settings offers
 "Download Stable" to go back now. About shows a nightly's build day
-("Version 0.21.0-nightly.20261105+55e1f5d, built 5 Nov 2026").
+("Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026").
 
 After an update, the first launch (the settings file's `lastSeenVersion`
 changed) runs the bundled `cua agents update` (skill folders and MCP entries

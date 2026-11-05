@@ -1521,6 +1521,10 @@ mod tests {
             first_launch_channel(Stable, "0.21.0-nightly.20261105"),
             Nightly
         );
+        assert_eq!(
+            first_launch_channel(Stable, "0.21.0-nightly.20261105.42+55e1f5d"),
+            Nightly
+        );
         assert_eq!(first_launch_channel(Stable, "0.7.2"), Stable);
         assert_eq!(first_launch_channel(Stable, "0.8.0+build-7"), Stable);
         // A release keeps a channel already in the file.

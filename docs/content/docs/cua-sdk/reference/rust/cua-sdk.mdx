@@ -60,6 +60,33 @@ impl CuaError {
 }
 ```
 
+### `DefaultSpace`
+
+Where the default Space resolves now.
+
+```rust
+pub struct DefaultSpace {
+  pub space: Option<String>,
+  pub reason: String,
+  pub default_space: Option<String>,
+  pub default_online: Option<bool>,
+  pub order: Vec<DefaultSpaceStep>,
+}
+```
+
+### `DefaultSpaceStep`
+
+One entry of the order `Devices::resolve_default_space` ...
+
+```rust
+pub struct DefaultSpaceStep {
+  pub space: String,
+  pub name: String,
+  pub online: bool,
+  pub role: String,
+}
+```
+
 ### `ExitInfo`
 
 How a process ended.
@@ -276,6 +303,19 @@ pub struct SpacesdFeature {
   pub supported: bool,
   pub limitation: Option<String>,
   pub attributes: HashMap<String, String>,
+}
+```
+
+### `SpacesSettings`
+
+The account's default Space and the order to try when ...
+
+```rust
+pub struct SpacesSettings {
+  pub default_space: Option<String>,
+  pub fallback: Vec<String>,
+  pub fallback_on: bool,
+  pub updated_at: u64,
 }
 ```
 

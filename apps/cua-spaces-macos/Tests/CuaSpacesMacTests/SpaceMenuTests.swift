@@ -46,7 +46,6 @@ struct SpaceMenuTests {
     func makeModel(_ backend: FixtureSpacesBackend = FixtureSpacesBackend(rows: SpaceMenuTests.rows)) async
         -> AppModel {
         let m = ViewModelTests().makeModel(backend)
-        m.settings.experiments.sharing = true
         await m.refresh()
         return m
     }
@@ -98,12 +97,6 @@ struct SpaceMenuTests {
         #expect(items.map(\.id) == [.open, .power, .share, .teleport, .delete])
         #expect(items.first { $0.id == .power }?.label == "Turn on")
         #expect(items.first { $0.id == .teleport }?.enabled == false, "Teleport needs a running desktop")
-    }
-
-    @Test func sharingOffLeavesShareOut() async throws {
-        let m = await makeModel()
-        m.settings.experiments.sharing = false
-        #expect(!m.spaceMenu(try space(m, "local:onb-new")).contains { $0.id == .share })
     }
 
     @Test func someoneElsesOffersLeaveNotDelete() async throws {

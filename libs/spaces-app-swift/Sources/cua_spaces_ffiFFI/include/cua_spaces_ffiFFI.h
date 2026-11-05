@@ -1773,11 +1773,6 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_settings_load(RustBuffer path, Rust
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_settings_page(RustBuffer input, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SETTINGS_RESOLVE_NEW_UI
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SETTINGS_RESOLVE_NEW_UI
-RustBuffer uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(RustBuffer settings, RustBuffer version, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SETTINGS_SAVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SETTINGS_SAVE
 void uniffi_cua_spaces_ffi_fn_func_app_settings_save(RustBuffer path, RustBuffer settings, RustCallStatus *_Nonnull out_status
@@ -1877,17 +1872,12 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_space_detail_copy(RustCallStatus *_
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_FOR
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_FOR
-RustBuffer uniffi_cua_spaces_ffi_fn_func_app_space_detail_for(RustBuffer space, RustBuffer usage, RustBuffer host_arch, RustBuffer experiments, RustBuffer access, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_space_detail_for(RustBuffer space, RustBuffer usage, RustBuffer host_arch, RustBuffer access, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_LIVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_LIVE
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_space_detail_live(RustBuffer space, RustBuffer usage, RustBuffer host_arch, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_WITH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_DETAIL_WITH
-RustBuffer uniffi_cua_spaces_ffi_fn_func_app_space_detail_with(RustBuffer space, RustBuffer usage, RustBuffer host_arch, RustBuffer experiments, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_SPACE_HOST
@@ -3979,12 +3969,6 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_settings_page(void
 
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SETTINGS_RESOLVE_NEW_UI
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SETTINGS_RESOLVE_NEW_UI
-uint16_t uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui(void
-
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SETTINGS_SAVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SETTINGS_SAVE
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_settings_save(void
@@ -4108,12 +4092,6 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SPACE_DETAIL_LIVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SPACE_DETAIL_LIVE
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SPACE_DETAIL_WITH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_SPACE_DETAIL_WITH
-uint16_t uniffi_cua_spaces_ffi_checksum_func_app_space_detail_with(void
 
 );
 #endif

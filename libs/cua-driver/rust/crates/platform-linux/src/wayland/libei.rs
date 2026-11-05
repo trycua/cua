@@ -1015,7 +1015,8 @@ impl EisState {
                 // key, so the field never receives a silently shortened string.
                 let text_device = self.device_with_interface("ei_text").filter(|_| {
                     self.device_with_interface("ei_keyboard").is_none()
-                        || prefers_ei_text(text, &self.keymap_chars, self.keymap_level3)
+                        || (prefers_ei_text(text, &self.keymap_chars, self.keymap_level3)
+                            && !x11_app_has_focus())
                 });
                 if let Some(device) = text_device {
                     let serial = self.last_serial;
@@ -1403,6 +1404,49 @@ fn plan_keycode_typing(
 /// and the two can swap, so text with a line break goes as keys when it can.
 fn prefers_ei_text(text: &str, table: &HashMap<char, TypedKey>, level3: Option<u32>) -> bool {
     !text.contains(['\n', '\r']) || plan_keycode_typing(text, table, level3).is_err()
+}
+
+/// Whether an X11 app has keyboard focus. KWin types a character the layout
+/// lacks by swapping in a keymap, pressing F24 and swapping back at once. Xwayland
+/// apps read the keymap after that, so the character is lost with no error, and
+/// such text must go as keys, which refuse it. A desktop with no X server, or one
+/// that doesn't answer in time, counts as no.
+fn x11_app_has_focus() -> bool {
+    const ANSWER_WITHIN: std::time::Duration = std::time::Duration::from_millis(250);
+    let (sender, receiver) = bounded(1);
+    thread::spawn(move || {
+        let _ = sender.send(read_x11_app_has_focus());
+    });
+    matches!(receiver.recv_timeout(ANSWER_WITHIN), Ok(Some(true)))
+}
+
+fn read_x11_app_has_focus() -> Option<bool> {
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+    let (conn, screen) = x11rb::connect(None).ok()?;
+    let root = conn.setup().roots.get(screen)?.root;
+    let windows = |name: &[u8]| -> Option<Vec<u32>> {
+        let property = conn.intern_atom(true, name).ok()?.reply().ok()?.atom;
+        let reply = conn
+            .get_property(false, root, property, AtomEnum::WINDOW, 0, 4096)
+            .ok()?
+            .reply()
+            .ok()?;
+        let values = reply.value32()?.collect();
+        Some(values)
+    };
+    Some(active_window_is_a_client(
+        &windows(b"_NET_ACTIVE_WINDOW")?,
+        &windows(b"_NET_CLIENT_LIST")?,
+    ))
+}
+
+/// KWin keeps its own helper window in `_NET_ACTIVE_WINDOW` while a Wayland app
+/// has focus, so a window only counts when it is also a listed client.
+fn active_window_is_a_client(active: &[u32], clients: &[u32]) -> bool {
+    active
+        .first()
+        .is_some_and(|window| clients.contains(window))
 }
 
 /// A piece of text for the `ei_text` route.
@@ -1827,6 +1871,16 @@ mod keycode_typing_tests {
                 level3: false
             })
         );
+    }
+
+    #[test]
+    fn only_a_listed_client_counts_as_the_active_x11_window() {
+        const KWIN_HELPER: u32 = 0x200000;
+        const X11_APP: u32 = 0x600007;
+        assert!(active_window_is_a_client(&[X11_APP], &[X11_APP]));
+        assert!(!active_window_is_a_client(&[KWIN_HELPER], &[X11_APP]));
+        assert!(!active_window_is_a_client(&[0], &[]));
+        assert!(!active_window_is_a_client(&[], &[X11_APP]));
     }
 
     #[test]

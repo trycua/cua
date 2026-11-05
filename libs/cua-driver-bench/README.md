@@ -87,6 +87,24 @@ only" skip the background condition: their readout appears only on a hover or a
 tooltip, which follows the real pointer, so no setup can do them in the
 background.
 
+### Reading and rerunning the release results
+
+* **What is scored.** Success and the background headline follow
+  [`METHOD.md`](METHOD.md): *full pass* is the checker passing with no GUI-only
+  violation and, in the background condition, all eight user-undisturbed
+  criteria held. The background headline covers the eight tasks that run in the
+  background; MB-10 and MB-11 (foreground only) are scored in the foreground
+  condition only.
+* **Versions.** Each table names the driver versions it used; they differ
+  between the macOS foreground, macOS background and Windows runs (see "Driver
+  versions differ between runs" in `METHOD.md`). Rerun with the version you want
+  to measure and record it.
+* **Rerun on your platform.** macOS: steps 1 to 5 under "Reproduce", one
+  condition per run. Linux: "Linux (the BenchLab tasks)". Windows: "Windows (the
+  BenchLab tasks)". Then `tools/analyze_v2.py` on the run directories. The
+  manifest decides which tasks run in which condition, so a rerun needs no task
+  list.
+
 ## Fairness and health checks
 
 A trial is scored only when the harness gave the agent a working environment.
@@ -313,6 +331,20 @@ The report gives, per setup, overall and per category: success and background
 completion with Wilson intervals, focus steals, key loss, windows raised,
 swallowed keystrokes, GUI-only violations with evidence, and the interruption
 rates. Keep raw results, streams and recordings out of git.
+
+### Linux (the BenchLab tasks)
+
+The Linux port of BenchLab and the sentinel is in
+[`automated-eval/macos_bench/linux`](automated-eval/macos_bench/linux) (GTK with AT-SPI). Run a trial inside
+the single-owner headless X11 session that [`launch/linux_session.sh`](automated-eval/macos_bench/launch/linux_session.sh)
+starts (Xvfb 1920 x 1080, a private D-Bus, openbox):
+
+```bash
+launch/linux_session.sh --evidence "$CDB_BENCH_WORK/evidence" -- <runner command>
+```
+
+Seeds, the state file, the event log, the checkers and the sentinel summary are the same as on macOS.
+`tests/test_linux_session.py` and `tests/test_linux_tools.py` check the session and the tools without a model.
 
 ### Windows (the BenchLab tasks)
 

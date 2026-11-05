@@ -12,8 +12,7 @@ pub const LOCAL_CLI_NAME: &str = "cua-driver-local";
 
 pub const RELEASE_APP_NAME: &str = "CuaDriver";
 pub const LOCAL_APP_NAME: &str = "CuaDriverLocal";
-pub const RELEASE_BUNDLE_ID: &str = "com.trycua.driver";
-pub const LOCAL_BUNDLE_ID: &str = "com.trycua.driver.local";
+pub use cua_driver_core::bundle_identity::{LOCAL_BUNDLE_ID, RELEASE_BUNDLE_ID};
 
 pub(crate) fn path_is_local(path: &Path) -> bool {
     let file_name = path

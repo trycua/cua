@@ -502,7 +502,7 @@ impl Tool for LaunchAppTool {
 }
 
 fn is_cua_driver_bundle_id(bundle_id: &str) -> bool {
-    matches!(bundle_id, "com.trycua.driver" | "com.trycua.driver.local")
+    cua_driver_core::bundle_identity::is_driver_bundle_id(bundle_id)
 }
 
 fn protected_host_launch_refusal() -> ToolResult {

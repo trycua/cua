@@ -50,6 +50,14 @@ jobs:
           uv run --no-project --python 3.12 --with pytest==8.4.2
           python -m pytest -q tests probes/tests swift/tests
 
+      - name: Task manifest, selectors, pins and docs agree
+        working-directory: libs/cua-driver-bench/automated-eval/macos_bench
+        run: uv run --no-project --python 3.12 python tools/taskset.py check
+
+      - name: Fairness and health checks
+        working-directory: libs/cua-driver-bench/fairness
+        run: uv run --no-project --python 3.9 python -m unittest discover -s tests
+
   linux-desktop:
     needs: quick
     if: ${{ !failure() && !cancelled() }}

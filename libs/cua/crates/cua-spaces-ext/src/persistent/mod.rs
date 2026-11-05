@@ -2497,7 +2497,10 @@ mod tests {
         assert!(t.should_say("sandbox a is Stopped", t0));
         assert!(!t.should_say("sandbox a is Stopped", t0 + Duration::from_secs(1)));
         assert!(t.should_say("sandbox b is Stopped", t0 + Duration::from_secs(1)));
-        assert!(!t.should_say("sandbox a is Stopped", t0 + ERROR_REPEAT - Duration::from_secs(1)));
+        assert!(!t.should_say(
+            "sandbox a is Stopped",
+            t0 + ERROR_REPEAT - Duration::from_secs(1)
+        ));
         assert!(t.should_say("sandbox a is Stopped", t0 + ERROR_REPEAT));
     }
 

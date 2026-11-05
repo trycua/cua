@@ -6,8 +6,10 @@ name: "E2E: cua SDK"
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks: five
 #                  build jobs in parallel, then 4 test shards (see `jobs:`). A
-#                  docs edit that leaves every fenced code block as it was
-#                  skips the suite (the `changes` job,
+#                  docs edit that leaves every fenced code block as it was,
+#                  or a change to a crate outside the dependency closure of
+#                  what the suite builds (package graph, ci_graph.py), skips
+#                  the suite (the `changes` job,
 #                  .github/scripts/e2e_cua_sdk_scope.py).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
 #                  Cua Cloud has ended, so there is no live Fleet lane.
@@ -61,6 +63,7 @@ on:
       - ".github/actions/setup-protoc/**"
       - ".github/actions/rust-cache/**"
       - ".github/scripts/e2e_cua_sdk_scope.py"
+      - ".github/scripts/ci_graph.py"
       - ".github/workflows/e2e-cua-sdk.yml"
   schedule:
     - cron: "23 7 * * *"

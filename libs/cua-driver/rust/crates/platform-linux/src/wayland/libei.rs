@@ -37,7 +37,7 @@ use std::thread;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use xkbcommon::xkb;
 
-use super::niri::keyboard::chromium_receives;
+use super::niri::keyboard::{chromium_receives, is_typing_key};
 use super::portal::RestoreToken;
 
 /// Buttons the public API exposes. Mapped to evdev codes in the worker
@@ -1305,12 +1305,6 @@ struct TypedKey {
     code: u32,
     shift: bool,
     level3: bool,
-}
-
-/// Whether evdev `code` is on the main typing block: the row keys, the space
-/// bar, the 102nd key and the two extra keys of JIS and ABNT layouts.
-fn is_typing_key(code: u32) -> bool {
-    matches!(code, 1..=53 | 57 | 86 | 89 | 124)
 }
 
 /// Index the compositor keymap's first layout by character.

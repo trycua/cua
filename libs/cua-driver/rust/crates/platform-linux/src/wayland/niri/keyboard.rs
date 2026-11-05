@@ -121,6 +121,12 @@ pub(in crate::wayland) fn chromium_receives(code: u32) -> bool {
     CHROMIUM_CODES.iter().any(|range| range.contains(&code))
 }
 
+/// Whether evdev `code` is on the main typing block: the row keys, the space
+/// bar, the 102nd key and the two extra keys of JIS and ABNT layouts.
+pub(in crate::wayland) fn is_typing_key(code: u32) -> bool {
+    matches!(code, 1..=53 | 57 | 86 | 89 | 124)
+}
+
 fn refused(detail: impl std::fmt::Display) -> anyhow::Error {
     anyhow!("foreground_unavailable: {detail}; nothing was typed")
 }
@@ -353,7 +359,9 @@ fn compile(map: &str) -> Result<xkb::Keymap> {
 }
 
 /// The key and modifiers that type `sym` in layout `group`: one Chromium
-/// receives first, then the fewest modifiers, then the lowest code.
+/// receives first, then one on the main typing block, then the fewest
+/// modifiers, then the lowest code. `us` also has `(` and `)` with no modifier
+/// on keypad keys, which terminals can read as commands.
 fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
     let mut candidates = Vec::new();
     for raw in map.min_keycode().raw().max(8)..=map.max_keycode().raw() {
@@ -377,6 +385,7 @@ fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
     candidates.into_iter().min_by_key(|key| {
         (
             !chromium_receives(key.code),
+            !is_typing_key(key.code),
             key.modifiers.count_ones(),
             key.code,
         )
@@ -895,6 +904,25 @@ mod tests {
         let typed = codes(0, " a. b, c");
         assert_eq!(typed, [57, 30, 52, 57, 48, 51, 57, 46]);
         assert!(!typed.contains(&ESC) && !typed.contains(&BACKSPACE) && !typed.contains(&ENTER));
+    }
+
+    #[test]
+    fn ascii_goes_out_on_the_main_typing_block_in_both_layouts() {
+        // `us` also has `(` and `)` with no modifier on `KEY_KPLEFTPAREN` and
+        // `KEY_KPRIGHTPAREN`, which terminals can read as commands.
+        assert_eq!(codes(0, "()"), [10, 11]);
+        assert_eq!(codes(1, "()"), [9, 10]);
+        let ascii: String = (' '..='~').collect();
+        // German has `^` and `` ` `` only as dead keys, so those go on spare keys.
+        let german: String = ascii.chars().filter(|c| !"^`".contains(*c)).collect();
+        for (group, text) in [(0, ascii.as_str()), (1, german.as_str())] {
+            for code in codes(group, text) {
+                assert!(
+                    is_typing_key(code),
+                    "layout {group} types ASCII on evdev {code}"
+                );
+            }
+        }
     }
 
     #[test]

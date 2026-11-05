@@ -46219,7 +46219,7 @@ export type AppWizardEnv = {
     storage?: AppLocalStorage,
     /**
      * The user's connected clouds (`cloud_status`), for "Your cloud"
-     * (offered only while its experiment is on: [`offered_clouds`]).
+     * ([`offered_clouds`]).
      */
     clouds: Array<AppConnectedCloud>,
     /**
@@ -46227,7 +46227,7 @@ export type AppWizardEnv = {
      */
     hosts: Array<AppSpaceHost>,
     /**
-     * Settings, Experiments ("Your cloud" decides whether clouds show).
+     * Settings, Experiments (the daemon-enforced switches the wizard reads).
      */
     experiments: AppExperiments,
     /**

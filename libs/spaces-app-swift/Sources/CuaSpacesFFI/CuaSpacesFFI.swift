@@ -44567,7 +44567,7 @@ public struct AppWizardEnv: Equatable, Hashable {
     public var storage: AppLocalStorage?
     /**
      * The user's connected clouds (`cloud_status`), for "Your cloud"
-     * (offered only while its experiment is on: [`offered_clouds`]).
+     * ([`offered_clouds`]).
      */
     public var clouds: [AppConnectedCloud]
     /**
@@ -44575,7 +44575,7 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var hosts: [AppSpaceHost]
     /**
-     * Settings, Experiments ("Your cloud" decides whether clouds show).
+     * Settings, Experiments (the daemon-enforced switches the wizard reads).
      */
     public var experiments: AppExperiments
     /**
@@ -44631,13 +44631,13 @@ public struct AppWizardEnv: Equatable, Hashable {
          */storage: AppLocalStorage?,
         /**
          * The user's connected clouds (`cloud_status`), for "Your cloud"
-         * (offered only while its experiment is on: [`offered_clouds`]).
+         * ([`offered_clouds`]).
          */clouds: [AppConnectedCloud],
         /**
          * The user's machines that provide Spaces (`Spaces.hosts()`).
          */hosts: [AppSpaceHost],
         /**
-         * Settings, Experiments ("Your cloud" decides whether clouds show).
+         * Settings, Experiments (the daemon-enforced switches the wizard reads).
          */experiments: AppExperiments,
         /**
          * The GPU option of each runtime that has one (the SDK's

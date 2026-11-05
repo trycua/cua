@@ -560,15 +560,15 @@ impl AgentKeys {
     /// Keys in `store` for this process's channel. A file store can't hold
     /// them, except on the Local channel ([`AgentKeys::new_for`]).
     pub fn new(store: cua_auth::Store) -> Self {
-        Self::new_for(store, cua_home::CuaChannel::current())
+        Self::new_for(store, cua_home::channel::CuaChannel::current())
     }
 
     /// Keys in `store` for `channel`. A file store can't hold them (see the
     /// module docs) unless `channel` allows the unencrypted development
-    /// store ([`cua_home::CuaChannel::allows_insecure_dev_store`]: Local
+    /// store ([`cua_home::channel::CuaChannel::allows_insecure_dev_store`]: Local
     /// only): then the keys are kept in a 0600 file beside the store's
     /// credentials, and [`AgentKeys::insecure`] says so.
-    pub fn new_for(store: cua_auth::Store, channel: cua_home::CuaChannel) -> Self {
+    pub fn new_for(store: cua_auth::Store, channel: cua_home::channel::CuaChannel) -> Self {
         let mut insecure = None;
         let store = if store.kind() == "keychain" {
             Some(store)
@@ -2237,7 +2237,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cua-agent-keys-file-{}", std::process::id()));
         let keys = AgentKeys::new_for(
             cua_auth::Store::File(dir.join("credentials.json")),
-            cua_home::CuaChannel::Stable,
+            cua_home::channel::CuaChannel::Stable,
         );
         assert!(!keys.available());
         assert!(keys.insecure().is_none());
@@ -2265,7 +2265,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let keys = AgentKeys::new_for(
             cua_auth::Store::File(dir.join("credentials.json")),
-            cua_home::CuaChannel::Local,
+            cua_home::channel::CuaChannel::Local,
         );
         assert!(keys.available());
         let warning = keys.insecure().expect("a warning").to_string();
@@ -2290,7 +2290,7 @@ mod tests {
         // A new handle on the same file reads the key back, and the report says why to be careful.
         let again = AgentKeys::new_for(
             cua_auth::Store::File(dir.join("credentials.json")),
-            cua_home::CuaChannel::Local,
+            cua_home::channel::CuaChannel::Local,
         );
         let r = again.report().unwrap();
         assert!(r.available && r.unavailable.is_none());
@@ -2306,7 +2306,7 @@ mod tests {
     fn only_the_local_channel_can_save_to_a_file_and_the_vault_never_warns() {
         let dir = std::env::temp_dir().join(format!("cua-agent-keys-chan-{}", std::process::id()));
         let file = cua_auth::Store::File(dir.join("credentials.json"));
-        for c in cua_home::CuaChannel::ALL {
+        for c in cua_home::channel::CuaChannel::ALL {
             let keys = AgentKeys::new_for(file.clone(), c);
             assert_eq!(keys.available(), c.allows_insecure_dev_store(), "{c:?}");
             assert_eq!(
@@ -2315,7 +2315,7 @@ mod tests {
                 "{c:?}"
             );
         }
-        let stable = AgentKeys::new_for(file, cua_home::CuaChannel::Stable);
+        let stable = AgentKeys::new_for(file, cua_home::channel::CuaChannel::Stable);
         assert!(stable.set("anthropic", None, "sk-ant-test-0000").is_err());
         assert!(!dir.exists());
         // The vault stand-in is a real vault: no warning on any channel.
@@ -2323,7 +2323,7 @@ mod tests {
             std::env::temp_dir().join(format!("cua-agent-keys-vault-{}", std::process::id()));
         let keys = AgentKeys::new_for(
             cua_auth::Store::TestKeychain(vault.clone()),
-            cua_home::CuaChannel::Local,
+            cua_home::channel::CuaChannel::Local,
         );
         assert!(keys.available() && keys.insecure().is_none());
         let _ = std::fs::remove_dir_all(&vault);

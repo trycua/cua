@@ -35882,6 +35882,24 @@ public struct AppSettings: Equatable, Hashable {
      * older settings file without it reads as tips on, none done.
      */
     public var tips: AppTipsState
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    public var agentMenuShown: [String]
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    public var agentMenuHidden: [String]
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    public var agentMenuSeen: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35963,7 +35981,22 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
          * older settings file without it reads as tips on, none done.
-         */tips: AppTipsState) {
+         */tips: AppTipsState,
+        /**
+         * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+         * Home's agent menu shows although the default hides them (an app
+         * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+         */agentMenuShown: [String],
+        /**
+         * The apps the menu hides although the default shows them. Nothing is
+         * signed out: a hidden app keeps its sign-ins and stays on the Agents
+         * page and available by name.
+         */agentMenuHidden: [String],
+        /**
+         * The working accounts the menu last saw (`app|variable|slot`): a new
+         * one is a connect, which shows its app again
+         * ([`crate::agent_menu::sync`]).
+         */agentMenuSeen: [String]) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -35982,6 +36015,9 @@ public struct AppSettings: Equatable, Hashable {
         self.autoConnect = autoConnect
         self.currentTeamId = currentTeamId
         self.tips = tips
+        self.agentMenuShown = agentMenuShown
+        self.agentMenuHidden = agentMenuHidden
+        self.agentMenuSeen = agentMenuSeen
     }
 
 
@@ -36017,7 +36053,10 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
                 currentTeamId: FfiConverterOptionString.read(from: &buf),
-                tips: FfiConverterTypeAppTipsState.read(from: &buf)
+                tips: FfiConverterTypeAppTipsState.read(from: &buf),
+                agentMenuShown: FfiConverterSequenceString.read(from: &buf),
+                agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -36040,6 +36079,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.currentTeamId, into: &buf)
         FfiConverterTypeAppTipsState.write(value.tips, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
+        FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
     }
 }
 

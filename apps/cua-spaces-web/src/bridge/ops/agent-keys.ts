@@ -20,6 +20,7 @@
  * | `agentKeys.set {provider, env?, value}` | `agent_keys.set` | `agentKeys.set` |
  * | `agentKeys.remove {env, slot?, keepOthers?}` | `agent_keys.remove` | `agentKeys.remove` |
  * | `agentKeys.use {app, env?, slot?}` | `agent_keys.use` | `agentKeys.use` |
+ * | `agentKeys.rename {env, slot?, label}` | `agent_keys.rename` | `agentKeys.rename` |
  *
  * The Electron shell answers the SwiftUI host's methods.
  */
@@ -112,6 +113,8 @@ declare module "../protocol" {
      * nothing. Answers the list after.
      */
     "agentKeys.use": { args: { app: string; env?: string; slot?: string }; result: AgentKeysReport };
+    /** Gives a saved key or sign-in a name (`slot` absent: the first saved for `env`). Answers the list after. */
+    "agentKeys.rename": { args: { env: string; slot?: string; label: string }; result: AgentKeysReport };
     /** Which provider keys your login shell has set (names only; never a value). */
     "agentKeys.shell": { args: Record<string, never>; result: { names: string[] } };
     /** Saves the key `env` from your login shell (the value goes straight to the store). Answers the list after. */
@@ -119,7 +122,7 @@ declare module "../protocol" {
   }
 }
 
-export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell"] as const;
+export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell"] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
 /** The SwiftUI host routes each under its own name. */
@@ -132,6 +135,7 @@ export const AGENT_KEYS_METHODS = {
   "agentKeys.set": "agent_keys.set",
   "agentKeys.remove": "agent_keys.remove",
   "agentKeys.use": "agent_keys.use",
+  "agentKeys.rename": "agent_keys.rename",
   "agentKeys.shell": "agent_keys.shell",
   "agentKeys.fromShell": "agent_keys.from_shell",
 } as const satisfies { [K in AgentKeysOp]: string };
@@ -142,6 +146,7 @@ export const AGENT_KEYS_COVERAGE = {
   "agentKeys.set": { webkit: { methods: ["agentKeys.set"] }, tauri: ["agents_tool"] },
   "agentKeys.remove": { webkit: { methods: ["agentKeys.remove"] }, tauri: ["agents_tool"] },
   "agentKeys.use": { webkit: { methods: ["agentKeys.use"] }, tauri: ["agents_tool"] },
+  "agentKeys.rename": { webkit: { methods: ["agentKeys.rename"] }, tauri: ["agents_tool"] },
   "agentKeys.shell": { webkit: { methods: ["agentKeys.shell"] }, tauri: ["agents_tool"] },
   "agentKeys.fromShell": { webkit: { methods: ["agentKeys.fromShell"] }, tauri: ["agents_tool"] },
 } as const satisfies Record<AgentKeysOp, OpCoverage>;
@@ -153,6 +158,7 @@ export const AGENT_KEYS_ARGS: { [K in AgentKeysOp]: OpArgs<K> } = {
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
   "agentKeys.use": { app: "hermes", env: "OPENAI_API_KEY" },
+  "agentKeys.rename": { env: "OPENAI_API_KEY", label: "Work key" },
   "agentKeys.shell": {},
   "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
 };
@@ -241,6 +247,7 @@ export function tauriAgentKeysOps(invoke: Invoke): Handlers {
     "agentKeys.set": (args) => tool("agentKeys.set", setArgs(args)),
     "agentKeys.remove": (args) => tool("agentKeys.remove", removeArgs(args)),
     "agentKeys.use": ({ app, env, slot }) => tool("agentKeys.use", { app, ...(env ? { env } : {}), ...(slot ? { slot } : {}) }),
+    "agentKeys.rename": ({ env, slot, label }) => tool("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS["agentKeys.shell"], args: {} })),
     "agentKeys.fromShell": ({ env, region, fields }) => tool("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
   };
@@ -255,6 +262,7 @@ export function webkitAgentKeysOps(request: Request): Handlers {
     "agentKeys.set": (args) => call("agentKeys.set", setArgs(args)),
     "agentKeys.remove": (args) => call("agentKeys.remove", removeArgs(args)),
     "agentKeys.use": ({ app, env, slot }) => call("agentKeys.use", { app, ...(env ? { env } : {}), ...(slot ? { slot } : {}) }),
+    "agentKeys.rename": ({ env, slot, label }) => call("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await request<unknown>("agentKeys.shell", {})),
     "agentKeys.fromShell": ({ env, region, fields }) => call("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
   };

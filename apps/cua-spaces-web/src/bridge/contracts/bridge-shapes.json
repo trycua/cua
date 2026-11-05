@@ -5016,6 +5016,34 @@
               "items": {
                 "type": "string"
               }
+            },
+            "agentMenu": {
+              "type": "object",
+              "properties": {
+                "shown": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "seen": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shown",
+                "hidden",
+                "seen"
+              ]
             }
           },
           "required": [
@@ -5720,6 +5748,37 @@
         "reachable"
       ]
     },
+    "SpaceService": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "restarts": {
+          "type": "number"
+        },
+        "lastEnd": {
+          "type": "string"
+        },
+        "probeError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command",
+        "state",
+        "restarts",
+        "lastEnd",
+        "probeError"
+      ]
+    },
     "SpaceSharingFacts": {
       "type": "object",
       "properties": {
@@ -6400,6 +6459,129 @@
         "update",
         "runsOnKeysOf",
         "event"
+      ]
+    },
+    "TreeBudget": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "set": {
+          "$ref": "#/$defs/TreeBudgetLimits"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxVcpus": {
+          "type": "number"
+        },
+        "maxMemoryMb": {
+          "type": "number"
+        },
+        "usdPerHour": {
+          "type": "number"
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "vcpus": {
+          "type": "number"
+        },
+        "memoryMb": {
+          "type": "number"
+        },
+        "usdPerHourUsed": {
+          "type": "number"
+        },
+        "usdSpent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "root",
+        "set",
+        "maxSpaces",
+        "maxVcpus",
+        "maxMemoryMb",
+        "usdPerHour",
+        "spaces",
+        "vcpus",
+        "memoryMb",
+        "usdPerHourUsed",
+        "usdSpent"
+      ]
+    },
+    "TreeBudgetLimits": {
+      "type": "object",
+      "properties": {
+        "maxSpaces": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxVcpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryMb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdPerHour": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "TreeNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": "number"
+        },
+        "children": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "children"
       ]
     },
     "UpdateState": {
@@ -7692,6 +7874,34 @@
             "type": "string"
           }
         },
+        "agentMenu": {
+          "type": "object",
+          "properties": {
+            "shown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hidden": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "seen": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "shown",
+            "hidden",
+            "seen"
+          ]
+        },
         "runtimes": {
           "anyOf": [
             {
@@ -8003,6 +8213,9 @@
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agentKeys.remove": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.rename": {
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agentKeys.set": {
@@ -8447,6 +8660,12 @@
         "earlierOmitted"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -8520,6 +8739,9 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "null"
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -9481,6 +9703,15 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "null"
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.completeOnboarding": {
       "type": "null"
     },
@@ -9863,6 +10094,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -11104,6 +11341,111 @@
         "available"
       ]
     },
+    "agentKeys.rename": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
     "agentKeys.set": {
       "type": "object",
       "properties": {
@@ -11718,6 +12060,12 @@
         "methods"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -11791,6 +12139,10 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "object",
+      "properties": {}
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -13389,6 +13741,16 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "object",
+      "properties": {}
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.get": {
       "$ref": "#/$defs/WkSession"
     },
@@ -13703,6 +14065,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [

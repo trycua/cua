@@ -124,6 +124,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
     // The Spaces and machine desktops pinned to the notch, in pin order.
     notchPinned: [...model.settings.notchPinned],
+    // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+    agentMenu: { shown: [...model.settings.agentMenuShown], hidden: [...model.settings.agentMenuHidden], seen: [...model.settings.agentMenuSeen] },
   };
 }
 
@@ -141,6 +143,14 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const ids = args.notchPinned;
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
     patch.notchPinned = ids as string[];
+  }
+  if ("agentMenu" in args) {
+    const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
+    const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen)) throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    patch.agentMenuShown = m.shown as string[];
+    patch.agentMenuHidden = m.hidden as string[];
+    patch.agentMenuSeen = m.seen as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;

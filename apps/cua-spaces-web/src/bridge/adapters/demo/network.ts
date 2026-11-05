@@ -46,6 +46,20 @@ export function demoNetworkSpaceRows(now: number): SpaceRow[] {
   ];
 }
 
+/** The agent's Home Space and the two Spaces it made for "test acme/app" (`?demo=agent-home`, CUA-2630). */
+export function demoAgentHomeRows(now: number): SpaceRow[] {
+  const mac: SpaceRow = {
+    ...linux("local:acme-app-build", "acme-app-build", now, 2),
+    os: "macos",
+    osName: "macOS",
+    osPrettyName: "macOS Tahoe 26.0",
+    image: "macos-tahoe",
+    kind: "vm",
+    power: "suspend",
+  };
+  return [{ ...linux("local:agent-home-demo", "Home", now, 6), image: "linux-slim" }, linux("local:acme-app-db", "acme-app-db", now, 3), mac];
+}
+
 const internet = (extra: Partial<SpaceNetwork> = {}): SpaceNetwork => ({ preset: "internet", allow: [], deny: [], enforced: true, ...extra });
 
 const MEMBERS = ["research-swarm", "swarm-worker-1", "swarm-worker-2"];

@@ -85,6 +85,29 @@ struct TipsTests {
         #expect(m.settings.tips == AppTipsState(off: false, done: []))
     }
 
+    /// Which coding apps the agent menu shows rides the same settings path
+    /// (`agentMenu`): the page reads and saves it and it survives a restart.
+    /// The rule (defaults, the last app, a connect that shows an app again)
+    /// is the core's `agent_menu`.
+    @Test func theNewUISavesTheAgentMenuChoiceThroughTheBridge() async throws {
+        let m = ViewModelTests().makeModel()
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let before = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let none = try #require(before["agentMenu"] as? [String: Any])
+        #expect(none["hidden"] as? [String] == [])
+
+        let after = try #require(try await bridge.handle("settings.update", [
+            "agentMenu": ["shown": ["goose"], "hidden": ["hermes"], "seen": ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"]],
+        ]) as? [String: Any])
+        #expect((after["agentMenu"] as? [String: Any])?["hidden"] as? [String] == ["hermes"])
+        #expect(settingsOnDisk(m).agentMenuHidden == ["hermes"])
+        #expect(settingsOnDisk(m).agentMenuShown == ["goose"])
+        #expect(settingsOnDisk(m).agentMenuSeen == ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"])
+        // The tips are untouched, and a malformed choice is refused.
+        #expect(m.settings.tips == AppTipsState(off: false, done: []))
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["agentMenu": ["hidden": "hermes"]]) }
+    }
+
     /// The notch's pins ride the same settings path as the tips: the page reads
     /// and saves them (`notchPinned`), the notch lists the pinned first at once,
     /// and they survive a restart.

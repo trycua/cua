@@ -1262,18 +1262,12 @@ mod tests {
         }
     }
 
-    /// Fixed sign-in apps have nothing to choose, and the Claude token reaches no switchable app
-    /// whatever was chosen.
+    /// An app is never pointed at a credential it can't read, and the Claude token reaches no app that takes
+    /// any provider whatever was chosen.
     #[test]
     fn only_apps_that_take_any_provider_can_be_told_which_key() {
         let (k, dir) = saved(&[("anthropic", None, "sk-ant-api03-first-aaaa")]);
-        for app in [
-            "claude-code",
-            "openai-codex",
-            "codex",
-            "gemini-cli",
-            "google-antigravity",
-        ] {
+        for app in ["openai-codex", "codex", "gemini-cli", "google-antigravity"] {
             assert!(
                 k.set_use(app, Some(("ANTHROPIC_API_KEY", None))).is_err(),
                 "{app}"

@@ -43,6 +43,9 @@ import {
   type SettingsSnapshot,
   type SettingsValues,
   type NetworkEventWire,
+  type ServiceWire,
+  type TreeBudgetWire,
+  type TreeNodeWire,
   type SpaceNetworkWire,
 } from "../protocol";
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
@@ -294,6 +297,7 @@ function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageR
 }
 
 const rowsById = (s: WkSettings) => new Map(s.page.sections.flatMap((sec) => sec.rows).map((r) => [r.id, r] as const));
+const only = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const active = (r: WkSettingsRow | undefined) => r?.options.find((o) => o.active)?.id;
 const lockedBy = (r: WkSettingsRow | undefined) => (r && !r.enabled && r.help?.startsWith("Set by ") ? r.help.slice(7) : undefined);
 
@@ -323,6 +327,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(s.agentMenu ? { agentMenu: { shown: only(s.agentMenu.shown), hidden: only(s.agentMenu.hidden), seen: only(s.agentMenu.seen) } } : {}),
       ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
@@ -625,6 +630,19 @@ export function createWebkitAdapter(
       await request("spaces.setAccess", args);
       return null;
     },
+    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
+    "children.set": async (args) => {
+      await request("children.set", args);
+      return null;
+    },
+    "budget.get": ({ spaceId }) => request<TreeBudgetWire>("budget.get", { spaceId }),
+    "budget.set": (args) => request<TreeBudgetWire>("budget.set", args),
+    "services.list": ({ spaceId }) => request<ServiceWire[]>("services.list", { spaceId }),
+    "services.control": async (args) => {
+      await request("services.control", args);
+      return null;
+    },
     "spaces.open": async ({ spaceId }) => {
       await request("spaces.open", { id: spaceId });
       return null;
@@ -670,6 +688,7 @@ export function createWebkitAdapter(
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
         case "notchPinned":
+        case "agentMenu":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();

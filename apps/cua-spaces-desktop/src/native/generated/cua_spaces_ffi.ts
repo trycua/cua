@@ -40887,7 +40887,25 @@ export type AppSettings = {
      * Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
      * older settings file without it reads as tips on, none done.
      */
-    tips: AppTipsState
+    tips: AppTipsState,
+    /**
+     * Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+     * Home's agent menu shows although the default hides them (an app
+     * outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+     */
+    agentMenuShown: Array<string>,
+    /**
+     * The apps the menu hides although the default shows them. Nothing is
+     * signed out: a hidden app keeps its sign-ins and stays on the Agents
+     * page and available by name.
+     */
+    agentMenuHidden: Array<string>,
+    /**
+     * The working accounts the menu last saw (`app|variable|slot`): a new
+     * one is a connect, which shows its app again
+     * ([`crate::agent_menu::sync`]).
+     */
+    agentMenuSeen: Array<string>
 }
 
 /**
@@ -40928,7 +40946,10 @@ const FfiConverterTypeAppSettings = (() => {
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
                 autoConnect: FfiConverterBool.read(from),
                 currentTeamId: FfiConverterOptionalString.read(from),
-                tips: FfiConverterTypeAppTipsState.read(from)
+                tips: FfiConverterTypeAppTipsState.read(from),
+                agentMenuShown: FfiConverterSequenceString.read(from),
+                agentMenuHidden: FfiConverterSequenceString.read(from),
+                agentMenuSeen: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -40950,6 +40971,9 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterBool.write(value.autoConnect, into);
             FfiConverterOptionalString.write(value.currentTeamId, into);
             FfiConverterTypeAppTipsState.write(value.tips, into);
+            FfiConverterSequenceString.write(value.agentMenuShown, into);
+            FfiConverterSequenceString.write(value.agentMenuHidden, into);
+            FfiConverterSequenceString.write(value.agentMenuSeen, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -40969,7 +40993,10 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
              FfiConverterBool.allocationSize(value.autoConnect) +
              FfiConverterOptionalString.allocationSize(value.currentTeamId) +
-             FfiConverterTypeAppTipsState.allocationSize(value.tips);
+             FfiConverterTypeAppTipsState.allocationSize(value.tips) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
 
         }
     };

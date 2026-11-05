@@ -98,7 +98,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   verify-skill:
-    if: inputs.lane == '' || inputs.lane == 'verify'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') }}
     name: "Linux / verification skill proof"
     needs: source
     runs-on: ubuntu-latest
@@ -145,7 +145,7 @@ jobs:
           retention-days: 14
 
   shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'shared') }}
     name: "Linux / shared Electron + Tauri"
     needs: source
     runs-on: ubuntu-latest
@@ -200,7 +200,7 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'native') }}
     name: "Linux / GTK3 + GTK4 native harnesses"
     needs: source
     runs-on: ubuntu-latest
@@ -250,7 +250,7 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.lane == 'all' || inputs.lane == 'capture'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'capture') }}
     name: "Linux / capture and desktop scope"
     needs: source
     runs-on: ubuntu-latest
@@ -300,7 +300,7 @@ jobs:
           retention-days: 14
 
   installer:
-    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'installer') }}
     name: "Linux / install-local.sh smoke"
     needs: source
     runs-on: ubuntu-latest
@@ -460,7 +460,11 @@ jobs:
     # combined with the lane=='all' check this keeps certification fail-closed
     # against both lane failures and diagnostic-lane dispatches. Manual
     # dispatches and release-gate calls certify the same complete matrix.
-    if: success() && inputs.lane == 'all'
+    if: >-
+      !failure() && !cancelled() && inputs.lane == 'all' &&
+      needs.source.result == 'success' && needs.shared.result == 'success' &&
+      needs.native.result == 'success' && needs.capture.result == 'success' &&
+      needs.installer.result == 'success'
     needs: [source, shared, native, capture, installer]
     name: "Linux / canonical certification"
     runs-on: ubuntu-latest

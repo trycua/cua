@@ -64,6 +64,10 @@ pub(super) struct FixtureState {
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
+    /// A trusted `mouseReleased` opens a confirm() dialog. Like Chromium, the
+    /// renderer then answers no input or emulation command until it closes.
+    trusted_click_opens_dialog: bool,
+    renderer_blocked: bool,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
@@ -125,6 +129,8 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             click_opens_dialog: false,
+            trusted_click_opens_dialog: false,
+            renderer_blocked: false,
             page_sessions: Vec::new(),
             semantic_large_page: false,
             semantic_html_style: String::new(),
@@ -743,6 +749,26 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
+            "Input.dispatchMouseEvent" | "Emulation.setFocusEmulationEnabled"
+                if st.renderer_blocked =>
+            {
+                MockReply::hang()
+            }
+            "Input.dispatchMouseEvent"
+                if st.trusted_click_opens_dialog && call.params["type"] == "mouseReleased" =>
+            {
+                st.renderer_blocked = true;
+                let events = st
+                    .page_sessions
+                    .iter()
+                    .map(|page_session| MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(page_session.clone()),
+                        params: json!({ "type": "confirm", "message": "Delete?", "url": st.main_url }),
+                    })
+                    .collect();
+                MockReply::hang().with_events(events)
+            }
             "DOM.focus"
             | "Emulation.setFocusEmulationEnabled"
             | "Input.dispatchMouseEvent"
@@ -818,6 +844,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 MockReply::ok(json!({ "result": { "value": true } }))
             }
             "Page.handleJavaScriptDialog" if is_tab => {
+                st.renderer_blocked = false;
                 MockReply::ok(json!({})).with_events(vec![MockEvent {
                     method: "Page.javascriptDialogClosed".into(),
                     session_id: Some(sess.clone()),
@@ -3983,4 +4010,46 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
     let t = structured(&trusted);
     assert_eq!(t["refusal"]["code"], "browser_action_unavailable", "{t}");
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
+    let f = fixture_with(|state| state.trusted_click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20,
+            "delivery_mode": "foreground"
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the click must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&clicked);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted", "{s}");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm", "{s}");
+    let dialog_id = s["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(
+        focus_emulation.last().map(|(_, p)| p["enabled"].clone()),
+        Some(json!(false)),
+        "focus emulation must still be switched off: {focus_emulation:?}"
+    );
+
+    let accepted = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "accept",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    assert_eq!(structured(&accepted)["status"], "ok");
 }

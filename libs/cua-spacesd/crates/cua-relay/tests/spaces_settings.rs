@@ -497,7 +497,7 @@ async fn a_default_that_is_no_longer_visible_is_skipped_but_kept() {
         space(&shared)
     );
 
-    // Ada stops sharing it with Bob: skipped, the next online one is used,
+    // Ada stops sharing it with Bob: skipped, Bob's own computer is used,
     // and the stored default is still there.
     let (s, v) = env
         .call(
@@ -513,7 +513,7 @@ async fn a_default_that_is_no_longer_visible_is_skipped_but_kept() {
     assert_eq!(v["default_online"], false);
     assert_eq!(
         (v["reason"].as_str(), v["space"].clone()),
-        (Some("fallback"), json!(space(&mine)))
+        (Some("here"), json!(space(&mine)))
     );
     assert!(!orders(&v).iter().any(|(s, ..)| s == &space(&shared)));
 

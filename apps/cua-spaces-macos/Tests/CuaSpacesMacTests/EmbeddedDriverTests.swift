@@ -12,6 +12,7 @@ struct EmbeddedDriverTests {
                                                       bundleId: "com.trycua.spaces.macos", home: "/Users/ada"))
         #expect(stable.socket == "/Users/ada/.cua/run/cua-driver.sock")
         #expect(stable.pausedMarker == "/Users/ada/.cua/run/cua-driver.off")
+        #expect(stable.startRequest == "/Users/ada/.cua/run/cua-driver.start")
         #expect(stable.serverName == "cua-driver")
         #expect(stable.mcpArguments == ["mcp", "--embedded", "--socket", "/Users/ada/.cua/run/cua-driver.sock",
                                         "--host-bundle-id", "com.trycua.spaces.macos"])
@@ -24,6 +25,19 @@ struct EmbeddedDriverTests {
         #expect(local.hostBundleId == "com.trycua.spaces.macos.local")
         // A Local bundle without its home never falls back to the released app's.
         #expect(EmbeddedDriver.make(binary: "/x", info: ["CuaChannel": "local"], bundleId: "x.local", home: "/Users/ada") == nil)
+    }
+
+    /// Set up and Repair start a driver that isn't answering: through
+    /// cua-spacesd first, then by restarting the host service. Never while
+    /// the person has paused agents, and whether or not this Mac shares its
+    /// desktop (a Mac set up with `--no-desktop --no-driver` included).
+    @Test func setUpStartsADriverThatIsntRunning() {
+        typealias D = EmbeddedDriver
+        #expect(D.startStep(paused: false, answering: true, setUp: true, askedHostService: false) == .none)
+        #expect(D.startStep(paused: true, answering: false, setUp: true, askedHostService: false) == .none)
+        #expect(D.startStep(paused: false, answering: false, setUp: false, askedHostService: false) == .needsSetUp)
+        #expect(D.startStep(paused: false, answering: false, setUp: true, askedHostService: false) == .askHostService)
+        #expect(D.startStep(paused: false, answering: false, setUp: true, askedHostService: true) == .restartHostService)
     }
 
     @Test func knowsItsOwnEntry() throws {

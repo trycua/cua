@@ -871,6 +871,16 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
             spec.args
         );
     }
+    // Keeping the screen private never turns off the Cua Driver this Mac's
+    // own coding agents use (cua-spacesd runs it whatever the flags say).
+    assert!(
+        !spec
+            .env
+            .iter()
+            .any(|(k, _)| k == "CUA_SPACESD_EMBEDDED_DRIVER"),
+        "{:?}",
+        spec.env
+    );
     let policy = host.policy().unwrap().unwrap();
     assert!(!policy.share_desktop && policy.provide_spaces);
     let daemon = policy.spaces_daemon.clone().unwrap();

@@ -18,7 +18,10 @@
 //! and is the one place the app asks for the driver's status, its settings
 //! (`get_config` / `set_config`), its permissions and a live test.
 //!
-//! **On by default** in a desktop session on macOS.
+//! **On by default** on macOS, whatever the host shares: a Mac set up to
+//! keep its screen private (`--no-desktop --no-driver`, the new first
+//! run's "Add this computer") still runs it, because those flags are about
+//! remote callers and this driver is for the coding agents on this Mac.
 //! `CUA_SPACESD_EMBEDDED_DRIVER=0` turns it off for this process.
 //!
 //! **Paused by the person.** The app's "Let agents use apps on this Mac"
@@ -26,6 +29,10 @@
 //! it exists the driver is stopped and its socket is gone, so agents get the
 //! proxy's plain "open Cua Spaces" message; removing it starts the driver
 //! again within a couple of seconds.
+//!
+//! **Started now on request.** Set up and Repair write [`start_request`]
+//! (`<CuaHome>/run/cua-driver.start`): a driver waiting out its restart
+//! backoff starts at once instead of up to a minute later.
 //!
 //! **Cursor overlay.** The child draws the agent cursor for coding agents
 //! (the SDK default). cua-spacesd's own overlay keeps drawing remote people
@@ -58,11 +65,19 @@ pub struct EmbeddedDriverConfig {
     pub host_bundle_id: String,
     /// While this file exists the person has paused agents: no driver runs.
     pub paused_marker: PathBuf,
+    /// The app writes this file to have a stopped driver start now.
+    pub start_request: PathBuf,
 }
 
 /// The file the app writes while agents are paused: beside the socket.
 pub fn paused_marker(socket: &Path) -> PathBuf {
     socket.with_file_name("cua-driver.off")
+}
+
+/// The file the app writes to have a driver that isn't running start now
+/// (Set up and Repair): beside the socket.
+pub fn start_request(socket: &Path) -> PathBuf {
+    socket.with_file_name("cua-driver.start")
 }
 
 /// How often the supervisor looks at [`paused_marker`].
@@ -105,6 +120,7 @@ impl EmbeddedDriverConfig {
         Ok(Self {
             binary,
             paused_marker: paused_marker(&socket),
+            start_request: start_request(&socket),
             socket,
             host_bundle_id: channel.bundle_id().to_string(),
         })
@@ -227,6 +243,9 @@ impl EmbeddedDriver {
                     _ = tokio::time::sleep(PAUSE_POLL) => continue,
                 }
             }
+            // A request written while nothing waited for it is answered by
+            // this start.
+            self.take_start_request();
             let started = std::time::Instant::now();
             let connection = tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -271,7 +290,7 @@ impl EmbeddedDriver {
             self.tracked.lock().unwrap().restarts += 1;
             tokio::select! {
                 _ = shutdown.cancelled() => break,
-                _ = tokio::time::sleep(restart_delay(attempt)) => {}
+                _ = self.backoff(restart_delay(attempt)) => {}
             }
         }
         if let Err(error) = self.host.clone().stop().await {
@@ -282,6 +301,28 @@ impl EmbeddedDriver {
     /// Whether the person paused agents ([`paused_marker`]).
     pub fn paused(&self) -> bool {
         self.config.paused_marker.exists()
+    }
+
+    /// Consumes a pending [`start_request`]; true when there was one.
+    fn take_start_request(&self) -> bool {
+        std::fs::remove_file(&self.config.start_request).is_ok()
+    }
+
+    /// Waits `delay` before the next start, or less when the app asks for
+    /// a start now ([`start_request`]).
+    async fn backoff(&self, delay: Duration) {
+        let deadline = tokio::time::Instant::now() + delay;
+        loop {
+            if self.take_start_request() {
+                tracing::info!("Cua Spaces asked for Cua Driver now: starting it");
+                return;
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return;
+            }
+            tokio::time::sleep((deadline - now).min(PAUSE_POLL)).await;
+        }
     }
 
     async fn until_paused(&self) {
@@ -483,6 +524,34 @@ mod tests {
         let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Local).unwrap();
         assert_eq!(c.paused_marker, c.socket.with_file_name("cua-driver.off"));
         assert_eq!(c.paused_marker.parent(), c.socket.parent());
+    }
+
+    #[test]
+    fn the_start_request_sits_beside_the_socket() {
+        let (_dir, exe) = exe_with_driver();
+        let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Stable).unwrap();
+        assert_eq!(c.start_request, c.socket.with_file_name("cua-driver.start"));
+    }
+
+    /// A driver that won't start waits its backoff, but a start request
+    /// from the app ends the wait at once and is consumed.
+    #[tokio::test]
+    async fn a_start_request_cuts_the_backoff_short() {
+        let (dir, exe) = exe_with_driver();
+        let mut c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Stable).unwrap();
+        c.socket = dir.path().join("run/cua-driver.sock");
+        c.paused_marker = paused_marker(&c.socket);
+        c.start_request = start_request(&c.socket);
+        std::fs::create_dir_all(dir.path().join("run")).unwrap();
+        let driver = EmbeddedDriver::new(c.clone()).unwrap();
+        let t = std::time::Instant::now();
+        driver.backoff(Duration::from_millis(300)).await;
+        assert!(t.elapsed() >= Duration::from_millis(300));
+        std::fs::write(&c.start_request, "").unwrap();
+        let t = std::time::Instant::now();
+        driver.backoff(Duration::from_secs(60)).await;
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        assert!(!c.start_request.exists());
     }
 
     #[test]

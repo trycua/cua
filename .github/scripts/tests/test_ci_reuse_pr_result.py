@@ -436,6 +436,34 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
     assert "ci:full" in job["if"]
 
 
+def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():
+    wf = load("ci-cua-sdk.yml")
+    build, shards = wf["jobs"]["rust-linux-build"], wf["jobs"]["rust-linux"]
+    assert build["needs"] == "reuse" and shards["needs"] == ["reuse", "rust-linux-build"]
+    # Same conditions: the build runs exactly when the shards do.
+    assert build["if"] == shards["if"]
+    build_text, shard_text = str(build["steps"]), str(shards["steps"])
+    assert "cargo nextest archive" in build_text and "rust-linux-tests" in build_text
+    assert "cargo nextest run" in shard_text and "--archive-file" in shard_text and "--workspace-remap" in shard_text
+    # The shards never compile the nextest packages again: they only restore the cache.
+    assert "cargo nextest run --locked" not in shard_text
+    assert any(s.get("with", {}).get("save-if") == "false" for s in shards["steps"] if "rust-cache" in str(s.get("uses", "")))
+    assert not any("save-if" in s.get("with", {}) for s in build["steps"] if "rust-cache" in str(s.get("uses", "")))
+
+
+def test_cua_sdk_pool_model_checks_leave_pull_requests_but_run_on_main_and_nightly():
+    text = (ROOT / ".github/workflows/ci-cua-sdk.yml").read_text()
+    wf = load("ci-cua-sdk.yml")
+    assert "schedule" in (wf.get("on") or wf[True])
+    run = next(s["run"] for s in wf["jobs"]["rust-linux"]["steps"] if "cargo nextest run" in s.get("run", ""))
+    # Excluded only on pull requests without `ci:full`; main, the nightly schedule and `ci:full` run them.
+    assert "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')" in run
+    for name in ("pool_protocol_is_safe", "mutation_no_epoch_check_breaks_single_writer", "finding_stale_holder_cancels_current_attempt"):
+        assert f"test(={name})" in run
+        assert f"fn {name}()" in (ROOT / "libs/cua/crates/cua-spaces-cluster/tests/pool_model.rs").read_text()
+    assert "pool_model" in text
+
+
 def test_cua_sdk_jobs_in_the_subset_skip_only_when_it_is_reused():
     wf = load("ci-cua-sdk.yml")
     skip = "needs.reuse.outputs.pr_subset != 'true'"

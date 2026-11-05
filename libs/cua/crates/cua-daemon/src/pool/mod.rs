@@ -633,29 +633,68 @@ pub fn shape_key(spec: &StartSpec, backend: BackendKind, spacesd: bool) -> Optio
     if !plain || image.starts_with("cua-vmm/") {
         return None;
     }
-    let t = template_of(spec);
+    let canonical = canonical_of(&template_of(spec), backend, image, false);
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+}
+
+/// The environment variables a headless Space adds to a desktop one's.
+const HEADLESS_ENV: [&str; 3] = ["CUA_HEADLESS", "CUA_ENV_NO_DESKTOP", "CUA_ENV_QUIC_PORT"];
+
+/// Everything that makes two templates interchangeable, as JSON. `loose`:
+/// without what a bigger or desktop member still satisfies (CPUs, memory,
+/// the command and the environment that switch the desktop off), for
+/// [`serves`].
+fn canonical_of(
+    t: &StartSpec,
+    backend: BackendKind,
+    image: &str,
+    loose: bool,
+) -> serde_json::Value {
     let mut ports = t.ports.clone();
     ports.sort_unstable();
     ports.dedup();
-    let canonical = serde_json::json!({
+    let mut env = t.env.clone();
+    if loose {
+        for k in HEADLESS_ENV {
+            env.remove(k);
+        }
+    }
+    serde_json::json!({
         "backend": backend.as_str(),
         "image": image,
         "os": t.os,
         "arch": t.arch,
-        "cpus": t.cpus,
-        "memory_mb": t.memory_mb,
+        "cpus": (!loose).then_some(t.cpus),
+        "memory_mb": (!loose).then_some(t.memory_mb),
         "firmware": t.firmware,
         "ports": ports,
-        "env": t.env,
+        "env": env,
         "probes": t.probes,
         "restrict_network": t.restrict_network,
         "labels": t.labels,
         "container_runtime": t.container_runtime,
-        "command": t.command,
-    });
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(canonical.to_string().as_bytes());
-    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+        "command": (!loose).then_some(&t.command),
+    })
+}
+
+/// Whether a member of shape `member` can be handed to a create of `want`
+/// as it is: the same in everything but size and desktop, and at least as
+/// big, with a desktop where one is wanted (a headless create runs fine
+/// on a desktop member; the other way round it would not).
+fn serves(member: &StartSpec, want: &StartSpec, backend: BackendKind) -> bool {
+    let (
+        cua_vmm::ImageSource::Oci { reference: have },
+        cua_vmm::ImageSource::Oci { reference: asked },
+    ) = (&member.image, &want.image)
+    else {
+        return false;
+    };
+    member.cpus >= want.cpus
+        && member.memory_mb >= want.memory_mb
+        && (has_desktop(member) || !has_desktop(want))
+        && canonical_of(member, backend, have, true) == canonical_of(want, backend, asked, true)
 }
 
 /// Whether a member of `spec` runs a desktop: every Space but a headless
@@ -869,7 +908,10 @@ impl WarmPool {
         let key = shape_key(spec, backend, spacesd)?;
         let token = token_of(spec)?;
         let arrived = self.now_s();
-        let (member, rt) = self.take_member(&key).await?;
+        let want = template_of(spec);
+        // The shape's own member first; else a bigger one the experiment
+        // keeps warm ([`serves`]), whose shape then pays for the claim.
+        let (member, rt, key) = self.take_member(&key, &want, backend).await?;
         let started = Instant::now();
         let identity = ClaimIdentity {
             token: Some(token.clone()),
@@ -942,7 +984,12 @@ impl WarmPool {
     /// create, so waiting is never slower than a cold start of its own, and
     /// a cold start would not have the agent stack in it. Any other shape
     /// answers at once.
-    async fn take_member(&self, key: &str) -> Option<(Member, Arc<dyn VmmRuntime>)> {
+    async fn take_member(
+        &self,
+        own: &str,
+        want: &StartSpec,
+        backend: BackendKind,
+    ) -> Option<(Member, Arc<dyn VmmRuntime>, String)> {
         let deadline = Instant::now() + WARM_WAIT_MAX;
         let mut waited = false;
         loop {
@@ -953,38 +1000,70 @@ impl WarmPool {
             notified.as_mut().enable();
             let starting = {
                 let mut shapes = self.inner.shapes.lock().unwrap();
-                let shape = shapes.get_mut(key)?;
-                // One with the coding apps in it first.
-                let at = shape
-                    .members
+                // The shape itself, then the warm shapes that serve it.
+                let mut keys = vec![own.to_string()];
+                let mut warm: Vec<&String> = shapes
                     .iter()
-                    .rposition(|m| m.prepared)
-                    .or(shape.members.len().checked_sub(1));
-                if let Some(m) = at.map(|i| shape.members.remove(i)) {
-                    if waited {
-                        tracing::info!(
-                            shape = key,
-                            "a create waited for the member that was starting"
-                        );
+                    .filter(|(k, s)| {
+                        k.as_str() != own
+                            && s.backend == backend
+                            && s.is_warm_source()
+                            && serves(&s.template, want, backend)
+                    })
+                    .map(|(k, _)| k)
+                    .collect();
+                // The smallest that serves first: it holds the least back.
+                warm.sort_by_key(|k| {
+                    let t = &shapes[*k].template;
+                    (t.memory_mb, t.cpus)
+                });
+                keys.extend(warm.into_iter().cloned());
+                for key in &keys {
+                    let Some(shape) = shapes.get_mut(key) else {
+                        continue;
+                    };
+                    // One with the coding apps in it first.
+                    let at = shape
+                        .members
+                        .iter()
+                        .rposition(|m| m.prepared)
+                        .or(shape.members.len().checked_sub(1));
+                    if let Some(m) = at.map(|i| shape.members.remove(i)) {
+                        if waited {
+                            tracing::info!(
+                                shape = key.as_str(),
+                                "a create waited for the member that was starting"
+                            );
+                        }
+                        if key != own {
+                            tracing::info!(
+                                shape = key.as_str(),
+                                "claiming a warm Space bigger than the one asked for"
+                            );
+                        }
+                        return Some((m, shape.rt.clone(), key.clone()));
                     }
-                    return Some((m, shape.rt.clone()));
                 }
-                shape.waits_for_refill()
-                    && (shape.starting > 0
-                        || self.inner.refilling.lock().unwrap().contains(key)
-                        || self.inner.due.lock().unwrap().contains(key))
+                keys.iter().any(|k| {
+                    shapes.get(k).is_some_and(|shape| {
+                        shape.waits_for_refill()
+                            && (shape.starting > 0
+                                || self.inner.refilling.lock().unwrap().contains(k.as_str())
+                                || self.inner.due.lock().unwrap().contains(k.as_str()))
+                    })
+                })
             };
             let Some(left) = deadline.checked_duration_since(Instant::now()) else {
                 tracing::warn!(
-                    shape = key,
+                    shape = own,
                     "warm-pools: the member that was starting did not arrive in time; starting cold"
                 );
                 return None;
             };
             if !starting {
-                if waited || self.is_warm_shape(key) {
+                if waited || self.is_warm_shape(own) {
                     tracing::info!(
-                        shape = key,
+                        shape = own,
                         "warm-pools: no prepared Space was ready and none is starting; starting cold"
                     );
                 }
@@ -993,7 +1072,7 @@ impl WarmPool {
             waited = true;
             if tokio::time::timeout(left, notified).await.is_err() {
                 tracing::warn!(
-                    shape = key,
+                    shape = own,
                     "warm-pools: the member that was starting did not arrive in time; starting cold"
                 );
                 return None;
@@ -3043,6 +3122,75 @@ mod tests {
             f.host.prepared.lock().unwrap().len(),
             5,
             "one member each, all prepared"
+        );
+    }
+
+    /// A create the way the Spaces app's Home asks: one CPU, 1 GB, no desktop.
+    fn home_spec(name: &str, token: &str) -> StartSpec {
+        let mut s = spec(name, token).cpus(1).memory_mb(1024);
+        for (k, v) in crate::local::headless_env() {
+            s.env.insert(k, v);
+        }
+        s.command = Some(crate::local::headless_command_line());
+        s
+    }
+
+    #[tokio::test]
+    async fn a_home_claims_the_bigger_warm_space_and_only_that() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let warm_key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &warm_key, 1).await;
+        assert_ne!(
+            shape_key(&home_spec("h", "t"), BackendKind::Container, true),
+            Some(warm_key.clone()),
+            "the home is another shape"
+        );
+        // Bigger than the member: starts cold.
+        let big = spec("big", "t1").cpus(8);
+        assert!(
+            f.pool
+                .claim(&big, BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+        // A desktop create is not served by a headless member.
+        let started = Instant::now();
+        let got = f
+            .pool
+            .claim(&home_spec("home-a", "t2"), BackendKind::Container, true)
+            .await;
+        assert!(got.is_some(), "the home claims the warm member");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a claim is the whole cost: {:?}",
+            started.elapsed()
+        );
+        // The member is replaced for the next one.
+        until_ready(&f, &warm_key, 1).await;
+        assert_eq!(f.host.prepared.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_headless_member_does_not_serve_a_desktop_create_nor_a_plain_pool_a_home() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        // Kept warm headless: a desktop create is not served by it.
+        let key = keep_warm_space(&f, &home_spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert!(
+            f.pool
+                .claim(&spec("desk", "t1"), BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+        // A shape kept by `pool.warm` (not the experiment) is claimed only by its own shape.
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.pool.shape_status(&key).map(|s| s.0), Some(1));
+        assert!(
+            f.pool
+                .claim(&home_spec("h", "t1"), BackendKind::Container, true)
+                .await
+                .is_none()
         );
     }
 

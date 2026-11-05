@@ -139,13 +139,12 @@ async fn observe_dom_click(
                 readback_available: true,
             };
         }
-        if let Some(after) = read_dom_click_state(
-            conn,
-            cdp,
-            object_id,
-            DOM_CLICK_READBACK_DEADLINE.saturating_sub(started.elapsed()),
-        )
-        .await
+        // The window only decides whether to start another read; each read
+        // keeps a full budget. Clipping an in-flight read to the window's
+        // remainder reported a slow-but-answering page as "readback
+        // unavailable" instead of "state unchanged".
+        if let Some(after) =
+            read_dom_click_state(conn, cdp, object_id, DOM_CLICK_READBACK_DEADLINE).await
         {
             if dom_click_state_changed(&before, &after) {
                 return DomClickObservation {

@@ -18,7 +18,10 @@ name: "CD: Cua Spaces build (shadow)"
 # bundles and release-artifacts.json (made at the tag), Electron macOS (beta
 # only), dSYMs.
 #
-# Trigger: push to main when a release input changes (paths below). The inputs
+# Trigger: push to main when a release input changes (paths below). A push
+# runs only the producer stages (the SwiftUI Rust slice and the Electron macOS
+# natives, which the tag run restores); the signed shadow build below them runs
+# for workflow_dispatch and the nightly call only (CUA-3571). The inputs
 # are keyed by their git tree hash: a run whose tree hash already has a live,
 # complete build (an Actions cache marker pointing at a run whose artifact has
 # not expired) does nothing. workflow_dispatch can force a rebuild.
@@ -130,6 +133,11 @@ jobs:
       actions: read
     outputs:
       skip: ${{ steps.plan.outputs.skip }}
+      # False for a push to main: the producer stages (`slice`, `natives-mac`)
+      # still fill the caches the tag run restores, but the signed installers
+      # (the shadow build, about 145k weighted runner min/wk) are built only
+      # for a manual run, the nightly call and `force`.
+      shadow: ${{ github.event_name != 'push' }}
       reuse_run: ${{ steps.plan.outputs.reuse_run }}
       version: ${{ steps.plan.outputs.version }}
       # The Electron apps' version: the version without +build metadata.
@@ -250,6 +258,7 @@ jobs:
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: [plan, spacesd-published, slice]
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: macos-26
     timeout-minutes: 180
     strategy:
@@ -300,6 +309,7 @@ jobs:
   web:
     name: Web UI
     needs: plan
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     permissions:
@@ -587,6 +597,7 @@ jobs:
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: plan
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -994,7 +1005,7 @@ jobs:
   summary:
     name: Cost summary
     needs: [plan, assemble, verify, attest]
-    if: always() && needs.plan.result == 'success' && inputs.channel != 'nightly'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.shadow == 'true' && inputs.channel != 'nightly'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

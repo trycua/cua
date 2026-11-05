@@ -7,9 +7,8 @@ harness, the agent, the model, the prompts and the limits are the same for every
 setup; only the computer-use tool changes.
 
 This directory holds the harness, the public task set and the method of
-**Bench v2**. The ten Bench v2 tasks run on macOS and Linux; the three multi-app
-tasks (CDB-G02 to CDB-G04) also run on Windows. The measurement on macOS assumes
-a macOS 26 desktop.
+**Bench v2**. The ten Bench v2 tasks run on macOS, Linux and Windows. The
+measurement on macOS assumes a macOS 26 desktop.
 
 | Path | What it is |
 | --- | --- |
@@ -44,7 +43,8 @@ Ten tasks in three categories. Each task has a `PROVENANCE.md` next to it.
 The CDB-G tasks are the GUI-only variants of pack tasks `cdb-s02` to `cdb-s04`:
 the same files, with no coding tools offered. The MB and IR tasks run in
 BenchLab, a small AppKit test app built from source in this directory (with a
-Linux port in `automated-eval/macos_bench/linux`). A fourth category, Web apps &
+Linux port in `automated-eval/macos_bench/linux` and a Windows port in
+`automated-eval/macos_bench/windows`). A fourth category, Web apps &
 forms, has no Bench v2 task yet.
 
 ### Platforms and conditions
@@ -73,17 +73,16 @@ Public tasks, in schedule order:
 | CDB-G02 | multi_app | Electron mail, chat and calendar apps, LibreOffice Calc | macOS, Linux, Windows | both | Replan a schedule across mail, chat, a calendar and a Calc workbook |
 | CDB-G03 | multi_app | Electron mail app, LibreOffice Calc, GnuCash | macOS, Linux, Windows | both | Review payables across mail, a Calc workbook and a GnuCash book |
 | CDB-G04 | multi_app | Electron case tracker and manual, Google Chrome | macOS, Linux, Windows | both | Triage duplicate support cases with a tracker, a manual, an archive site and a log |
-| MB-09 | precision | BenchLab | macOS, Linux | both | Reorder a native list by drag and drop |
-| MB-10 | precision | BenchLab | macOS, Linux | foreground only | Reveal a hover-only toolbar and click one action |
-| MB-11 | precision | BenchLab | macOS, Linux | foreground only | Read a native tooltip and type the code it shows |
-| IR-01 | interruptions | BenchLab | macOS, Linux | both | Finish a two-step form through a permission-style prompt |
-| IR-02 | interruptions | BenchLab | macOS, Linux | both | Apply settings while a notification-style banner covers the button |
-| IR-03 | interruptions | BenchLab | macOS, Linux | both | Edit two notes and keep both changes through a save prompt |
-| IR-04 | interruptions | BenchLab | macOS, Linux | both | Sign up on a web page while a cookie-consent overlay appears |
+| MB-09 | precision | BenchLab | macOS, Linux, Windows | both | Reorder a native list by drag and drop |
+| MB-10 | precision | BenchLab | macOS, Linux, Windows | foreground only | Reveal a hover-only toolbar and click one action |
+| MB-11 | precision | BenchLab | macOS, Linux, Windows | foreground only | Read a native tooltip and type the code it shows |
+| IR-01 | interruptions | BenchLab | macOS, Linux, Windows | both | Finish a two-step form through a permission-style prompt |
+| IR-02 | interruptions | BenchLab | macOS, Linux, Windows | both | Apply settings while a notification-style banner covers the button |
+| IR-03 | interruptions | BenchLab | macOS, Linux, Windows | both | Edit two notes and keep both changes through a save prompt |
+| IR-04 | interruptions | BenchLab | macOS, Linux, Windows | both | Sign up on a web page while a cookie-consent overlay appears |
 <!-- taskset:end -->
 
-The seven BenchLab tasks run on macOS and on Linux. The three multi-app tasks run
-on macOS, Linux and Windows; CDB-G03 needs GnuCash. Tasks marked "foreground
+All ten tasks run on macOS, Linux and Windows; CDB-G03 needs GnuCash. Tasks marked "foreground
 only" skip the background condition: their readout appears only on a hover or a
 tooltip, which follows the real pointer, so no setup can do them in the
 background.
@@ -315,11 +314,54 @@ completion with Wilson intervals, focus steals, key loss, windows raised,
 swallowed keystrokes, GUI-only violations with evidence, and the interruption
 rates. Keep raw results, streams and recordings out of git.
 
+### Windows (the BenchLab tasks)
+
+The Windows port of BenchLab and the sentinel is in
+[`automated-eval/macos_bench/windows`](automated-eval/macos_bench/windows): Python with wxPython, so
+every control is a native Win32 control that UI Automation exposes. Seeds, the state file, the event log
+and the checkers are the same as on macOS and Linux (`probes/_common/benchlab_common.py`), and the
+sentinel log is read by the same `swift/summarize_sentinel.py`.
+
+You need Windows 11, Python 3.12 with `wxPython` (and `pywinauto` for the oracle only), and an
+interactive desktop session: run the trials as a standard user signed in at the console, not from an
+SSH or service session. One trial:
+
+```powershell
+python launch\windows_session.py --task IR-02 --run-index 0 --condition background --out C:\bench\IR-02-r0 -- <agent command>
+```
+
+`{brief}`, `{out}`, `{seed}` and `{mode}` in the agent command are filled in. The launcher starts
+BenchLab and the sentinel (as `BenchLab.exe` and `BenchSentinel.exe`, copies of `pythonw.exe`), brings
+the "User activity" window to the front in the background condition, arms the sentinel, runs the agent
+with the GUI-only guard watching, then runs the checker and writes `row.json`. `windows\oracle.py` solves
+each task through the GUI with real input; `tests/test_windows_desktop.py` checks that the oracle passes
+every task, that doing nothing fails and leaves the user undisturbed, and that a deliberate disturbance
+is seen.
+
+Where Windows differs:
+
+* **GUI-only guard.** A shell or script host (PowerShell, cmd, Windows Terminal, the script hosts,
+  mshta, WSL) started in the desktop session outside the runner's own processes, or a side-door window
+  in front, fails and stops the trial. Tool inputs are also scanned for PowerShell, cmd and script-host
+  commands.
+* **Sentinel.** Windows has no signals, so the runner arms it through a control file. A window counts as
+  raised when it is above the user window in the z-order and overlaps it. The desktop measure is
+  `IVirtualDesktopManager`; a dialog on the user's app is a window owned by the user window.
+* **Dialogs.** BenchLab's dialogs are owned by its window and disable it while open. When BenchLab is not
+  in front, a dialog opens without activation just above BenchLab, so BenchLab never raises itself.
+* **MB-09.** Rows reorder by a native list drag (the list view's begin-drag, then the button release
+  over a row).
+* **MB-10 and MB-11.** Hover and tooltips follow the real pointer on Windows too (mouse-leave tracking
+  and the tooltip control read the cursor position), so both stay foreground-only. A tooltip counts as
+  shown when BenchLab's own tooltip window is visible.
+* **Brief.** "on your Mac" reads "on this Windows PC".
+
 ### Tests
 
 ```bash
 cd automated-eval/macos_bench
 python3 -m pytest tests probes/tests swift/tests          # harness, checkers, sentinel (no GUI, no model)
+python -m pytest tests/test_windows_desktop.py           # on a Windows desktop: BenchLab, sentinel, guard, oracle
 cd ../../taskpack/tasks/shared/cdb-s02 && python3 -m unittest discover -s tests
 cd ../../../../fairness && python3 -m unittest discover -s tests   # fairness and health checks
 python3 ../automated-eval/macos_bench/tools/taskset.py check        # manifest, selectors, pins and docs agree

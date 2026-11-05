@@ -35,10 +35,8 @@ class TaskSetTest(unittest.TestCase):
 
     def test_platforms(self) -> None:
         by_id = {e["id"]: e for e in v2.load_taskset()["tasks"]}
-        for tid in ("CDB-G02", "CDB-G03", "CDB-G04"):
+        for tid in v2.V2_TASKS:
             self.assertEqual(by_id[tid]["os"], ["macos", "linux", "windows"], tid)
-        for tid in ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04"):
-            self.assertEqual(by_id[tid]["os"], ["macos", "linux"], tid)
         self.assertIn("GnuCash", by_id["CDB-G03"]["apps"])
 
     def test_task_sets_and_splits(self) -> None:

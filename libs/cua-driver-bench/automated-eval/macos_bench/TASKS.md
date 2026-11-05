@@ -259,7 +259,7 @@ Bench v2 and are not in this repository.
 ## Platforms, splits and the task manifest
 
 [`../../taskpack/v2-taskset.json`](../../taskpack/v2-taskset.json) lists every task with its category, apps, OS
-availability (the seven BenchLab tasks: macOS and Linux; CDB-G02 to CDB-G04: macOS, Linux and Windows), conditions,
+availability (all ten tasks: macOS, Linux and Windows), conditions,
 health requirements and split; the bench README renders it as a table. Selectors are in `probes/<ID>/task.json`.
 A task whose selector says `"split": "heldout"` is read from a separate pack with the same layout, named by
 `CDB_TASKPACK_HELDOUT` (selectors in `probes/`, trees in `tasks/`, digests in `pins.heldout.json`); `--task-set

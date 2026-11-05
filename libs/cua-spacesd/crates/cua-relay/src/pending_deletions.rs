@@ -246,7 +246,11 @@ impl PendingDeletions {
     /// `computer` deleted `space`: it leaves the record, and the last one
     /// clears it. Returns whether it was pending.
     pub fn ack(&self, computer: &str, space: &str) -> Result<bool, String> {
-        let now = now_secs();
+        self.ack_at(computer, space, now_secs())
+    }
+
+    /// [`Self::ack`] at a given time (tests).
+    pub fn ack_at(&self, computer: &str, space: &str, now: u64) -> Result<bool, String> {
         let mut computers = self.computers.lock().expect("pending deletions");
         let mut next = computers.clone();
         next.retain(|_, t| !t.expired(now));
@@ -406,11 +410,11 @@ mod tests {
         assert!(p.get_at("c1", 200 + TTL_SECS - 1).is_some());
         assert!(p.get_at("c1", 200 + TTL_SECS).is_none());
 
-        assert!(p.ack("c1", "s1").unwrap());
-        assert!(!p.ack("c1", "s1").unwrap(), "idempotent");
-        assert!(!p.ack("c1", "nope").unwrap());
-        assert!(!p.ack("c9", "s2").unwrap());
-        assert!(p.ack("c1", "s2").unwrap());
+        assert!(p.ack_at("c1", "s1", 200).unwrap());
+        assert!(!p.ack_at("c1", "s1", 200).unwrap(), "idempotent");
+        assert!(!p.ack_at("c1", "nope", 200).unwrap());
+        assert!(!p.ack_at("c9", "s2", 200).unwrap());
+        assert!(p.ack_at("c1", "s2", 200).unwrap());
         assert!(
             p.computers.lock().unwrap().is_empty(),
             "the last ack clears it"

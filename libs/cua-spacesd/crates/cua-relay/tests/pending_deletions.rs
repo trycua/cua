@@ -238,7 +238,7 @@ async fn removing_with_delete_records_the_spaces_for_the_computer_alone() {
     assert_eq!(s, StatusCode::FORBIDDEN, "the owner's account token");
     let (s, _) = env.pending(&host, None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
-    let (s, _) = env.pending(&host, Some("cua_m_not-a-real-token")).await;
+    let (s, _) = env.pending(&host, Some("cmt_not-a-real-token")).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     let (s, _) = env.pending(&host, Some(&kid1_token)).await;
     assert_eq!(

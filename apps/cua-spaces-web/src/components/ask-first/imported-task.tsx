@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { agentName, AppMark } from "./ask-box";
 import { agoLabel } from "./pick-up";
 import { StartFailed } from "./task-view";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /** The earlier messages as the run's timeline rows, before the run's own. */
 export function earlierItems(history: PastThread | null): TranscriptItem[] {
@@ -114,7 +115,7 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         <p className="mx-auto w-full max-w-[720px] shrink-0 px-8 pt-6 text-[12px] font-medium text-muted-foreground" data-earlier-heading="">
-          Earlier on this Mac
+          Earlier on {thisComputerText()}
           {history?.earlierOmitted ? ` (${history.earlierOmitted} older messages aren't shown)` : ""}
         </p>
         {loading ? (
@@ -171,7 +172,7 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
             </div>
             {waiting ? (
               <p className="px-1 text-[12px] text-muted-foreground" data-imported-note="">
-                Nothing runs until you send. {name} then carries on this chat on this Mac, in its own folder.
+                Nothing runs until you send. {name} then carries on this chat on {thisComputerText()}, in its own folder.
               </p>
             ) : null}
           </div>
@@ -196,7 +197,7 @@ export function ContinueOn() {
       <MenuPrimitive.Trigger
         render={
           <button type="button" className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]" data-continue-on="">
-            <span className="text-muted-foreground">Continue on:</span> This Mac <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">Continue on:</span> {thisComputerLabel()} <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           </button>
         }
       />
@@ -211,7 +212,7 @@ export function ContinueOn() {
             <MenuPrimitive.Item className="flex min-h-12 cursor-default items-center gap-3 rounded-lg bg-foreground/[0.06] px-3 py-2 outline-none">
               <LaptopIcon className="size-4" />
               <div className="min-w-0 flex-1">
-                <div className="text-[14px] font-medium">This Mac</div>
+                <div className="text-[14px] font-medium">{thisComputerLabel()}</div>
                 <div className="text-[12px] text-muted-foreground">Where this chat's session is</div>
               </div>
               <CheckIcon className="size-4" />
@@ -221,7 +222,7 @@ export function ContinueOn() {
                 <MonitorIcon className="size-4" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium">{m.name}</div>
-                  <div className="text-[12px] text-muted-foreground">Not yet: the chat's session is on this Mac</div>
+                  <div className="text-[12px] text-muted-foreground">Not yet: the chat's session is on {thisComputerText()}</div>
                 </div>
               </MenuPrimitive.Item>
             ))}

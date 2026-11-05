@@ -211,7 +211,7 @@ export function WhereScreen({
       <Line>{view.line}</Line>
       <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
         <Row
-          icon={<Mark os="macos" />}
+          icon={<Mark os={hostOs()} />}
           name={t.name}
           sub={
             <>
@@ -342,7 +342,7 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
       {view.agents.length ? (
         <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-agents="">
           <div className={cn("flex items-center gap-2 px-3 pt-2 pb-2 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>
-            <OsMark os="macos" className="h-3 w-auto" />
+            <OsMark os={hostOs()} className="h-3 w-auto" />
             {view.label}
           </div>
           {view.agents.map((a) => (
@@ -872,7 +872,7 @@ export function NewFirstRun() {
   }
 
   return (
-    <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-new-first-run="" data-step={s.screen}>
+    <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-window-surface="#050607" data-new-first-run="" data-step={s.screen}>
       <FloatKeys copyRight={544} />
       <header className="relative z-30 flex shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
         <span className="flex items-center gap-1.5">

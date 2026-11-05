@@ -5,6 +5,7 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { setThisMacConfirmed, thisMacConfirmed, thisMacConfirmText, type TaskWhere } from "@/lib/ask-first";
+import { thisComputerText } from "@/lib/host-labels";
 
 /**
  * Picking where a task runs. This Mac asks once per device ("Use this Mac"
@@ -38,7 +39,7 @@ export function useWherePick(agent: string): {
         }}
         title={text.title}
         description={text.description}
-        confirmLabel="Use this Mac"
+        confirmLabel={`Use ${thisComputerText()}`}
         cancelLabel="Pick another"
         onConfirm={() => {
           const chosen = asking?.onChosen;

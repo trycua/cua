@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
 import { findNode, treeRows, type SpacesTree, type TreeNode } from "@/lib/spaces-tree";
 import { cn } from "@/lib/utils";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 /**
  * The order to try when the default is offline: the saved one (computers
@@ -84,7 +85,7 @@ export function DefaultSpaceGroup() {
       />
       <SettingsRow
         label="If it's offline"
-        description="Use your next online computer, then This Mac."
+        description={`Use your next online computer, then ${thisComputerLabel()}.`}
         control={<Switch aria-label="If it's offline, use your next online computer" checked={fallbackOn} onCheckedChange={(v) => save({ fallbackOn: v })} />}
       />
       {fallbackOn && (order.length > 0 || here) ? (
@@ -122,7 +123,7 @@ export function DefaultSpaceGroup() {
               {here ? (
                 <li className="flex h-8 items-center gap-2 px-2.5 text-[13px] text-muted-foreground" data-order-item="here">
                   <TreeIcon node={here} />
-                  <span className="truncate">This Mac</span>
+                  <span className="truncate">{thisComputerLabel()}</span>
                   <span className="ml-auto">Last resort</span>
                 </li>
               ) : null}

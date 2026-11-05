@@ -13,6 +13,7 @@ import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
+import { thisComputerText } from "@/lib/host-labels";
 
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
@@ -52,8 +53,8 @@ export function AdvancedTab() {
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: "Open a Space’s screen right away" }} onChoose={choose} /> : null}
           {overflow ? (
             <CoreSettingsRow
-              row={{ ...overflow, label: "Use my own cloud when this Mac is busy" }}
-              description="New Spaces go to your linked cloud when this Mac is full."
+              row={{ ...overflow, label: `Use my own cloud when ${thisComputerText()} is busy` }}
+              description={`New Spaces go to your linked cloud when ${thisComputerText()} is full.`}
               onChoose={choose}
             />
           ) : null}
@@ -141,7 +142,7 @@ function Sharing() {
 
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
-  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: "Ask before a task uses this Mac", options: [
+  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: `Ask before a task uses ${thisComputerText()}`, options: [
     { id: "on", label: "On", active: asks },
     { id: "off", label: "Off", active: !asks },
   ] };
@@ -191,7 +192,7 @@ function Labs() {
       {askFirst ? (
         <CoreSettingsRow
           row={thisMacAskRow(!thisMacOk)}
-          description="Before a task works directly on this Mac, with your files and apps. Turn it on to be asked again."
+          description={`Before a task works directly on ${thisComputerText()}, with your files and apps. Turn it on to be asked again.`}
           onChoose={(_, option) => setThisMacConfirmed(option === "off")}
         />
       ) : null}

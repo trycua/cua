@@ -33,16 +33,18 @@ name: "Nightly: Cua Spaces"
 # cua-spaces-nightly-darwin-universal.dmg, -windows-<arch>-setup.exe,
 # -linux-<arch>.AppImage and -linux-<arch>.deb on the same release.
 #
-# Versions: VERSION X.Y.Z on main builds X.(Y+1).0-nightly.YYYYMMDD+<sha7>
-# (a prerelease X.Y.Z-pre builds X.Y.Z-nightly...); the Electron apps carry
-# it without the +<sha7> (electron-builder takes no build metadata), and
-# asset names join it with a dot (a GitHub asset name has no '+').
+# Versions: VERSION X.Y.Z on main builds
+# X.(Y+1).0-nightly.YYYYMMDD.<run number>+<sha7> (a prerelease X.Y.Z-pre
+# builds X.Y.Z-nightly...). The run number makes every nightly unique and
+# ordered, even two on one day (semver compares numeric identifiers as
+# numbers; an HHMM time would need a leading zero, which semver forbids).
+# The Electron apps carry it without the +<sha7> (electron-builder takes no
+# build metadata), and asset names join it with a dot (a GitHub asset name
+# has no '+').
 # CFBundleVersion, which Sparkle compares, is X.Y.Z.<YYYYMMDDHHMM>
 # (X.Y.Z.0.<...> for a prerelease): above every build of the release it came
 # from, below the next release, so an app back on Stable takes the next
-# stable release. electron-updater compares the semver version, so a second
-# nightly on the same UTC day reaches new installs and Macs but not Windows or
-# Linux apps that already have that day's build.
+# stable release. electron-updater compares the semver version.
 #
 # A platform whose build failed keeps last night's build and feed; the others
 # still publish, and the run ends red. The input tree is recorded only when
@@ -137,10 +139,10 @@ jobs:
           day="${stamp:0:8}"
           sha="${GITHUB_SHA:0:7}"
           if [ -z "$pre" ]; then
-            electron_version="$x.$((y + 1)).0-nightly.$day"
+            electron_version="$x.$((y + 1)).0-nightly.$day.$GITHUB_RUN_NUMBER"
             bundle_version="$x.$y.$z.$stamp"
           else
-            electron_version="$x.$y.$z-nightly.$day"
+            electron_version="$x.$y.$z-nightly.$day.$GITHUB_RUN_NUMBER"
             bundle_version="$x.$y.$z.0.$stamp"
           fi
           version="$electron_version+$sha"

@@ -13,6 +13,8 @@ import { NIGHTLY_FEEDS, nightlyFeedProblems, prepareNightlyFeeds } from "../scri
 
 const require = createRequire(import.meta.url);
 const configPath = require.resolve("../electron-builder.config.cjs");
+// The semver electron-updater compares versions with.
+const semver = require(require.resolve("semver", { paths: [path.dirname(require.resolve("electron-updater"))] }));
 
 function config(env: Record<string, string | undefined> = {}) {
   const saved = { ...process.env };
@@ -27,7 +29,7 @@ function config(env: Record<string, string | undefined> = {}) {
   }
 }
 
-const VERSION = "0.21.0-nightly.20261105";
+const VERSION = "0.21.0-nightly.20261105.42";
 const BASE = "https://github.com/trycua/cua/releases/download/cua-spaces-nightly";
 const STABLE_BASE = "https://github.com/trycua/cua/releases/download/cua-spaces-latest";
 
@@ -120,6 +122,19 @@ describe("nightly-feeds", () => {
     expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64"), STABLE_BASE), BASE, VERSION).join()).toMatch(/outside/);
     expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64"), STABLE_BASE), STABLE_BASE, VERSION).join()).toMatch(/not the cua-spaces-nightly release/);
     expect(nightlyFeedProblems("latest.yml", abs(winFeed("x64")), BASE, VERSION).join()).toMatch(/not a nightly feed/);
-    expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64", "0.21.0-nightly.20261104")), BASE, VERSION).join()).toMatch(/want/);
+    expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64", "0.21.0-nightly.20261105.41")), BASE, VERSION).join()).toMatch(/want/);
+  });
+
+  it("every nightly is newer than the one before, even two on one day, and below the next stable", () => {
+    // nightly-cua-spaces.yml: X.Y.Z-nightly.YYYYMMDD.<run number> (Electron), +sha7 on the Mac.
+    const order = ["0.20.0", "0.21.0-nightly.20261105.42", "0.21.0-nightly.20261105.43", "0.21.0-nightly.20261106.44", "0.21.0"];
+    for (let i = 1; i < order.length; i++) expect(semver.gt(order[i], order[i - 1])).toBe(true);
+    // Run numbers compare as numbers (9 < 10), not as text.
+    expect(semver.gt("0.21.0-nightly.20261105.10", "0.21.0-nightly.20261105.9")).toBe(true);
+    // An HHMM time would need a leading zero, which semver (and this check) refuses.
+    expect(semver.valid("0.21.0-nightly.20261105.0731")).toBeNull();
+    const abs = (text: string) => text.replace(/(url|path): (\S+)/g, `$1: ${BASE}/$2`);
+    expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64", "0.21.0-nightly.20261105.0731")), BASE, undefined).join()).toMatch(/not X\.Y\.Z-nightly/);
+    expect(nightlyFeedProblems("nightly.yml", abs(winFeed("x64", "0.21.0-nightly.20261105")), BASE, undefined).join()).toMatch(/not X\.Y\.Z-nightly/);
   });
 });

@@ -46,7 +46,7 @@
 // repository (<owner>/<repo>) updates from that repository. GitHub's own
 // provider cannot serve this monorepo: it wants semver tags and reads the
 // repository-wide latest release. An X.Y.Z-suffix version is channel `beta`
-// (beta*.yml), anything else `latest`. A nightly (X.Y.Z-nightly.YYYYMMDD,
+// (beta*.yml), anything else `latest`. A nightly (X.Y.Z-nightly.YYYYMMDD.N,
 // nightly-cua-spaces.yml) is channel `nightly` (nightly*.yml) on the rolling
 // `cua-spaces-nightly` prerelease instead, so its feed never sits beside the
 // stable one.

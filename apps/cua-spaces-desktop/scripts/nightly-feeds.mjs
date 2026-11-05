@@ -5,14 +5,14 @@
 // The electron-updater feeds of a Windows and Linux nightly
 // (nightly-cua-spaces.yml). electron-builder writes nightly.yml (one per
 // Windows architecture), nightly-linux.yml and nightly-linux-arm64.yml for an
-// X.Y.Z-nightly.YYYYMMDD version (electron-builder.config.cjs). This joins the
+// X.Y.Z-nightly.YYYYMMDD.N version (electron-builder.config.cjs). This joins the
 // Windows ones (merge-feeds.mjs), points every installer at the rolling
 // `cua-spaces-nightly` release (feed-urls.mjs), and refuses anything that
 // could reach a Stable app: a latest*.yml or beta*.yml, a version that is not
 // a nightly, or an installer URL outside the nightly release.
 //
 //   node scripts/nightly-feeds.mjs --base https://github.com/OWNER/REPO/releases/download/cua-spaces-nightly \
-//     --version 0.21.0-nightly.20261105 --out DIR PART_DIR...
+//     --version 0.21.0-nightly.20261105.42 --out DIR PART_DIR...
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,7 +22,8 @@ import { mergeFeeds } from "./merge-feeds.mjs";
 /** The feed files a nightly may publish (Windows, Linux x64, Linux arm64). */
 export const NIGHTLY_FEEDS = ["nightly.yml", "nightly-linux.yml", "nightly-linux-arm64.yml"];
 
-const NIGHTLY_VERSION = /^\d+\.\d+\.\d+-nightly\.\d{8}$/;
+// X.Y.Z-nightly.YYYYMMDD.<run number>: unique and ordered (numeric identifiers, no leading zero).
+const NIGHTLY_VERSION = /^\d+\.\d+\.\d+-nightly\.\d{8}\.(?:0|[1-9]\d*)$/;
 
 /** Why `text`, the feed `name`, must not be published on the nightly release `base` (empty: it may). */
 export function nightlyFeedProblems(name, text, base, version) {
@@ -31,7 +32,7 @@ export function nightlyFeedProblems(name, text, base, version) {
   const root = base.endsWith("/") ? base : `${base}/`;
   if (!/\/releases\/download\/cua-spaces-nightly\/$/.test(root)) problems.push(`${base} is not the cua-spaces-nightly release`);
   const v = /^version:\s*['"]?([^'"\n]+?)['"]?\s*$/m.exec(text)?.[1];
-  if (!v || !NIGHTLY_VERSION.test(v)) problems.push(`${name}: version ${v ?? "(none)"} is not X.Y.Z-nightly.YYYYMMDD`);
+  if (!v || !NIGHTLY_VERSION.test(v)) problems.push(`${name}: version ${v ?? "(none)"} is not X.Y.Z-nightly.YYYYMMDD.N`);
   else if (version && v !== version) problems.push(`${name}: version ${v}, want ${version}`);
   const urls = [...text.matchAll(/^\s*(?:- )?(?:url|path):\s*['"]?([^'"\n]+?)['"]?\s*$/gm)].map((m) => m[1]);
   if (urls.length === 0) problems.push(`${name} names no installer`);

@@ -38,7 +38,7 @@ name: "CD: Cua Spaces build (shadow)"
 # Nightly (CUA-1991, CUA-3503; called by nightly-cua-spaces.yml with
 # `channel: nightly`): the same macOS, Windows and Linux builds with the
 # nightly version and CFBundleVersion the caller chose. The Electron apps get
-# the version without its +sha build metadata (X.Y.Z-nightly.YYYYMMDD:
+# the version without its +sha build metadata (X.Y.Z-nightly.YYYYMMDD.N:
 # electron-builder takes no build metadata), which makes electron-builder
 # write the `nightly` feeds (nightly.yml, nightly-linux*.yml) for the
 # cua-spaces-nightly release. No build set, attestation or marker: the caller

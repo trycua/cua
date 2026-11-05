@@ -26,8 +26,10 @@ Don't tag a beta. To test what is on main:
   Spaces CI (`ci-cua-spaces*.yml`) is red, or still running after 90 minutes.
 - **What:** the same signed builds as a release: macOS notarized and
   stapled, Windows Authenticode signed, Linux AppImage and deb.
-- **Version:** `X.Y.Z-nightly.YYYYMMDD+sha7`, where X.Y.Z is the next minor
-  after main's version. The Windows and Linux apps carry it without `+sha7`.
+- **Version:** `X.Y.Z-nightly.YYYYMMDD.N+sha7`, where X.Y.Z is the next
+  minor after main's version and N is the workflow's run number, so every
+  nightly is unique and newer than the one before, even two on one day. The
+  Windows and Linux apps carry it without `+sha7`.
 - **Feeds:** all on `cua-spaces-nightly`, never on `cua-spaces-latest`.
   - macOS: `cua-spaces-nightly-appcast.xml`, every item on Sparkle's
     `nightly` channel.

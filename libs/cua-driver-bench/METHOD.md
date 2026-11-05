@@ -261,12 +261,10 @@ differences are directional only.
   compare setups within a platform, not across platforms. The Windows release
   run covers the seven BenchLab tasks (MB-09, MB-10, MB-11, IR-01 to IR-04); it
   does not include CDB-G02 to CDB-G04.
-* **Driver versions differ between runs.** The release tables name the version
-  of each tool layer per run, and a table never mixes versions silently. macOS
-  foreground: Cua Driver 0.36.0 and agent-desktop 1.0.2. macOS background: Cua
-  Driver 0.38.0, agent-desktop 1.2.0 and the Browser Use macOS harness 0.2.1,
-  the versions of an independent run of this benchmark's tasks that the
-  background results are compared with. Windows: the Cua Driver 0.38.0 Windows
-  build, agent-desktop 1.2.0 and the Browser Use Windows harness 0.2.2. When a
-  foreground and a background number of the same setup are shown side by side,
-  they come from the versions above, and the versions are not the same.
+* **Driver versions are named per platform.** The release tables name the
+  version of each tool layer, and a table never mixes versions silently. macOS,
+  foreground and background alike: Cua Driver 0.38.0, agent-desktop 1.2.0 and
+  the Browser Use macOS harness 0.2.1 (Codex computer use as installed for the
+  run; Claude Code 2.1.318, Claude Sonnet 5.5, 3 trials with the same seeds in
+  the foreground run). Windows: the Cua Driver 0.38.0 Windows build,
+  agent-desktop 1.2.0 and the Browser Use Windows harness 0.2.2.

@@ -95,9 +95,9 @@ background.
   criteria held. The background headline covers the eight tasks that run in the
   background; MB-10 and MB-11 (foreground only) are scored in the foreground
   condition only.
-* **Versions.** Each table names the driver versions it used; they differ
-  between the macOS foreground, macOS background and Windows runs (see "Driver
-  versions differ between runs" in `METHOD.md`). Rerun with the version you want
+* **Versions.** Each table names the driver versions it used: the same on
+  both macOS conditions, different on Windows (see "Driver versions are named
+  per platform" in `METHOD.md`). Rerun with the version you want
   to measure and record it.
 * **Rerun on your platform.** macOS: steps 1 to 5 under "Reproduce", one
   condition per run. Linux: "Linux (the BenchLab tasks)". Windows: "Windows (the

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { resolveDefaultSpace, type Machine, type Space } from "@/bridge";
 
 import { currentTreeWhere, fallbackSentence, newSpaceTargets, treeDefault } from "./default-where";
-import { buildSpacesTree, defaultCandidates, findNode, treeRows, treeSummary } from "./spaces-tree";
+import { buildSpacesTree, defaultCandidates, findNode, foldOffline, treeRows, treeSummary } from "./spaces-tree";
 
 const NOW = Date.parse("2026-11-04T12:00:00Z");
 
@@ -126,6 +126,27 @@ describe("buildSpacesTree", () => {
   it("leaves devices that are only signed in out of the tree", () => {
     const t = tree({ machines: [THIS_MAC, STUDIO, DILLON, machine({ id: "phone", name: "iPhone", device: true })] });
     expect(t.roots.map((r) => r.name)).not.toContain("iPhone");
+  });
+});
+
+describe("foldOffline", () => {
+  const old = (i: number) => machine({ id: `old-${i}`, name: `Old box ${i}`, online: false, os: "linux", lastSeen: Math.floor((NOW - 86_400_000) / 1000) });
+  const oldSpaces = (n: number) => Array.from({ length: n }, (_, i) => space({ id: `relay:old-${i}`, name: `Old box ${i}` }));
+
+  it("folds offline computers with nothing on them into one row at the end, keeping This Mac, the default and computers with Spaces", () => {
+    const olds = [0, 1, 2, 3].map(old);
+    const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON, ...olds], spaces: [...SPACES, ...oldSpaces(4)], defaultSpace: "relay:old-0" });
+    const { shown, folded } = foldOffline(t.roots);
+    // Studio is offline but has Spaces on it; Old box 0 is the default: both stay in the list.
+    expect(shown.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC", "Old box 0"]);
+    expect(folded.map((r) => r.name)).toEqual(["Old box 1", "Old box 2", "Old box 3"]);
+  });
+
+  it("leaves a single offline computer where it is", () => {
+    const t = tree({ machines: [THIS_MAC, STUDIO, DILLON, old(0)], spaces: [...SPACES, ...oldSpaces(1)] });
+    const { shown, folded } = foldOffline(t.roots);
+    expect(folded).toEqual([]);
+    expect(shown.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC", "Old box 0"]);
   });
 });
 

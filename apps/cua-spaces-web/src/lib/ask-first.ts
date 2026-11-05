@@ -308,6 +308,13 @@ export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
   return orderSpaces((spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running"));
 }
 
+/** Your other computers whose desktops are online to run a job on: never this computer's own (`this-mac` is its row). */
+export function otherComputerDesktops(spaces: readonly Space[] | undefined, thisMachineId: string | null): Space[] {
+  return (spaces ?? []).filter(
+    (s) => isMachineDesktop(s) && s.id !== THIS_MAC_ID && s.status !== "local" && s.id !== `relay:${thisMachineId}` && s.status === "running" && spaceState(s) === "running",
+  );
+}
+
 /** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
 export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
   const ok = kinds.filter((k) => !k.blocked);

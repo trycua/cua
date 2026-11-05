@@ -15,7 +15,7 @@ import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { addAskTask, askTasks, resetAskTasks } from "@/lib/ask-first";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -58,7 +58,9 @@ async function compose(text: string) {
 }
 
 async function start(job: string) {
-  fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: job } });
+  await screen.findByLabelText("What should it do?");
+  await pickNewLinux();
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: job } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
@@ -132,9 +134,9 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     expect(q("[data-home-spaces] h2")?.textContent).not.toMatch(/\bon\b/);
     // The Spaces page's tiles.
     expect(qa("[data-home-spaces] [data-space-id]").length).toBeGreaterThan(0);
-    // The composer: the agent and its account (the demo has an OpenAI key saved), where as a Space.
+    // The composer: the agent and its account (the demo has an OpenAI key saved), and This Mac, already in the account.
     expect(q("[data-ask-agent]")?.textContent).toBe("OpenAI Codex");
-    expect(q("[data-ask-where]")?.textContent).toBe("New SpaceLinux on This Mac");
+    await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("This Mac"));
   });
 
   it("a task whose Space is gone leaves nothing to list: Home is the welcome, not a bare box", async () => {

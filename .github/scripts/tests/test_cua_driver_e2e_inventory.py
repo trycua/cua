@@ -28,6 +28,8 @@ RUNNER_GLOBS = (
     ".github/workflows/*.yml",
     "scripts/ci/**/*.sh",
     "scripts/ci/**/*.ps1",
+    # Cell tables the shell runners read, one test name per row.
+    "scripts/ci/**/*.tsv",
     "libs/cua-driver/tests/runners/macos-lume/*.sh",
     "libs/cua-driver/tests/runners/windows/*.ps1",
 )

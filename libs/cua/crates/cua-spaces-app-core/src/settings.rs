@@ -187,13 +187,12 @@ pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> App
 
 /// Writes settings atomically (temp file, then rename).
 pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
-    let mut stored = settings.clone();
-    let mut value = serde_json::to_value(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
+    let mut value = serde_json::to_value(settings).map_err(|e| CoreError::Io(e.to_string()))?;
     // Nightly is stored as `beta`, its old name: a release from before
     // Nightly (someone going back to Stable by hand) reads the whole file
     // with serde and starts over with the defaults on a word it does not
     // know. This build reads `beta` as Nightly ([`UpdateChannel`]).
-    if stored.update_channel == UpdateChannel::Nightly
+    if settings.update_channel == UpdateChannel::Nightly
         && let Some(o) = value.as_object_mut()
     {
         o.insert("updateChannel".into(), STORED_NIGHTLY.into());

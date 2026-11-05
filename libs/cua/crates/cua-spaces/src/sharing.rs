@@ -447,12 +447,38 @@ impl Spaces {
     }
 
     async fn delete_one(&self, space: &str) -> Result<String> {
-        let key = self.resolve(space)?.to_string();
+        let id = self.resolve(space)?;
+        let key = id.to_string();
+        // A list that cannot be read must not stop a delete that needs none of it.
+        let listed = self.list().unwrap_or_default();
+        let name = listed
+            .iter()
+            .find(|i| i.id == key)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| space.to_string());
+        // What another computer's relay entry is says whether this device may
+        // delete it at all. A "success" for one it cannot (the entry stays on
+        // the relay and is listed again) is worse than saying why not.
+        if let SpaceId::Relay { machine_id } = &id
+            && let Some(m) = self.relay_row(machine_id).await
+            && !crate::cloud::is_cloud_machine(&m)
+            && m.host.as_deref().is_none_or(str::is_empty)
+        {
+            if m.role != "owner" {
+                return Err(Error::InvalidArgument(format!(
+                    "{name} is shared with you, so it can't be deleted here. Leave it instead."
+                )));
+            }
+            if !crate::relay::is_registered_space(&m) {
+                return Err(Error::InvalidArgument(format!(
+                    "{name} is one of your computers, not a Space. Remove it from Machines instead."
+                )));
+            }
+        }
         // Running and able to turn off (a local Space, one in your cloud,
         // one your machine provides): turned off first, as the apps say.
-        let running = self
-            .list()?
-            .into_iter()
+        let running = listed
+            .iter()
             .any(|i| i.id == key && !i.power.is_empty() && i.power_state == "running");
         if running && let Err(e) = self.stop(&key).await {
             // Deleting takes it down anyway; the turn-off is a courtesy.

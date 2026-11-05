@@ -187,3 +187,29 @@ async fn deleting_several_answers_once_per_space_in_order_past_failures() {
     assert!(results[2].ok, "{:?}", results[2]);
     assert!(spaces.list().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn deleting_skips_a_space_shared_with_you_and_says_so() {
+    let relay = relay_with_shares().await;
+    let home = tempfile::tempdir().unwrap();
+    let spaces = spaces_of(&relay, home.path(), "you-token");
+    let ids = vec![format!("relay:{SHARED}"), format!("relay:{MINE}")];
+    // The directory has been read, as the app's list does.
+    let _ = spaces.list_all().await;
+    let results = spaces.delete_many(&ids).await;
+    // Someone else's Space cannot be deleted here: not "deleted", with the way out.
+    assert!(!results[0].ok, "{:?}", results[0]);
+    assert!(
+        results[0]
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("shared with you") && e.contains("Leave")),
+        "{:?}",
+        results[0]
+    );
+    // Yours goes, and is gone from the relay directory.
+    assert!(results[1].ok, "{:?}", results[1]);
+    assert!(relay.machine(MINE).is_none());
+    // The shared one is still there for its owner.
+    assert!(relay.machine(SHARED).is_some());
+}

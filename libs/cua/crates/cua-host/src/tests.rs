@@ -3088,3 +3088,30 @@ async fn setup_fails_when_the_machine_never_comes_online() {
     assert!(err.contains("the relay does not see it yet"), "{err}");
     assert!(err.contains("relay refused: 503"), "{err}");
 }
+
+/// CUA-3512: a service an older build left under another home's names
+/// moves to this home's own on the next setup, even when nothing else
+/// changes (`migrate_service_names`), and not at all when there is none.
+#[tokio::test]
+async fn an_old_service_name_moves_to_the_home_own_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    f.manager.calls.lock().unwrap().clear();
+    assert!(host.migrate_service_names().unwrap().is_empty());
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+
+    *f.manager.legacy_names.lock().unwrap() = vec!["cua-spacesd-host-e9140ee2".into()];
+    assert_eq!(
+        host.migrate_service_names().unwrap(),
+        vec!["cua-spacesd-host-e9140ee2".to_string()]
+    );
+    assert_eq!(
+        *f.manager.calls.lock().unwrap(),
+        ["retire", "install", "start"]
+    );
+}

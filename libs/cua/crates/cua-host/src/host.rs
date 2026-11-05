@@ -2855,6 +2855,9 @@ impl Host {
         force: bool,
         app_version: &str,
     ) -> Result<ServiceMigration> {
+        if let Err(e) = self.migrate_service_names() {
+            tracing::warn!("could not move the host service to its own name: {e}");
+        }
         let config = self.config()?;
         let app = self.helper_app();
         let legacy = self.legacy();
@@ -2999,6 +3002,37 @@ impl Host {
                 ))
             }
         }
+    }
+
+    /// Moves this home's host service off the names a build before CUA-3512
+    /// registered it under (another home's: production's for a staging
+    /// home set up without `CUA_HOME`, or a `CUA_HOME` hash) onto its own
+    /// ([`service::ServiceNames`]), and puts back production's service when
+    /// a staging setup had taken its place. Runs only for a runner that
+    /// runs this home ([`service::ServiceNames::owns`]); production's own
+    /// service is never touched. Returns the names it retired (none when
+    /// there was nothing to move). Setup (also when nothing else changes)
+    /// and [`Host::migrate_service`] run it.
+    pub fn migrate_service_names(&self) -> Result<Vec<String>> {
+        let Some(config) = self.config()? else {
+            return Ok(Vec::new());
+        };
+        let runner = RunnerKind::parse(&config.runner).unwrap_or(RunnerKind::Auto);
+        if runner == RunnerKind::AppHelper {
+            return Ok(Vec::new());
+        }
+        let manager = self.manager(runner);
+        let retired = manager.retire_legacy_names();
+        if retired.is_empty() {
+            return Ok(retired);
+        }
+        tracing::info!(?retired, "moved this home's host service to its own name");
+        if !config.paused_signed_out {
+            manager.install(&self.service_spec(&config))?;
+            manager.start()?;
+        }
+        self.restore_default_home(&retired);
+        Ok(retired)
     }
 
     /// Waits until the relay reports this machine online (relay mode), up to

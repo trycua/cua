@@ -2143,6 +2143,8 @@ pub struct FakeServiceManager {
     pub held_by_others: Mutex<Vec<u16>>,
     /// Ports this service holds while it runs (free once it is stopped).
     pub held_while_running: Mutex<Vec<u16>>,
+    /// Old names `retire_legacy_names` reports retiring (once).
+    pub legacy_names: Mutex<Vec<String>>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -2172,6 +2174,13 @@ impl ServiceManager for FakeServiceManager {
         *self.spec.lock().unwrap() = None;
         *self.running.lock().unwrap() = false;
         Ok(())
+    }
+    fn retire_legacy_names(&self) -> Vec<String> {
+        let retired = std::mem::take(&mut *self.legacy_names.lock().unwrap());
+        if !retired.is_empty() {
+            self.calls.lock().unwrap().push("retire".into());
+        }
+        retired
     }
     fn state(&self) -> ServiceState {
         ServiceState {

@@ -1793,67 +1793,19 @@ impl Persistent {
         // A Space someone stopped or suspended is left alone: its durable
         // members wait for it to run again instead of waking it.
         let off = self.spaces_off();
-        let live_sessions: Vec<AgentRecord> = records
-            .iter()
-            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
-            .flat_map(|r| r.session_views())
-            .filter(|r| r.run_id.is_some())
-            .collect();
         if self.detach_dispatch {
             // A posted message is handed to its member first, ahead of
-            // anything below that can wait on a Space.
+            // anything below that can wait on a Space; each session is read
+            // on a task of its own (see `serve_sessions`).
             self.dispatch(&mut report).await;
-            // Each session is read on a task of its own: a Space that does not
-            // answer (a minute, at worst) holds up only its own agent, never
-            // another agent's reply or the dispatch of a new message.
-            report.errors.append(
-                &mut self
-                    .detached_errors
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()),
-            );
-            for rec in live_sessions {
-                let key = format!("{}#{}\u{0}tick", rec.name, rec.k());
-                let Some(guard) = phases::ServingGuard::take(&self.dir, &key) else {
-                    continue; // the earlier pass for it is still running
-                };
-                let me = self.clone();
-                tokio::spawn(async move {
-                    let _guard = guard;
-                    // While the agent is talking to its bridge (its tool list at
-                    // start, then every tool call) the session is read every
-                    // quarter second instead of every pass, so a call is
-                    // answered at once; ten quiet seconds go back to the pass.
-                    let (name, k) = (rec.name.clone(), rec.k());
-                    let mut rec = rec;
-                    let mut fast_until: Option<Instant> = None;
-                    loop {
-                        let mut r = TickReport::default();
-                        me.tick_one(rec.clone(), &mut r).await;
-                        if r.bridged > 0 {
-                            fast_until = Some(Instant::now() + Duration::from_secs(10));
-                        }
-                        if !r.errors.is_empty() {
-                            me.detached_errors
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner())
-                                .append(&mut r.errors);
-                            break;
-                        }
-                        if !fast_until.is_some_and(|t| Instant::now() < t) {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                        match me.get(&name) {
-                            Ok(fresh) if !fresh.paused && fresh.session(k).run_id.is_some() => {
-                                rec = fresh.session(k);
-                            }
-                            _ => break,
-                        }
-                    }
-                });
-            }
+            self.serve_sessions(&records, &off, &mut report);
         } else {
+            let live_sessions: Vec<AgentRecord> = records
+                .iter()
+                .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+                .flat_map(|r| r.session_views())
+                .filter(|r| r.run_id.is_some())
+                .collect();
             for rec in live_sessions {
                 self.tick_one(rec, &mut report).await;
             }
@@ -1875,7 +1827,7 @@ impl Persistent {
             }
         }
         self.tick_setups(&mut report).await;
-        self.tick_standby(&mut report).await;
+        self.tick_standby(&mut report, false).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
         if !self.detach_dispatch {
@@ -1885,6 +1837,72 @@ impl Persistent {
         self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
         report
+    }
+
+    /// Starts a task for every live session whose last one has finished:
+    /// each is read on its own, so a Space that does not answer (a minute,
+    /// at worst) holds up only its own agent. While an agent talks to its
+    /// bridge (its tool list at start, then every tool call) its session is
+    /// read every quarter second instead of every pass, so a call is
+    /// answered at once; ten quiet seconds go back to the pass.
+    fn serve_sessions(
+        &self,
+        records: &[AgentRecord],
+        off: &std::collections::BTreeSet<String>,
+        report: &mut TickReport,
+    ) {
+        report.errors.append(
+            &mut self
+                .detached_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+        let live_sessions = records
+            .iter()
+            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .flat_map(|r| r.session_views())
+            .filter(|r| r.run_id.is_some());
+        for rec in live_sessions {
+            let key = format!("{}#{}\u{0}tick", rec.name, rec.k());
+            let Some(guard) = phases::ServingGuard::take(&self.dir, &key) else {
+                continue; // the earlier pass for it is still running
+            };
+            let me = self.clone();
+            tokio::spawn(async move {
+                let _guard = guard;
+                // While the agent is talking to its bridge (its tool list at
+                // start, then every tool call) the session is read every
+                // quarter second instead of every pass, so a call is
+                // answered at once; ten quiet seconds go back to the pass.
+                let (name, k) = (rec.name.clone(), rec.k());
+                let mut rec = rec;
+                let mut fast_until: Option<Instant> = None;
+                loop {
+                    let mut r = TickReport::default();
+                    me.tick_one(rec.clone(), &mut r).await;
+                    if r.bridged > 0 {
+                        fast_until = Some(Instant::now() + Duration::from_secs(10));
+                    }
+                    if !r.errors.is_empty() {
+                        me.detached_errors
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .append(&mut r.errors);
+                        break;
+                    }
+                    if !fast_until.is_some_and(|t| Instant::now() < t) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    match me.get(&name) {
+                        Ok(fresh) if !fresh.paused && fresh.session(k).run_id.is_some() => {
+                            rec = fresh.session(k);
+                        }
+                        _ => break,
+                    }
+                }
+            });
+        }
     }
 
     /// One session's pass, within its budget.
@@ -1914,7 +1932,15 @@ impl Persistent {
             return;
         }
         let mut report = TickReport::default();
+        // A new member is settled (no `.cua/setup` hook) and its standby run
+        // started here, ahead of the pass, which can be held up by a Space
+        // that does not answer; a member with a setup hook is left to the pass.
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.tick_setups(&mut report)).await;
+        self.tick_standby(&mut report, true).await;
         self.dispatch(&mut report).await;
+        if let (Ok(records), off) = (self.list(), self.spaces_off()) {
+            self.serve_sessions(&records, &off, &mut report);
+        }
         if !report.errors.is_empty() {
             self.detached_errors
                 .lock()
@@ -1940,7 +1966,7 @@ impl Persistent {
     /// whose run is gone): the agent process, its handshake and its session,
     /// no prompt. A message later finds a session ready. A start that fails
     /// is tried again after half a minute.
-    async fn tick_standby(&self, _report: &mut TickReport) {
+    async fn tick_standby(&self, _report: &mut TickReport, fresh_only: bool) {
         let Ok(records) = self.list() else { return };
         let off = self.spaces_off();
         let wanted: Vec<AgentRecord> = records
@@ -1955,6 +1981,7 @@ impl Persistent {
                     && r.setup != durable::setup::PENDING
                     && r.setup != durable::setup::FAILED
                     && !identity::is_external(r)
+                    && (!fresh_only || r.run_id.is_none())
             })
             .collect();
         for rec in wanted {
@@ -2004,7 +2031,9 @@ impl Persistent {
                         me.live.lock().await.standby_retry.remove(&rec.name);
                         tracing::info!(agent = %rec.name, run = %d.run_id, ms = t0.elapsed().as_millis() as u64, "standby run started");
                     }
-                    Err(e) => tracing::warn!(agent = %rec.name, ms = t0.elapsed().as_millis() as u64, "standby run did not start: {e}"),
+                    Err(e) => {
+                        tracing::warn!(agent = %rec.name, ms = t0.elapsed().as_millis() as u64, "standby run did not start: {e}")
+                    }
                 }
             });
         }
@@ -2475,12 +2504,17 @@ pub trait SpacesPersistent {
         let p = p.detached();
         let wake = crate::thread::supervisor_wake();
         // The dispatcher has its own task: a message is handed to its agent
-        // the moment it is posted, whatever the pass is waiting on.
+        // the moment it is posted (in this process by a wake, by another
+        // process, such as the app, within half a second), whatever the
+        // supervisor's pass is waiting on.
         let d = p.clone();
         let dispatch_wake = crate::thread::dispatch_wake();
         let dispatcher = tokio::spawn(async move {
             loop {
-                dispatch_wake.notified().await;
+                tokio::select! {
+                    () = dispatch_wake.notified() => {}
+                    () = tokio::time::sleep(Duration::from_millis(500)) => {}
+                }
                 d.dispatch_now().await;
             }
         });

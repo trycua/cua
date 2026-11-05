@@ -8,7 +8,9 @@
 //! managed, and user policy layers; it cannot introduce unreviewed tools.
 
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+#[cfg(feature = "yaml")]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -67,6 +69,8 @@ struct ApplicationGrant {
     terminate: TerminationGrant,
 }
 
+// Only the YAML manifest parser constructs these variants.
+#[cfg_attr(not(feature = "yaml"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminationGrant {
     Deny,

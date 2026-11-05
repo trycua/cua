@@ -332,6 +332,7 @@ mod tests {
 
     #[test]
     fn the_reply_deadline_outlasts_every_tool_budget() {
+        #[cfg_attr(not(feature = "script"), allow(unused_mut))]
         let mut budgets_ms = vec![crate::tool_schema::TIMEOUT_MS_MAX];
         #[cfg(feature = "script")]
         budgets_ms.push(crate::script_tool::MAX_TIMEOUT_MS);

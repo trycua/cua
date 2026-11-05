@@ -109,7 +109,7 @@ jobs:
           python3 .github/scripts/ci_reuse_pr_result.py run \
             --stamp-job "reuse PR results" \
             --float node-22 --float uv --float python-standalone \
-            --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
+            --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (macos-26)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
 
   rust-lint:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') }}

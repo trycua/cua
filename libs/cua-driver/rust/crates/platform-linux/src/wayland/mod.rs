@@ -1405,6 +1405,7 @@ fn crop_png_to_rect(
 /// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
 /// 3. ext-image-copy-capture-v1 on supported compositors.
+///    Then KWin's ScreenShot2, when this executable holds its grant.
 /// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
 ///    first use per session. A refusal from the portal is terminal; the
 ///    request has a 30-second deadline, after which the cascade continues.
@@ -1432,6 +1433,12 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
             shell_helper::screenshot_display,
         ) {
             return result;
+        }
+        // KWin answers directly when this executable holds its capture grant:
+        // every output, no portal request to wait on.
+        match kwin_capture::capture_workspace() {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => tracing::debug!("KWin workspace capture unavailable: {e:#}"),
         }
         // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {

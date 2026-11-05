@@ -592,6 +592,42 @@ async fn read_image(
     decode(width, height, stride, format, &pixels)
 }
 
+/// The whole desktop, every output included, in logical pixels. KWin answers
+/// directly, so unlike the portal this has no request to lose and no prompt.
+/// Refused unless this executable holds the ScreenShot2 grant.
+pub fn capture_workspace() -> anyhow::Result<Vec<u8>> {
+    run(async move {
+        let connection = zbus::Connection::session().await?;
+        let owner = owner(&connection).await?;
+        let (reader, writer) = std::os::unix::net::UnixStream::pair()?;
+        reader.set_nonblocking(true)?;
+        let mut reader = tokio::net::UnixStream::from_std(reader)?;
+        let options: HashMap<&str, zbus::zvariant::Value<'_>> = [
+            ("include-cursor", false.into()),
+            // The action frame is logical. Asking for it here avoids encoding
+            // a full-size image only to decode and shrink it afterwards.
+            ("native-resolution", false.into()),
+        ]
+        .into();
+        let proxy = zbus::Proxy::new(
+            &connection,
+            owner.as_str(),
+            "/org/kde/KWin/ScreenShot2",
+            SCREENSHOT,
+        )
+        .await?;
+        let result: Properties = proxy
+            .call("CaptureWorkspace", &(options, Fd::from(writer.as_fd())))
+            .await?;
+        drop(writer);
+        ensure!(
+            text(&result, "type")? == "raw",
+            "KWin screenshot is not raw image data"
+        );
+        read_image(&result, &mut reader).await
+    })
+}
+
 fn image_size(width: u32, height: u32, stride: u32, format: u32) -> anyhow::Result<usize> {
     ensure!(
         width > 0 && height > 0 && width <= 16384 && height <= 16384,

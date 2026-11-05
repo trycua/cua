@@ -267,8 +267,30 @@ extension WebUIBridge {
             let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
-            try await model.removeMachine(machine: machine, device: device)
+            // The Spaces made on it are detached unless the page asked to delete them too.
+            try await model.removeMachine(machine: machine, device: device, deleteSpaces: args["deleteSpaces"] as? Bool == true)
             return NSNull()
+
+        // The account's default Space (the relay keeps it, so the apps, the
+        // CLI and agents agree) and where a new task goes now. Signed out or
+        // not enrolled: null. Nothing here creates a Space.
+        case "spaces.settings":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.spacesSettings())
+        case "spaces.setSettings":
+            let defaultSpace = (args["defaultSpace"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let fallback = try strings(args, "fallback")
+            guard let fallbackOn = args["fallbackOn"] as? Bool else { throw Failure.badArgs("fallbackOn: boolean") }
+            for id in [defaultSpace].compactMap({ $0 }) + fallback where !Self.isRelaySpaceId(id) {
+                throw Failure.badArgs("not a Space id: \(id)")
+            }
+            guard let relay = signedInDevices() else { return NSNull() }
+            let saved = try await relay.setSpacesSettings(
+                SpacesSettings(defaultSpace: defaultSpace, fallback: fallback, fallbackOn: fallbackOn, updatedAt: 0))
+            return BridgeValue.encode(saved)
+        case "spaces.resolveDefault":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.resolveDefaultSpace())
         // Each machine's own daemon checks its health; the next
         // `machines.list` view carries the issues.
         case "machines.checkHealth":
@@ -1129,5 +1151,19 @@ extension WebUIBridge {
         else if data.first == UInt8(ascii: "<") { type = "image/svg+xml" }
         else { type = "application/octet-stream" }
         return "data:\(type);base64,\(data.base64EncodedString())"
+    }
+}
+
+extension WebUIBridge {
+    /// The session's relay devices, or nil (signed out, or before the SDK is in).
+    func signedInDevices() -> DevicesRunning? {
+        let devices = model.devices
+        guard devices.signedIn else { return nil }
+        return devices.devices
+    }
+
+    /// A Space id the relay keeps: `relay:<machine>` or `relay:<machine>/<name>`.
+    static func isRelaySpaceId(_ id: String) -> Bool {
+        id.range(of: #"^relay:[^/\s]+(/[a-z0-9-]{1,63})?$"#, options: .regularExpression) != nil
     }
 }

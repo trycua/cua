@@ -258,7 +258,10 @@ struct BridgeContractTests {
             // The relay allowance before the sign-out below (signed out, it is null).
             // No request is waiting on the fixtures: an answer to none is left alone.
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]),
+            // The default Space reads from the fixture account (before the sign-out: signed out, each is null).
+            ("spaces.settings", [:]), ("spaces.setSettings", ["defaultSpace": NSNull(), "fallback": [String](), "fallbackOn": true]),
+            ("spaces.resolveDefault", [:]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
             ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
             ("shares.settings.get", [:]), ("shares.edge.remove", [:]),

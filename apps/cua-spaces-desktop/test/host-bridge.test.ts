@@ -989,6 +989,33 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
   });
 
+  it("the home warming for Home's prompt box is in no top bar view until a person writes into it", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    const base = backend.rowsNow[2]!;
+    const home = { ...base, id: "local:home-claude-code", name: "home-claude-code", provider: "local", host: undefined, reachable: true, power: undefined, powerState: undefined };
+    backend.rowsNow = [...backend.rowsNow, { ...home, hidden: true }];
+    await model.refresh();
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const tiles = () => {
+      const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+      const opened = core.appNotchReduce(shown.state, { tag: "Click" });
+      return wireView(core.appNotchView(opened.state, model.spaces));
+    };
+    // Warming: the list the SDK returns keeps it (marked), the menu, the tray and the notch do not.
+    expect(model.spaces.find((s) => s.id === home.id)?.hidden).toBe(true);
+    expect(realSpaces(model.spaces).map((s) => s.id)).not.toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).not.toContain(home.id);
+    const before = menuItems(bridge.context)[0]!.label;
+    expect(before).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
+    // The first message: the daemon clears the mark and the next list has it.
+    backend.rowsNow = backend.rowsNow.map((r) => (r.id === home.id ? { ...r, hidden: false } : r));
+    await model.refresh();
+    expect(realSpaces(model.spaces).map((s) => s.id)).toContain(home.id);
+    expect(tiles().tiles.map((t) => t.id)).toContain(home.id);
+    expect(menuItems(bridge.context)[0]!.label).not.toBe(before);
+  });
+
   it("the notch lists the Spaces, never a machine that only provides them (CUA-1619)", async () => {
     const { wireView } = await import("../src/notch/core");
     await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });

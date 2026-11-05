@@ -123,8 +123,8 @@ CUA=/path/to/cua libs/cua/scripts/conformance/run.py --entry vz-microvm --out re
 ```
 
 The children case needs the `cua` CLI in the guest. When the Space under
-test does not ship it, the run makes a home Space from the `agent-home` image
-(the slim Linux image plus the CLI) on the same runtime and runs the case
+test does not ship it, the run makes a home Space from the slim Linux image
+(`ghcr.io/trycua/linux:24.04-slim`, which carries the CLI) on the same runtime and runs the case
 there; `--home-image` and `--entry-home-image ID=IMAGE` name another build.
 
 The roster and what each entry must do is `libs/cua/scripts/conformance/entries.json`,

@@ -257,7 +257,7 @@ JSON: `space`, `relay_space` (`relay:<computer>`: how the account's other device
 
 Take a Space off the relay.
 
-Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.
+Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead. Removing one of your computers keeps the Spaces it provides on your account, detached (hidden, and refused until the computer registers again with the same id, which brings them back unchanged); `delete_spaces: true` deletes them too, files first (through the computer while it answers), then their records.
 
 | | |
 | --- | --- |
@@ -273,6 +273,7 @@ Takes the Space off the relay: its driver leaves and its computer is removed, wi
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| `delete_spaces` | `boolean` | `false` | For one of your computers: also delete the Spaces it provides, their files first (through the computer while it answers), then their records. Default false: they stay on your account, detached, and come back when the computer registers again. |
 | `space` | `string` | required | Space id or name. |
 
 #### Result

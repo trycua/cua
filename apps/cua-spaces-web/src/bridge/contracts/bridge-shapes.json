@@ -1764,6 +1764,65 @@
         "percent"
       ]
     },
+    "DefaultSpace": {
+      "type": "object",
+      "properties": {
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultOnline": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "space",
+              "name",
+              "online",
+              "role"
+            ]
+          }
+        }
+      },
+      "required": [
+        "space",
+        "reason",
+        "defaultSpace",
+        "defaultOnline",
+        "order"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -6043,6 +6102,35 @@
         "role"
       ]
     },
+    "SpacesSettings": {
+      "type": "object",
+      "properties": {
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fallbackOn": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "defaultSpace",
+        "fallback",
+        "fallbackOn",
+        "updatedAt"
+      ]
+    },
     "StartupState": {
       "type": "object",
       "properties": {
@@ -10315,6 +10403,16 @@
     "spaces.rename": {
       "type": "null"
     },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.sendFiles": {
       "type": "array",
       "items": {
@@ -10361,6 +10459,26 @@
         "state",
         "power",
         "message"
+      ]
+    },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "spaces.thumbnail": {
@@ -14389,6 +14507,16 @@
       "type": "object",
       "properties": {}
     },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.sendFiles": {
       "type": "array",
       "items": {
@@ -14417,6 +14545,26 @@
     },
     "spaces.setPower": {
       "$ref": "#/$defs/WkSpaces"
+    },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "spaces.thumbnail": {
       "type": [

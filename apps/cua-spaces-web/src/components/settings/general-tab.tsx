@@ -10,6 +10,7 @@ import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSe
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { DefaultSpaceGroup } from "@/components/settings/default-space-group";
 import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,8 @@ export function GeneralTab() {
 
   return (
     <div data-settings-tab="general">
+      {/* Labs "Spaces as a tree": the default Space and the order to try (nothing while it's off). */}
+      <DefaultSpaceGroup />
       <SettingsGroup
         title="Everyday"
         footer={

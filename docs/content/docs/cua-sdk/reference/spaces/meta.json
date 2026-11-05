@@ -19,6 +19,7 @@
     "list-watch",
     "agents",
     "persistent-agents",
+    "default-space",
     "host"
   ]
 }

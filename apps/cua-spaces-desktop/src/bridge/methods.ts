@@ -53,6 +53,7 @@ export const METHODS = [
   "nudges.pending", "nudges.answer",
   "resources.get",
   "machines.rename", "machines.remove", "machines.checkHealth",
+  "spaces.settings", "spaces.setSettings", "spaces.resolveDefault",
   "checklist.get", "checklist.send",
   "links.list", "links.create", "links.stop", "links.approve", "links.deny",
   "shares.settings.get", "shares.settings.set", "shares.edge.remove",

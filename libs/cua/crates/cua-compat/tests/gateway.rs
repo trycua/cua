@@ -264,6 +264,40 @@ async fn a_root_command_names_root_to_an_agent_that_switches_users() {
     assert_eq!(run.user, "root");
 }
 
+/// What the command itself sees: run as root, it is root. The mock agent
+/// is `cua` and runs unnamed work as `cua` (as the Linux image does), so a
+/// root command that reached it without a user prints `cua`.
+#[tokio::test]
+async fn a_root_command_runs_as_root_on_a_non_root_agent() {
+    use base64::Engine;
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let basic = base64::engine::general_purpose::STANDARD.encode("root:");
+    let mut seen = Vec::new();
+    for line in ["whoami", "id -u", "printf %s \"$HOME\""] {
+        let body = envelope(&json!({
+            "process": {"cmd": "/bin/bash", "args": ["-l", "-c", line], "envs": {}},
+            "stdin": false
+        }));
+        let r = g
+            .envd(&sb, "process.Process/Start")
+            .header("content-type", "application/connect+json")
+            .header("authorization", format!("Basic {basic}"))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+        let out: Vec<u8> = frames(&r.bytes().await.unwrap())
+            .iter()
+            .filter_map(|(_, v)| v["event"]["data"]["stdout"].as_str())
+            .flat_map(|b| base64::engine::general_purpose::STANDARD.decode(b).unwrap())
+            .collect();
+        seen.push(String::from_utf8(out).unwrap().trim().to_string());
+    }
+    assert_eq!(seen, ["root", "0", "/root"]);
+}
+
 #[tokio::test]
 async fn unary_errors_are_connect_json() {
     let g = start(&[]).await;

@@ -103,4 +103,31 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude run the tests")).toBe(true), { timeout: 15000 });
   });
+
+  it("names the Space's handle for the Home's agent, never the host's unique name for it", async () => {
+    // `cua agent ls` says claude-8 (the host made it unique: other Spaces have a claude); the Space calls it @claude.
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    const member = { name: "claude-8", handle: "claude", harness: "claude-code", status: "idle", activity: null, sessions: 1 };
+    const { router } = await mountApp("/home", {
+      ...HOME,
+      intercept: (op, args) => {
+        calls.push({ op, args: args as Record<string, unknown> });
+        return op === "thread.members" && (args as { spaceId: string }).spaceId === "local:agent-home-demo" ? { members: [member] } : undefined;
+      },
+    });
+    const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await useClaude();
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await new Promise((r) => setTimeout(r, 300));
+    fireEvent.change(box, { target: { value: "hi" } });
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter" });
+    });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/local%3Aagent-home-demo"));
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude hi")).toBe(true), { timeout: 15000 });
+    // Adding the standby agent names the handle too (it is the same member), and nothing is posted to @claude-8.
+    expect(calls.filter((c) => c.op === "thread.agentAdd").every((c) => c.args.name === "claude")).toBe(true);
+    expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("claude-8"))).toBe(false);
+  });
 });

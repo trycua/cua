@@ -52,6 +52,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
     imageDigest: undefined,
     kind: undefined,
     arch: undefined,
+    hidden: false,
     reachable: true,
     error: undefined,
     host: undefined,
@@ -191,8 +192,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
     return h ?? { cuaVersion: "0.4.1", checks: [] };
   }
   readonly unregistered: string[] = [];
-  async relayUnregister(machineId: string) {
+  /** The machines taken off the relay with the Spaces made on them deleted too. */
+  readonly unregisteredWithSpaces: string[] = [];
+  async relayUnregister(machineId: string, deleteSpaces = false) {
     this.unregistered.push(machineId);
+    if (deleteSpaces) this.unregisteredWithSpaces.push(machineId);
     this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
   }
   async setPower(id: string, on: boolean) {

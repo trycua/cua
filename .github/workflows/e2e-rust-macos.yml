@@ -18,6 +18,11 @@ on:
         description: "Full 40-character commit SHA to certify"
         required: true
         type: string
+      quick:
+        description: "PR quick lane: only the shared lane, on the Electron harness (not a certification)"
+        required: false
+        type: boolean
+        default: false
       mode:
         description: "Supplemental GitHub-hosted matrix or registration of a direct Lume console run"
         required: false
@@ -137,11 +142,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [shared, native, capture, browser]
+        lane: ${{ fromJSON(inputs.quick && '["shared"]' || '["shared","native","capture","browser"]') }}
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
       CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
+      # The PR quick lane runs the core Electron cells only; empty runs every host.
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && 'electron' || '' }}
 
     steps:
       - name: Validate requested source SHA
@@ -234,6 +241,7 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       PROBE_RESULT: ${{ needs.probe.result }}
       MATRIX_RESULT: ${{ needs.matrix.result }}
+      QUICK: ${{ inputs.quick && 'true' || 'false' }}
       WORKFLOW_REF: ${{ github.workflow_ref }}
       WORKFLOW_SHA: ${{ github.sha }}
     steps:
@@ -250,12 +258,14 @@ jobs:
             --arg workflow_sha "${WORKFLOW_SHA}" \
             --arg probe "${PROBE_RESULT}" \
             --arg matrix "${MATRIX_RESULT}" \
+            --arg quick "${QUICK}" \
             '{schema: $schema, source_sha: $source_sha,
               github: {run_id: $run_id, run_attempt: $run_attempt,
                 workflow_ref: $workflow_ref, workflow_sha: $workflow_sha},
               jobs: {probe: $probe, matrix: $matrix},
               lanes: ["shared", "native", "capture", "browser"],
               standalone_browser: true,
+              quick: ($quick == "true"),
               passed: ($probe == "success" and $matrix == "success")}' \
             | tee certification.json
           jq -e '.passed == true' certification.json >/dev/null
@@ -264,7 +274,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: rust-macos-hosted-certification-${{ github.run_id }}-${{ github.run_attempt }}
+          # A quick run is not a certification: keep it out of the name consumers look for.
+          name: rust-macos-hosted-${{ inputs.quick && 'quick-result' || 'certification' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: certification.json
           if-no-files-found: error
           retention-days: 14

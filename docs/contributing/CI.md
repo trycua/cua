@@ -20,6 +20,12 @@ each failure. Run it before you push. It catches in minutes what otherwise costs
 - Python isort, black and ruff; TypeScript typecheck, tests and the design lint for the web packages you touched;
 - actionlint for workflows, SPDX headers, and the unit tests of the crates you changed.
 
+`CI: Quick` runs `bin/ci --quick` on every pull request, so these checks have no workflow of their own: SPDX
+headers, lockfiles, actionlint, the larger-runner ban, image refs, Python lint, rustfmt and the docs image
+refs (the last also runs nightly in `ci-check-docs-image-refs.yml`). On the runner a missing tool fails them
+(`CUA_CI_REQUIRE_TOOLS=1`) instead of skipping them, and `bin/ci --verify-sync` fails if `ci-quick.yml`
+stops running `bin/ci --quick`. Do not add a workflow that repeats one of them.
+
 ```bash
 bin/ci                 # the checks your change affects (compares with the merge base with origin/main)
 bin/ci --quick         # only checks that build nothing: seconds

@@ -154,6 +154,17 @@ def register_parser(subparsers):
         help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")',
     )
 
+    view_parser.add_argument(
+        "--follow", action="store_true", help="Follow an experimental live trace bundle"
+    )
+
+    view_parser.add_argument(
+        "--max-download-mib",
+        type=int,
+        default=100,
+        help="Per-attachment viewer download limit in MiB (1-4096; default: 100)",
+    )
+
     # cb trace traj <run_id>
     traj_parser = trace_subparsers.add_parser(
         "traj",
@@ -214,6 +225,20 @@ def cmd_view(args) -> int:
         print(f"{GREY}Try:{RESET}")
         print(f"  cb run list           {GREY}# List all runs{RESET}")
         print(f"  cb run info <run_id>  {GREY}# Show sessions in a run{RESET}")
+        return 1
+
+    if (trace_path / "trace.json").exists():
+        from cua_bench.trace_live_viewer import view_bundle
+
+        limit = getattr(args, "max_download_mib", 100)
+        if not 1 <= limit <= 4096:
+            print("--max-download-mib must be between 1 and 4096")
+            return 1
+        return view_bundle(
+            trace_path, follow=getattr(args, "follow", False), max_download=limit * 1024**2
+        )
+    if getattr(args, "follow", False):
+        print("--follow requires a live trace bundle; saved datasets are snapshots.")
         return 1
 
     # If it's a run directory (not a specific trace), pick the first trace

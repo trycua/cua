@@ -1,0 +1,23 @@
+[
+  {"click": "button[aria-label='Actions for Hesper Blackmore']"},
+  {"click": "[role=menu] [role=menuitem]:nth-child(1)"},
+  {"select": ["#team-select", "pantry"]},
+  {"click": "#team-save", "after": 300},
+  {"click": "button[aria-label='Page 3']"},
+  {"click": "button[aria-label='Actions for Teodor Quillfeather']"},
+  {"click": "[role=menu] [role=menuitem]:nth-child(1)"},
+  {"select": ["#team-select", "pantry"]},
+  {"click": "#team-save", "after": 300},
+  {"click": "#search"},
+  {"type": "Ilse"},
+  {"click": "button[aria-label='Actions for Ilse Varnham']"},
+  {"click": "[role=menu] [role=menuitem]:nth-child(1)"},
+  {"select": ["#team-select", "pantry"]},
+  {"click": "#team-save", "after": 300},
+  {"fill": ["#search", "Ostwick"]},
+  {"assert": "document.querySelectorAll('#rows tr').length === 2"},
+  {"click": "tr[data-id='V-1214'] .menu-btn"},
+  {"click": "[role=menu] [role=menuitem]:nth-child(2)"},
+  {"click": "#deact-ok", "after": 400},
+  {"assert": "document.getElementById('notice').textContent.includes('deactivated')"}
+]

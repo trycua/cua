@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sallowmead Depot Returns · Weekly review</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Sallowmead Depot Returns</h1><p>Weekly returns review, weeks 30 to 41 of 2026</p></header>
+<main>
+  <section aria-labelledby="chart-h">
+    <h2 id="chart-h">Parcels coming back to the depot, per week</h2>
+    <p class="hint">Point at a bar to see its exact figure.</p>
+    <div class="chart-wrap">
+      <canvas id="chart" width="1000" height="360" role="img" aria-label="Bar chart of parcels coming back to the depot each week, weeks 30 to 41, in two series. Point at a bar to see its figure."></canvas>
+      <div id="tooltip" role="status" aria-live="polite" hidden></div>
+    </div>
+  </section>
+  <form id="answer" novalidate aria-labelledby="answer-h">
+    <h2 id="answer-h">Weekly review answer</h2>
+    <div class="fields">
+      <div>
+        <label for="depot">Depot</label>
+        <select id="depot">
+          <option value="Sallowmead North" selected>Sallowmead North</option>
+          <option value="Sallowmead South">Sallowmead South</option>
+          <option value="Sallowmead Riverside">Sallowmead Riverside</option>
+        </select>
+      </div>
+      <div>
+        <label for="week">Week with the most returns</label>
+        <select id="week"><option value="">Choose a week</option></select>
+      </div>
+      <div>
+        <label for="count">Number of returns that week</label>
+        <input id="count" type="number" min="0" step="1" inputmode="numeric">
+      </div>
+      <button type="submit" id="submit" class="primary">Submit</button>
+    </div>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <p id="confirmation" role="status" hidden></p>
+  </form>
+</main>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

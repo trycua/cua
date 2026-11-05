@@ -1,0 +1,17 @@
+{
+  "id": "DS-05",
+  "pack_task": "v2/ds05-festival-program-notes",
+  "title": "Fill venue placeholders, add a footnote and bold a phrase in a festival programme",
+  "category": "documents",
+  "gui_only": true,
+  "apps": [
+    "LibreOffice Writer"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

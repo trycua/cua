@@ -26,7 +26,24 @@
       "shared/cdb-s03": "095f8be9ee022ca0005dd428d2872d1347e6a1e766c767dff9592841018bb719",
       "shared/cdb-s04": "0c5f559573b0a3e0b1726bd44d4d6f1c75231ab4cbdcc1d0d229c4c6d223fbc6",
       "shared/web-01": "82853053f6fd546b022d18b857c8bc370538cb1111636cf905a78db55fc44a95",
-      "shared/web-02": "78f504225bc2943881582bfcece129c525c589aa3d3f5483090769f2fe12ff89"
+      "shared/web-02": "78f504225bc2943881582bfcece129c525c589aa3d3f5483090769f2fe12ff89",
+      "v2/_kit": "d86c1ab90892b1f4fb675bd5ebb82e1f3f9e9c130c1cad86215b731ba1d15999",
+      "v2/ds01-flour-order-lookup": "4e3de649659ed593e6bd1fab6fcc0fd7cdfd908586016f2300614fd16e752068",
+      "v2/ds02-rowing-dues-format": "e7bf8d4f75cec69edd313c3b8edda2336c2ca88c682aee2b1400545875de3c5b",
+      "v2/ds04-lichen-guide-headings": "b093a477ee9f4762e69d932763aed6311ec6b362be558c8bcb7d89b30ed726dc",
+      "v2/ds05-festival-program-notes": "bab6ec3b2e5b3e179845c1953ff20f86e6f1d617354d2d82cd1dc1b5e37a7188",
+      "v2/ir06-club-profile-leave-guard": "6dffc645685233cf46a9caa881e1787cdab179605aeb10d9a631a53ad5013eaa",
+      "v2/ma01-parts-requests-to-sheet": "42602523c437f05f4efb0c20deb3f4db4745fe298b16c31a1d81975624625b34",
+      "v2/ma04-shift-summary-note": "2b48d6caa5316fbfab2d997868cb67aeeee066a29fb37ec6327233b68845adc2",
+      "v2/na01-theatre-calendar": "c24aa95e7e1ef1e43a77c0ae9bfeffe1ba04caa4aa10cadabd99ed75f944760e",
+      "v2/na03-seed-packet-tags": "b77454ad8ee54a2bdb348aad99d1066085a49be0ed2cad864bf4d17a68c87901",
+      "v2/na04-committee-get-info": "42f6107d2d41322ad8d7e4609999eb33fb6c568009f927d78cacf3f39801a7f6",
+      "v2/na06-tasting-panel-notes": "8971c5665552e3c17e79faafc6b7d26134821121f05f903effe22a115d2de0e5",
+      "v2/pr03-chart-hover-readout": "436427ed7750c9682a7935273ce6405244a8ddcb461cf38e370c2d90185230d7",
+      "v2/wf01-workshop-booking": "bf1d8b5a37e522371a6d3e5085de2c828aebef79f2ca03f5c8bc57d1e5f0df23",
+      "v2/wf03-volunteer-directory": "c955f59e5de821104c676a430b49802281b9c5aa3348c01b77b57c7861d7dbfd",
+      "v2/wf04-seed-delivery-address": "4b8790c43a14047e5c0781984c1bc1eadb71a9a715c788f305911657fb6226e6",
+      "v2/wf06-newsletter-editor": "2bb66df585cde4556fb92bd9c17a02f010a6ebba312d8250ad72dda02378fc5b"
     },
     "mit_release_tree_sha256": {
       "shared/cdb-s02": "844dbbd2b247395303b901cbd328dee092adfa0e592b511ce6900c69e92073c9",
@@ -37,7 +54,8 @@
       "shared/cdb-s02": "96f4a35667e90fb4272405030afc055093cbe2e628b6795099153e2274b83503",
       "shared/cdb-s03": "9a0615c29150af95e6a133573ea3021f17222ee51480cb150427e90457f678d2",
       "shared/cdb-s04": "240ab1b758603e938b688e4452f78a715bf4443a1df7f58535c20d8e47dc1efe"
-    }
+    },
+    "v2_source": "tasks/v2 (the 32 pack tasks of the 42-task set and their shared `_kit`) was copied from Cua's private benchmark repository at revision ab0db0e5eebf141a0e87f88fec45cbb1be51a91d, the revision the 42-task runs used. The copy differs only in provenance and comment wording, `_kit/devtools/vm_validate.py` reading each native-app task's scripted solution from that task's own `tests/vm_solve.py`, and the off-Space tasks being left out; briefs, apps, fixtures, reset, export and evaluator logic are unchanged."
   },
   "cua_main": {
     "note": "Bench v2 uses main at 1fa2247ae built in the VM with tools/vm_main_build.",

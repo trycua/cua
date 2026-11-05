@@ -1,0 +1,17 @@
+{
+  "id": "NA-04",
+  "pack_task": "v2/na04-committee-get-info",
+  "title": "Lock a file, add a comment and rename a file through Finder's Get Info",
+  "category": "native_apps",
+  "gui_only": true,
+  "apps": [
+    "Finder"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

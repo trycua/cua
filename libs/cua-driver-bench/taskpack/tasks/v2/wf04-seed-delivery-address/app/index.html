@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Larchgate Seed Co-op · Annual order: delivery</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Larchgate Seed Co-op</h1><p>Members' annual seed order</p></header>
+<ol class="steps" aria-label="Order steps">
+  <li class="done">1. Seeds</li><li aria-current="step">2. Delivery</li><li>3. Payment</li><li>4. Confirm</li>
+</ol>
+<main>
+  <aside id="summary" aria-label="Order summary"></aside>
+  <form id="form" novalidate aria-labelledby="form-h">
+    <h2 id="form-h">Delivery details</h2>
+    <fieldset id="ship" class="addr"><legend>Delivery address</legend></fieldset>
+    <label class="check"><input type="checkbox" id="billing-same" checked> Billing address is the same</label>
+    <fieldset id="bill" class="addr" hidden><legend>Billing address</legend></fieldset>
+    <fieldset>
+      <legend>Delivery option</legend>
+      <div id="options" role="radiogroup" aria-label="Delivery option"></div>
+    </fieldset>
+    <label for="notes" class="field">Delivery notes</label>
+    <textarea id="notes" rows="2"></textarea>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <div class="actions"><button type="submit" id="continue">Continue</button></div>
+  </form>
+  <p id="confirmation" role="status" hidden></p>
+</main>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

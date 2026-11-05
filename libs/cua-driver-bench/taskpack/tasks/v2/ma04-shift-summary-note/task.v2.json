@@ -1,0 +1,18 @@
+{
+  "id": "MA-04",
+  "pack_task": "v2/ma04-shift-summary-note",
+  "title": "Write a TextEdit note of unfilled food-bank shifts found in a filtered web rota",
+  "category": "multi_app",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome",
+    "TextEdit"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

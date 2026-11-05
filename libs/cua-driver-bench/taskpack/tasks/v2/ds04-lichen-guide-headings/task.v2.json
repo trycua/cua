@@ -1,0 +1,17 @@
+{
+  "id": "DS-04",
+  "pack_task": "v2/ds04-lichen-guide-headings",
+  "title": "Apply heading styles and insert a table of contents in a lichen field guide",
+  "category": "documents",
+  "gui_only": true,
+  "apps": [
+    "LibreOffice Writer"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

@@ -2473,8 +2473,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--task-set",
         default="v2",
-        help="with --bench-v2: v2 (the ten registered tasks, default), or v2-public / v2-heldout for one split "
-        "(see taskpack/v2-taskset.json)",
+        help="with --bench-v2: v2 (the ten registered tasks, default), v2-42, v2-new (its 32 pack tasks), and "
+        "each with -public or -heldout for one split (see taskpack/v2-taskset.json)",
     )
     p.add_argument(
         "--phase1-runs",
@@ -2622,7 +2622,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
         raise SystemExit(f"unknown --task-set {task_set!r}; known {sorted(sets)}")
     defaults = list(sets[task_set]) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
     if bench_v2 and task_set != "v2":
-        # a set other than v2 honours each task's `conditions` (taskpack/v2-taskset.json)
+        # the 42-task set honours each task's `conditions` (taskpack/v2-taskset.json)
         manifest = {e["id"]: e for e in v2.load_taskset()["tasks"]}
         condition = getattr(args, "condition", "foreground")
         specs = {

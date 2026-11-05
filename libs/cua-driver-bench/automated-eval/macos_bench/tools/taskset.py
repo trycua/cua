@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 
-"""The task manifest (`taskpack/v2-taskset.json`): check it, render its docs table, split it.
+"""The 42-task set manifest (`taskpack/v2-taskset.json`): check it, render its docs table, split it.
 
     tools/taskset.py check                       # manifest, selectors, pack trees, pins and docs agree
     tools/taskset.py doc [--write]               # the README task table (between the taskset markers)
-    tools/taskset.py split --heldout ID1,ID2 --out DIR
+    tools/taskset.py split --heldout NA-02,DS-03 --out DIR
 
 `split` moves the named tasks out of this repository into DIR, a held-out pack with the public pack's layout
 (`DIR/tasks/v2/<task>`, a copy of `DIR/tasks/v2/_kit`, `DIR/probes/<ID>/task.json`, `DIR/pins.heldout.json` and
@@ -62,32 +62,27 @@ def render(manifest: dict) -> str:
     tasks = manifest["tasks"]
     public = [e for e in tasks if e["split"] == "public"]
     heldout = [e for e in tasks if e["split"] == "heldout"]
-    categories = {e["category"] for e in tasks}
     lines = [
-        f"{len(tasks)} tasks in {len(categories)} categories: {len(public)} public"
-        + (f", {len(heldout)} held out." if heldout else "."),
+        f"{len(tasks)} tasks in {len(v2.CATEGORIES)} categories: {len(public)} public, {len(heldout)} held out.",
         "",
-        "| Category | Public |" + (" Held out |" if heldout else ""),
-        "| --- | --- |" + (" --- |" if heldout else ""),
+        "| Category | Public | Held out |",
+        "| --- | --- | --- |",
     ]
     for cat, label in v2.CATEGORIES.items():
-        if cat not in categories:
-            continue
-        row = f"| {label} (`{cat}`) | {sum(e['category'] == cat for e in public)} |"
-        if heldout:
-            row += f" {sum(e['category'] == cat for e in heldout)} |"
-        lines.append(row)
+        pub = sum(e["category"] == cat for e in public)
+        held = sum(e["category"] == cat for e in heldout)
+        lines.append(f"| {label} (`{cat}`) | {pub} | {held} |")
     lines += [
         "",
-        "Public tasks, in schedule order:",
+        "Public tasks, in schedule order (`set` v2 = the ten registered core tasks, v2-new = the 32 added):",
         "",
-        "| Task | Category | Apps | OS availability | Conditions | What the agent does |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Task | Set | Category | Apps | OS availability | Conditions | What the agent does |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for e in public:
         conditions = "both" if len(e["conditions"]) == 2 else "foreground only"
         lines.append(
-            f"| {e['id']} | {e['category']} | {', '.join(e['apps'])} | "
+            f"| {e['id']} | {e['set']} | {e['category']} | {', '.join(e['apps'])} | "
             f"{os_label(e)} | {conditions} | {e['title']} |"
         )
     if heldout:
@@ -117,8 +112,8 @@ def check() -> list[str]:
     manifest = load()
     problems: list[str] = []
     ids = [e["id"] for e in manifest["tasks"]]
-    if tuple(ids[: len(v2.V2_TASKS)]) != v2.V2_TASKS:
-        problems.append("manifest does not start with bench_v2.V2_TASKS, in order")
+    if tuple(ids) != v2.V2_42_TASKS:
+        problems.append("manifest order differs from bench_v2.V2_42_TASKS")
     pins = json.loads(PINS.read_text("utf-8"))["cdb_pack"]["tree_sha256"]
     for e in manifest["tasks"]:
         if e["category"] not in v2.CATEGORIES:
@@ -150,14 +145,9 @@ def check() -> list[str]:
                     f"{e['id']}: pin differs from the tree (tools/check_pack_pins.py --write)"
                 )
     kit = TASKS_ROOT / "v2" / "_kit"
-    if kit.is_dir() and pins.get("v2/_kit") != cdb_adapter.tree_sha256(kit):
+    if pins.get("v2/_kit") != cdb_adapter.tree_sha256(kit):
         problems.append("v2/_kit: pin differs from the tree")
-    pack_dir = TASKS_ROOT / "v2"
-    on_disk = (
-        {p.name for p in pack_dir.iterdir() if (p / "task.v2.json").is_file()}
-        if pack_dir.is_dir()
-        else set()
-    )
+    on_disk = {p.name for p in (TASKS_ROOT / "v2").iterdir() if (p / "task.v2.json").is_file()}
     listed = {
         Path(e["pack_task"]).name
         for e in manifest["tasks"]
@@ -173,13 +163,9 @@ def check() -> list[str]:
 def split(heldout: list[str], out: Path) -> None:
     manifest = load()
     by_id = {e["id"]: e for e in manifest["tasks"]}
-    unknown = [
-        t
-        for t in heldout
-        if t not in by_id or not (by_id[t].get("pack_task") or "").startswith("v2/")
-    ]
+    unknown = [t for t in heldout if t not in by_id or by_id[t]["set"] != "v2-new"]
     if unknown:
-        raise SystemExit(f"only pack tasks under tasks/v2 can be held out; not: {unknown}")
+        raise SystemExit(f"only v2-new tasks can be held out; not: {unknown}")
     pins_doc = json.loads(PINS.read_text("utf-8"))
     pins = pins_doc["cdb_pack"]["tree_sha256"]
     out_tasks = out / "tasks" / "v2"

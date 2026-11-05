@@ -1,0 +1,68 @@
+{
+  "platform": "macos",
+  "descriptor_version": "1",
+  "semantics": {
+    "task_id": "cua.v2.ds01-flour-order-lookup",
+    "task_version": "1.0.0",
+    "brief": "brief.md",
+    "reset": {
+      "setup": [
+        "${python}",
+        "reset/setup.py",
+        "--workspace",
+        "${workspace}"
+      ],
+      "verify": [
+        "${python}",
+        "reset/verify.py",
+        "--workspace",
+        "${workspace}"
+      ]
+    },
+    "evaluate": [
+      "${python}",
+      "evaluator/evaluate.py",
+      "--workspace",
+      "${workspace}",
+      "--artifacts",
+      "${artifacts}",
+      "--result",
+      "${result}",
+      "--agent-exit-code",
+      "${agent_exit_code}"
+    ],
+    "required_apps": [
+      "LibreOffice Calc"
+    ]
+  },
+  "workspace_root": "${HOME}/v2-ds01",
+  "apps": [
+    {
+      "id": "office",
+      "kind": "office",
+      "role": "LibreOffice calc",
+      "command": [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "--calc",
+        "--norestore",
+        "--nodefault",
+        "--nolockcheck",
+        "-env:UserInstallation=${workspace_uri}/.runtime/libreoffice",
+        "${workspace}/orders.fods"
+      ],
+      "process_names": [
+        "soffice",
+        "soffice.bin"
+      ],
+      "window": {
+        "title_contains": "orders.fods",
+        "bounds": {
+          "x": 40,
+          "y": 40,
+          "width": 1280,
+          "height": 900
+        }
+      }
+    }
+  ]
+}

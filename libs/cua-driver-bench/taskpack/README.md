@@ -1,7 +1,7 @@
 # Cua Driver Bench task pack (public)
 
-The multi-app tasks of the public Bench v2 task set, plus separately selectable
-web tasks. These run GUI-only (no coding tools) under the ids in the table; the harness reads
+The multi-app tasks of the public Bench v2 task set, the public pack tasks of
+the 42-task set, plus separately selectable web tasks. These run GUI-only (no coding tools) under the ids in the table; the harness reads
 them from here (`CDB_TASKPACK`, see
 [`../automated-eval/macos_bench/cdb_adapter.py`](../automated-eval/macos_bench/cdb_adapter.py)).
 
@@ -12,15 +12,20 @@ them from here (`CDB_TASKPACK`, see
 | [`tasks/shared/cdb-s04`](tasks/shared/cdb-s04) | CDB-G04 | Rillwatch Cases and Margin Lantern Manual (Electron), the Morrowglass Archive site in Chrome, a log file |
 | [`tasks/shared/web-01`](tasks/shared/web-01) | WEB-01 (separate) | Fern signup in Chrome |
 | [`tasks/shared/web-02`](tasks/shared/web-02) | WEB-02 (separate) | Pebble checkout in Chrome |
+| [`tasks/v2/*`](tasks/v2) | MA, WF, NA, DS, PR and IR-05 to IR-07 tasks of the 42-task set | Chrome with local web apps, LibreOffice, TextEdit, Calendar, Reminders, Notes, Finder, Preview; see [`v2-taskset.json`](v2-taskset.json) |
+
+The 42-task set's manifest, [`v2-taskset.json`](v2-taskset.json), lists all
+42 tasks with their `split`. Held-out tasks are not in this repository; they run
+from a separate pack with the same layout (`CDB_TASKPACK_HELDOUT`). The
+`tasks/v2` tasks share [`tasks/v2/_kit`](tasks/v2/_kit) (helpers only, no task
+content), use `task.v2.json` instead of `task.cuabench.json`, and keep their
+scripted VM solutions in their own `tests/`; see
+[`tasks/v2/README.md`](tasks/v2/README.md).
 
 WEB-01 and WEB-02 are Amendment 24.3 originals, not members of `bench_v2.V2_TASKS`.
 Select them explicitly with `--tasks WEB-01 WEB-02`; `run_bench.WEB_TASKS` lists them.
 They use a Node built-in-only loopback service, task-local routes and checks,
 and a fresh workspace-local Chrome profile. No internet or external assets are used.
-
-The task manifest, [`v2-taskset.json`](v2-taskset.json), lists every Bench v2 task with its
-category, OS availability, conditions and `split`. A task kept out of this repository would run
-from a separate pack named by `CDB_TASKPACK_HELDOUT`, with the same layout.
 
 Each task directory holds:
 
@@ -34,6 +39,15 @@ Each task directory holds:
 * `PROVENANCE.md`: origin, prior art, review and licence.
 
 ## Source and changes
+
+The `tasks/v2` tasks were written by Cua in its private benchmark repository and
+are copied from revision `ab0db0e5eebf141a0e87f88fec45cbb1be51a91d`, the revision
+the 42-task runs used. The copy differs only in provenance and comment wording,
+in `_kit/devtools/vm_validate.py` reading each native-app task's scripted solution
+from that task's own `tests/vm_solve.py`, and in leaving out tasks that are not in
+the set; briefs, apps, fixtures, reset, export and evaluator logic are unchanged.
+`pins.json` `cdb_pack.tree_sha256` holds the digests of this copy (`v2/<task>` and
+`v2/_kit`).
 
 The three `cdb-s0*` tasks were written by Cua in its private benchmark repository and are
 copied from revision `16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a`, the revision

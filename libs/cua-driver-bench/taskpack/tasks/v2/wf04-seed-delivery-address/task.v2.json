@@ -1,0 +1,17 @@
+{
+  "id": "WF-04",
+  "pack_task": "v2/wf04-seed-delivery-address",
+  "title": "Fill in delivery and billing addresses for a seed co-operative order",
+  "category": "web_forms",
+  "gui_only": true,
+  "apps": [
+    "Google Chrome"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "WF-01",
+  "title": "Book a tool-training session on a community workshop's booking page",
+  "group": "V2X",
+  "category": "web_forms",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/wf01-workshop-booking",
+  "split": "public",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": [
+    "web_forms",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

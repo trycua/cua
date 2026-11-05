@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Coppergate Cycling Club · Your profile</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="profile">
+<header>
+  <h1>Coppergate Cycling Club</h1>
+  <nav aria-label="Members' area"><a href="profile.html" aria-current="page">Profile</a><a href="preferences.html">Riding preferences</a></nav>
+</header>
+<main>
+  <form id="form" novalidate aria-labelledby="form-h">
+    <h2 id="form-h">Your profile</h2>
+    <p class="muted">Member number <strong id="member-no"></strong></p>
+    <label for="display_name">Display name</label>
+    <input id="display_name" name="display_name" autocomplete="off">
+    <label for="phone">Mobile phone</label>
+    <input id="phone" name="phone" type="tel" autocomplete="off">
+    <label for="bike">Main bike</label>
+    <select id="bike" name="bike">
+      <option value="road">Road bike</option>
+      <option value="gravel">Gravel bike</option>
+      <option value="hybrid">Hybrid</option>
+      <option value="tandem">Tandem</option>
+    </select>
+    <h3>Emergency contact</h3>
+    <p id="ec-summary"></p>
+    <button type="button" id="ec-toggle" aria-expanded="false" aria-controls="ec-box">Edit emergency contact</button>
+    <div id="ec-box" hidden>
+      <label for="emergency_name">Contact name</label>
+      <input id="emergency_name" name="emergency_name" autocomplete="off">
+      <label for="emergency_relation">Relationship to you</label>
+      <input id="emergency_relation" name="emergency_relation" autocomplete="off">
+      <label for="emergency_phone">Contact phone</label>
+      <input id="emergency_phone" name="emergency_phone" type="tel" autocomplete="off">
+    </div>
+    <p class="error" id="form-error" role="alert" hidden></p>
+    <div class="actions"><button type="submit" id="save">Save profile</button><span id="status" role="status"></span></div>
+  </form>
+</main>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

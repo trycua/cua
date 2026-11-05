@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:styles>
+  <style:style style:name="Standard" style:family="paragraph" style:class="text"/>
+  <style:style style:name="Text_20_body" style:display-name="Text body" style:family="paragraph" style:parent-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0.247cm"/></style:style>
+  <style:style style:name="Title" style:family="paragraph" style:parent-style-name="Standard" style:class="chapter"><style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.4cm"/><style:text-properties fo:font-size="20pt" fo:font-weight="bold"/></style:style>
+  <style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:class="text"><style:paragraph-properties fo:margin-top="0.423cm" fo:margin-bottom="0.212cm" fo:keep-with-next="always"/></style:style>
+  <style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2" style:class="text"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style>
+ </office:styles>
+ <office:body>
+  <office:text>
+   <text:p text:style-name="Title">Ottersby Harvest Festival 2026: Programme</text:p>
+   <text:p text:style-name="Text_20_body">Welcome to the twenty-third Ottersby Harvest Festival, held this year on Saturday 24 October 2026 in and around [[venue]]. Every event is free unless marked otherwise.</text:p>
+   <text:h text:style-name="Heading_20_2" text:outline-level="2">Morning</text:h>
+   <text:p text:style-name="Text_20_body">10:00 Produce show opens in the main hall of [[venue]]. Judging of the marrow, onion and bramble jelly classes begins at 10:30.</text:p>
+   <text:p text:style-name="Text_20_body">11:30 Children's lantern workshop on the lawn. Bring your own cup for the free apple juice, as the committee no longer buys disposable ones.</text:p>
+   <text:h text:style-name="Heading_20_2" text:outline-level="2">Afternoon</text:h>
+   <text:p text:style-name="Text_20_body">14:00 Sheaf-tossing contest on the green behind [[venue]]. Entries close at 13:30 at the steward's table.</text:p>
+   <text:p text:style-name="Text_20_body">16:00 Auction of show produce, with proceeds going to the village hall roof fund.</text:p>
+   <text:h text:style-name="Heading_20_2" text:outline-level="2">Evening</text:h>
+   <text:p text:style-name="Text_20_body">19:30 Evening concert by the Ottersby Silver Band and the Wendle Valley Singers. Tickets for the evening concert are limited to 120. Doors open at 19:00.</text:p>
+   <text:p text:style-name="Text_20_body">All indoor events take place at [[venue]], Mill Lane, Ottersby. Step-free access is through the side door on Tanner's Row.</text:p>
+   <text:p text:style-name="Text_20_body">Organised by the Ottersby Festival Committee. Enquiries to the secretary, Hannelore Prisk, at the post office.</text:p>
+  </office:text>
+ </office:body>
+</office:document>

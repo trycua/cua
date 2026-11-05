@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tallowmere Volunteers · Directory</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Tallowmere Volunteers</h1><p>Coordinator admin · volunteer directory</p></header>
+<main>
+  <div class="tools" role="search">
+    <label for="search">Search</label>
+    <input id="search" type="search" placeholder="Name or email" autocomplete="off">
+    <label for="team-filter">Team</label>
+    <select id="team-filter"></select>
+    <span id="count" aria-live="polite"></span>
+  </div>
+  <table aria-label="Volunteers">
+    <thead><tr><th>Name</th><th>Email</th><th>Team</th><th>Status</th><th>Joined</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <nav aria-label="Pages" class="pager">
+    <button type="button" id="prev">Previous</button>
+    <span id="pages"></span>
+    <button type="button" id="next">Next</button>
+    <span id="page-label"></span>
+  </nav>
+  <p id="notice" role="status"></p>
+</main>
+<div id="backdrop" hidden></div>
+<div id="team-dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="team-title" hidden>
+  <h2 id="team-title">Change team</h2>
+  <p id="team-who"></p>
+  <label for="team-select">New team</label>
+  <select id="team-select"></select>
+  <p class="error" id="team-error" role="alert" hidden></p>
+  <div class="buttons"><button type="button" id="team-cancel">Cancel</button><button type="button" id="team-save" class="primary">Save</button></div>
+</div>
+<div id="deact-dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="deact-title" hidden>
+  <h2 id="deact-title">Deactivate volunteer</h2>
+  <p id="deact-who"></p>
+  <p>They will no longer be offered shifts. You can reactivate them later.</p>
+  <div class="buttons"><button type="button" id="deact-cancel">Cancel</button><button type="button" id="deact-ok" class="danger">Deactivate</button></div>
+</div>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

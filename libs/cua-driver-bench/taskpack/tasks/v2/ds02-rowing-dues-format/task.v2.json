@@ -1,0 +1,17 @@
+{
+  "id": "DS-02",
+  "pack_task": "v2/ds02-rowing-dues-format",
+  "title": "Format a rowing club's dues ledger: frozen bold header, currency amounts, wrapped notes",
+  "category": "documents",
+  "gui_only": true,
+  "apps": [
+    "LibreOffice Calc"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

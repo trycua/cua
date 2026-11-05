@@ -1,0 +1,17 @@
+[
+  {"waitFor": "#phone"},
+  {"fill": ["#phone", "07700 900561"]},
+  {"click": "#ec-toggle"},
+  {"fill": ["#emergency_name", "Wilma Osei-Brandt"]},
+  {"fill": ["#emergency_relation", "Partner"]},
+  {"fill": ["#emergency_phone", "07700 900287"]},
+  {"click": "#save", "after": 500},
+  {"assert": "document.getElementById('status').textContent === 'Saved'"},
+  {"click": "nav a[href='preferences.html']", "after": 1000},
+  {"waitFor": "input[name=pace][value=steady]"},
+  {"click": "input[name=pace][value=steady]"},
+  {"click": "button[aria-label='Sunday hill loop']"},
+  {"select": ["#newsletter", "monthly"]},
+  {"click": "#save", "after": 500},
+  {"assert": "document.getElementById('status').textContent === 'Saved'"}
+]

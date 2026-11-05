@@ -1,0 +1,71 @@
+{
+  "platform": "macos",
+  "descriptor_version": "1",
+  "semantics": {
+    "task_id": "cua.v2.na06-tasting-panel-notes",
+    "task_version": "1.0.0",
+    "brief": "brief.md",
+    "reset": {
+      "setup": [
+        "${python}",
+        "reset/setup.py",
+        "--workspace",
+        "${workspace}",
+        "--apply-app-state"
+      ],
+      "verify": [
+        "${python}",
+        "reset/verify.py",
+        "--workspace",
+        "${workspace}",
+        "--apply-app-state"
+      ]
+    },
+    "evaluate": [
+      "${python}",
+      "evaluator/evaluate.py",
+      "--workspace",
+      "${workspace}",
+      "--artifacts",
+      "${artifacts}",
+      "--result",
+      "${result}",
+      "--agent-exit-code",
+      "${agent_exit_code}"
+    ],
+    "required_apps": [
+      "Notes"
+    ],
+    "export": [
+      "${python}",
+      "reset/export.py",
+      "--workspace",
+      "${workspace}"
+    ]
+  },
+  "workspace_root": "${HOME}/v2-na06",
+  "apps": [
+    {
+      "id": "notes",
+      "kind": "native",
+      "role": "Notes",
+      "command": [
+        "/usr/bin/open",
+        "-a",
+        "Notes"
+      ],
+      "process_names": [
+        "Notes"
+      ],
+      "window": {
+        "title_contains": "Notes",
+        "bounds": {
+          "x": 40,
+          "y": 40,
+          "width": 1200,
+          "height": 820
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+header { background: #3d5a40; color: #fff; padding: 14px 28px; }
+header h1 { margin: 0; font-size: 22px; } header p { margin: 2px 0 0; opacity: .85; }
+main { padding: 18px 28px; display: grid; grid-template-columns: 300px 1fr; gap: 28px; align-items: start; }
+section, form { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+fieldset { border: 0; padding: 0; margin: 0 0 14px; } legend { font-weight: 600; margin-bottom: 6px; }
+.cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.cards label { border: 1px solid #bbb; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.cards input { margin-right: 6px; }
+.date-row { display: flex; gap: 8px; } #date { width: 220px; }
+#calendar { position: absolute; background: #fff; border: 1px solid #999; border-radius: 6px; padding: 8px; z-index: 5; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 34px); gap: 3px; }
+.cal-grid .dow { font-size: 11px; text-align: center; color: #666; }
+.cal-grid button { height: 30px; } .cal-grid button:disabled { color: #bbb; }
+#slots { display: flex; gap: 8px; margin-top: 10px; }
+#slots button[aria-checked="true"] { background: #3d5a40; color: #fff; }
+.stepper { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; } .stepper output { min-width: 18px; text-align: center; font-weight: 600; }
+label { display: block; margin-top: 6px; } label.check { display: flex; gap: 6px; align-items: center; }
+input, textarea { font: inherit; padding: 4px 6px; } .error { color: #a40000; }
+#booking-list li { margin-bottom: 8px; } #confirmation { grid-column: 2; background: #e3f1e0; padding: 10px; border-radius: 6px; }

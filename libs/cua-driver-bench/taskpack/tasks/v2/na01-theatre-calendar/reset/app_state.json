@@ -1,0 +1,39 @@
+{
+  "calendar": "Youth Theatre 2026",
+  "events": [
+    {
+      "summary": "Rehearsal: Act 1",
+      "start": "2026-11-03T18:30",
+      "end": "2026-11-03T20:30",
+      "location": "Orchard Street Studio"
+    },
+    {
+      "summary": "Rehearsal: Act 2",
+      "start": "2026-11-10T18:30",
+      "end": "2026-11-10T20:30",
+      "location": "Orchard Street Studio"
+    },
+    {
+      "summary": "Rehearsal: full run",
+      "start": "2026-11-17T18:30",
+      "end": "2026-11-17T21:00",
+      "location": "Orchard Street Studio"
+    },
+    {
+      "summary": "Costume fitting",
+      "start": "2026-11-21T10:00",
+      "end": "2026-11-21T12:00",
+      "location": "Wardrobe room"
+    },
+    {
+      "summary": "Dress rehearsal",
+      "start": "2026-11-26T18:00",
+      "end": "2026-11-26T21:30",
+      "location": "Gallowfield Arts Centre"
+    }
+  ],
+  "purge": [
+    "Lighting check",
+    "Rehearsal: full run"
+  ]
+}

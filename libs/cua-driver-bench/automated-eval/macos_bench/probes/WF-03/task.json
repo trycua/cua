@@ -1,0 +1,20 @@
+{
+  "id": "WF-03",
+  "title": "Reassign and deactivate volunteers in a paginated admin directory",
+  "group": "V2X",
+  "category": "web_forms",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/wf03-volunteer-directory",
+  "split": "public",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": [
+    "web_forms",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

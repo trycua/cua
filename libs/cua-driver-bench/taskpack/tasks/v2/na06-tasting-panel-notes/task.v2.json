@@ -1,0 +1,17 @@
+{
+  "id": "NA-06",
+  "pack_task": "v2/na06-tasting-panel-notes",
+  "title": "Edit a note and write a new one in Notes",
+  "category": "native_apps",
+  "gui_only": true,
+  "apps": [
+    "Notes"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

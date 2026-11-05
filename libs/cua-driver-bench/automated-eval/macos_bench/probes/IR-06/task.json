@@ -1,0 +1,20 @@
+{
+  "id": "IR-06",
+  "title": "Update a cycling club profile across two pages without losing unsaved edits",
+  "group": "V2X",
+  "category": "interruptions",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/ir06-club-profile-leave-guard",
+  "split": "public",
+  "coding_tools": false,
+  "browser": true,
+  "dimension_tags": [
+    "interruptions",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

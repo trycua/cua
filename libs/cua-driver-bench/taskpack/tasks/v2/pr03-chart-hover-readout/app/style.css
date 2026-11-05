@@ -1,0 +1,15 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #edf0f2; color: #1d2329; }
+header { background: #34505e; color: #fff; padding: 12px 24px; }
+header h1 { margin: 0; font-size: 22px; } header p { margin: 2px 0 0; opacity: .85; }
+main { padding: 14px 24px; }
+section, form { background: #fff; border-radius: 8px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); margin-bottom: 14px; max-width: 1040px; }
+h2 { margin: 0 0 4px; font-size: 17px; } .hint { color: #666; font-size: 13px; margin: 0 0 8px; }
+.chart-wrap { position: relative; width: 1000px; }
+canvas { width: 1000px; height: 360px; display: block; }
+#tooltip { position: absolute; pointer-events: none; background: #1d2329; color: #fff; font-size: 13px; padding: 5px 9px; border-radius: 4px; white-space: nowrap; z-index: 3; }
+#tooltip[hidden] { display: none; }
+.fields { display: flex; gap: 18px; align-items: flex-end; }
+label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+input, select { font: inherit; padding: 4px 6px; } #count { width: 120px; }
+.primary { font: inherit; background: #34505e; color: #fff; border: 0; padding: 6px 16px; border-radius: 5px; cursor: pointer; }
+.error { color: #a40000; } #confirmation { color: #2d6a2d; }

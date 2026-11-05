@@ -1,7 +1,7 @@
 {
   "schema": "cdb-taskset/1",
-  "name": "v2",
-  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: the three multi-app tasks (CDB-G02 to CDB-G04, pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash) run on macOS, Linux and Windows; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run on macOS and Linux. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only).",
+  "name": "v2-42",
+  "description": "Bench v2, 42 tasks: the ten core tasks and 32 pack tasks. `split` is public (in this repository) or heldout (kept out of this repository; listed by id and category only). `os` lists where the task has a launch descriptor today; `cross_os_candidate` marks tasks whose apps also exist on Linux and Windows (libreoffice, browser), so a descriptor for another OS is possible without changing the task.",
   "limits": {
     "timeout_s": 360,
     "max_turns": 45
@@ -283,6 +283,552 @@
           "python3"
         ]
       }
+    },
+    {
+      "id": "MA-01",
+      "category": "multi_app",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ma01-parts-requests-to-sheet",
+      "title": "Log approved parts requests from a makerspace web app into a Calc purchase log",
+      "apps": [
+        "Google Chrome",
+        "LibreOffice Calc"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "libreoffice+browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4501/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "MA-02",
+      "category": "multi_app",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "MA-03",
+      "category": "multi_app",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "MA-04",
+      "category": "multi_app",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ma04-shift-summary-note",
+      "title": "Write a TextEdit note of unfilled food-bank shifts found in a filtered web rota",
+      "apps": [
+        "Google Chrome",
+        "TextEdit"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [
+          "TextEdit"
+        ],
+        "ready_urls": [
+          "http://127.0.0.1:4504/healthz"
+        ],
+        "evaluator_tools": [
+          "python3",
+          "/usr/bin/osascript"
+        ]
+      }
+    },
+    {
+      "id": "WF-01",
+      "category": "web_forms",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/wf01-workshop-booking",
+      "title": "Book a tool-training session on a community workshop's booking page",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4201/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "WF-02",
+      "category": "web_forms",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "WF-03",
+      "category": "web_forms",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/wf03-volunteer-directory",
+      "title": "Reassign and deactivate volunteers in a paginated admin directory",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4203/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "WF-04",
+      "category": "web_forms",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/wf04-seed-delivery-address",
+      "title": "Fill in delivery and billing addresses for a seed co-operative order",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4204/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "WF-05",
+      "category": "web_forms",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "WF-06",
+      "category": "web_forms",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/wf06-newsletter-editor",
+      "title": "Save a formatted draft in a neighbourhood newsletter editor without publishing it",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4206/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "WF-07",
+      "category": "web_forms",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "WF-08",
+      "category": "web_forms",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "NA-01",
+      "category": "native_apps",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/na01-theatre-calendar",
+      "title": "Reschedule a rehearsal and add a lighting check with an alert in Calendar",
+      "apps": [
+        "Calendar"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [
+          "Calendar"
+        ],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3",
+          "/usr/bin/osascript"
+        ]
+      }
+    },
+    {
+      "id": "NA-02",
+      "category": "native_apps",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "NA-03",
+      "category": "native_apps",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/na03-seed-packet-tags",
+      "title": "Tag files by rule in Finder",
+      "apps": [
+        "Finder"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [
+          "Finder"
+        ],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3",
+          "/usr/bin/osascript",
+          "/usr/bin/xattr"
+        ]
+      }
+    },
+    {
+      "id": "NA-04",
+      "category": "native_apps",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/na04-committee-get-info",
+      "title": "Lock a file, add a comment and rename a file through Finder's Get Info",
+      "apps": [
+        "Finder"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [
+          "Finder"
+        ],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3",
+          "/usr/bin/osascript",
+          "/usr/bin/xattr"
+        ]
+      }
+    },
+    {
+      "id": "NA-05",
+      "category": "native_apps",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "NA-06",
+      "category": "native_apps",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/na06-tasting-panel-notes",
+      "title": "Edit a note and write a new one in Notes",
+      "apps": [
+        "Notes"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [
+          "Notes"
+        ],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3",
+          "/usr/bin/osascript"
+        ]
+      }
+    },
+    {
+      "id": "NA-07",
+      "category": "native_apps",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "DS-01",
+      "category": "documents",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ds01-flour-order-lookup",
+      "title": "Look up flour rates and cost each order line in a co-operative's order sheet",
+      "apps": [
+        "LibreOffice Calc"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "libreoffice",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "DS-02",
+      "category": "documents",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ds02-rowing-dues-format",
+      "title": "Format a rowing club's dues ledger: frozen bold header, currency amounts, wrapped notes",
+      "apps": [
+        "LibreOffice Calc"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "libreoffice",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "DS-03",
+      "category": "documents",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "DS-04",
+      "category": "documents",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ds04-lichen-guide-headings",
+      "title": "Apply heading styles and insert a table of contents in a lichen field guide",
+      "apps": [
+        "LibreOffice Writer"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "libreoffice",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "DS-05",
+      "category": "documents",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ds05-festival-program-notes",
+      "title": "Fill venue placeholders, add a footnote and bold a phrase in a festival programme",
+      "apps": [
+        "LibreOffice Writer"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "libreoffice",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "DS-06",
+      "category": "documents",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "DS-07",
+      "category": "documents",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "PR-01",
+      "category": "precision",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "PR-02",
+      "category": "precision",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "PR-03",
+      "category": "precision",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/pr03-chart-hover-readout",
+      "title": "Read exact values from a canvas bar chart's hover tooltip and report the peak week",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4303/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-05",
+      "category": "interruptions",
+      "split": "heldout",
+      "set": "v2-new"
+    },
+    {
+      "id": "IR-06",
+      "category": "interruptions",
+      "split": "public",
+      "set": "v2-new",
+      "pack_task": "v2/ir06-club-profile-leave-guard",
+      "title": "Update a cycling club profile across two pages without losing unsaved edits",
+      "apps": [
+        "Google Chrome"
+      ],
+      "os": [
+        "macos"
+      ],
+      "cross_os_candidate": "browser",
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [
+          "http://127.0.0.1:4406/healthz"
+        ],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-07",
+      "category": "interruptions",
+      "split": "heldout",
+      "set": "v2-new"
     }
   ]
 }

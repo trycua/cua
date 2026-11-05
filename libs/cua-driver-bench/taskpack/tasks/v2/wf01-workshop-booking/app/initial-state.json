@@ -1,0 +1,14 @@
+{
+  "bookings": [
+    {
+      "id": "B-0417",
+      "course": "pottery",
+      "date": "2026-11-03",
+      "slot": "18:30",
+      "participants": 1,
+      "member": "FH-30417",
+      "access": false,
+      "access_note": ""
+    }
+  ]
+}

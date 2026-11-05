@@ -1,0 +1,15 @@
+[
+  {"waitFor": "#list li"},
+  {"select": ["#status-filter", "Approved"]},
+  {"click": "button[aria-label='Details for PR-2039']"},
+  {"assert": "document.getElementById('details-PR-2039').textContent.includes('Approved quantity4')"},
+  {"click": "button.mark[data-id='PR-2035']"},
+  {"click": "#dialog-ok", "after": 300},
+  {"click": "button.mark[data-id='PR-2037']"},
+  {"click": "#dialog-ok", "after": 300},
+  {"click": "button.mark[data-id='PR-2039']"},
+  {"click": "#dialog-ok", "after": 300},
+  {"click": "button.mark[data-id='PR-2041']"},
+  {"click": "#dialog-ok", "after": 300},
+  {"assert": "document.querySelectorAll('button.mark').length === 0"}
+]

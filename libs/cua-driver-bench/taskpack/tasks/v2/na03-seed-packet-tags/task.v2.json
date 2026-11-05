@@ -1,0 +1,17 @@
+{
+  "id": "NA-03",
+  "pack_task": "v2/na03-seed-packet-tags",
+  "title": "Tag files by rule in Finder",
+  "category": "native_apps",
+  "gui_only": true,
+  "apps": [
+    "Finder"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "written": "2026-10-11",
+  "author": "Cua, agent-authored, reviewed",
+  "provenance": "original, written from scratch"
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wrenfield Makerspace Requests · Parts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Wrenfield Makerspace</h1><p>Parts requests from members</p></header>
+<main>
+  <div class="toolbar">
+    <label for="status-filter">Status</label>
+    <select id="status-filter">
+      <option value="all">All requests</option>
+      <option value="Pending">Pending</option>
+      <option value="Approved">Approved</option>
+      <option value="Declined">Declined</option>
+    </select>
+    <label for="sort">Order</label>
+    <select id="sort">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+    </select>
+    <span id="count" aria-live="polite"></span>
+  </div>
+  <ul id="list" aria-label="Parts requests"></ul>
+  <nav class="pager" aria-label="Pages">
+    <button type="button" id="prev">Previous page</button>
+    <span id="page-label" aria-live="polite"></span>
+    <button type="button" id="next">Next page</button>
+  </nav>
+  <p id="flash" role="status" hidden></p>
+</main>
+<div id="backdrop" hidden>
+  <div id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-text">
+    <p id="dialog-text"></p>
+    <div class="actions">
+      <button type="button" id="dialog-cancel">Cancel</button>
+      <button type="button" id="dialog-ok">Mark as logged</button>
+    </div>
+  </div>
+</div>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Brackenmoor Food Bank Rota · Next week</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Brackenmoor Food Bank Rota</h1><p>Volunteer shifts for Monday 12 to Saturday 17 October 2026</p></header>
+<main>
+  <div class="filters" role="group" aria-label="Filters">
+    <label for="day">Day</label>
+    <select id="day"><option value="all">All days</option></select>
+    <label for="role">Role</label>
+    <select id="role"><option value="all">All roles</option></select>
+    <span id="count" aria-live="polite"></span>
+  </div>
+  <table>
+    <thead><tr><th scope="col">Role</th><th scope="col">Day</th><th scope="col">Time</th><th scope="col">Volunteer</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <nav class="pager" aria-label="Pages">
+    <button type="button" id="prev">Previous</button>
+    <span id="page-label" aria-live="polite"></span>
+    <button type="button" id="next">Next</button>
+  </nav>
+  <p id="flash" role="status" hidden></p>
+</main>
+<div id="backdrop" hidden>
+  <form id="assign" role="dialog" aria-modal="true" aria-labelledby="assign-h" novalidate>
+    <h2 id="assign-h">Assign a volunteer</h2>
+    <p id="assign-what"></p>
+    <label for="assign-name">Volunteer name</label>
+    <input id="assign-name" autocomplete="off">
+    <p class="error" id="assign-error" role="alert" hidden>Enter the volunteer's name.</p>
+    <div class="actions">
+      <button type="button" id="assign-cancel">Cancel</button>
+      <button type="submit" id="assign-ok">Assign</button>
+    </div>
+  </form>
+</div>
+<script src="/_kit/kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

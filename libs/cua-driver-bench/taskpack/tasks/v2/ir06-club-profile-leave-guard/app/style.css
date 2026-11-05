@@ -1,0 +1,18 @@
+body { font: 15px/1.45 -apple-system, "Helvetica Neue", sans-serif; margin: 0; background: #f3efe9; color: #222; }
+header { background: #8a4b1f; color: #fff; padding: 12px 28px; display: flex; align-items: center; gap: 40px; }
+header h1 { margin: 0; font-size: 22px; }
+nav { display: flex; gap: 6px; } nav a { color: #fff; text-decoration: none; padding: 6px 12px; border-radius: 6px; }
+nav a[aria-current="page"] { background: rgba(255,255,255,.22); font-weight: 600; }
+main { padding: 18px 28px; max-width: 720px; }
+form { background: #fff; border-radius: 8px; padding: 14px 22px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+fieldset { border: 0; padding: 0; margin: 12px 0; } legend { font-weight: 600; margin-bottom: 6px; }
+label { display: block; margin-top: 10px; font-weight: 500; } label.check { display: flex; gap: 6px; align-items: center; font-weight: 400; }
+input, select { font: inherit; padding: 4px 6px; } input:not([type=checkbox]):not([type=radio]), select { width: 320px; }
+.radios label { display: flex; gap: 6px; align-items: center; margin-top: 4px; font-weight: 400; }
+.switches { display: grid; gap: 8px; }
+.switches button { display: flex; justify-content: space-between; align-items: center; width: 360px; padding: 6px 10px; border: 1px solid #bbb; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+.switches button::after { content: "Off"; font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #ddd; }
+.switches button[aria-checked="true"]::after { content: "On"; background: #8a4b1f; color: #fff; }
+.muted { color: #666; font-size: 13px; margin: 0 0 6px; } h3 { margin: 18px 0 4px; font-size: 16px; }
+.actions { margin-top: 16px; display: flex; gap: 12px; align-items: center; } #status { color: #2d6a2d; }
+.error { color: #a40000; }

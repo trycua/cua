@@ -116,13 +116,14 @@ jobs:
     name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: reuse
-    # Windows clippy runs on every pull request: Windows-only compile errors
-    # used to surface only on release PRs.
+    # Windows and macOS clippy run on every pull request: platform-only compile
+    # errors (cfg gaps) used to surface only on release PRs or after merging to
+    # main. Standard runners are free here; this job is lint only, no tests.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest","macos-26","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua

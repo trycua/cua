@@ -682,11 +682,7 @@ impl Job {
     /// updates it). In a Space the caller was given, an agent that is not a
     /// member yet is the owner's to add.
     fn add_agent(&self, space: &str, existing: bool) -> Result<()> {
-        let rec = self
-            .p
-            .members_of(space)?
-            .into_iter()
-            .find(|r| r.handle() == self.agent.handle);
+        let rec = self.p.member_named(space, self.agent.handle)?;
         if rec.is_some() && existing {
             return Ok(());
         }

@@ -79,7 +79,7 @@ jobs:
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
       # Pull requests from our agents must carry a `local-ci` commit status on the head commit, set by
-      # `bin/ci --signoff` (or our Mac CI runner) after a green local `bin/ci`. An agent PR is one
+      # `bin/ci --signoff` (or our Mac CI runner) after a green `bin/ci --quick`. An agent PR is one
       # opened by the Cua Agents GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an
       # `agent/` branch of this repository. Community PRs are not asked for it.
       # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
@@ -120,7 +120,7 @@ jobs:
           state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
           echo "local-ci on ${sha:0:10}: ${state:-not set yet}"
           if [[ "$state" == failure || "$state" == error ]]; then
-            msg="local-ci reported $state on ${sha:0:10}. Fix the failing checks, push, and rerun bin/ci."
+            msg="local-ci reported $state on ${sha:0:10}. Fix the failing checks, push, and rerun bin/ci --quick."
             if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then echo "::error title=local-ci failed::$msg"; exit 1; fi
             echo "::warning title=local-ci failed (report-only)::$msg"
           fi
@@ -255,7 +255,7 @@ jobs:
             [[ "$state" == failure || "$state" == error ]] && break
             (( i < tries )) && sleep 60
           done
-          msg="Run bin/ci and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          msg="Quick sign-off required: run bin/ci --quick --signoff on this head commit (or ci-remote-sweep). The full bin/ci is optional. (local-ci on ${sha:0:10}: ${state:-not set})"
           if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
             echo "::error title=local-ci missing::$msg"
             exit 1

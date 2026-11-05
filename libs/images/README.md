@@ -259,8 +259,8 @@ Nobody dispatches the image builds after a cua-spacesd release:
 
 | Value | Behaviour |
 |---|---|
-| `local` (default) | Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
-| `release` | Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
 | `none` | No driver. The supervisor program idles. |
 
 The driver runs inside the desktop session, bound to `0.0.0.0:$CUA_ENV_PORT` (3211, QUIC media on 3212). A non-loopback bind needs a token, so a missing token is fatal rather than anonymous.
@@ -300,8 +300,8 @@ Requirements for the pod spec (trycua/cloud#7885):
 
 | Value | Behaviour |
 |---|---|
-| `local` (default) | Copies `linux/dist/<arch>/cua`. `linux/build-cua-cli-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`; `CUA_CLI_BIN=<path>` stages a binary you already built (CI hands over the one it built from the same commit). |
-| `release` | Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` of the `cua-sdk-v<version>` release. `CUA_CLI_VERSION` must be pinned (never `latest`, cua-sdk 0.10.1 or later, the first with child Spaces); the archive is checked against `CUA_CLI_SHA256` or the release's `checksums.txt`. |
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua`. `linux/build-cua-cli-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`; `CUA_CLI_BIN=<path>` stages a binary you already built (CI hands over the one it built from the same commit). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` of the `cua-sdk-v<version>` release. `CUA_CLI_VERSION` must be pinned (never `latest`, cua-sdk 0.10.1 or later, the first with child Spaces); the archive is checked against `CUA_CLI_SHA256` or the release's `checksums.txt`. |
 | `none` | No CLI. |
 
 ```bash

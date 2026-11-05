@@ -46,8 +46,9 @@
 # CUA_CLI_SOURCE (the `cua` CLI an agent in the Space uses to make child Spaces)
 #   local    copy linux/dist/<TARGETARCH>/cua (linux/build-cua-cli-linux.sh builds it;
 #            CI hands over the CLI it built from the same commit). Missing = build error.
-#   release  download cua-cli-<version>-linux-<x64|arm64>.tar.gz of the cua-sdk-v<version>
-#            release; CUA_CLI_VERSION must be pinned (never `latest`) and the archive is
+#            What the publish workflow says (release.json cli_source=local).
+#   release  the default, at CUA_CLI_DEFAULT_VERSION (0.10.1, sha256 pinned here): download cua-cli-<version>-linux-<x64|arm64>.tar.gz of the cua-sdk-v<version>
+#            release; CUA_CLI_VERSION, when given, must be pinned (never `latest`) and the archive is
 #            checked against CUA_CLI_SHA256 or the release's checksums.txt.
 #   none     no CLI.
 #
@@ -76,6 +77,12 @@ ARG CUA_CLI_SOURCE=
 ARG CUA_CLI_VERSION=
 ARG CUA_CLI_RELEASE_URL=
 ARG CUA_CLI_SHA256=
+# The release a build without a CLI of its own takes (ad-hoc builds, e2e and nightly jobs), pinned with
+# the sha256 of its archives (checksums.txt of cua-sdk-v0.10.1). The image publish workflow says
+# CUA_CLI_SOURCE=local instead (the CLI built from the same commit).
+ARG CUA_CLI_DEFAULT_VERSION=0.10.1
+ARG CUA_CLI_DEFAULT_SHA256_AMD64=ea420b0ac21c524b09507c576cf9c55a2177ce3c84169dcb5e2d1792f18c2929
+ARG CUA_CLI_DEFAULT_SHA256_ARM64=fd6e24accb572350a433935a67e1b5a21302786ef8bf1cb3b5237d611822c0ac
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
 
 # Desktop, display, a11y and test tooling. No snaps anywhere (the full tier's
@@ -255,7 +262,7 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
 RUN --mount=type=bind,source=linux/dist,target=/dist \
     set -eu; \
     bin=/usr/local/bin/cua; \
-    CUA_CLI_SOURCE="${CUA_CLI_SOURCE:-local}"; \
+    CUA_CLI_SOURCE="${CUA_CLI_SOURCE:-release}"; \
     default_url='https://github.com/trycua/cua/releases/download/cua-sdk-v{version}/cua-cli-{version}-linux-{arch}.tar.gz'; \
     CUA_CLI_RELEASE_URL="${CUA_CLI_RELEASE_URL:-$default_url}"; \
     case "$CUA_CLI_SOURCE" in \
@@ -265,11 +272,15 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
         install -m 0755 "$src" "$bin" ;; \
       release) \
         case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "no cua CLI release for $TARGETARCH" >&2; exit 1 ;; esac; \
+        CUA_CLI_VERSION="${CUA_CLI_VERSION:-$CUA_CLI_DEFAULT_VERSION}"; \
         CUA_CLI_VERSION="${CUA_CLI_VERSION#cua-sdk-v}"; CUA_CLI_VERSION="${CUA_CLI_VERSION#v}"; \
         case "$CUA_CLI_VERSION" in ""|latest) echo "CUA_CLI_SOURCE=release needs a pinned CUA_CLI_VERSION (not latest)" >&2; exit 1 ;; esac; \
         url="$(echo "$CUA_CLI_RELEASE_URL" | sed "s/{version}/$CUA_CLI_VERSION/g; s/{arch}/$arch/g")"; \
         echo "fetching $url"; \
         curl -fsSL --retry 5 -o /tmp/cua-cli.tar.gz "$url"; \
+        if [ -z "$CUA_CLI_SHA256" ] && [ "$CUA_CLI_VERSION" = "$CUA_CLI_DEFAULT_VERSION" ]; then \
+          case "$TARGETARCH" in amd64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_AMD64" ;; arm64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_ARM64" ;; esac; \
+        fi; \
         if [ -z "$CUA_CLI_SHA256" ]; then \
           sums="https://github.com/trycua/cua/releases/download/cua-sdk-v$CUA_CLI_VERSION/checksums.txt"; \
           CUA_CLI_SHA256="$(curl -fsSL --retry 5 "$sums" | awk -v f="$(basename "$url")" '$2 == f || $2 == "*" f { print $1 }')"; \

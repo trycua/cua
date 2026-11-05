@@ -211,8 +211,25 @@ Removing a computer (`DELETE /v1/machines/{id}`) keeps the Spaces it provided
 connections are refused (403, "its computer was removed from the account")
 until the computer registers again with the same id.
 `DELETE /v1/machines/{id}?spaces=delete` (owner) forgets them too and cuts
-their connections; deleting their files is the client's job, through the
-computer, before it removes it.
+their connections. A computer can be removed while it is offline, so the
+relay first keeps a pending deletion for it (the Spaces' ids and names, who
+asked, the computer's token hash), and the computer deletes them, files
+included, the next time it dials the relay:
+
+- `GET /v1/machines/{id}/pending-deletions` lists them (`{computer, spaces:
+  [{id, name}], requested_at, expires_at}`; empty `spaces` when none).
+- `POST /v1/machines/{id}/pending-deletions/{space}/ack` marks one deleted
+  (idempotent); the last ack clears the record.
+- Only that computer's machine token is accepted: the one it had when it was
+  removed, or its new one if it was added again with the same id. Another
+  computer's token or an account token gets 403, an unknown token 401.
+- Adding the computer again keeps the record (deleted means deleted), and a
+  pending Space id cannot be registered again (410) until it is acked.
+- A record expires 90 days after the (latest) request, so a computer that
+  never comes back does not pin it forever; erasing the account drops it.
+
+See `src/pending_deletions.rs`; the computer side is
+`cua_spacesd_server::pending_deletions`.
 
 Each account has a default Space and a fallback order, so the apps, CLI,
 phone and agents agree where to work: `GET`/`PUT /v1/spaces/settings` and
@@ -557,6 +574,7 @@ Everything the relay keeps lives next to the state file, on one volume:
 | Pools | `<state>.pool/<account>/` | `log.jsonl` and `terminal.txt` appended (fsynced) per append; `lease.json`, `keys.json`, `snapshot.bin` replaced whole. A failed append is cut back (no torn line) and answered `500 storage`. |
 | Pairing codes | `<state>.pairing.json` | Compact JSON, rewritten (streamed) per mint, spend or revoke. A failed write refuses the mint or spend (`500`); the code stays as it was. |
 | Space settings | `<state>.spaces.json` | Compact JSON of each account's default Space and fallback, rewritten (streamed) per change. A failed write refuses the change (`500`). |
+| Pending deletions | `<state>.pending-deletions.json` | Compact JSON of removed computers' Spaces still to delete on them, rewritten (streamed) per removal and ack; records older than 90 days are dropped. A failed write refuses the removal (`500`, nothing removed). |
 | Grants | `<state>.grants.json` | Compact JSON of who reached each machine and whose access was revoked, rewritten (streamed) on a change. A failed write is not rolled back (a revoke holds in memory, so old tickets stay refused) and is retried with the next authorization. |
 
 Every replaced file goes through a temp file (`.<name>.<uuid>.tmp`); startup

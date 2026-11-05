@@ -2156,9 +2156,14 @@ pub async fn remove_machine(
         String::new()
     } else if delete_spaces {
         format!(
-            " Its {} Space{} and their files will be deleted (the files only if the computer answers).",
-            children.len(),
-            if children.len() == 1 { "" } else { "s" }
+            " Its {} leave{} your account now, and the computer deletes {}, files included, the next time it comes online.",
+            if children.len() == 1 {
+                "Space".to_string()
+            } else {
+                format!("{} Spaces", children.len())
+            },
+            if children.len() == 1 { "s" } else { "" },
+            if children.len() == 1 { "it" } else { "them" }
         )
     } else {
         format!(

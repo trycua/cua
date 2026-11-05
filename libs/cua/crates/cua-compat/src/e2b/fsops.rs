@@ -616,11 +616,22 @@ mod native {
                 "error renaming: rename {src} {dst}: file exists"
             )));
         }
+        // The destination's new parents go to `user` before the move, so
+        // what is moved keeps its owner.
         let parent = dst.rsplit_once('/').map_or("", |(p, _)| p);
-        let from = match parent {
-            "" => None,
-            p => created_for(c, driver, user, p).await,
-        };
+        if !parent.is_empty()
+            && let Some(from) = created_for(c, driver, user, parent).await
+        {
+            c.filesystem()
+                .make_dir(pb::MakeDirRequest {
+                    path: parent.to_string(),
+                    parents: true,
+                    mode: 0,
+                    run_as: root(driver),
+                })
+                .await?;
+            crate::guestfs::chown_created(c, user, &from).await;
+        }
         c.filesystem()
             .r#move(pb::MoveRequest {
                 source: src.to_string(),
@@ -639,9 +650,6 @@ mod native {
                     s.into()
                 }
             })?;
-        if let Some(from) = from {
-            crate::guestfs::chown_created(c, user, &from).await;
-        }
         stat(c, driver, dst).await
     }
 }

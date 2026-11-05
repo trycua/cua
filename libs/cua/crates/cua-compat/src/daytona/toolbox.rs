@@ -1881,7 +1881,9 @@ async fn create_folder(
             Err(e) => e,
         };
     }
-    let from = if crate::guest::without_sudo(&driver) && user != "root" {
+    // An agent that switches users makes them as `user`; one that cannot
+    // makes them as itself, and they are given to `user` after.
+    let from = if driver == crate::guest::UNNAMED && user != "root" {
         crate::guestfs::first_missing(&c, &driver, &path).await
     } else {
         None

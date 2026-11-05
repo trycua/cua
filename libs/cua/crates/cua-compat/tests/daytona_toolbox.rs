@@ -265,6 +265,4 @@ async fn file_calls_name_the_sandbox_user_to_an_agent_that_switches_users() {
     assert_eq!(o.run_as_of("Stat", "/tmp/m2"), ["alice"]);
     assert_eq!(o.run_as_of("Move", "/tmp/m1"), ["alice"]);
     assert_eq!(o.run_as_of("Remove", "/tmp/m2"), ["alice"]);
-    // What the new folder must be given to `alice` is looked up as root.
-    assert_eq!(o.run_as_of("Stat", "/tmp/new"), ["root"]);
 }

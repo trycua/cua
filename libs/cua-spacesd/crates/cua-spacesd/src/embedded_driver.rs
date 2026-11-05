@@ -197,6 +197,8 @@ impl EmbeddedDriver {
             inherit_stderr: true,
             // The child draws coding agents' cursors (see the module docs).
             no_overlay: false,
+            // Its stderr goes to cua-spacesd's log (inherit_stderr).
+            capture_stderr: false,
         })
         .map_err(|e| e.to_string())?;
         Ok(Arc::new(Self {

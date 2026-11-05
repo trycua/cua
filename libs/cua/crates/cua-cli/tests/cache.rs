@@ -222,6 +222,13 @@ async fn orphaned_ephemeral_sandboxes_are_reaped_on_the_next_cli_run() {
 
 #[tokio::test]
 async fn low_disk_guard_fails_typed_with_a_prune_hint() {
+    // #6323: a Mac that cannot run virtual machines (GitHub's macOS
+    // runners are VMs themselves) refuses a VM create before the disk
+    // guard, so there is nothing to test here.
+    if cua_vmm::host::mac_virtualization_supported() == Some(false) {
+        eprintln!("skipped: this Mac cannot run virtual machines");
+        return;
+    }
     let mut h = home();
     h.set("CUA_DISK_FAKE_AVAILABLE", "1G");
     // #5755: on Windows a VM create is refused up front when QEMU is not

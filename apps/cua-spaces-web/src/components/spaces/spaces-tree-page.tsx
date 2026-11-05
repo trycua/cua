@@ -18,7 +18,7 @@ import { Menu, type MenuItem } from "@/components/ui/menu";
 import { toast, toastError } from "@/components/ui/toast";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { plural } from "@/lib/plural";
-import { treeSummary, type TreeNode } from "@/lib/spaces-tree";
+import { foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
 import { cn } from "@/lib/utils";
 
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
@@ -81,6 +81,8 @@ export function SpacesTreePage() {
   const [editing, setEditing] = useState<{ key: string; name: string } | null>(null);
   const [removing, setRemoving] = useState<TreeNode | null>(null);
   const [deleting, setDeleting] = useState<TreeNode | null>(null);
+  // Offline computers with nothing on them sit folded in one "N offline" row until it's opened.
+  const [showOffline, setShowOffline] = useState(false);
   // A click on a name waits out the double-click time before opening (see clickName below).
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClick = () => {
@@ -245,6 +247,26 @@ export function SpacesTreePage() {
   };
 
   const single = tree.computers === 1 && tree.spaces === 0;
+  const { shown, folded } = foldOffline(tree.roots);
+  const branch = (r: TreeNode) => [rowFor(r, 0), ...(collapsed.has(r.key) ? [] : r.children.map((c) => rowFor(c, 1)))];
+  const offlineRow =
+    folded.length > 0 ? (
+      <div key="offline" role="row" data-tree-offline-fold="" className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px] text-muted-foreground")}>
+        <div role="cell" className="col-span-5 flex min-w-0 items-center gap-2.5">
+          <button
+            type="button"
+            aria-expanded={showOffline}
+            onClick={() => setShowOffline((v) => !v)}
+            className="-ml-5 flex min-w-0 items-center gap-2.5 text-left outline-none hover:text-foreground focus-visible:underline"
+            data-tree-offline-toggle=""
+          >
+            <ChevronRightIcon className={cn("size-3.5 shrink-0 transition-transform", showOffline && "rotate-90")} />
+            <span className="shrink-0 font-medium text-foreground">{folded.length} offline</span>
+            {showOffline ? null : <span className="min-w-0 truncate">{folded.map((n) => n.name).join(", ")}</span>}
+          </button>
+        </div>
+      </div>
+    ) : null;
   return (
     <Page>
       <PageHeader title="Spaces" description={editing ? "Double-click a name, or pick Rename from its menu." : treeSummary(tree)} actions={addButton} />
@@ -256,7 +278,11 @@ export function SpacesTreePage() {
           <div role="columnheader">Agent tasks</div>
           <div role="columnheader" aria-label="Actions" />
         </div>
-        <GroupedSection role="rowgroup">{tree.roots.flatMap((r) => [rowFor(r, 0), ...(collapsed.has(r.key) ? [] : r.children.map((c) => rowFor(c, 1)))])}</GroupedSection>
+        <GroupedSection role="rowgroup">
+          {shown.flatMap(branch)}
+          {offlineRow}
+          {showOffline ? folded.map((r) => rowFor(r, 0)) : null}
+        </GroupedSection>
       </div>
       {editing ? <p className="mt-4 text-[13px] text-muted-foreground">{RENAME_NOTE}</p> : null}
       {single ? (

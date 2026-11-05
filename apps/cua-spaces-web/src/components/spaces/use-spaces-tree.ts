@@ -31,7 +31,7 @@ export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS
   const on = useSpacesTree();
   const { data: spaces, listStatus } = useSpaces();
   const { data: machines, refresh: refreshMachines } = useMachines();
-  // The tree is always on screen, so nothing else asks for the computers again: without this a computer that went
+  // The sidebar counts the tree on every page, so nothing else asks for the computers again: without this a computer that went
   // offline keeps its green dot (and "Online, Default") while Home already says it is offline.
   useEffect(() => {
     if (!on) return;

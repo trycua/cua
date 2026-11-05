@@ -227,6 +227,23 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
   };
 }
 
+/** Fewer offline computers than this stay in the list as they are. */
+export const OFFLINE_FOLD_MIN = 2;
+
+/**
+ * The Spaces page's top rows, with idle offline computers kept apart: an
+ * offline computer with no Spaces on it that isn't This Mac or the default
+ * folds into one "N offline" row at the end, so an account with many old
+ * computers still reads at a glance. Fewer than `OFFLINE_FOLD_MIN` fold
+ * into nothing.
+ */
+export function foldOffline(roots: readonly TreeNode[]): { shown: TreeNode[]; folded: TreeNode[] } {
+  const idle = (n: TreeNode) => n.kind === "computer" && !n.online && !n.current && !n.isDefault && n.children.length === 0;
+  const folded = roots.filter(idle);
+  if (folded.length < OFFLINE_FOLD_MIN) return { shown: [...roots], folded: [] };
+  return { shown: roots.filter((n) => !idle(n)), folded };
+}
+
 /** Every row, depth first. */
 export function treeRows(tree: Pick<SpacesTree, "roots">): TreeNode[] {
   return tree.roots.flatMap((r) => [r, ...r.children]);

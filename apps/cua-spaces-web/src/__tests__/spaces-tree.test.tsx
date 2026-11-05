@@ -3,8 +3,8 @@
 
 // Spaces as a tree and a default Space (CUA-3413, Labs `spaces_tree`) on the
 // real routes and the wasm core: off, the app is as it was; on, Machines
-// leaves the nav and the sidebar and the Spaces page list each computer with
-// the Spaces made on it; rename by double-click; Remove names each Space and
+// leaves the nav, the sidebar keeps one Spaces item, and the Spaces page
+// lists each computer with the Spaces made on it; rename by double-click; Remove names each Space and
 // deletes them only with the box ticked; Home starts on the default Space,
 // says why when it falls back, and never makes a computer by itself.
 
@@ -44,13 +44,15 @@ const found = (s: string) =>
   });
 type Call = [string, Record<string, unknown>];
 
-/** The demo host with the Linux box sharing its desktop; `offline` machines are offline; every change recorded. */
-function host(calls: Call[], opts: { offline?: string[]; resolved?: DefaultSpace } = {}): TestHost {
+/** The demo host with the Linux box sharing its desktop; `offline` machines are offline; `extra` machines join the
+ * account; every change recorded. */
+function host(calls: Call[], opts: { offline?: string[]; resolved?: DefaultSpace; extra?: MachineRow[] } = {}): TestHost {
   return {
     failsCreates: false,
     listsGhost: false,
     demo: { onboarded: true, desktops: true },
-    answer: (op, out) => (op === "machines.list" ? (out as MachineRow[]).map((m) => (opts.offline?.includes(m.id) ? { ...m, online: false } : m)) : out),
+    answer: (op, out) =>
+      op === "machines.list" ? [...(out as MachineRow[]), ...(opts.extra ?? [])].map((m) => (opts.offline?.includes(m.id) ? { ...m, online: false } : m)) : out,
     intercept: (op, args) => {
       if (op === "spaces.rename" || op === "machines.rename" || op === "machines.remove" || op === "spaces.delete" || op === "spaces.setSettings" || op === "spaces.create") {
         calls.push([op, args as Record<string, unknown>]);
@@ -86,7 +88,7 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     expect(q("[data-spaces-tree]")).toBeNull();
   });
 
-  it("on: Machines leaves the nav, and each computer lists the Spaces made on it, This Mac first", { timeout: 30000 }, async () => {
+  it("on: Machines leaves the nav, the sidebar keeps one Spaces item, and the page lists each computer with its Spaces, This Mac first", { timeout: 30000 }, async () => {
     on();
     const { router } = await mountApp("/spaces", host([]));
     await router.load();
@@ -96,17 +98,19 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     const names = qa("[data-tree-kind=computer] [data-tree-name]").map((e) => e.textContent);
     expect(names[0]).toBe("This Mac");
     expect(names).toContain("Linux box");
-    // The Linux box's Spaces sit under it, in the sidebar too.
+    // The Linux box's Spaces sit under it on the page.
     const rows = qa("[data-tree-row]").map((r) => r.getAttribute("data-tree-row"));
     expect(rows.indexOf("relay:linux-box/ubuntu-build")).toBeGreaterThan(rows.indexOf("relay:linux-box"));
-    expect(q('[data-sidebar-tree-row="relay:linux-box/ubuntu-build"]')).not.toBeNull();
+    // The sidebar has no tree: one Spaces item, counting the computers and Spaces the page lists.
+    const sidebar = q("aside[aria-label=Sidebar]")!;
+    expect(sidebar.querySelector("[data-sidebar-tree], [data-tree-row], [data-tree-default]")).toBeNull();
+    expect(sidebar.textContent).not.toContain("Linux box");
+    await waitFor(() => expect(within(sidebar).getByRole("link", { name: /^Spaces/ }).textContent).toContain(String(rows.length)));
     // The first computer that isn't this Mac is the default until one is set.
     expect(q('[data-tree-status="relay:mac-mini"]')?.textContent).toMatch(/, Default$/);
-    expect(q("[data-sidebar-tree] [data-tree-default]")).not.toBeNull();
-    // Folding a computer hides its Spaces in both lists.
+    // Folding a computer hides its Spaces.
     fireEvent.click(q('[data-tree-fold="relay:linux-box"]')!);
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();
-    expect(q('[data-sidebar-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();
     // Machines' page still opens.
     await act(() => router.navigate({ to: "/machines" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
@@ -118,6 +122,22 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
     await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')?.hasAttribute("data-dim")).toBe(true);
     expect(document.body.textContent).toContain("Linux box is offline, so the 2 Spaces on it are too. They come back when it does.");
+  });
+
+  it("folds offline computers with no Spaces on them into one \"N offline\" row that opens", { timeout: 30000 }, async () => {
+    on();
+    const old = (n: number): MachineRow => ({ id: `old-${n}`, name: `Old box ${n}`, via: "relay", online: false, os: "linux", limits: [] });
+    await mountApp("/spaces", host([], { extra: [old(1), old(2), old(3)] }));
+    const fold = await found("[data-tree-offline-fold]");
+    expect(fold.textContent).toMatch(/^\d+ offline/);
+    expect(fold.textContent).toContain("Old box 1, Old box 2, Old box 3");
+    expect(qa("[data-tree-name]").map((e) => e.textContent)).not.toContain("Old box 1");
+    // The computers with Spaces stay in the list above it.
+    expect(q('[data-tree-row="relay:linux-box"]')).not.toBeNull();
+    fireEvent.click(q("[data-tree-offline-toggle]")!);
+    await waitFor(() => expect(qa("[data-tree-name]").map((e) => e.textContent)).toContain("Old box 1"));
+    // Each one keeps its row menu once shown.
+    expect(qa("[data-tree-menu]").length).toBe(qa("[data-tree-row]").length);
   });
 
   it("renames a Space by double-clicking its name: Enter saves, Esc cancels", { timeout: 30000 }, async () => {

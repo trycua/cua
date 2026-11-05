@@ -13265,7 +13265,11 @@ export type AppSpace = {
      */
     access?: AppSpaceAccess,
     /**
-     * The home warming for Home's prompt box until a person writes into it: no list shows it.
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
      */
     hidden: boolean
 }
@@ -44366,10 +44370,13 @@ export type AppSpaceRow = {
      */
     arch?: string,
     /**
-     * Answered the last connect.
-     * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
      */
     hidden: boolean,
+    /**
+     * Answered the last connect.
+     */
     reachable: boolean,
     /**
      * Why not.

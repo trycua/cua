@@ -64,9 +64,10 @@ pub(super) struct FixtureState {
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
-    /// A trusted `mouseReleased` opens a confirm() dialog. Like Chromium, the
-    /// renderer then answers no input or emulation command until it closes.
-    trusted_click_opens_dialog: bool,
+    /// The trusted mouse event (`mousePressed` or `mouseReleased`) that opens
+    /// a confirm() dialog. Like Chromium, the renderer then answers no input
+    /// or emulation command until it closes.
+    trusted_click_opens_dialog: Option<&'static str>,
     renderer_blocked: bool,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
@@ -129,7 +130,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             click_opens_dialog: false,
-            trusted_click_opens_dialog: false,
+            trusted_click_opens_dialog: None,
             renderer_blocked: false,
             page_sessions: Vec::new(),
             semantic_large_page: false,
@@ -755,7 +756,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 MockReply::hang()
             }
             "Input.dispatchMouseEvent"
-                if st.trusted_click_opens_dialog && call.params["type"] == "mouseReleased" =>
+                if st
+                    .trusted_click_opens_dialog
+                    .is_some_and(|opener| call.params["type"] == opener) =>
             {
                 st.renderer_blocked = true;
                 let events = st
@@ -4014,7 +4017,13 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
 
 #[tokio::test]
 async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
-    let f = fixture_with(|state| state.trusted_click_opens_dialog = true).await;
+    for opener in ["mouseReleased", "mousePressed"] {
+        trusted_click_returns_when_a_dialog_opens_on(opener).await;
+    }
+}
+
+async fn trusted_click_returns_when_a_dialog_opens_on(opener: &'static str) {
+    let f = fixture_with(|state| state.trusted_click_opens_dialog = Some(opener)).await;
     let (target, tab) = bind(&f).await;
 
     let started = std::time::Instant::now();
@@ -4026,7 +4035,7 @@ async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
         .await;
     assert!(
         started.elapsed() < std::time::Duration::from_secs(5),
-        "the click must not wait out the CDP call timeout: {:?}",
+        "the click must not wait out the CDP call timeout ({opener}): {:?}",
         started.elapsed()
     );
     let s = structured(&clicked);
@@ -4038,6 +4047,15 @@ async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
         .as_str()
         .expect("dialog id")
         .to_owned();
+    let mouse: Vec<_> = recorded_calls(&f, "Input.dispatchMouseEvent")
+        .into_iter()
+        .map(|(_, p)| p["type"].clone())
+        .collect();
+    assert_eq!(
+        mouse,
+        [json!("mousePressed"), json!("mouseReleased")],
+        "the press must always be released ({opener})"
+    );
     let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
     assert_eq!(
         focus_emulation.last().map(|(_, p)| p["enabled"].clone()),

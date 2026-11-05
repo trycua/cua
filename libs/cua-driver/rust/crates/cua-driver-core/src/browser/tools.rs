@@ -1587,10 +1587,9 @@ impl Tool for BrowserClickTool {
                     delivery_error = Some(error);
                     break;
                 }
-                Err(open) => {
-                    opened = Some(open);
-                    break;
-                }
+                // Still send the release after a mousedown dialog, so the
+                // page is not left with the button held.
+                Err(open) => opened = Some(open),
             }
         }
         let opened = opened.or_else(|| conn.dialog_state(cdp_target_id));

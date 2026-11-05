@@ -43,8 +43,7 @@ understand, reproduce, or continue the work.
 ### Polling for work
 
 When asked what to work on, follow
-[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#pull-model) and the
-[polling skill](.agents/skills/poll-github-work/SKILL.md).
+[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#pull-model).
 
 ## Repository layout
 

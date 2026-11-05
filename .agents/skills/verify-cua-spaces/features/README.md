@@ -13,7 +13,7 @@ This directory is the maintained source for verifying what a user does with a Cu
 
 ## Driving conventions
 
-- In the recipes, `H=.cursor/skills/verify-cua-spaces/scripts/spaces-desk.sh` and `. "$RUN/state.env"` has been sourced (for `SPACE_ID`, `URL`, `EVIDENCE`).
+- In the recipes, `H=.agents/skills/verify-cua-spaces/scripts/spaces-desk.sh` and `. "$RUN/state.env"` has been sourced (for `SPACE_ID`, `URL`, `EVIDENCE`).
 - Run CLI steps as `$H cua "$RUN" -- <args>`; quote arguments as shown.
 - Run viewer steps as `$H viewer "$RUN" <capture-name> [fragment]`.
 - `cua spacesd ...` verbs need the Space token: pass `--token "$(cat "$RUN/token")"`. The registered Space (`cua do`, `cua sb view`, `cua mcp`) does not; its token is in the cua home.

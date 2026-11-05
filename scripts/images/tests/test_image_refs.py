@@ -64,7 +64,7 @@ def lock() -> dict:
 
 def allowlist(**over) -> dict:
     base = {
-        "exclude": ["blog/**"],
+        "exclude": ["docs/blog/**"],
         "generated": ["gen/*"],
         "thirdParty": {f"{HUB}/*": "upstream"},
         "refs": {
@@ -193,7 +193,7 @@ class GateTests(unittest.TestCase):
         self.assertIn("unknown cua repository", "\n".join(self.errors()))
 
     def test_excluded_files_and_templates_are_skipped(self) -> None:
-        self.write("blog/post.md", f"{GH}/ancient:1\n")
+        self.write("docs/blog/post.md", f"{GH}/ancient:1\n")
         self.write(
             "docs/ci.mdx", f"push {GH}/cua-desktop-linux:e2e-<sha> and {GH}/linux:${{TAG}}\n"
         )

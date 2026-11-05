@@ -6,7 +6,7 @@ name: "Release: auto rollout (Cua Spaces)"
 # about 2h at 10% and 4h at 50% once the crash gate has enough sessions; x.y.0 release:
 # 24h) and every health gate passes it dispatches release-rollout.yml for the next one (10 -> 50 -> 100). If a
 # gate fails it dispatches `pause` and posts an alert. Gates and thresholds:
-# .github/scripts/release_rollout_auto.py and config/spaces-rollout-soak.json. Manual dispatch of release-rollout.yml
+# .github/scripts/release_rollout_auto.py and apps/cua-spaces-desktop/spaces-rollout-soak.json. Manual dispatch of release-rollout.yml
 # keeps working and is what this workflow calls; a person can still pause or advance.
 #
 # Hold: set the repository variable SPACES_ROLLOUT_HOLD to any text (the reason), or

@@ -12,7 +12,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-EXCLUDE='(^|/)CHANGELOG[^/]*\.md$|^\.github/release-backfill/|^\.github/release-notes/|^blog/|^docs/changelog/'
+EXCLUDE='(^|/)CHANGELOG[^/]*\.md$|^\.github/release-backfill/|^\.github/release-notes/|^docs/blog/|^docs/changelog/'
 EM=$'\xe2\x80\x94'
 
 if [ "$#" -gt 0 ]; then

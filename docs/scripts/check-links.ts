@@ -25,7 +25,7 @@ import fg from 'fast-glob';
 
 const DOCS_DIR = path.resolve(__dirname, '..');
 const CONTENT_DIR = path.join(DOCS_DIR, 'content/docs');
-const BLOG_DIR = path.join(DOCS_DIR, '../blog');
+const BLOG_DIR = path.join(DOCS_DIR, 'blog');
 
 /**
  * Build the ScanResult (valid URL map) directly from content files.

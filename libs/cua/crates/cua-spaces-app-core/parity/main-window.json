@@ -158,7 +158,7 @@
         "id": "cursor",
         "name": "Cursor",
         "installed": true,
-        "skillsDir": "/h/.cursor/skills",
+        "skillsDir": "/h/.agents/skills",
         "mcpConfig": "/h/.cursor/mcp.json",
         "skillsInstalled": ["a"]
       },

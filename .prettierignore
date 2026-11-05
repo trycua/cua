@@ -21,7 +21,6 @@ venv/
 *.tmp
 
 # VSCode / editor files
-.vscode/
 .idea/
 
 # Other generated files

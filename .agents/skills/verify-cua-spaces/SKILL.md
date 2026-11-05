@@ -14,7 +14,7 @@ Everything here is source-built: `libs/cua-spacesd` (the daemon and the `cua-spa
 Run from the repository root. Linux only. Needs Rust (pinned by the workspaces), `protoc`, Node 20+, Chromium, `Xvfb`, `openbox`, `dbus-daemon`, `curl`, `ss`, `python3`, and for audio `pipewire`, `wireplumber`, `pipewire-pulse` (Debian/Ubuntu: the build packages in `.github/workflows/ci-cua-spacesd.yml` plus `xvfb openbox dbus chromium pipewire wireplumber pipewire-pulse pulseaudio-utils`).
 
 ```bash
-H=.cursor/skills/verify-cua-spaces/scripts/spaces-desk.sh
+H=.agents/skills/verify-cua-spaces/scripts/spaces-desk.sh
 $H build                      # once: release cua-spacesd, cua-spacesd-x11-pad, cua-spaces-cli (~20 min cold, ~9 GB of target/)
 $H up                         # or: $H up --no-audio
 ```

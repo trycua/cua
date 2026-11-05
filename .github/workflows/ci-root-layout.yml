@@ -1,0 +1,28 @@
+name: "CI: Root layout"
+
+# Keeps the repo root to the README and standard files. A new top-level entry
+# fails unless it is in .github/root-allowlist.txt; the error says where the
+# file belongs instead. The same check runs in `bin/ci --quick`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  root-layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on new top-level entries
+        run: python3 .github/scripts/check_root_layout.py

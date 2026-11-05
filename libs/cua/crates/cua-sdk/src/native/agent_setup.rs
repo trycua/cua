@@ -806,12 +806,7 @@ mod tests {
         let drv_path = drv.display().to_string();
         let s = AgentSetup::with_env(cua_agent_setup::HostEnv::isolated(d.path()));
         let out = s
-            .setup_cua_driver(
-                vec!["codex".into()],
-                Some(drv_path.clone()),
-                true,
-                true,
-            )
+            .setup_cua_driver(vec!["codex".into()], Some(drv_path.clone()), true, true)
             .await
             .unwrap();
         assert!(

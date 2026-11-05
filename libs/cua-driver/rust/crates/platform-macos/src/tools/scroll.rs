@@ -83,7 +83,9 @@ fn wheel_action_record(
 fn wheel_delivery_label(actual: ActualDelivery) -> &'static str {
     match actual {
         ActualDelivery::Foreground => " (target foreground observed before dispatch)",
-        ActualDelivery::Unknown => " (foreground assist requested; target foreground not confirmed)",
+        ActualDelivery::Unknown => {
+            " (foreground assist requested; target foreground not confirmed)"
+        }
         ActualDelivery::Background => " (background delivery)",
         ActualDelivery::NotApplicable => "",
     }
@@ -625,7 +627,7 @@ impl Tool for ScrollTool {
                 }))
                 .with_action_record(wheel_action_record(delivery_mode, actual)),
                 Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 

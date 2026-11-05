@@ -1279,10 +1279,21 @@ pub fn warm_pools_image() -> String {
 }
 
 /// The coding apps a warm Space is prepared for: `CUA_WARM_POOLS_HARNESSES`
-/// (comma separated harness ids), else the four most used (Codex, Hermes, Claude Code, OpenCode).
+/// (comma separated harness ids), else every harness the app offers: the four
+/// most used (Codex, Hermes, Claude Code, OpenCode) first, then the rest of
+/// [`cua_agents::harness::ready`]. A harness missing here would install in the
+/// claimed Space (7 to 50 s) instead of starting at once. The cost is disk in
+/// the one saved member filesystem (about 3.6 GB), not memory.
 pub fn warm_pools_harnesses() -> Vec<String> {
-    let v = std::env::var("CUA_WARM_POOLS_HARNESSES")
-        .unwrap_or_else(|_| "openai-codex,hermes,claude-code,opencode".into());
+    let v = std::env::var("CUA_WARM_POOLS_HARNESSES").unwrap_or_else(|_| {
+        let mut all: Vec<&str> = vec!["openai-codex", "hermes", "claude-code", "opencode"];
+        let rest: Vec<&str> = cua_agents::harness::ready()
+            .into_iter()
+            .filter(|h| !all.contains(h))
+            .collect();
+        all.extend(rest);
+        all.join(",")
+    });
     v.split(',')
         .map(str::trim)
         .filter(|h| !h.is_empty() && *h != "none")
@@ -3566,9 +3577,20 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: serialised by ENV_LOCK; no other test reads this variable.
         unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
+        let defaults = super::warm_pools_harnesses();
         assert_eq!(
-            super::warm_pools_harnesses(),
+            defaults[..4],
             ["openai-codex", "hermes", "claude-code", "opencode"]
+        );
+        // Every harness the app offers is prepared: one that is not would
+        // install in the Space that claims the member.
+        for id in cua_agents::harness::ready() {
+            assert!(defaults.iter().any(|d| d == id), "{id} is not prepared");
+        }
+        assert_eq!(
+            defaults.len(),
+            cua_agents::harness::ready().len(),
+            "no duplicates"
         );
         unsafe { std::env::set_var("CUA_WARM_POOLS_HARNESSES", " claude-code , ,none ") };
         assert_eq!(super::warm_pools_harnesses(), ["claude-code"]);
@@ -3576,7 +3598,7 @@ mod tests {
         assert!(super::warm_pools_harnesses().is_empty());
         unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
         // Every default is a harness this build can install.
-        for id in ["openai-codex", "hermes", "claude-code", "opencode"] {
+        for id in &defaults {
             assert!(
                 cua_agents::harness::harness(id).is_some_and(|h| h.ready),
                 "{id}"

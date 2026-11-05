@@ -294,7 +294,7 @@ Requirements for the pod spec (trycua/cloud#7885):
 
 ### The cua CLI (slim tier, so every tier)
 
-`ghcr.io/trycua/linux:24.04-slim[-disk]` also carries `/usr/local/bin/cua`, so an agent in a Space (the Home Space of the ask-first flow runs on it) can run `cua spaces create`, `ls` and `delete`. In a Space whose host turned child Spaces on, the CLI finds the Space's own spawn channel (`CUA_SPAWN`, or the files the spawn-capable cua-spacesd keeps) with nothing to configure, and the image holds no token. `full` and `docker` are `FROM slim`, so they have it too. The slim tier claims `cua --version` and the `spawn` feature, so `cua-spacesd doctor --strict` fails an image without them.
+`ghcr.io/trycua/linux:24.04-slim[-disk]` also carries `/usr/local/bin/cua`, so an agent in a Space (the Home Space of the ask-first flow runs on it) can run `cua spaces create`, `ls` and `delete`. In a Space whose host turned child Spaces on, the CLI finds the Space's own spawn channel (`CUA_SPAWN`, or the files the spawn-capable cua-spacesd keeps) with nothing to configure, and the image holds no token. `full` and `docker` are `FROM slim`, so they have it too. The CLI is not small: the released archive is about 85 MB compressed on x64 (78 MB on arm64), so slim grows from about 0.49 GB to about 0.58 GB compressed and from 1.23 GB to 1.43 GB unpacked on amd64. Child Spaces from a Home Space need it, so the slim gate (`size/{arch}` in `release.json`) allows 1.55 GB unpacked per arch; a thinner in-Space CLI would cut it. The slim tier claims `cua --version` and the `spawn` feature, so `cua-spacesd doctor --strict` fails an image without them.
 
 `CUA_CLI_SOURCE` selects where the CLI comes from, the way `CUA_SPACESD_SOURCE` does for the driver:
 

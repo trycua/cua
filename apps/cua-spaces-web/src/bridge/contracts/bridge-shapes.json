@@ -270,6 +270,12 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

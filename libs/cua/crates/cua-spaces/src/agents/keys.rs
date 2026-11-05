@@ -535,7 +535,11 @@ fn insecure_notice(credentials: &std::path::Path) -> String {
         .unwrap_or_else(|| std::path::PathBuf::from(SECRET_NAME));
     let shown = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
-        .and_then(|h| file.strip_prefix(&h).ok().map(|r| format!("~/{}", r.display())))
+        .and_then(|h| {
+            file.strip_prefix(&h)
+                .ok()
+                .map(|r| format!("~/{}", r.display()))
+        })
         .unwrap_or_else(|| file.display().to_string());
     format!(
         "Keychain not available in this development build: keys are stored unencrypted in {shown}. Do not use real production secrets"
@@ -2265,8 +2269,14 @@ mod tests {
         );
         assert!(keys.available());
         let warning = keys.insecure().expect("a warning").to_string();
-        assert!(warning.starts_with("Keychain not available in this development build"), "{warning}");
-        assert!(warning.contains("unencrypted") && warning.contains(SECRET_NAME), "{warning}");
+        assert!(
+            warning.starts_with("Keychain not available in this development build"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("unencrypted") && warning.contains(SECRET_NAME),
+            "{warning}"
+        );
         assert!(!warning.contains('\u{b7}'), "{warning}");
         keys.set("anthropic", None, "sk-ant-test-0000").unwrap();
         let file = dir.join(SECRET_NAME);
@@ -2299,13 +2309,18 @@ mod tests {
         for c in cua_home::CuaChannel::ALL {
             let keys = AgentKeys::new_for(file.clone(), c);
             assert_eq!(keys.available(), c.allows_insecure_dev_store(), "{c:?}");
-            assert_eq!(keys.insecure().is_some(), c.allows_insecure_dev_store(), "{c:?}");
+            assert_eq!(
+                keys.insecure().is_some(),
+                c.allows_insecure_dev_store(),
+                "{c:?}"
+            );
         }
         let stable = AgentKeys::new_for(file, cua_home::CuaChannel::Stable);
         assert!(stable.set("anthropic", None, "sk-ant-test-0000").is_err());
         assert!(!dir.exists());
         // The vault stand-in is a real vault: no warning on any channel.
-        let vault = std::env::temp_dir().join(format!("cua-agent-keys-vault-{}", std::process::id()));
+        let vault =
+            std::env::temp_dir().join(format!("cua-agent-keys-vault-{}", std::process::id()));
         let keys = AgentKeys::new_for(
             cua_auth::Store::TestKeychain(vault.clone()),
             cua_home::CuaChannel::Local,

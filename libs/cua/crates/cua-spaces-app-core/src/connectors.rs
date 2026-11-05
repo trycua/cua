@@ -3333,7 +3333,12 @@ mod tests {
         assert!(v.providers.iter().any(|p| p.button.enabled));
         i.keys.unavailable = Some("no Keychain".into());
         let v = view(&i);
-        assert!(!v.can_edit && v.notice.unwrap().starts_with("Sign-ins can't be saved here"));
+        assert!(
+            !v.can_edit
+                && v.notice
+                    .unwrap()
+                    .starts_with("Sign-ins can't be saved here")
+        );
     }
 
     fn keyed(env: &str, provider: &str) -> AgentKeyInput {

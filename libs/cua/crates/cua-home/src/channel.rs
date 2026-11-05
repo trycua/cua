@@ -727,7 +727,11 @@ mod tests {
     #[test]
     fn only_the_local_channel_may_keep_keys_in_a_file() {
         for c in CuaChannel::ALL {
-            assert_eq!(c.allows_insecure_dev_store(), c == CuaChannel::Local, "{c:?}");
+            assert_eq!(
+                c.allows_insecure_dev_store(),
+                c == CuaChannel::Local,
+                "{c:?}"
+            );
         }
         assert!(!CuaChannel::Stable.allows_insecure_dev_store());
         assert!(!CuaChannel::default().allows_insecure_dev_store());

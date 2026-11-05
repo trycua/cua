@@ -1,0 +1,72 @@
+name: "Release: Auto-merge release PRs"
+
+# CUA-3559. Release-please PRs wait for a human to merge them (median 8 h, p90 36 h; the
+# driver and SDK PRs waited 15 days and 2 days). This turns on auto-merge (squash) for each
+# one as it is opened or updated. It still merges only behind the required checks (ci-gate and
+# the rest of the main-safety-gates ruleset). The `hold` label stops it: a held PR gets
+# auto-merge switched off, and ci-gate fails while the label is on.
+#
+# A merge made with the release App token starts the release pipeline (release-on-merge.yml);
+# one made with GITHUB_TOKEN would not. Same App as release-please.yml.
+#
+# The sweep also posts a ReleasePRStuck alert (Alertmanager, same path as
+# workflow-failure-alerts.yml) when a release PR has been green for more than 6 h and is
+# still open and not on hold.
+#
+# pull_request_target runs this file from main and never checks out the PR's code.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+    branches: [main]
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr-auto-merge-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    if: >-
+      github.repository == 'trycua/cua' &&
+      (github.event_name != 'pull_request_target' ||
+       (startsWith(github.event.pull_request.head.ref, 'release-please--branches--') &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Enable or disable auto-merge, and alert on stale green release PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [ -n "$PR_NUMBER" ]; then
+            args+=(--pr "$PR_NUMBER")
+          fi
+          if [ "$GITHUB_EVENT_NAME" != pull_request_target ]; then
+            args+=(--alert)
+          fi
+          python3 .github/scripts/release_pr_automerge.py "${args[@]}"

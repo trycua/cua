@@ -20,6 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
+      # A pull request labelled `hold` never merges, auto-merge or not (CUA-3559). The gate
+      # reruns when the label is added or removed (labeled/unlabeled above).
+      - name: Fail while the pull request is on hold
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'hold') }}
+        run: |
+          echo "::error::This pull request has the hold label. Remove it to let the gate pass."
+          exit 1
       # Which workflows this gate may ignore, from the paths the PR changes, the area map
       # (.github/ci-areas.json) and the package graph (.github/scripts/ci_graph.py); see
       # docs/contributing/CI.md. The map and both scripts come from the base commit, never

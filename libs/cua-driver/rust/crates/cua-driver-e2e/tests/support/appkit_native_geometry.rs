@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 use super::*;
+use cua_driver_testkit::e2e::RefusalCode;
 use std::time::Instant;
 
 fn fixture_state(

@@ -397,7 +397,12 @@ jobs:
           bad=0
           while read -r url; do
             [ -n "$url" ] || continue
-            code="$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 "$url")"
+            # GitHub's release CDN answers 5xx for minutes at a time: retry with a pause.
+            for attempt in 1 2 3 4 5; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 --max-time 60 "$url" || true)"
+              case "$code" in 200|206|404) break ;; esac
+              sleep $((15 * attempt))
+            done
             if [ "$code" = 200 ] || [ "$code" = 206 ]; then echo "ok $url"; else echo "::error::$url answers $code"; bad=1; fi
           done <<<"$urls"
           # The stable feeds are not this workflow's: they hold no nightly.

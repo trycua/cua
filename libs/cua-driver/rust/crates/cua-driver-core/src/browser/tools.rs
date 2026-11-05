@@ -1156,8 +1156,8 @@ impl BrowserClickTool {
                 input_route=\"dom_event\" (synthetic pointer and mouse \
                 down/up/click sequence at the element's center, ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
-                controls may ignore synthetic events. If the handler opens a \
-                page-owned JavaScript dialog, the call returns at once with a \
+                controls may ignore synthetic events. If a click's handler opens a \
+                page-owned JavaScript dialog, on either route, the call returns at once with a \
                 dialog block (present, kind, dialog_id) to pass to browser_dialog. \
                 Refused while a page-owned dialog is open on the tab, and for \
                 heuristic bindings."
@@ -1363,11 +1363,11 @@ impl Tool for BrowserClickTool {
 
         let conn = &validated.conn;
         let cdp = cdp_session.as_str();
+        let cdp_target_id = validated.tab.cdp_target_id.as_str();
 
         // dom_event route: explicit opt-in only.
         if route == "dom_event" {
             let backend = backend_node_id.expect("checked above");
-            let cdp_target_id = validated.tab.cdp_target_id.as_str();
             let resolved = match conn
                 .call(
                     Some(cdp),
@@ -1439,17 +1439,9 @@ impl Tool for BrowserClickTool {
                     "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
                 }),
             );
-            tokio::pin!(click);
-            let outcome = loop {
-                tokio::select! {
-                    replied = &mut click => break replied,
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
-                        if conn.dialog_state(cdp_target_id).is_some() {
-                            break Ok(json!({}));
-                        }
-                    }
-                }
-            };
+            let outcome = call_until_dialog(conn, cdp_target_id, click)
+                .await
+                .unwrap_or(Ok(json!({})));
             return match (outcome, conn.dialog_state(cdp_target_id)) {
                 (Ok(_), None) => {
                     let observation = observe_dom_click(conn, cdp, &object_id, before).await;
@@ -1576,33 +1568,49 @@ impl Tool for BrowserClickTool {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
         let mut delivery_error = None;
+        let mut opened = None;
         for (event_type, click_count) in [("mousePressed", 1), ("mouseReleased", 1)] {
-            if let Err(error) = conn
-                .call(
-                    Some(cdp),
-                    "Input.dispatchMouseEvent",
-                    json!({
-                        "type": event_type,
-                        "x": x,
-                        "y": y,
-                        "button": "left",
-                        "clickCount": click_count,
-                    }),
-                )
-                .await
-            {
-                delivery_error = Some(error);
-                break;
+            let press = conn.call(
+                Some(cdp),
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": event_type,
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": click_count,
+                }),
+            );
+            match call_until_dialog(conn, cdp_target_id, press).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    delivery_error = Some(error);
+                    break;
+                }
+                // Still send the release after a mousedown dialog, so the
+                // page is not left with the button held.
+                Err(open) => opened = Some(open),
             }
         }
-        let cleanup_error = conn
-            .call(
-                Some(cdp),
-                "Emulation.setFocusEmulationEnabled",
-                json!({ "enabled": false }),
-            )
-            .await
-            .err();
+        let opened = opened.or_else(|| conn.dialog_state(cdp_target_id));
+        let unfocus = json!({ "enabled": false });
+        let cleanup_error = if opened.is_some() {
+            // The blocked renderer applies this once the dialog closes, and
+            // only then replies, so send it without waiting for the reply.
+            let _ = conn
+                .call_with_timeout(
+                    Some(cdp),
+                    "Emulation.setFocusEmulationEnabled",
+                    unfocus,
+                    std::time::Duration::from_millis(50),
+                )
+                .await;
+            None
+        } else {
+            conn.call(Some(cdp), "Emulation.setFocusEmulationEnabled", unfocus)
+                .await
+                .err()
+        };
         if let Some(error) = delivery_error {
             // Trusted input is the contract; we never silently fall back to
             // synthetic events. Focus emulation has already been unwound.
@@ -1625,7 +1633,7 @@ impl Tool for BrowserClickTool {
             .with_detail(json!({ "delivery": "unknown", "retryable": false }))
             .to_tool_result();
         }
-        ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
+        let mut structured = json!({
             "status": "ok",
             "route": "trusted",
             "delivery_mode": if foreground { "foreground" } else { "background" },
@@ -1635,7 +1643,44 @@ impl Tool for BrowserClickTool {
             "frame": frame_kind,
             "x": x,
             "y": y,
-        }))
+        });
+        let Some(open) = opened else {
+            return ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}"))
+                .with_structured(structured);
+        };
+        structured["dialog"] = dialog_block(&open);
+        structured["escalation"] = json!({
+            "recommended": "page",
+            "reason": "the click opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
+        });
+        ToolResult::text(format!(
+            "clicked ({x:.0}, {y:.0}) in {tab_id}; its handler opened a {} dialog that is \
+             blocking the page. Inspect and resolve it with browser_dialog (dialog_id {}) \
+             before any other action on this tab",
+            open.kind,
+            dialog_capability_id(open.generation)
+        ))
+        .with_structured(structured)
+    }
+}
+
+/// Await `call` unless a page-owned dialog opens on the tab first. The dialog
+/// blocks the renderer, so the call's reply would not come until it closes.
+async fn call_until_dialog(
+    conn: &super::cdp_ws::CdpConnection,
+    cdp_target_id: &str,
+    call: impl std::future::Future<Output = anyhow::Result<Value>>,
+) -> Result<anyhow::Result<Value>, super::cdp_ws::CdpDialogState> {
+    tokio::pin!(call);
+    loop {
+        tokio::select! {
+            replied = &mut call => return Ok(replied),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                if let Some(open) = conn.dialog_state(cdp_target_id) {
+                    return Err(open);
+                }
+            }
+        }
     }
 }
 

@@ -341,8 +341,9 @@ struct Inner {
     /// Connections peers opened to us, so a peer leaving the map is cut.
     inbound: Mutex<Vec<(PublicKey, quinn::Connection)>>,
     connect_timeout: Duration,
-    /// The last failed dial per peer: when, and why.
-    failed_dials: Mutex<HashMap<PublicKey, (Instant, String)>>,
+    /// The last failed dial per peer: when, whether the map listed the
+    /// peer online then, and why.
+    failed_dials: Mutex<HashMap<PublicKey, (Instant, bool, String)>>,
 }
 
 /// One node on the mesh. Cheap to clone.
@@ -667,7 +668,7 @@ impl Mesh {
             return Ok(c);
         }
         // A dial that just failed answers the callers that waited for it.
-        if let Some(why) = self.recent_failure(&peer.node_key) {
+        if let Some(why) = self.recent_failure(peer) {
             return Err(Error::Unreachable(why));
         }
         self.inner.engine.want(&peer.node_key);
@@ -727,7 +728,7 @@ impl Mesh {
                         .failed_dials
                         .lock()
                         .expect("failed dials")
-                        .insert(peer.node_key, (Instant::now(), e.to_string()));
+                        .insert(peer.node_key, (Instant::now(), peer.online, e.to_string()));
                 }
                 Err(e)
             }
@@ -745,13 +746,14 @@ impl Mesh {
     }
 
     /// Why the last dial to `peer` failed, when it failed less than
-    /// [`FAILED_DIAL_HOLD`] ago.
-    fn recent_failure(&self, peer: &PublicKey) -> Option<String> {
+    /// [`FAILED_DIAL_HOLD`] ago and the map still lists it as it did then
+    /// (a peer that came online since gets a fresh dial).
+    fn recent_failure(&self, peer: &PeerInfo) -> Option<String> {
         let failed = self.inner.failed_dials.lock().expect("failed dials");
         failed
-            .get(peer)
-            .filter(|(at, _)| at.elapsed() < FAILED_DIAL_HOLD)
-            .map(|(_, why)| why.clone())
+            .get(&peer.node_key)
+            .filter(|(at, online, _)| at.elapsed() < FAILED_DIAL_HOLD && *online == peer.online)
+            .map(|(_, _, why)| why.clone())
     }
 
     /// Why this node can no longer use the mesh, while it holds: its

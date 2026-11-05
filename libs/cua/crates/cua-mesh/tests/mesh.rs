@@ -930,3 +930,48 @@ async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
     }
     assert!(client.control_state().denied.is_none());
 }
+
+/// A dial to a machine the map lists offline fails, but once the map lists
+/// it online again the next stream dials it at once, instead of answering
+/// with the old failure for a few seconds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_machine_back_online_is_dialed_again_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    let key = machine.node_key();
+    let client = node(&coord, NodeKind::Client, dir.path(), "c", false).await;
+    wait_peer(&client, &key).await;
+    machine.shutdown();
+    drop(machine);
+    let online = |c: &Mesh| c.machine("machine-m").is_some_and(|p| p.online);
+    for _ in 0..100 {
+        if !online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!online(&client), "the map never listed the machine offline");
+    // The dial times out (only that is remembered) and starts the hold.
+    let failed_at = std::time::Instant::now();
+    assert!(client.open_stream(&key, "echo", None).await.is_err());
+
+    // The same machine (same identity) comes back.
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    assert_eq!(machine.node_key(), key);
+    serve_echo(&machine);
+    for _ in 0..100 {
+        if online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(online(&client), "the map never listed the machine online");
+    // Inside the hold, or this test passes without the fix.
+    assert!(failed_at.elapsed() < Duration::from_secs(5));
+    let mut s = client
+        .open_stream(&key, "echo", None)
+        .await
+        .expect("a machine back online is dialed again");
+    roundtrip(&mut s, 1024).await;
+}

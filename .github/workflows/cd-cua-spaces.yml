@@ -526,6 +526,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
 
+      # GitHub's release CDN answers 504 for minutes (Sparkle, Sentry binary
+      # targets): resolve with retries before the build that follows the
+      # long Rust compile, so one blip does not cost a whole run.
+      - uses: ./.github/actions/swiftpm-resolve
       - name: Build and sign Cua Spaces.app (universal)
         env:
           CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd

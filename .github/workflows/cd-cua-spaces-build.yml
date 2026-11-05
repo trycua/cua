@@ -199,7 +199,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -207,6 +207,8 @@ jobs:
       - name: Check the baked cua-spacesd release
         env:
           GH_TOKEN: ${{ github.token }}
+          # The VERSION bump and its release publish start together on main.
+          SPACESD_WAIT_MINUTES: "30"
         run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
 
   # The SwiftUI app's Rust slices, restored from the cache the main producer
@@ -405,6 +407,10 @@ jobs:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
 
+      # GitHub's release CDN answers 504 for minutes (Sparkle, Sentry binary
+      # targets): resolve with retries before the build that follows the
+      # long Rust compile, so one blip does not cost a whole run.
+      - uses: ./.github/actions/swiftpm-resolve
       - name: Build and sign Cua Spaces.app (universal)
         env:
           SIGNED: ${{ steps.signing.outputs.apple }}

@@ -1997,12 +1997,14 @@ impl Persistent {
             let me = self.clone();
             tokio::spawn(async move {
                 let _guard = guard;
+                let t0 = Instant::now();
+                tracing::info!(agent = %rec.name, "standby run starting");
                 match Box::pin(me.start_session(&rec, "", "standby", None)).await {
                     Ok(d) => {
                         me.live.lock().await.standby_retry.remove(&rec.name);
-                        tracing::info!(agent = %rec.name, run = %d.run_id, "standby run started");
+                        tracing::info!(agent = %rec.name, run = %d.run_id, ms = t0.elapsed().as_millis() as u64, "standby run started");
                     }
-                    Err(e) => tracing::warn!(agent = %rec.name, "standby run did not start: {e}"),
+                    Err(e) => tracing::warn!(agent = %rec.name, ms = t0.elapsed().as_millis() as u64, "standby run did not start: {e}"),
                 }
             });
         }

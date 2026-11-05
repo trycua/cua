@@ -41,6 +41,7 @@ Statuses:
 | --- | --- |
 | `pass` | Built against the exact headers, CTest passed, loaded with a matching ABI, and the input smoke passed. |
 | `build-only` | Built and CTest passed, but no headless session was available on the runner. |
+| `unsupported` | A released Driver source whose own input pin refuses this Hyprland (releases before #6495 pin 0.56.2). Only a newer release can qualify; no issue is opened. |
 | `fail` | A build, test, load or smoke step failed. A tracking issue is opened. |
 
 This is CI requalification, not native certification. It does not produce a

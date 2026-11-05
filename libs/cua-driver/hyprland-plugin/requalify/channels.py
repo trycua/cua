@@ -213,13 +213,14 @@ def versions(channel_info):
 def plan(snapshot, sources, manifest=None, force=False):
     """Build matrix: one job per (distinct ABI key, distinct plugin tree).
 
-    A combination that already passed is skipped unless forced. build-only and
+    A combination that already passed, or a release that refuses that Hyprland
+    by its own pin (unsupported), is skipped unless forced. build-only and
     fail are retried, so a persistent failure is reported on every run and a
     transient one clears itself. Channels sharing an ABI key share one build.
     """
     done = {}
     for entry in (manifest or {}).get("entries", []):
-        if entry.get("status") == "pass":
+        if entry.get("status") in ("pass", "unsupported"):
             done[(entry["abi_key"], entry["plugin"]["tree"])] = entry["status"]
     builds = {}
     for channel, info in sorted(snapshot["channels"].items()):

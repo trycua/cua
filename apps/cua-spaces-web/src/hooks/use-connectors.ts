@@ -102,6 +102,9 @@ export function resetConnectState(): void {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Why an app's last Connect failed, in the words it was told ("" when it did not). */
+export const connectFailureLine = (agent: string): string => useConnectState.getState().failures.find((f) => f.id === `app:${agent}`)?.line ?? "";
+
 /** How a connect ended: `connected`, waiting on the provider sheet (`sheet`), or `failed`. */
 export type ConnectOutcome = "connected" | "sheet" | "failed";
 
@@ -195,10 +198,16 @@ export function useConnectors(): Connectors {
 
   const connectApp = useCallback(
     async (agent: string): Promise<ConnectOutcome> => {
-      if (!data) return "failed";
       const id = `app:${agent}`;
+      if (!data) {
+        fail(id, "Cua Spaces isn't ready yet. Try again in a moment.");
+        return "failed";
+      }
       const plan = connectPlan(core, input, agent);
-      if (!plan) return "failed";
+      if (!plan) {
+        fail(id, "Cua couldn't tell how to sign in to this app. Open Settings, then Connections, to sign in there.");
+        return "failed";
+      }
       // Importing an app's own sign-in reads its files: ask first, in plain words.
       if (plan.appToken) {
         settleImport("sheet");

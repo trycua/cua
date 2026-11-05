@@ -21,3 +21,14 @@ pub fn answering_driver() -> &'static str {
         p.display().to_string()
     })
 }
+
+/// Writes an executable shell script `name` into `dir` (a fake agent binary).
+#[cfg(unix)]
+pub fn write_executable(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}

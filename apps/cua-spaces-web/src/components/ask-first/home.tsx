@@ -9,7 +9,8 @@ import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useAgentMenu } from "@/hooks/use-agent-menu";
-import { useConnectors } from "@/hooks/use-connectors";
+import { toast } from "@/components/ui/toast";
+import { connectFailureLine, useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
 import { currentWhere, SUGGESTIONS, thisMacConfirmed, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
 import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from "@/lib/ask-first-model";
@@ -106,6 +107,12 @@ export function AskFirstHome() {
     start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
     setText("");
   };
+  // A sign-in that did not work says so, in plain words, where the person clicked.
+  const signInTo = async (app: string, label: string) => {
+    if ((await connectors.connectApp(app)) === "failed") {
+      toast(`Couldn't sign in to ${label}`, { description: connectFailureLine(app) || "Try again, or sign in from Settings, then Connections.", type: "error", group: `sign-in:${app}` });
+    }
+  };
   const useAccount = (group: AgentGroup, account: AgentAccount) => {
     rememberAgent(pickAccount(group, account, picked));
     if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
@@ -139,7 +146,7 @@ export function AskFirstHome() {
           selected={selected}
           onPickAccount={useAccount}
           onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
-          onSignIn={(g) => void connectors.connectApp(g.app)}
+          onSignIn={(g) => void signInTo(g.app, g.label)}
           onConfigure={() => void navigate({ to: "/settings/connections" })}
           accounts={accountActions}
           repo={repo}
@@ -158,7 +165,7 @@ export function AskFirstHome() {
           autoFocus
           tree={tw}
         />
-        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void connectors.connectApp(selected.group.app)} />
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
         {fallback ? <FallbackLine fallback={fallback} /> : null}
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />

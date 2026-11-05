@@ -4,6 +4,8 @@
 use cua_agent_setup::{
     AGENTS, AgentSetup, Change, Format, HostEnv, McpServer, Outcome, Parts, Target, registry,
 };
+mod common;
+
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -1453,7 +1455,7 @@ fn sign_in_is_refused_without_a_sign_in_an_install_or_agent_commands() {
     let mut t = T::new();
     let err = |s: &AgentSetup, id: &str| s.sign_in(id).unwrap_err().to_string();
     assert!(err(&t.setup(), "nope").contains("unknown agent"));
-    assert!(err(&t.setup(), "claude-code").contains("no sign-in"));
+    assert!(err(&t.setup(), "cursor").contains("no sign-in"));
     // Isolated environments never run an agent's CLI.
     assert!(err(&t.setup(), "codex").contains("off in this environment"));
     t.env.run_agent_clis = true;
@@ -1493,6 +1495,50 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     assert_eq!(t.read(&log).trim(), "login");
     let a = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
     assert!(a.installed && a.signed_in, "{a:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
+    let mut t = T::new();
+    let bin = t.home.join("bin");
+    let log = t.home.join("claude-argv.log");
+    common::write_executable(&bin, "claude", &format!("printf '%s\\n' \"$*\" >> '{}'\nsleep 0.3\nexit 0", log.display()));
+    t.env.path = vec![bin.clone(), "/bin".into(), "/usr/bin".into()];
+    t.env.run_agent_clis = true;
+    t.setup().sign_in("claude-code").unwrap();
+    assert_eq!(t.read(&log).trim(), "auth login");
+    // A login that stops with an error at once: its own last line, in words.
+    common::write_executable(&bin, "claude", "echo 'opening the browser' >&2\necho '\x1b[31mNo browser found\x1b[0m' >&2\nexit 1");
+    let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
+    assert!(e.contains("Claude Code's sign-in stopped: No browser found"), "{e}");
+    // No output: the exit code.
+    common::write_executable(&bin, "claude", "exit 7");
+    let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
+    assert!(e.contains("exit code 7"), "{e}");
+    // One still waiting for the browser is not started twice (last: it stays
+    // registered while it runs).
+    let runs = t.home.join("claude-runs.log");
+    common::write_executable(&bin, "claude", &format!("echo run >> '{}'\nsleep 5", runs.display()));
+    t.setup().sign_in("claude-code").unwrap();
+    t.setup().sign_in("claude-code").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(t.read(&runs).lines().count(), 1);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hermes_signs_in_in_terminal() {
+    let mut t = T::new();
+    let bin = t.home.join("bin");
+    let log = t.home.join("osascript.log");
+    common::write_executable(&bin, "hermes", "exit 0");
+    common::write_executable(&bin, "osascript", &format!("printf '%s' \"$*\" > '{}'", log.display()));
+    t.env.path = vec![bin];
+    t.env.run_agent_clis = true;
+    t.setup().sign_in("hermes").unwrap();
+    let said = t.read(&log);
+    assert!(said.contains("Terminal") && said.contains("hermes") && said.contains("model"), "{said}");
 }
 
 /// Cua's own setup (its entry in a new `~/.claude.json`, its skills under

@@ -41,3 +41,11 @@ pub fn write_executable(path: &std::path::Path, contents: impl AsRef<[u8]>) {
     let tmp_path = tmp.into_temp_path();
     tmp_path.persist(path).unwrap();
 }
+
+/// Writes an executable shell script `name` into `dir` (a fake agent binary) and returns its path.
+#[cfg(unix)]
+pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    let p = dir.join(name);
+    write_executable(&p, format!("#!/bin/sh\n{body}\n"));
+    p
+}

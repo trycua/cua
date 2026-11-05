@@ -433,8 +433,9 @@ fn installed_signed_in_or_not_connected_or_not() {
 fn connected_but_not_signed_in_says_so_and_offers_sign_in_where_cua_can_start_it() {
     for (id, action) in [
         ("codex", ProblemAction::SignIn),
-        ("claude-code", ProblemAction::None),
-        ("hermes", ProblemAction::None),
+        // Claude Code and Hermes sign in from here too since CUA-3549 (`claude auth login`; Hermes in Terminal).
+        ("claude-code", ProblemAction::SignIn),
+        ("hermes", ProblemAction::SignIn),
     ] {
         let w = World::new();
         w.install(id, "1.0.0");

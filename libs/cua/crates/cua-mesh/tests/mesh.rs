@@ -150,6 +150,53 @@ async fn streams_go_direct_and_carry_data() {
     assert_eq!(seen.grant.unwrap().account, "acct-1");
 }
 
+/// A node whose network refuses the local network (`lan = false`) still
+/// carries streams, and none of its paths is a local-network one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_without_the_local_network_still_carries_streams() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let start = |kind: NodeKind, name: &'static str| {
+        let coord = &coord;
+        let dir = dir.path().to_path_buf();
+        async move {
+            let mut headers = Vec::new();
+            if kind == NodeKind::Machine {
+                headers.push(("x-cua-machine-id".to_owned(), format!("machine-{name}")));
+            }
+            let mut cfg = MeshConfig::new(
+                coord.url.clone(),
+                kind,
+                Some(dir.join(format!("{name}.json"))),
+                static_auth(headers),
+            );
+            cfg.name = name.to_owned();
+            cfg.stun = vec![coord.stun.to_string()];
+            cfg.lan = false;
+            cfg.reconnect_speedup = FAST_RECONNECT;
+            cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
+            let m = Mesh::start(cfg).await.expect("start");
+            m.wait_ready(READY).await.expect("ready");
+            m
+        }
+    };
+    let machine = start(NodeKind::Machine, "m").await;
+    let client = start(NodeKind::Client, "c").await;
+    serve_echo(&machine);
+    wait_peer(&client, &machine.node_key()).await;
+    let mut s = client
+        .open_stream(&machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    roundtrip(&mut s, 256 * 1024).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for m in [&machine, &client] {
+        for p in m.status().peers {
+            assert_ne!(p.path_kind, "lan", "{p:?}");
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_relay_carries_only_ciphertext_when_direct_fails() {
     let dir = tempfile::tempdir().unwrap();

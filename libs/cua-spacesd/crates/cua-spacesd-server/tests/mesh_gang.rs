@@ -122,6 +122,7 @@ impl World {
             recheck: cua_spacesd_server::mesh_host::GATE_RECHECK,
             gang_home: Some(home.to_owned()),
             gang_wait: wait,
+            lan: true,
         };
         tokio::spawn(cua_spacesd_server::mesh_host::run(cfg, self.stop.clone()));
     }

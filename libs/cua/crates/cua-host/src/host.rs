@@ -1225,6 +1225,9 @@ pub struct Host {
     /// The old LaunchAgent (tests; else [`service::Launchd`]).
     legacy: Option<Arc<dyn LegacyService>>,
     verify: VerifyTiming,
+    /// Whether setup waits for the relay to report this machine online
+    /// (`None`: yes, except under the test runner).
+    online_check: Option<bool>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1246,7 +1249,16 @@ impl Host {
             helper: None,
             legacy: None,
             verify: VerifyTiming::default(),
+            online_check: None,
         }
+    }
+
+    /// Whether setup waits until the relay reports this machine online
+    /// before it reports success (on by default; tests with a fake runner
+    /// turn it on to test it).
+    pub fn with_online_check(mut self, on: bool) -> Self {
+        self.online_check = Some(on);
+        self
     }
 
     /// Uses `app` as the installed Cua Spaces app with its helper, run by
@@ -1292,7 +1304,10 @@ impl Host {
     fn legacy(&self) -> Arc<dyn LegacyService> {
         match &self.legacy {
             Some(l) => l.clone(),
-            None => Arc::new(service::Launchd::for_current_user(&user_home(&self.home))),
+            None => Arc::new(service::Launchd::for_current_user(
+                &user_home(&self.home),
+                self.service_names(),
+            )),
         }
     }
 
@@ -1344,7 +1359,15 @@ impl Host {
             runner,
             &user_home(&self.home),
             &self.paths.dir,
+            self.service_names(),
         ))
+    }
+
+    /// The names this home's host service is registered under (CUA-3512):
+    /// from this home, never from environment variables, so the CLI and
+    /// the app's daemon agree and a staging home never takes production's.
+    pub fn service_names(&self) -> service::ServiceNames {
+        service::ServiceNames::for_home(CuaChannel::current(), &self.home, &user_home(&self.home))
     }
 
     fn manager_for_config(&self, config: &HostConfig) -> Arc<dyn ServiceManager> {
@@ -1743,6 +1766,9 @@ impl Host {
             self.retire_legacy()?;
         }
         let manager = self.manager(runner);
+        // This home's service under another home's names (a build before
+        // CUA-3512): retired first, and only when it runs this home.
+        let retired = manager.retire_legacy_names();
         let previous = self.config().ok().flatten();
         self.choose_ports(&mut config, previous.as_ref(), manager.as_ref())
             .await?;
@@ -1753,6 +1779,13 @@ impl Host {
             let _ = manager.stop();
             return Err(e);
         }
+        // "Added" means online for the user's other devices (CUA-3513): a
+        // service that runs but never reaches the relay is not added.
+        let online_check = self.online_check.unwrap_or(manager.state().kind != "fake");
+        if online_check {
+            self.confirm_online(&config, manager.as_ref()).await?;
+        }
+        self.restore_default_home(&retired).await;
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -1807,8 +1840,15 @@ impl Host {
             let p = p.service_ports(channel);
             preferred.push((p.tcp, p.quic));
         }
-        preferred.push((default.tcp, default.quic));
-        if !free(preferred[0]) && manager.state().installed {
+        // The other environment's home (staging beside production) never
+        // takes the channel's pair: production would find it taken the
+        // next time it starts (CUA-3512).
+        if self.service_names().other_env() {
+            preferred.retain(|&pair| pair != (default.tcp, default.quic));
+        } else {
+            preferred.push((default.tcp, default.quic));
+        }
+        if !preferred.is_empty() && !free(preferred[0]) && manager.state().installed {
             // Perhaps this user's own service: stop it and give it a moment
             // to let go of its sockets.
             let _ = manager.stop();
@@ -1818,24 +1858,27 @@ impl Host {
             }
         }
         let candidates = ports::candidates(&preferred, ports::per_user_seed());
+        // What the warning and the error name: this home's own pair, or
+        // the first one it may take.
+        let wanted = preferred.first().copied().unwrap_or(candidates[0]);
         let Some((tcp, quic)) = ports::first_free(&candidates, free) else {
             let (lo, hi) = ports::per_user_range();
             return Err(Error::Service(format!(
                 "no free port for the host service: {}/{} (TCP/UDP) and the per-user ports \
                  {lo}-{hi} are all in use by other programs; stop one of them, then run \
                  `{} host setup` again",
-                preferred[0].0,
-                preferred[0].1,
+                wanted.0,
+                wanted.1,
                 crate::cli()
             )));
         };
         let tcp = fixed_tcp.map_or(tcp, |_| default.tcp);
-        if quic != preferred[0].1 || (fixed_tcp.is_none() && tcp != preferred[0].0) {
+        if quic != wanted.1 || (fixed_tcp.is_none() && tcp != wanted.0) {
             tracing::warn!(
                 "port {}/{} is in use by another program (another user's Cua host on this \
                  machine?); this host service listens on {tcp} (TCP) and {quic} (QUIC) instead",
-                preferred[0].0,
-                preferred[0].1,
+                wanted.0,
+                wanted.1,
             );
         }
         config.port = (tcp != default.tcp).then_some(tcp);
@@ -2958,6 +3001,95 @@ impl Host {
         }
     }
 
+    /// Waits until the relay reports this machine online (relay mode), up to
+    /// [`VerifyTiming::timeout`]. Fails with the reason and the driver's last
+    /// log lines, so the app never says "Added" for a computer that stays
+    /// offline (CUA-3513).
+    async fn confirm_online(
+        &self,
+        config: &HostConfig,
+        manager: &dyn ServiceManager,
+    ) -> Result<()> {
+        if config.mode != "relay" || config.relay_url.is_none() || config.machine_id.is_none() {
+            return Ok(());
+        }
+        let t = self.verify;
+        let start = std::time::Instant::now();
+        let mut last = "the relay did not answer".to_string();
+        loop {
+            if !manager.state().running {
+                last = "the host service stopped".into();
+            } else {
+                match self.relay_session(config).await {
+                    Some((true, _)) => return Ok(()),
+                    Some((false, _)) => last = "the relay does not see it yet".into(),
+                    None => last = "the relay did not answer".into(),
+                }
+            }
+            if start.elapsed() >= t.timeout {
+                let tail = log_tail(&self.paths.log());
+                return Err(Error::Service(format!(
+                    "the host service started, but this computer did not come online for \
+                     your other devices within {} s ({last}); last log lines: {}",
+                    t.timeout.as_secs(),
+                    if tail.is_empty() { "none" } else { &tail }
+                )));
+            }
+            tokio::time::sleep(t.poll).await;
+        }
+    }
+
+    /// After this home's service was retired from the production names
+    /// (a build before CUA-3512 set a staging host up under them and so
+    /// replaced the production host), puts the production home's service
+    /// back as its own setup made it. Best effort, logged.
+    async fn restore_default_home(&self, retired: &[String]) {
+        let names = self.service_names();
+        if retired.is_empty() || names.is_default() {
+            return;
+        }
+        let channel = names.channel;
+        let user = user_home(&self.home);
+        let default_home = channel.home_dir_name();
+        let default_home = match channel.home_subdir(channel.default_env()) {
+            Some(sub) => user.join(default_home).join(sub),
+            None => user.join(default_home),
+        };
+        let default = Host::new(&default_home);
+        let default_names = default.service_names();
+        let took_default = retired.iter().any(|r| {
+            [
+                default_names.systemd_unit(),
+                default_names.launchd_label(),
+                default_names.windows_task(),
+                default_names.windows_run_value(),
+            ]
+            .contains(r)
+        });
+        if !took_default {
+            return;
+        }
+        let Ok(Some(config)) = default.config() else {
+            return;
+        };
+        let runner = RunnerKind::parse(&config.runner).unwrap_or(RunnerKind::Auto);
+        if runner == RunnerKind::AppHelper {
+            return;
+        }
+        let manager = default.manager(runner);
+        let spec = default.service_spec(&config);
+        match manager.install(&spec).and_then(|()| manager.start()) {
+            Ok(()) => tracing::info!(
+                home = %default_home.display(),
+                "restored the production host service a staging setup had replaced"
+            ),
+            Err(e) => tracing::warn!(
+                home = %default_home.display(),
+                "could not restore the production host service: {e}"
+            ),
+        }
+    }
+
     /// The relay's view of this machine's session: `(online, connected_at)`
     /// (relay mode; `None` when it could not be read). Read fresh, never
     /// the remembered answer [`Host::status`] shows during a hiccup.
@@ -3400,12 +3532,7 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
         tokio::time::sleep(step).await;
         let st = manager.state();
         if !st.running {
-            let tail = std::fs::read_to_string(log)
-                .map(|t| {
-                    let lines: Vec<&str> = t.lines().rev().take(3).collect();
-                    lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
-                })
-                .unwrap_or_default();
+            let tail = log_tail(log);
             return Err(Error::Service(format!(
                 "the host service did not stay running ({}); last log lines: {}",
                 st.detail.trim(),
@@ -3414,6 +3541,16 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
         }
     }
     Ok(())
+}
+
+/// The last 3 lines of the driver's log, joined with ` | ` ("" when none).
+fn log_tail(log: &Path) -> String {
+    std::fs::read_to_string(log)
+        .map(|t| {
+            let lines: Vec<&str> = t.lines().rev().take(3).collect();
+            lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+        })
+        .unwrap_or_default()
 }
 
 /// Locates (or downloads) cua-spacesd and installs it at `dest`.

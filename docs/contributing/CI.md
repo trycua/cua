@@ -76,10 +76,18 @@ After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit
 `gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
 sign off a run that failed or skipped a check. Sign off again after every new commit.
 
-`ci-gate` requires a successful `local-ci` status on the head commit for **agent pull requests**: those
-opened by the Cua Agents GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch
-of this repository. Community pull requests are not asked for it. When it is missing the gate says "Run
-bin/ci and bin/ci --signoff on this head commit."
+`ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
+labels and commit trailers are not read.
+
+- **A branch of this repository** (members and agents): a successful `local-ci` status. Our Mac runner sets
+  it after `bin/ci --quick` (`ci-remote-sweep` starts that run for each such PR), or you set it with
+  `bin/ci --signoff`. When it is missing the gate says "Run bin/ci --quick and bin/ci --signoff on this head
+  commit."
+- **A fork** (community): fork code never runs on our Macs. The sign-off is a successful `CI: Quick` run
+  (`ci-quick.yml`, which runs `bin/ci --quick`) on the head commit in GitHub Actions: a `pull_request` job
+  with a read-only token and no secrets. A first-time contributor's run needs a maintainer to approve it.
+
+The `agent` label is only for filtering; it does not change the gate.
 
 The requirement is **report-only** at first: the gate prints that line as a warning and passes. Setting the
 repository variable `REQUIRE_LOCAL_CI` to `true` makes it blocking. It is the only switch. When blocking, the

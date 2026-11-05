@@ -1,11 +1,11 @@
 //! End-to-end behaviour of cua-agent-setup against fixture configs for every
 //! agent format, always in a temporary HOME (never the real one).
 
+mod common;
+
 use cua_agent_setup::{
     AGENTS, AgentSetup, Change, Format, HostEnv, McpServer, Outcome, Parts, Target, registry,
 };
-mod common;
-
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -146,19 +146,16 @@ fn one(out: Vec<Outcome>) -> Outcome {
 /// (or, when `answers` is false, reads it and never answers).
 #[cfg(unix)]
 fn fake_driver(path: &Path, answers: bool) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let body = if answers {
         "read line\nprintf '%s\\n' 'not json: a log line'\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n"
     } else {
         "read line\nexit 3\n"
     };
-    std::fs::write(
+    common::write_executable(
         path,
         format!("#!/bin/sh\n[ \"$1\" = mcp ] || exit 2\n{body}"),
-    )
-    .unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     path.to_path_buf()
 }
 
@@ -577,11 +574,9 @@ fn detection_uses_path_markers_and_app_bundles() {
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let codex = bin.join(if cfg!(windows) { "codex.exe" } else { "codex" });
-    std::fs::write(&codex, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&codex, "#!/bin/sh\n");
         // A non-executable file is not a binary.
         std::fs::write(bin.join("claude"), "").unwrap();
     }
@@ -835,7 +830,6 @@ fn a_skill_the_user_installed_another_way_is_not_outdated() {
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {
-    use std::os::unix::fs::PermissionsExt;
     let mut t = T::new();
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -851,8 +845,7 @@ fn claude_code_is_configured_through_its_own_cli_when_present() {
         config.display()
     );
     let claude = bin.join("claude");
-    std::fs::write(&claude, script).unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&claude, script);
     t.env.path = vec![bin];
     t.env.run_agent_clis = true;
     let s = t.setup();
@@ -1040,12 +1033,10 @@ fn the_driver_command_resolves_from_path_then_local_bin() {
     } else {
         "cua-driver"
     });
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     assert_eq!(
         McpServer::driver_for(&t.env).command,
         exe.display().to_string()
@@ -1181,12 +1172,10 @@ fn cua_driver_is_found_inside_its_app_on_macos() {
         .home
         .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     assert_eq!(cua_agent_setup::driver::locate(&env), Some(exe.clone()));
     assert_eq!(
         McpServer::driver_for(&env).command,
@@ -1220,12 +1209,10 @@ fn hermes_is_detected_from_its_bin_home_or_app() {
     } else {
         "hermes"
     });
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     t.env.path = vec![bin];
     let st = get(&t.setup());
     assert_eq!(st.evidence, [format!("bin:{}", exe.display())]);
@@ -1465,7 +1452,6 @@ fn sign_in_is_refused_without_a_sign_in_an_install_or_agent_commands() {
 #[cfg(unix)]
 #[test]
 fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
-    use std::os::unix::fs::PermissionsExt;
     let mut t = T::new();
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1480,8 +1466,7 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     // Its PATH is only `bin` below: no mkdir there.
     std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
     let codex = bin.join("codex");
-    std::fs::write(&codex, script).unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&codex, script);
     t.env.path = vec![bin];
     t.env.run_agent_clis = true;
     let s = t.setup();
@@ -1503,7 +1488,7 @@ fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
     let mut t = T::new();
     let bin = t.home.join("bin");
     let log = t.home.join("claude-argv.log");
-    common::write_executable(
+    common::write_script(
         &bin,
         "claude",
         &format!(
@@ -1516,7 +1501,7 @@ fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
     t.setup().sign_in("claude-code").unwrap();
     assert_eq!(t.read(&log).trim(), "auth login");
     // A login that stops with an error at once: its own last line, in words.
-    common::write_executable(
+    common::write_script(
         &bin,
         "claude",
         "echo 'opening the browser' >&2\necho '\x1b[31mNo browser found\x1b[0m' >&2\nexit 1",
@@ -1527,13 +1512,13 @@ fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
         "{e}"
     );
     // No output: the exit code.
-    common::write_executable(&bin, "claude", "exit 7");
+    common::write_script(&bin, "claude", "exit 7");
     let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
     assert!(e.contains("exit code 7"), "{e}");
     // One still waiting for the browser is not started twice (last: it stays
     // registered while it runs).
     let runs = t.home.join("claude-runs.log");
-    common::write_executable(
+    common::write_script(
         &bin,
         "claude",
         &format!("echo run >> '{}'\nsleep 5", runs.display()),
@@ -1550,8 +1535,8 @@ fn hermes_signs_in_in_terminal() {
     let mut t = T::new();
     let bin = t.home.join("bin");
     let log = t.home.join("osascript.log");
-    common::write_executable(&bin, "hermes", "exit 0");
-    common::write_executable(
+    common::write_script(&bin, "hermes", "exit 0");
+    common::write_script(
         &bin,
         "osascript",
         &format!("printf '%s' \"$*\" > '{}'", log.display()),

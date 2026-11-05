@@ -164,7 +164,14 @@ fn message(v: &Value) -> Option<Message> {
     })
 }
 
-pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Vec<Message>)>> {
+/// A chat's newest messages: the file is read from its end, within
+/// [`lines::HISTORY_BUDGET`], until `cap` messages are in hand, so a chat of
+/// any size opens at once. `more` is whether older ones were left unread.
+pub(crate) fn history(
+    root: &Path,
+    id: &str,
+    cap: usize,
+) -> Result<Option<(ThreadSummary, Vec<Message>, bool)>> {
     let Some(path) = find(root, id) else {
         return Ok(None);
     };
@@ -173,19 +180,21 @@ pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Ve
         return Ok(None);
     };
     let mut out = vec![];
-    lines::each(&path, |v| {
+    let whole = lines::rev_each(&path, lines::HISTORY_BUDGET, |v| {
         if let Some(mut m) = message(&v) {
             if m.key.is_empty() {
-                m.key = format!("line-{}", out.len());
+                m.key = format!("rev-{}", out.len());
             }
             out.push(m);
         }
+        out.len() < cap
     })
     .map_err(|source| crate::Error::Io {
         path: path.display().to_string(),
         source,
     })?;
-    Ok(Some((thread, out)))
+    out.reverse();
+    Ok(Some((thread, out, !whole)))
 }
 
 fn find(root: &Path, id: &str) -> Option<PathBuf> {

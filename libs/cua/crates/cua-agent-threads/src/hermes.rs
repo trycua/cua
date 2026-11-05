@@ -166,7 +166,11 @@ pub(crate) fn recent(root: &Path, limit: usize) -> Vec<ThreadSummary> {
         .collect()
 }
 
-pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Vec<Message>)>> {
+pub(crate) fn history(
+    root: &Path,
+    id: &str,
+    cap: usize,
+) -> Result<Option<(ThreadSummary, Vec<Message>, bool)>> {
     let Some(c) = open(root) else { return Ok(None) };
     let Some(row) = rows(&c, " AND id = ?2", 1, Some(id)).into_iter().next() else {
         return Ok(None);
@@ -181,12 +185,12 @@ pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Ve
     };
     let sql = format!(
         "SELECT id, role, content, timestamp FROM messages \
-         WHERE session_id = ?1 AND role IN ('user', 'assistant'){active} ORDER BY id"
+         WHERE session_id = ?1 AND role IN ('user', 'assistant'){active} ORDER BY id DESC LIMIT ?2"
     );
     let sqlite = |e: rusqlite::Error| Error::Sqlite(e.to_string());
     let mut s = c.prepare(&sql).map_err(sqlite)?;
     let messages = s
-        .query_map(params![id], |r| {
+        .query_map(params![id, cap as i64 + 1], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -214,6 +218,10 @@ pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Ve
                 cut: false,
             })
         })
-        .collect();
-    Ok(Some((thread, messages)))
+        .collect::<Vec<_>>();
+    let more = messages.len() > cap;
+    let mut messages = messages;
+    messages.truncate(cap);
+    messages.reverse();
+    Ok(Some((thread, messages, more)))
 }

@@ -28,7 +28,9 @@ import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
+import { useThisMacTarget } from "./use-this-mac-target";
 import { useWhereOptions } from "./where-options";
+import { homeDefaultWhere } from "@/lib/this-mac-target";
 import { FallbackLine, useTreeWhere } from "./tree-where";
 import { currentTreeWhere } from "@/lib/default-where";
 import { PrepareLine } from "@/components/prepare/prepare-line";
@@ -59,7 +61,9 @@ export function AskFirstHome() {
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
-  const { kinds, spaces: pickable } = useWhereOptions();
+  const { kinds, spaces: pickable, computers } = useWhereOptions();
+  // This computer, once it's in the account, is where a job goes unless you pick (no Space needed first).
+  const thisMac = useThisMacTarget();
   const { start } = useStartTask();
   const { core } = useBridge();
   // The agent: the last app, account and model picked while they are still there, else the first connected app. The
@@ -83,7 +87,8 @@ export function AskFirstHome() {
   const machines = useMemo(() => (machineRows ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current, online: m.online })), [machineRows]);
   useKeepHomeWarm(chosenAgent, agentHome);
   const readiness = useAgentReadiness(chosenAgent, agentHome, agents, selected);
-  // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
+  // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
+  // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
   // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
   const prep = usePrepare();
@@ -94,11 +99,12 @@ export function AskFirstHome() {
   // With agent homes the agent decides where, so the tree's default doesn't apply.
   const treeWhere = useTreeWhere();
   const tw = agentHome ? null : treeWhere;
-  const where = tw ? currentTreeWhere(pickedWhere, tw.def.where, kinds, tw.tree) : currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : null), kinds, pickable);
+  const where = tw ? currentTreeWhere(pickedWhere, tw.def.where, kinds, tw.tree) : currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
     // The default can be This Mac itself: it asks once, as picking it does.
-    if (tw && w.kind === "this-mac" && !thisMacConfirmed()) {
+    if (w.kind === "this-mac" && thisMac.readiness === "needs-setup") return;
+    if (w.kind === "this-mac" && !thisMacConfirmed()) {
       pick.choose(w, (ok) => submit(prompt, ok), () => setWhereOpen(true));
       return;
     }
@@ -156,6 +162,8 @@ export function AskFirstHome() {
           onWhereOpen={setWhereOpen}
           kinds={kinds}
           spaces={pickable}
+          computers={computers}
+          thisMac={{ readiness: thisMac.readiness, busy: thisMac.busy, onSetUp: thisMac.setUp }}
           machines={machines}
           agentHome={agentHome}
           hasHome={agentHome && reusableHome(chosenAgent, spaces, false, children?.homesOf(chosenAgent)) !== null}

@@ -17,6 +17,7 @@ import { machineOs, reachable } from "@/lib/machines";
 import { plural } from "@/lib/plural";
 import { isMachineDesktop, spaceState, type SpaceState } from "@/lib/spaces";
 import { relativeTime } from "@/lib/utils";
+import { thisComputerLabel } from "./host-labels";
 
 /** How a row reads in the Status column (and its dot). */
 export type TreeTone = "online" | "offline" | "stopped" | "waits" | "busy";
@@ -89,6 +90,22 @@ export function computerSpaceId(m: Pick<Machine, "id" | "current" | "relayId" | 
   return m.connection === "direct" ? null : `relay:${m.id}`;
 }
 
+/**
+ * A computer row left in the Spaces list after its machine went (Remove from
+ * account, or a machine the relay forgot): `relay:<machine>` named by its raw
+ * id, with no machine in the list. It is not a computer to show, and nothing
+ * under it is either.
+ */
+function ghostMachineIds(spaces: readonly Space[], machines: readonly Machine[]): Set<string> {
+  const known = new Set(machines.flatMap((m) => [m.id, ...(m.relayId ? [m.relayId] : [])]));
+  const ghosts = new Set<string>();
+  for (const s of spaces) {
+    const m = /^relay:([^/]+)$/.exec(s.id);
+    if (m && !known.has(m[1]!) && (s.name === s.id || s.name === m[1])) ghosts.add(m[1]!);
+  }
+  return ghosts;
+}
+
 /** A Space id the relay knows (`relay:<machine>` or `relay:<machine>/<name>`): one that can be the default. */
 const relayId = (id: string): string | null => (id.startsWith("relay:") ? id : null);
 
@@ -122,7 +139,9 @@ const isComputer = (m: Machine) => !m.device;
  * read "Paused".
  */
 export function buildSpacesTree({ spaces, machines, defaultSpace, running = new Map(), me = null, now = Date.now(), relayOnline }: TreeInput): SpacesTree {
-  const listed = spaces.filter((s) => !isMachineDesktop(s));
+  const ghosts = ghostMachineIds(spaces, machines);
+  const onGhost = (s: Space) => [...ghosts].some((g) => s.id === `relay:${g}` || s.id.startsWith(`relay:${g}/`) || s.host === g);
+  const listed = spaces.filter((s) => !isMachineDesktop(s) && !onGhost(s));
   const placed = new Set<string>();
   const here = machines.find((m) => m.current && isComputer(m)) ?? null;
   const others = machines.filter((m) => !m.current && isComputer(m));
@@ -188,7 +207,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const node: TreeNode = {
       key,
       kind: "computer",
-      name: m.current ? "This Mac" : m.name,
+      name: m.current ? thisComputerLabel() : m.name,
       os: machineOs(m),
       settingsId: id,
       space: own,

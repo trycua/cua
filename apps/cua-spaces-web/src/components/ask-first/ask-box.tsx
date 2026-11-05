@@ -17,6 +17,7 @@ import { AgentPicker, type AccountActions } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
 import { TreeWherePicker, whereNode, type TreeWhere } from "./tree-where";
 import { TreeIcon } from "@/components/spaces/tree-parts";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 export type { TaskWhere } from "@/lib/ask-first";
 
@@ -28,8 +29,8 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
   if (where.kind === "agent") return { title: where.fresh ? "Agent decides, new Home" : "Agent decides", detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
-  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? "This Mac"}` };
-  return { title: where.kind === "this-mac" ? "This Mac" : where.space.name, detail: null };
+  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? thisComputerLabel()}` };
+  return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
 }
 
 export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) {
@@ -41,7 +42,7 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
 }
 
 /** The trade-off, under the list. */
-export const WHERE_FOOTER = "A new computer keeps yours untouched. This Mac works on your own files and apps.";
+export const whereFooter = (): string => `A new computer keeps yours untouched. ${thisComputerLabel()} works on your own files and apps.`;
 
 /** With agent homes: what the footer adds (the agent can also be told in the text with @). */
 export const WHERE_FOOTER_HOME = "You can also name a Space or computer in the text with @.";
@@ -317,7 +318,7 @@ export function WherePicker({
 }) {
   if (tree) return <TreeWherePicker tw={tree} where={where} onWhere={onWhere} kinds={kinds} trigger={trigger} open={open} onOpenChange={onOpenChange} />;
   return (
-    <Picker title="Where it runs" trigger={trigger} footer={agentHome ? `${WHERE_FOOTER} ${WHERE_FOOTER_HOME}` : WHERE_FOOTER} open={open} onOpenChange={onOpenChange}>
+    <Picker title="Where it runs" trigger={trigger} footer={agentHome ? `${whereFooter()} ${WHERE_FOOTER_HOME}` : whereFooter()} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (
         <PickerRow
           icon={
@@ -352,7 +353,7 @@ export function WherePicker({
               <OsIcon os={k.os} className="size-4" />
             </span>
           }
-          title={`A new ${OS_WORD[k.os]} computer on this Mac`}
+          title={`A new ${OS_WORD[k.os]} computer on ${thisComputerText()}`}
           note={k.blocked ?? k.note}
           selected={where?.kind === "new" && where.os === k.os}
           onSelect={() => onWhere({ kind: "new", os: k.os })}
@@ -365,7 +366,7 @@ export function WherePicker({
             <LaptopIcon className="size-4" />
           </span>
         }
-        title="This Mac"
+        title={thisComputerLabel()}
         note="Works on your own files and apps"
         selected={where?.kind === "this-mac"}
         onSelect={() => onWhere({ kind: "this-mac" })}

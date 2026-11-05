@@ -462,11 +462,12 @@ def build_image(
         f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive",
         f"if=pflash,format=raw,file={efivars}",
-        # Main disk — virtio-blk (bootindex=0 so after reboot it boots from disk)
+        # Main disk — virtio-blk (bootindex=1: the install media is tried first; its "press any key" prompt times out on
+        # later boots, which then fall through to the disk)
         "-drive",
         f"file={disk_path},id=disk0,format=qcow2,if=none",
         "-device",
-        "virtio-blk-pci,drive=disk0,bootindex=0",
+        "virtio-blk-pci,drive=disk0,bootindex=1",
         # AHCI controller for all CDROMs (Q35 built-in IDE only supports 1 unit)
         "-device",
         "ich9-ahci,id=sata",
@@ -474,7 +475,7 @@ def build_image(
         "-drive",
         f"file={win_iso},if=none,media=cdrom,readonly=on,id=cd0",
         "-device",
-        "ide-cd,drive=cd0,bus=sata.0,bootindex=1",
+        "ide-cd,drive=cd0,bus=sata.0,bootindex=0",
         # Unattend ISO (data-only: Autounattend.xml + setup script + startup.nsh)
         "-drive",
         f"file={unattend_iso},if=none,media=cdrom,readonly=on,id=cd1",

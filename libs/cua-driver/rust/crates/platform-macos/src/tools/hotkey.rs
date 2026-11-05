@@ -226,6 +226,11 @@ impl Tool for HotkeyTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        if std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() && apps::frontmost_pid() == Some(pid) {
+            return ToolResult::error(
+                "CUA_DRIVER_AX_ONLY: the target pid is frontmost; refusing to send keys that compete with the user.",
+            );
+        }
 
         if args.get("keys").and_then(|v| v.as_array()).is_none() {
             return ToolResult::error("Missing required parameter: keys");

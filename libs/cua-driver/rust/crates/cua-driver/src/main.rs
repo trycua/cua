@@ -359,7 +359,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
 }
 
 fn inspect_tools_without_runtime_for(compatibility_mode: bool) -> serde_json::Value {
-    cua_driver_sdk::CuaDriver::inspect_host_tools(cua_driver_sdk::DriverHostOptions {
+    let tools = cua_driver_sdk::CuaDriver::inspect_host_tools(cua_driver_sdk::DriverHostOptions {
         cursor: cursor_overlay::CursorConfig {
             enabled: false,
             ..cursor_overlay::CursorConfig::default()
@@ -371,7 +371,8 @@ fn inspect_tools_without_runtime_for(compatibility_mode: bool) -> serde_json::Va
         register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
-    })
+    });
+    proxy::filtered_tools_list(&tools)
 }
 
 #[cfg(test)]

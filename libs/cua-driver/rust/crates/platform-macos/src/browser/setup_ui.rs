@@ -68,6 +68,35 @@ fn tab_name_matches_title(node: &AXNode, title: &str) -> bool {
 /// How long the omnibox may take to apply queued setup keystrokes.
 const TYPED_URL_SETTLE_TIMEOUT: Duration = Duration::from_millis(1500);
 
+fn ax_only_mode() -> bool {
+    std::env::var_os("CUA_DRIVER_AX_ONLY").is_some()
+}
+
+fn with_ax_only_foreground_guard<T>(
+    ax_only: bool,
+    on_attempt: impl FnOnce(),
+    action: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if ax_only {
+        anyhow::bail!(
+            "CUA_DRIVER_AX_ONLY: refusing browser setup fallback that activates the window or injects global input"
+        );
+    }
+    on_attempt();
+    action()
+}
+
+fn with_setup_foreground_assist(
+    pid: i32,
+    window_id: u32,
+    on_attempt: impl FnOnce(),
+    body: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    with_ax_only_foreground_guard(ax_only_mode(), on_attempt, || {
+        crate::input::skylight::with_foreground_assist(pid, window_id, body)
+    })
+}
+
 /// Poll `read` until it returns exactly `expected` (trimmed, ASCII
 /// case-insensitive) or `timeout` elapses. On timeout, returns the last value
 /// observed so the refusal can say how far the field got.
@@ -1050,9 +1079,12 @@ fn press_pixel_checkbox(
     if background {
         return click(crate::input::mouse::WindowClickDelivery::Background).map(|()| false);
     }
-    crate::input::skylight::with_foreground_assist(pid, window_id, || {
-        click(crate::input::mouse::WindowClickDelivery::Foreground)
-    })
+    with_setup_foreground_assist(
+        pid,
+        window_id,
+        || {},
+        || click(crate::input::mouse::WindowClickDelivery::Foreground),
+    )
 }
 
 /// Toggle the setup checkbox with the keyboard: give the exact AX checkbox
@@ -1172,11 +1204,13 @@ impl SetupUiHandle {
                                 let Some((x, y)) = center else {
                                     return false;
                                 };
-                                self.foregrounded_window = true;
-                                self.injected_global_input = true;
-                                let restored = crate::input::skylight::with_foreground_assist(
+                                let restored = with_setup_foreground_assist(
                                     pid,
                                     window_id,
+                                    || {
+                                        self.foregrounded_window = true;
+                                        self.injected_global_input = true;
+                                    },
                                     || {
                                         std::thread::sleep(Duration::from_millis(60));
                                         if crate::apps::frontmost_pid() != Some(pid) {
@@ -1234,7 +1268,11 @@ impl SetupUiHandle {
                             } else {
                                 trusted_fallback_attempted = true;
                                 release_actionable_nodes(&tree.nodes);
-                                self.injected_global_input = true;
+                                let foreground_path = !super::platform::guarded_attach_active();
+                                if foreground_path && ax_only_mode() {
+                                    return false;
+                                }
+                                self.injected_global_input |= foreground_path;
                                 match press_pixel_checkbox(
                                     pid,
                                     window_id,
@@ -1661,11 +1699,13 @@ fn set_remote_debugging(
                         }
                     }
                     Ok(None) => {
-                        handle.foregrounded_window = true;
-                        handle.injected_global_input = true;
-                        let navigated = crate::input::skylight::with_foreground_assist(
+                        let navigated = with_setup_foreground_assist(
                             pid,
                             window_id,
+                            || {
+                                handle.foregrounded_window = true;
+                                handle.injected_global_input = true;
+                            },
                             || {
                                 std::thread::sleep(Duration::from_millis(60));
                                 if crate::apps::frontmost_pid() != Some(pid) {
@@ -1843,11 +1883,13 @@ fn set_remote_debugging(
                                     ),
                                 ));
                             };
-                            handle.foregrounded_window = true;
-                            handle.injected_global_input = true;
-                            let clicked = crate::input::skylight::with_foreground_assist(
+                            let clicked = with_setup_foreground_assist(
                                 pid,
                                 window_id,
+                                || {
+                                    handle.foregrounded_window = true;
+                                    handle.injected_global_input = true;
+                                },
                                 || {
                                     std::thread::sleep(Duration::from_millis(60));
                                     if crate::apps::frontmost_pid() != Some(pid) {
@@ -1942,7 +1984,18 @@ fn set_remote_debugging(
                     handle.pixel_checkbox.get_or_insert(checkbox);
                     handle.used_bounded_pixel_fallback = true;
                     release_actionable_nodes(&tree.nodes);
-                    handle.injected_global_input = true;
+                    let foreground_path = !super::platform::guarded_attach_active();
+                    if foreground_path && ax_only_mode() {
+                        return Err(handle.abort(
+                            pid,
+                            window_id,
+                            BrowserRefusal::new(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                "CUA_DRIVER_AX_ONLY refuses browser setup that needs foreground input",
+                            ),
+                        ));
+                    }
+                    handle.injected_global_input |= foreground_path;
                     match press_pixel_checkbox(
                         pid,
                         window_id,
@@ -2016,6 +2069,45 @@ pub fn disable(
 mod tests {
     use super::*;
     use cua_driver_core::browser::{existing_profile_setup_descriptor, BrowserProduct};
+
+    #[test]
+    fn ax_only_foreground_guard_refuses_before_marking_or_running_fallback() {
+        let attempted = std::cell::Cell::new(false);
+        let ran = std::cell::Cell::new(false);
+
+        let error = with_ax_only_foreground_guard(
+            true,
+            || attempted.set(true),
+            || {
+                ran.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("CUA_DRIVER_AX_ONLY"));
+        assert!(!attempted.get());
+        assert!(!ran.get());
+    }
+
+    #[test]
+    fn non_ax_only_foreground_guard_runs_the_requested_fallback() {
+        let attempted = std::cell::Cell::new(false);
+        let ran = std::cell::Cell::new(false);
+
+        with_ax_only_foreground_guard(
+            false,
+            || attempted.set(true),
+            || {
+                ran.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(attempted.get());
+        assert!(ran.get());
+    }
 
     fn chrome() -> &'static BrowserSetupDescriptor {
         existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()

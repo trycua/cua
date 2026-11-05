@@ -235,6 +235,36 @@ impl Tool for ScrollTool {
                         }
                     }
                 }
+                let element_ptr = element_guard.as_ptr() as usize;
+                let direction_generic = direction.clone();
+                let by_generic = by.clone();
+                match tokio::task::spawn_blocking(move || {
+                    crate::input::ax_actions::perform_ax_scroll_action_if_supported(
+                        element_ptr,
+                        &direction_generic,
+                        &by_generic,
+                        amount,
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(Some(action))) => {
+                        return ToolResult::text(format!(
+                            "Scrolled {direction} by {by} × {amount} via {action} (AX)."
+                        ))
+                        .with_structured(serde_json::json!({
+                            "path": "ax",
+                            "effect": "unverifiable"
+                        }));
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(error)) => {
+                        return ToolResult::error(format!("Native AX scroll failed: {error}"));
+                    }
+                    Err(error) => {
+                        return ToolResult::error(format!("Native AX scroll task failed: {error}"));
+                    }
+                }
                 let direction_for_ax = direction.clone();
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
@@ -294,6 +324,12 @@ impl Tool for ScrollTool {
                     }
                 }
             }
+        }
+
+        if std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() {
+            return ToolResult::error(
+                "CUA_DRIVER_AX_ONLY: scroll needs a native AX scroll action; refusing CGEvent wheel. Use codex-cu for wheel scrolling.",
+            );
         }
 
         // ── Targeted wheel path ─────────────────────────────────────────────

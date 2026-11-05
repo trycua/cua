@@ -1336,6 +1336,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
                 "window_id": 7,
                 "session": SESSION,
                 "strategy": { "kind": "existing_profile" },
+                "delivery_mode": "background",
             },
         })
     );

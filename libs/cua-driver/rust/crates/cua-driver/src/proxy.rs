@@ -23,7 +23,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use cua_driver_core::mcp_wire::{self, ProtocolSession};
-use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
+use cua_driver_core::policy::{authorize_tool_call, is_tool_listable, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -1436,6 +1436,23 @@ fn proxy_tool_result_response(
     }
 }
 
+/// With `CUA_DRIVER_AX_ONLY=1`, hide tools that the configured policy can
+/// never allow (e.g. physical mouse/keyboard tools) from `tools/list`.
+pub(crate) fn filtered_tools_list(cached: &serde_json::Value) -> serde_json::Value {
+    if std::env::var_os("CUA_DRIVER_AX_ONLY").is_none() {
+        return cached.clone();
+    }
+    let mut out = cached.clone();
+    if let Some(tools) = out.get_mut("tools").and_then(|t| t.as_array_mut()) {
+        tools.retain(|tool| {
+            tool.get("name")
+                .and_then(|n| n.as_str())
+                .is_some_and(is_tool_listable)
+        });
+    }
+    out
+}
+
 fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
     result
         .get("tool_observation_owner")
@@ -1498,7 +1515,7 @@ async fn handle_proxy_tool_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
+        "tools/list" => Response::ok(id, filtered_tools_list(cached_tools_list)),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),

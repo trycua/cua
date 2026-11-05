@@ -29,9 +29,9 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
-    element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
-    AXUIElementRef,
+    ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
+    copy_element_attr, copy_string_attr, element_at_screen_position, element_screen_rect,
+    kAXErrorSuccess, AXUIElementCreateApplication, AXUIElementPerformAction, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -410,6 +410,25 @@ impl ClickTool {
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        if has_xy && std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() {
+            let pid = args.opt_i64("pid").map(|v| v as i32);
+            let wid = args.opt_u64("window_id").map(|v| v as u32);
+            let mirroring = pid.and_then(crate::apps::bundle_id_for_pid).as_deref()
+                == Some("com.apple.ScreenContinuity");
+            let ax_poor_fallback = match (pid, wid) {
+                (Some(p), Some(w)) => {
+                    apps::frontmost_pid() != Some(p)
+                        && user_idle_seconds() >= 1.0
+                        && !window_has_actionable_ax(p, w)
+                }
+                _ => false,
+            };
+            if !mirroring && !ax_poor_fallback {
+                return ToolResult::error(
+                    "CUA_DRIVER_AX_ONLY: coordinate clicks are only allowed when the target window has no actionable AX, is not frontmost, and the user is idle (or for iPhone Mirroring). Pass an element_token otherwise.",
+                );
+            }
+        }
         let capture_id = args.opt_str("capture_id");
         if capture_id.is_some() && !has_xy {
             return ToolResult::error("click.capture_id requires pixel coordinates x and y.")
@@ -804,6 +823,9 @@ impl ClickTool {
             // above. In background, drop the fallback rather than silently
             // escalate when the pointer rung would refuse (e.g. a
             // minimized/hidden target); the semantic path still runs.
+            if std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() {
+                selection_pixel = None;
+            }
             if selection_pixel.is_some()
                 && !delivery_mode.is_foreground()
                 && _mutation_lease
@@ -1622,6 +1644,66 @@ unsafe fn ancestor_roles(element: AXUIElementRef) -> Vec<String> {
         current = next;
     }
     roles
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+}
+
+/// Seconds since the user's last real mouse/key input. Driver-posted events do
+/// not count.
+fn user_idle_seconds() -> f64 {
+    const HID_SYSTEM_STATE: i32 = 1;
+    [1u32, 3, 10, 12, 22]
+        .into_iter()
+        .filter_map(|kind| {
+            let v = unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, kind) };
+            v.is_finite().then_some(v)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Whether the exact window exposes at least one actionable AX control
+/// (press/menu/open/pick). Used to decide if a pixel click is legitimate.
+fn window_has_actionable_ax(pid: i32, window_id: u32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let windows = copy_ax_windows(app);
+        let Some(target) = windows
+            .iter()
+            .copied()
+            .find(|w| ax_get_window_id(*w) == Some(window_id))
+        else {
+            return false;
+        };
+        let mut stack: Vec<(AXUIElementRef, usize)> = vec![(target, 0)];
+        let mut visited = 0usize;
+        while let Some((el, depth)) = stack.pop() {
+            visited += 1;
+            if visited > 250 {
+                break;
+            }
+            let actions = copy_action_names(el);
+            if actions.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "AXPress" | "AXShowMenu" | "AXConfirm" | "AXOpen" | "AXPick"
+                )
+            }) {
+                return true;
+            }
+            if depth < 8 {
+                for child in copy_children(el) {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        false
+    }
 }
 
 fn perform_ax_click(

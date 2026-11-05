@@ -117,7 +117,7 @@ jobs:
   linux:
     name: "gate / Linux E2E"
     needs: decide
-    if: needs.decide.outputs.run == 'true'
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' }}
     permissions:
       actions: read
       contents: read
@@ -128,7 +128,7 @@ jobs:
   windows:
     name: "gate / Windows E2E"
     needs: decide
-    if: needs.decide.outputs.run == 'true'
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' }}
     permissions:
       actions: read
       contents: read
@@ -141,7 +141,7 @@ jobs:
   macos:
     name: "gate / macOS hosted E2E"
     needs: decide
-    if: needs.decide.outputs.run == 'true' && github.event_name != 'pull_request'
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name != 'pull_request' }}
     permissions:
       actions: read
       contents: read
@@ -156,6 +156,7 @@ jobs:
     name: "gate / macOS hosted E2E (dispatched)"
     needs: decide
     if: >-
+      !failure() && !cancelled() &&
       needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -236,7 +237,7 @@ jobs:
   browsers:
     name: "gate / standalone browser E2E"
     needs: decide
-    if: needs.decide.outputs.run == 'true'
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' }}
     permissions:
       actions: read
       contents: read

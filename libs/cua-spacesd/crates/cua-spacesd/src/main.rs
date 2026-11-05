@@ -8,8 +8,8 @@
 #[cfg(not(cua_headless))]
 mod doctor;
 #[cfg(all(target_os = "macos", not(cua_headless)))]
-// Status, settings and the live test are wired to the app's API next
-// (CUA-2771); until then only `spawn` is called.
+// The app reads the driver's status, settings and permissions from the
+// driver's own socket; only `spawn` and the supervisor run here.
 #[allow(dead_code)]
 mod embedded_driver;
 #[cfg(not(cua_headless))]
@@ -956,7 +956,7 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     #[cfg(target_os = "macos")]
     cua_spacesd::vsock_agent::start();
     // Cua Driver for the coding agents on this Mac, as this process's own
-    // child (off unless CUA_SPACESD_EMBEDDED_DRIVER=1; see embedded_driver).
+    // child (on unless CUA_SPACESD_EMBEDDED_DRIVER=0; see embedded_driver).
     #[cfg(all(target_os = "macos", not(cua_headless)))]
     let _embedded_driver = if no_desktop {
         None

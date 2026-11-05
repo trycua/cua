@@ -18,9 +18,14 @@
 //! and is the one place the app asks for the driver's status, its settings
 //! (`get_config` / `set_config`), its permissions and a live test.
 //!
-//! **Off by default** until the live check on a macOS VM passes (the
-//! cursor draws, the parent is cua-spacesd, System Settings lists only Cua
-//! Spaces): `CUA_SPACESD_EMBEDDED_DRIVER=1` turns it on.
+//! **On by default** in a desktop session on macOS.
+//! `CUA_SPACESD_EMBEDDED_DRIVER=0` turns it off for this process.
+//!
+//! **Paused by the person.** The app's "Let agents use apps on this Mac"
+//! switch writes [`paused_marker`] (`<CuaHome>/run/cua-driver.off`). While
+//! it exists the driver is stopped and its socket is gone, so agents get the
+//! proxy's plain "open Cua Spaces" message; removing it starts the driver
+//! again within a couple of seconds.
 //!
 //! **Cursor overlay.** The child draws the agent cursor for coding agents
 //! (the SDK default). cua-spacesd's own overlay keeps drawing remote people
@@ -40,7 +45,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-/// Turns the embedded driver on (`1`).
+/// Turns the embedded driver off (`0`); it is on otherwise.
 pub const ENABLE_VAR: &str = "CUA_SPACESD_EMBEDDED_DRIVER";
 /// A cua-driver to run instead of the bundled one (development).
 pub const BINARY_VAR: &str = "CUA_SPACESD_DRIVER_BIN";
@@ -51,7 +56,17 @@ pub struct EmbeddedDriverConfig {
     pub binary: PathBuf,
     pub socket: PathBuf,
     pub host_bundle_id: String,
+    /// While this file exists the person has paused agents: no driver runs.
+    pub paused_marker: PathBuf,
 }
+
+/// The file the app writes while agents are paused: beside the socket.
+pub fn paused_marker(socket: &Path) -> PathBuf {
+    socket.with_file_name("cua-driver.off")
+}
+
+/// How often the supervisor looks at [`paused_marker`].
+const PAUSE_POLL: Duration = Duration::from_secs(1);
 
 impl EmbeddedDriverConfig {
     /// The configuration from the environment, or `None` (with the reason)
@@ -74,8 +89,8 @@ impl EmbeddedDriverConfig {
         exe: &Path,
         channel: CuaChannel,
     ) -> Result<Self, String> {
-        if enable.as_deref().map(str::trim) != Some("1") {
-            return Err(format!("off ({ENABLE_VAR} is not 1)"));
+        if enable.as_deref().map(str::trim) == Some("0") {
+            return Err(format!("off ({ENABLE_VAR}=0)"));
         }
         let binary = match binary_override.filter(|v| !v.trim().is_empty()) {
             Some(path) => PathBuf::from(path),
@@ -86,9 +101,11 @@ impl EmbeddedDriverConfig {
                 )
             })?,
         };
+        let socket = channel.embedded_driver_socket();
         Ok(Self {
             binary,
-            socket: channel.embedded_driver_socket(),
+            paused_marker: paused_marker(&socket),
+            socket,
             host_bundle_id: channel.bundle_id().to_string(),
         })
     }
@@ -144,6 +161,8 @@ pub struct DriverStatus {
     pub restarts: u32,
     pub last_error: Option<String>,
     pub last_test: Option<LiveTest>,
+    /// The person paused agents ([`paused_marker`]).
+    pub paused: bool,
 }
 
 #[derive(Default)]
@@ -199,6 +218,13 @@ impl EmbeddedDriver {
         }
         let mut attempt = 0u32;
         loop {
+            // Paused by the person: nothing runs until the marker goes.
+            if self.paused() {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(PAUSE_POLL) => continue,
+                }
+            }
             let started = std::time::Instant::now();
             let connection = tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -214,6 +240,14 @@ impl EmbeddedDriver {
                     );
                     let exit = tokio::select! {
                         _ = shutdown.cancelled() => break,
+                        _ = self.until_paused() => {
+                            tracing::info!("agents paused: stopping Cua Driver for coding agents");
+                            if let Err(error) = self.host.clone().stop().await {
+                                tracing::warn!(%error, "stopping Cua Driver for coding agents");
+                            }
+                            attempt = 0;
+                            continue;
+                        }
                         exit = self.host.clone().wait_for_exit(connection.generation.clone()) => exit,
                     };
                     let reason = match exit {
@@ -240,6 +274,17 @@ impl EmbeddedDriver {
         }
         if let Err(error) = self.host.clone().stop().await {
             tracing::warn!(%error, "stopping Cua Driver for coding agents");
+        }
+    }
+
+    /// Whether the person paused agents ([`paused_marker`]).
+    pub fn paused(&self) -> bool {
+        self.config.paused_marker.exists()
+    }
+
+    async fn until_paused(&self) {
+        while !self.paused() {
+            tokio::time::sleep(PAUSE_POLL).await;
         }
     }
 
@@ -270,6 +315,7 @@ impl EmbeddedDriver {
             restarts: tracked.restarts,
             last_error: tracked.last_error.clone(),
             last_test: tracked.last_test.clone(),
+            paused: self.paused(),
         }
     }
 
@@ -420,24 +466,33 @@ mod tests {
     }
 
     #[test]
-    fn off_unless_enabled() {
+    fn on_unless_turned_off() {
         let (_dir, exe) = exe_with_driver();
-        for enable in [None, Some("0".to_string()), Some("yes".to_string())] {
-            let r = EmbeddedDriverConfig::resolve(enable, None, &exe, CuaChannel::Stable);
-            assert!(r.unwrap_err().starts_with("off"));
+        for enable in [None, Some("1".to_string()), Some("yes".to_string())] {
+            assert!(EmbeddedDriverConfig::resolve(enable, None, &exe, CuaChannel::Stable).is_ok());
         }
+        let r = EmbeddedDriverConfig::resolve(Some(" 0 ".into()), None, &exe, CuaChannel::Stable);
+        assert!(r.unwrap_err().starts_with("off"));
+    }
+
+    #[test]
+    fn the_pause_marker_sits_beside_the_socket() {
+        let (_dir, exe) = exe_with_driver();
+        let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Local).unwrap();
+        assert_eq!(c.paused_marker, c.socket.with_file_name("cua-driver.off"));
+        assert_eq!(c.paused_marker.parent(), c.socket.parent());
     }
 
     #[test]
     fn uses_the_bundled_driver_and_the_channels_names() {
         let (_dir, exe) = exe_with_driver();
-        let c = EmbeddedDriverConfig::resolve(Some("1".into()), None, &exe, CuaChannel::Stable)
+        let c = EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Stable)
             .unwrap();
         assert_eq!(c.binary, exe.parent().unwrap().join("cua-driver"));
         assert_eq!(c.host_bundle_id, "com.trycua.spaces.macos");
         assert_eq!(c.socket, CuaChannel::Stable.embedded_driver_socket());
         let l =
-            EmbeddedDriverConfig::resolve(Some("1".into()), None, &exe, CuaChannel::Local).unwrap();
+            EmbeddedDriverConfig::resolve(None, None, &exe, CuaChannel::Local).unwrap();
         assert_eq!(l.host_bundle_id, "com.trycua.spaces.macos.local");
         assert_eq!(l.socket, CuaChannel::Local.embedded_driver_socket());
     }
@@ -446,7 +501,7 @@ mod tests {
     fn an_override_wins_and_a_missing_driver_says_where_it_looked() {
         let (_dir, exe) = exe_with_driver();
         let c = EmbeddedDriverConfig::resolve(
-            Some("1".into()),
+            None,
             Some("/opt/dev/cua-driver".into()),
             &exe,
             CuaChannel::Stable,
@@ -455,7 +510,7 @@ mod tests {
         assert_eq!(c.binary, PathBuf::from("/opt/dev/cua-driver"));
         let empty = tempfile::tempdir().unwrap();
         let err = EmbeddedDriverConfig::resolve(
-            Some("1".into()),
+            None,
             None,
             &empty.path().join("cua-spacesd"),
             CuaChannel::Stable,

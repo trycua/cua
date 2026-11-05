@@ -353,6 +353,12 @@ pub struct AppSpace {
     /// Who it belongs to, who else has it and what you may do with it
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     pub access: Option<AppSpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    pub hidden: bool,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -390,6 +396,9 @@ pub struct AppSpaceRow {
     /// The guest's CPU architecture, when known (any spelling: `arm64`,
     /// `aarch64`, `amd64`, `x86_64`).
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.

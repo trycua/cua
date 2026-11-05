@@ -526,6 +526,8 @@ export class LiveSpacesBackend implements SpacesBackend {
           imageDigest: text(info.imageDigest),
           kind: kindOf(this.native, info.kind),
           arch: text(info.arch),
+          // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+          hidden: Boolean(info.labels?.has("cua.hidden")),
           reachable: false,
           error: undefined,
           host: text(info.host),

@@ -489,6 +489,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         stop_reason: String::new(),
         volumes: Vec::new(),
         labels: BTreeMap::new(),
+        hidden: false,
         expires_at_unix: 0,
         on_expire: String::new(),
         created_at_unix: 0,
@@ -1378,6 +1379,7 @@ impl Spaces {
             stop_reason: String::new(),
             volumes: Vec::new(),
             labels: BTreeMap::new(),
+            hidden: false,
             expires_at_unix: 0,
             on_expire: String::new(),
             created_at_unix: 0,
@@ -1427,6 +1429,7 @@ impl Spaces {
                     info.display_name = m.display_name.clone();
                 }
                 info.labels = m.labels.clone();
+                info.hidden = m.labels.contains_key(crate::registry::HIDDEN_LABEL);
                 if m.created_at_unix > 0 {
                     info.created_at_unix = m.created_at_unix;
                 }
@@ -2774,6 +2777,7 @@ impl Spaces {
                 result = Err(e);
             } else if let Ok(SpaceCreated::Ready { info, .. }) = &mut result {
                 info.labels = labels.clone();
+                info.hidden = labels.contains_key(crate::registry::HIDDEN_LABEL);
                 info.created_at_unix = now;
                 info.egress = egress.clone();
                 info.egress_enforced =

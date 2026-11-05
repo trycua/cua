@@ -1839,6 +1839,7 @@ mod tests {
     #[test]
     fn only_the_identifier_has_a_copy_button() {
         let row = SpaceRow {
+            hidden: false,
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
             display_name: None,
@@ -1890,6 +1891,7 @@ mod tests {
     #[test]
     fn a_space_being_deleted_neither_streams_nor_deletes_again() {
         let row = SpaceRow {
+            hidden: false,
             id: "local:demo".into(),
             name: "demo".into(),
             display_name: None,

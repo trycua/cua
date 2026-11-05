@@ -263,6 +263,7 @@ impl Spaces {
             let m = meta.get(&id);
             if m.is_some_and(|m| {
                 !m.relay.is_on()
+                    || m.labels.contains_key(crate::registry::HIDDEN_LABEL)
                     || m.labels.get(crate::registry::RELAY_LABEL).is_some_and(|v| {
                         crate::registry::RelaySetting::parse(v).is_ok_and(|s| !s.is_on())
                     })
@@ -727,6 +728,29 @@ impl Spaces {
         }
     }
 
+    /// Makes a hidden Space ([`crate::registry::HIDDEN_LABEL`]) visible: the
+    /// apps list it from now on and the next publish pass puts it on the
+    /// owner's account (`set_on_relay` on). The daemon calls it when a
+    /// person writes into the Space's thread. `true` when it was hidden.
+    pub async fn reveal(&self, space: &str) -> Result<bool> {
+        let id = self.resolve(space)?;
+        let canonical = id.to_string();
+        let hidden = self
+            .inner
+            .registry
+            .all_meta()
+            .get(&canonical)
+            .is_some_and(|m| m.labels.contains_key(crate::registry::HIDDEN_LABEL));
+        if !hidden {
+            return Ok(false);
+        }
+        self.inner.registry.update_meta(&canonical, |m| {
+            m.labels.remove(crate::registry::HIDDEN_LABEL);
+        })?;
+        self.set_on_relay(space, true).await?;
+        Ok(true)
+    }
+
     /// Opts a Space in or out of the account's relay (`--no-relay`). Off
     /// takes it off at once when this computer is signed in.
     pub async fn set_on_relay(&self, space: &str, on: bool) -> Result<crate::SpaceInfo> {
@@ -742,9 +766,14 @@ impl Spaces {
         } else {
             crate::registry::RelaySetting::Off
         };
-        self.inner
-            .registry
-            .update_meta(&canonical, |m| m.relay = setting)?;
+        self.inner.registry.update_meta(&canonical, |m| {
+            m.relay = setting;
+            // The label that opted it out at create (`--label cua.relay=off`)
+            // would otherwise keep it off for good.
+            if on {
+                m.labels.remove(crate::registry::RELAY_LABEL);
+            }
+        })?;
         memo(self.home_dir(), |m| m.settled = None);
         CHANGED.notify_waiters();
         if !on {

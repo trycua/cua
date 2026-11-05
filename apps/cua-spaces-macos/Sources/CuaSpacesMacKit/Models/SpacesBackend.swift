@@ -587,7 +587,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         image: info.image.isEmpty ? nil : info.image,
                         imageDigest: info.imageDigest.isEmpty ? nil : info.imageDigest,
                         kind: AppSpaceKind(word: info.kind), arch: info.arch.isEmpty ? nil : info.arch,
-                        reachable: false, error: nil, host: info.host.isEmpty ? nil : info.host, hostName: info.hostName.isEmpty ? nil : info.hostName,
+                        // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+                        hidden: info.labels["cua.hidden"] != nil, reachable: false, error: nil, host: info.host.isEmpty ? nil : info.host, hostName: info.hostName.isEmpty ? nil : info.hostName,
                         power: info.power.isEmpty ? nil : info.power,
                         powerState: info.powerState.isEmpty ? nil : info.powerState,
                         cloud: info.cloud.isEmpty ? nil : info.cloud,
@@ -1530,17 +1531,17 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS",
                     image: "ghcr.io/trycua/linux:24.04",
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
-                    kind: .container, arch: "arm64", reachable: true, error: nil, host: nil, hostName: nil,
+                    kind: .container, arch: "arm64", hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
                     power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
         AppSpaceRow(id: "direct:builder", name: "builder", displayName: nil, provider: "direct", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
-                    kind: nil, arch: nil, reachable: false, error: "timed out", host: nil, hostName: nil,
+                    kind: nil, arch: nil, hidden: false, reachable: false, error: "timed out", host: nil, hostName: nil,
                     power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
         AppSpaceRow(id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", displayName: nil, provider: "direct",
                     spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .windows,
                     osName: "Windows", osPrettyName: "Windows Server 2022 Datacenter 10.0.20348",
-                    image: nil, imageDigest: nil, kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                    image: nil, imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
                     power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
     ]
 
@@ -1616,7 +1617,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                                            spacesdVersion: "0.4.0", features: ["desktop_stream"],
                                            addedAt: nil, os: .linux, osName: nil, osPrettyName: nil,
                                            image: args.image, imageDigest: nil, kind: args.kind, arch: nil,
-                                           reachable: true, error: nil, host: nil, hostName: nil,
+                                           hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
                                            power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
             return id
         }

@@ -1287,6 +1287,7 @@ jobs:
     uses: ./.github/workflows/e2e-rust-macos.yml
     with:
       source_sha: ${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}
+      rebuild_of_released_source: ${{ inputs.channel != 'nightly' && inputs.rebuild_sha != '' }}
 
   e2e-standalone-browsers:
     name: release gate / standalone browser E2E

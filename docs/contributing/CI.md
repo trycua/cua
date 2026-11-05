@@ -211,6 +211,26 @@ to a relay change. Every other area lists every workflow whose own `paths:` reac
 or add a path to one, add it to the matching areas in `.github/ci-areas.json`. Changing the map or the gate
 is a `.github/**` change, so it waits for every workflow, and it takes effect only once it is on `main`.
 
+## Heavy bundles run after merge
+
+The installer bundles take 55 to 100 minutes, so a pull request does not wait for them:
+
+- `CI: Cua Spaces` `bundle` (Tauri: Windows NSIS and MSI, macOS DMG, Linux deb and AppImage) builds on every push to
+  `main` that touches the app or `libs/cua`. A pull request builds it only when it changes a packaging path and
+  carries the `ci:full` label.
+- `CI: Cua Spaces for macOS (SwiftUI)` `SwiftUI app (bundle, launch check, XCUITest)` runs on every push to `main`
+  and on a manual run. A pull request runs it only when it changes a packaging path: `apps/cua-spaces-macos`
+  `scripts/`, `Support/`, `UITests/`, `project.yml`, the Swift package manifests, the pinned driver files, the
+  `libs/spaces-app-swift/scripts/` staging script, or the workflow itself (the `changes` job).
+- Pull requests keep the 2 to 5 minute installer smokes (`CI: Installers`, the desktop install smoke) and the
+  core, binding and Swift test jobs. A release still builds every bundle.
+- The gate waits only for runs and jobs that exist on the pull request, so a job that the pull request does not
+  start (a skipped `if`, or a trigger that is `push` only) is never waited for. No change to the area map is needed.
+
+A red run on `main` is already merged, so it is fixed forward. It alerts through `workflow-failure-alerts.yml`
+(Alertmanager, `#alerts-staging`) and `ci-postmerge-issue-bundles.yml` opens one issue per workflow, labelled
+`ci-postmerge`, comments on it for each later failure and closes it on the next green run.
+
 ## Flaky checks
 
 Known flakes are listed in [`.github/flaky/quarantine.json`](../../.github/flaky/quarantine.json) and

@@ -10367,7 +10367,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
+       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `localhost+lan:<ports>` (both), `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

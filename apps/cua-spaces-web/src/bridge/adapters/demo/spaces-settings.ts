@@ -37,10 +37,13 @@ export function demoSpacesSettingsHandlers(
     "spaces.resolveDefault": () => {
       if (!state.identity) return null;
       const rows = machines().filter((m) => !m.device && m.via !== "direct");
-      return resolveDefaultSpace(
-        state.spacesSettings,
-        rows.map((m) => ({ space: spaceOf(m), name: m.name, online: m.online, here: m.current === true })),
-      );
+      const candidates = rows.map((m) => ({ space: spaceOf(m), name: m.name, online: m.online, here: m.current === true }));
+      // A Space made on one of them can be the default too (`relay:<machine>/<name>`): online while its computer is.
+      const def = state.spacesSettings.defaultSpace;
+      const onMachine = def?.match(/^relay:([^/]+)\/(.+)$/);
+      const host = onMachine ? rows.find((m) => m.id === onMachine[1]) : undefined;
+      if (def && onMachine && host) candidates.unshift({ space: def, name: onMachine[2]!, online: host.online, here: false });
+      return resolveDefaultSpace(state.spacesSettings, candidates);
     },
   };
 }

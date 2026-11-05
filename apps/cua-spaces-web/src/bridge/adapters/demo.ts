@@ -105,7 +105,7 @@ export interface DemoOptions {
   keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
-  /** `?demo=desktops`: the Linux box also shares its desktop (a Space row of its own, `relay:linux-box`). */
+  /** `?demo=desktops`: the Mac mini and the Linux box also share their desktops (Space rows of their own, `relay:mac-mini`, `relay:linux-box`). */
   desktops?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
@@ -230,7 +230,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
- * `?demo=desktops` (the Linux box shares its desktop, a shared desktop row beside the Spaces), and
+ * `?demo=desktops` (the Mac mini and the Linux box share their desktops, a shared desktop row beside the Spaces), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 /** The account's signed-in machines that share nothing, as a host lists them (`?demo=signed-in-machines`): one enrolled, and the demo devices that wait. */
 function demoSignedInRows(nowMs: number): MachineRow[] {

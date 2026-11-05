@@ -9,9 +9,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, setFlagOverride, type HostStatus } from "@/bridge";
+import { BridgeProvider, setFlagOverride, type DataAdapter, type HostStatus } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
+import { ContinueOn } from "@/components/ask-first/imported-task";
 import { PickUpWhereYouLeftOff, ReadyScreen } from "@/components/first-run-new/first-run-new";
 import { readyView } from "@/lib/first-run-new";
 import { addImportedTask, askTask, resetAskTasks, type AskTask } from "@/lib/ask-first";
@@ -74,6 +75,44 @@ describe("the new setup's Ready screen", () => {
     await waitFor(() => expect(document.querySelectorAll("[data-new-run=ready] [data-pick-up-row]").length).toBe(3));
     fireEvent.click(document.querySelectorAll<HTMLElement>("[data-pick-up-continue]")[0]!);
     expect(picked[0]!.imported).toMatchObject({ sessionId: KETTLE.id });
+  });
+});
+
+describe("Continue on", () => {
+  it("lists only your other computers that could run the chat, each once, and fits the window", async () => {
+    const demo = createDemoAdapter({ latencyMs: 1 });
+    const extra = [
+      { id: "browser-1", name: "Web browser", via: "relay", online: true, os: "web", current: false, device: true, limits: [] },
+      { id: "browser-2", name: "Web browser", via: "relay", online: true, os: "web", current: false, device: true, limits: [] },
+    ];
+    const adapter: DataAdapter = {
+      ...demo,
+      subscribe: (l) => demo.subscribe(l),
+      call: (async (op: string, args: never) => {
+        const out = await demo.call(op as never, args);
+        if (op !== "machines.list") return out;
+        const rows = out as { id: string }[];
+        // The Mac mini listed twice, plus two signed-in browsers.
+        return [...rows, rows.find((r) => r.id === "mac-mini")!, ...extra];
+      }) as DataAdapter["call"],
+    };
+    render(
+      <BridgeProvider adapter={adapter} core={await testCore()}>
+        <ContinueOn />
+      </BridgeProvider>,
+    );
+    fireEvent.click(await waitFor(() => q("[data-continue-on]")!));
+    await waitFor(() => expect(q("[data-continue-on-menu]")).not.toBeNull());
+    await waitFor(() => expect(document.querySelectorAll("[data-continue-on-other]").length).toBeGreaterThan(0));
+    const ids = [...document.querySelectorAll<HTMLElement>("[data-continue-on-other]")].map((e) => e.dataset.continueOnOther);
+    // Mac mini once, the Linux box; no browsers, and Studio PC is offline.
+    expect(ids).toEqual(["mac-mini", "linux-box"]);
+    expect(document.body.textContent).not.toContain("Web browser");
+    expect(q("[data-continue-on-offline]")?.textContent).toBe("1 more computer is offline.");
+    // It scrolls inside the room the window has rather than running off it.
+    const menu = q("[data-continue-on-menu]")!;
+    expect(menu.className).toContain("max-h-[min(480px,var(--available-height))]");
+    expect(menu.className).toContain("overflow-y-auto");
   });
 });
 

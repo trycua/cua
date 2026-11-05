@@ -202,6 +202,9 @@ export function WhereScreen({
 }) {
   const t = view.thisRow;
   const sep = view.separate;
+  const fold = view.offlineFold;
+  const [showOffline, setShowOffline] = useState(false);
+  const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
   return (
     <div data-new-run="where">
       <Title>{view.title}</Title>
@@ -243,7 +246,30 @@ export function WhereScreen({
           <>
             <Label>{view.othersLabel}</Label>
             {view.others.length ? (
-              view.others.map((o) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />)
+              <>
+                {(fold ? view.others.filter((o) => !o.offline) : view.others).map(other)}
+                {fold ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-expanded={showOffline}
+                      // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+                      className="flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px] text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]"
+                      onClick={() => setShowOffline((v) => !v)}
+                      data-new-run-offline-fold={fold.rows.length}
+                    >
+                      <span className="flex size-7 shrink-0 items-center justify-center text-white">
+                        <ChevronRightIcon className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")} strokeWidth={2.2} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[15px] leading-5 font-medium text-white">{fold.label}</span>
+                        <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{fold.sub}</span>
+                      </span>
+                    </button>
+                    {showOffline ? fold.rows.map(other) : null}
+                  </>
+                ) : null}
+              </>
             ) : (
               <p className={cn("px-3 pt-1 pb-2 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-none="">
                 {view.emptyLine}
@@ -298,7 +324,8 @@ export function WhereScreen({
           </div>
         ) : null}
       </div>
-      <div className="mt-[min(28px,3vh)]">
+      {/* Stays in view at the bottom of the window however long the list is; the fade keeps the list readable under it. */}
+      <div className="sticky bottom-0 z-10 -mx-4 mt-2 bg-linear-to-t from-[#050607] from-60% to-transparent px-4 pt-[min(20px,2.2vh)] pb-3" data-new-run-footer="">
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
           Continue
         </button>

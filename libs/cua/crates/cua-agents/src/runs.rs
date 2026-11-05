@@ -1564,6 +1564,14 @@ impl Agents {
         Ok(summarize(run_id, s.status, &evs))
     }
 
+    /// The last turn's one reply: the text after its last tool call (see
+    /// [`final_reply`]). `result` keeps the whole transcript.
+    pub async fn reply(&self, run_id: &str) -> Result<String> {
+        let evs = self.all_events(run_id).await?;
+        let turn = evs.iter().map(|e| e.turn).max().unwrap_or(0);
+        Ok(final_reply(evs.iter().filter(|e| e.turn == turn)))
+    }
+
     /// Waits until no turn is running (or `timeout`), then returns the result.
     pub async fn wait(&self, run_id: &str, timeout: Duration) -> Result<RunResult> {
         let deadline = tokio::time::Instant::now() + timeout;
@@ -1652,16 +1660,52 @@ fn info(run_id: &str, meta: RunMeta, state: &Value, alive: Option<bool>) -> RunI
     }
 }
 
+/// The agent's words in the events, one string per stretch between tool calls.
+/// Message events inside a stretch are chunks of one text (the runner also
+/// flushes on a timer), so they join as written; a tool call starts a new
+/// stretch, so narration before a tool is never glued to the answer after it.
+fn message_segments<'a>(evs: impl Iterator<Item = &'a AgentEvent>) -> Vec<String> {
+    let mut segs: Vec<String> = Vec::new();
+    let mut open = false;
+    for e in evs {
+        match e.kind {
+            "tool_call" => open = false,
+            "message" => {
+                let Some(t) = e.text.as_deref().filter(|t| !t.is_empty()) else {
+                    continue;
+                };
+                if open {
+                    if let Some(l) = segs.last_mut() {
+                        l.push_str(t);
+                    }
+                } else {
+                    segs.push(t.to_string());
+                    open = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    segs.retain(|s| !s.trim().is_empty());
+    segs
+}
+
+/// What the agent answers for a turn: the text after its last tool call (the
+/// last non-empty stretch when the turn ends right after one). The whole
+/// transcript stays in the run record; this is what a thread posts as the
+/// one reply, and what its live row previews.
+pub fn final_reply<'a>(turn_events: impl Iterator<Item = &'a AgentEvent>) -> String {
+    message_segments(turn_events)
+        .pop()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// The last turn's outcome from its events.
 pub fn summarize(run_id: &str, status: RunStatus, evs: &[AgentEvent]) -> RunResult {
     let turn = evs.iter().map(|e| e.turn).max().unwrap_or(0);
     let last: Vec<&AgentEvent> = evs.iter().filter(|e| e.turn == turn).collect();
-    let text = last
-        .iter()
-        .filter(|e| e.kind == "message")
-        .filter_map(|e| e.text.as_deref())
-        .collect::<Vec<_>>()
-        .join("");
+    let text = message_segments(last.iter().copied()).join("\n\n");
     let ended = last.iter().rev().find(|e| e.kind == "turn_ended");
     RunResult {
         run_id: run_id.into(),
@@ -1944,6 +1988,59 @@ mod tests {
         assert_eq!(r.stop_reason.as_deref(), Some("end_turn"));
         assert_eq!(r.tool_calls, 1);
         assert!(r.usage.is_some());
+    }
+
+    /// A turn as the runner journals it: `parts` are message text ("" stands
+    /// for a tool call), one event each.
+    fn turn_events(parts: &[&str]) -> Vec<AgentEvent> {
+        let mut raw = String::new();
+        for (i, p) in parts.iter().enumerate() {
+            let seq = i + 1;
+            let update = if p.is_empty() {
+                r#"{"toolCallId":"t1","title":"Tool","kind":"other","status":"pending","sessionUpdate":"tool_call"}"#.to_string()
+            } else {
+                format!(
+                    r#"{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":{}}}}}"#,
+                    serde_json::to_string(p).unwrap()
+                )
+            };
+            raw.push_str(&format!(
+                r#"{{"seq":{seq},"ts":1,"turn":1,"type":"update","update":{update}}}"#
+            ));
+            raw.push('\n');
+        }
+        events::page(raw.as_bytes(), 0, usize::MAX).events
+    }
+
+    #[test]
+    fn narration_before_a_tool_call_is_not_part_of_the_reply() {
+        let evs = turn_events(&[
+            "I'll check the thread and respond. Let me get the tool schemas first.",
+            "",
+            "Hi! ",
+            "What would you like me to do?",
+        ]);
+        assert_eq!(final_reply(evs.iter()), "Hi! What would you like me to do?");
+        // The run record keeps the whole transcript, the stretches apart.
+        let r = summarize("run-1", RunStatus::Idle, &evs);
+        assert_eq!(
+            r.text,
+            "I'll check the thread and respond. Let me get the tool schemas first.\n\nHi! What would you like me to do?"
+        );
+    }
+
+    #[test]
+    fn a_text_only_turn_is_its_own_reply() {
+        let evs = turn_events(&["Hello", " there."]);
+        assert_eq!(final_reply(evs.iter()), "Hello there.");
+        assert_eq!(summarize("r", RunStatus::Idle, &evs).text, "Hello there.");
+    }
+
+    #[test]
+    fn a_turn_ending_on_a_tool_call_replies_with_its_last_text() {
+        let evs = turn_events(&["First.", "", "Second, then a tool.", ""]);
+        assert_eq!(final_reply(evs.iter()), "Second, then a tool.");
+        assert_eq!(final_reply(turn_events(&[""]).iter()), "");
     }
 
     /// Every run's environment names the run, so a Cua program inside it

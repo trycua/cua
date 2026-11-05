@@ -243,10 +243,25 @@ describe("folding the thread", () => {
     const task = entry({ task: { to: "claude", session: null } });
     const reply = entry({ author: CLAUDE, replyTo: task.seq, text: "done" });
     const items = foldThread([read, mine, task, reply], { readSeq: read.seq, me: "acct_ada" });
-    // Mine and my task are not unread; Claude's reply (its own row now) is, and the divider sits before it.
-    expect(items.map((i) => i.type)).toEqual(["message", "message", "task", "unread", "message"]);
+    // Mine and my task are not unread, and neither is Claude's reply to it (the answer the reader waited for).
+    expect(items.map((i) => i.type)).toEqual(["message", "message", "task", "message"]);
+    // Someone else's message, or an agent speaking unprompted, is news.
+    const news = entry({ author: GRACE, text: "later" });
+    const unprompted = entry({ author: CLAUDE, text: "fyi" });
+    expect(foldThread([read, mine, task, reply, news], { readSeq: read.seq, me: "acct_ada" }).map((i) => i.type)).toEqual(["message", "message", "task", "message", "unread", "message"]);
+    expect(foldThread([read, task, unprompted], { readSeq: read.seq, me: "acct_ada" }).map((i) => i.type)).toEqual(["message", "task", "unread", "message"]);
     expect(foldThread([read], { readSeq: read.seq, me: "acct_ada" }).some((i) => i.type === "unread")).toBe(false);
     expect(foldThread([read, mine], { readSeq: null }).some((i) => i.type === "unread")).toBe(false);
+  });
+
+  it("does not draw \"woke up and joined\" between a person's message and the agent's reply", () => {
+    seq = 0;
+    const ada = { kind: "person" as const, id: "acct_ada", name: "Ada" };
+    const task = entry({ author: ada, text: "@claude hi", task: { to: "claude", session: null } });
+    const woke = entry({ author: SYSTEM, kind: "system", text: "claude woke up and joined", noteFor: task.seq });
+    const reply = entry({ author: CLAUDE, replyTo: task.seq, text: "Hi!" });
+    const items = foldThread([task, woke, reply], { readSeq: 0, me: "acct_ada" });
+    expect(items.map((i) => i.type)).toEqual(["task", "message"]);
   });
 
   it("works out the reader's cursor from the unread count when the daemon does not say it", () => {

@@ -866,7 +866,7 @@ impl Persistent {
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
         let framed = format!(
-            "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
+            "[thread #{} from {}] {text}\n\n(Your final text is posted as your one reply in the thread. Write nothing before a tool call. A greeting or a question you can answer gets one or two plain sentences and no tools; never list your abilities unless asked.)",
             task.seq, task.author.name
         );
         // The member's standing instructions go in front of the first message

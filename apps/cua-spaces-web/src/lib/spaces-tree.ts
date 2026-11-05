@@ -77,6 +77,10 @@ export interface TreeInput {
   /** Your own name or email, for "Who's on it". */
   me?: string | null;
   now?: number;
+  /** What the relay said about each computer when it last resolved the default (`spaces.resolveDefault`'s order, by
+   * Space id). A computer it calls offline is offline here too, so the tree never shows green where Home says offline
+   * (the machines list can lag, as it also counts a connection the relay has not dropped yet). */
+  relayOnline?: ReadonlyMap<string, boolean>;
 }
 
 /** A computer's own Space id: `relay:<machine>` (This Mac's once it is on the relay), else its list row's. */
@@ -117,7 +121,7 @@ const isComputer = (m: Machine) => !m.device;
  * a computer is offline its Spaces wait for it, and their running tasks
  * read "Paused".
  */
-export function buildSpacesTree({ spaces, machines, defaultSpace, running = new Map(), me = null, now = Date.now() }: TreeInput): SpacesTree {
+export function buildSpacesTree({ spaces, machines, defaultSpace, running = new Map(), me = null, now = Date.now(), relayOnline }: TreeInput): SpacesTree {
   const listed = spaces.filter((s) => !isMachineDesktop(s));
   const placed = new Set<string>();
   const here = machines.find((m) => m.current && isComputer(m)) ?? null;
@@ -132,7 +136,11 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     if (id) ids.add(id);
   }
   for (const s of listed) if (relayId(s.id)) ids.add(s.id);
-  const fallbackDefault = others.filter((m) => m.online).map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
+  const isOnline = (m: Machine) => {
+    const id = computerSpaceId(m);
+    return m.online && !(id !== null && relayOnline?.get(id) === false);
+  };
+  const fallbackDefault = others.filter(isOnline).map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
   const defaultKey = defaultSpace && ids.has(defaultSpace) ? defaultSpace : fallbackDefault;
 
   const runningOf = (id: string | null | undefined) => (id ? (running.get(id) ?? 0) : 0);
@@ -174,7 +182,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const kids = listed.filter((s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id));
     // This Mac before it is shared, with no Space on it: not a Space yet (the empty state offers "Add this Mac").
     if (m.current && !id && !m.connection && kids.length === 0) continue;
-    const online = reachable(m);
+    const online = reachable(m) && !(id !== null && !m.current && relayOnline?.get(id) === false);
     const isDefault = key === defaultKey;
     const word = online ? "Online" : m.online && m.notSharing ? "Not sharing" : offlineWord(m, now);
     const node: TreeNode = {

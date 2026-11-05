@@ -1002,3 +1002,63 @@ async fn sudo_is_the_fallback_for_older_and_sudo_agents_only() {
         );
     }
 }
+
+/// The mock agent runs as `cua`, not root, as on the Linux images: a
+/// command that names no user runs as `cua`, root work has to name root,
+/// and `sudo` runs as its `-u` user. The answers are what the guest's own
+/// `id` and `$HOME` say.
+#[tokio::test]
+async fn the_mock_runs_a_command_as_the_user_it_names() {
+    let srv = server().await;
+    let env = connect_to(&srv.url(), Transport::Native).await;
+    let run = |cmd: Command| {
+        let env = env.clone();
+        async move {
+            let out = env.run(cmd).await.unwrap();
+            assert!(out.success(), "{out:?}");
+            out.stdout_str().trim().to_string()
+        }
+    };
+    assert_eq!(run(Command::new("id").arg("-u")).await, "1000");
+    assert_eq!(run(Command::shell("whoami")).await, "cua");
+    assert_eq!(
+        srv.state
+            .process_user(srv.state.last_pid().unwrap())
+            .as_deref(),
+        Some("cua")
+    );
+    assert_eq!(run(Command::new("id").arg("-u").user("root")).await, "0");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"").user("root")).await,
+        "/root"
+    );
+    assert_eq!(run(Command::shell("id -un").user("alice")).await, "alice");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"")).await,
+        "/home/cua"
+    );
+    let sudo = |args: &[&str]| Command::new("sudo").args(args.iter().copied());
+    assert_eq!(run(sudo(&["-n", "id", "-u"])).await, "0");
+    assert_eq!(
+        run(sudo(&[
+            "-n", "-H", "-u", "bob", "--", "env", "A=1", "whoami"
+        ]))
+        .await,
+        "bob"
+    );
+
+    // A file written without a user belongs to the agent's user.
+    env.upload(
+        "/tmp/plain",
+        Bytes::from_static(b"x"),
+        UploadOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(srv.state.file_owner("/tmp/plain").as_deref(), Some("cua"));
+    assert_eq!(env.stat("/tmp/plain").await.unwrap().owner, "cua");
+
+    // An agent that is root itself runs unnamed work as root.
+    set_run_as(&srv, Some("root"), false);
+    assert_eq!(run(Command::new("id").arg("-u")).await, "0");
+}

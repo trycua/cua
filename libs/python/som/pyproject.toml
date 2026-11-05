@@ -29,7 +29,7 @@ readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 keywords = ["computer-vision", "ocr", "ui-analysis", "icon-detection"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 7 - Inactive",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",

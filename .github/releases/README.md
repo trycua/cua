@@ -39,10 +39,10 @@ contributor notes** with the tag.
 | cua SDK and `cua` CLI | `libs/cua` | `cua-sdk-v*` | `cd-cua-sdk.yml` |
 | cua-spacesd | `libs/cua-spacesd` | `cua-spacesd-v*` | `cd-cua-spacesd.yml` |
 | cua-sandbox (PyPI) | `libs/python/cua-sandbox` | `sandbox-v*` | publish the draft; `cd-py-sandbox.yml` |
-| cua-agent (PyPI) | `libs/python/agent` | `agent-v*` | `cd-py-agent.yml` |
-| cua-core (PyPI) | `libs/python/core` | `core-v*` | `cd-py-core.yml` |
+| cua-agent (PyPI) | `libs/python/agent` | `agent-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
+| cua-core (PyPI) | `libs/python/core` | `core-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
 | cua-bench (PyPI) | `libs/cua-bench` | `bench-v*` | `cd-py-bench.yml` |
-| cua-bench-ui (PyPI) | `libs/python/bench-ui` | `bench-ui-v*` | `cd-py-bench-ui.yml` |
+| cua-bench-ui (PyPI) | `libs/python/bench-ui` | `bench-ui-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
 | cua-som (PyPI) | `libs/python/som` | `som-v*` | `cd-py-som.yml` |
 | cua-sandbox-apps (PyPI) | `libs/python/cua-sandbox-apps` | `sandbox-apps-v*` | `cd-py-sandbox-apps.yml` |
 | @trycua/core (npm) | `libs/typescript/core` | `npm-core-v*` | `cd-ts-core.yml` |

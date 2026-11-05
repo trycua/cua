@@ -264,10 +264,7 @@
     "ci-cua-s1.yml",
     "ci-cua-sdk.yml",
     "ci-driver-mcp-candidate.yml",
-    "ci-py-agent.yml",
-    "ci-py-bench-ui.yml",
     "ci-py-bench.yml",
-    "ci-py-core.yml",
     "ci-test-python.yml",
     "ci-test-scripts.yml",
     "docs-page-tests.yml",
@@ -315,12 +312,6 @@
    "workflows": [
     "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
-    "ci-container-kasm.yml",
-    "ci-container-qemu-android.yml",
-    "ci-container-qemu-linux.yml",
-    "ci-container-qemu-windows.yml",
-    "ci-container-xfce-cua.yml",
-    "ci-container-xfce.yml",
     "license-check.yml"
    ]
   },

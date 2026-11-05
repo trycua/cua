@@ -167,6 +167,7 @@ if phase images; then
     step "reference images (rootfs, $harch)"
     cd "$REPO/libs/images"
     linux/build-spacesd-linux.sh "$harch"
+    linux/build-cua-cli-linux.sh "$harch"
     ./build.sh linux
     ./build.sh plain/ubuntu-server
     ./build.sh plain/ubuntu-xfce-vnc
@@ -177,6 +178,7 @@ if phase disks; then
     step "reference disks ($harch) -> ~/.cache/cua-images-e2e"
     cd "$REPO/libs/images"
     [ -x "linux/dist/$harch/cua-spacesd" ] || linux/build-spacesd-linux.sh "$harch"
+    [ -x "linux/dist/$harch/cua" ] || linux/build-cua-cli-linux.sh "$harch"
     ./build.sh linux --tag e2e --outputs rootfs,disk --out "$HOME/.cache/cua-images-e2e"
     ./build.sh plain/ubuntu-server --tag e2e --outputs rootfs,disk --out "$HOME/.cache/cua-images-e2e"
     end

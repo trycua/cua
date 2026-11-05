@@ -324,7 +324,8 @@ def test_quick_stage_is_wired_into_heavy_workflows():
                 assert '!failure() && !cancelled()' in str(job['if']), f'{path.name}: {name}'
 
 
-LOCAL_CI = STEPS['Require local sign-off on agent pull requests']['run']
+LOCAL_CI_FAST = STEPS['Check the local sign-off on agent pull requests (fail fast)']['run']
+LOCAL_CI_WAIT = STEPS['Require local sign-off on agent pull requests']['run']
 GH_STUB = '''
 sleep() { :; }
 gh() {
@@ -338,13 +339,22 @@ gh() {
 
 
 def run_local_ci(author='someone', labels='', ref='fix/x', head_repo='fork/repo', state='', require='true'):
-    return subprocess.run(
-        ['bash', '-e', '-c', GH_STUB + LOCAL_CI],
-        env={**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
-             'AUTHOR': author, 'LABELS': labels, 'REF': ref, 'HEAD_REPO': head_repo, 'STATE': state,
-             'REQUIRE_LOCAL_CI': require},
-        capture_output=True, text=True, timeout=20,
-    )
+    """Run the two sign-off steps in order, as the job does: the fast check, then (for an
+    agent pull request) the wait that is the last step. Returns the first failure, or the last result."""
+    import tempfile
+    with tempfile.NamedTemporaryFile('r+') as out:
+        env = {**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+               'AUTHOR': author, 'LABELS': labels, 'REF': ref, 'HEAD_REPO': head_repo, 'STATE': state,
+               'REQUIRE_LOCAL_CI': require, 'GITHUB_OUTPUT': out.name}
+        fast = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_FAST], env=env,
+                              capture_output=True, text=True, timeout=20)
+        outputs = dict(line.split('=', 1) for line in out.read().splitlines())
+    if fast.returncode != 0 or outputs.get('agent') != 'true':
+        return fast
+    wait = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_WAIT], env={**env, 'SHA': outputs['sha']},
+                          capture_output=True, text=True, timeout=20)
+    wait.stdout = fast.stdout + wait.stdout
+    return wait
 
 
 @pytest.mark.parametrize('kwargs', [

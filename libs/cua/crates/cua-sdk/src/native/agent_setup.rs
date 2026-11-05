@@ -808,7 +808,7 @@ mod tests {
         let out = s
             .setup_cua_driver(
                 vec!["codex".into()],
-                Some(drv_path.clone().into()),
+                Some(drv_path.clone()),
                 true,
                 true,
             )

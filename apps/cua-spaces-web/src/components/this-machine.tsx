@@ -13,7 +13,9 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { throttleSeconds } from "@/bridge/friendly-errors";
+import { AppPermissionList } from "@/components/app-permissions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
@@ -23,6 +25,9 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn, relativeTime } from "@/lib/utils";
+
+/** The permissions `AppPermissionList` draws; any other (Local Network) keeps its own row. */
+const GUIDED = new Set(["screen-recording", "accessibility"]);
 
 /** The log open in full ("Show All…"). */
 type HostLog = "access" | "activity";
@@ -38,6 +43,8 @@ type HostLog = "access" | "activity";
 export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs" }) {
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
+  // Screen Recording and Accessibility: Cua Spaces' own, the same rows and live status as the first run and the Cua Driver page.
+  const perms = useAppPermissions(part === "alerts" && Boolean(panel?.permissionsTitle));
   const [fullLog, setFullLog] = useState<HostLog | null>(null);
   const now = Date.now();
 
@@ -62,9 +69,10 @@ export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelV
             </div>
           </GroupedSection>
         ) : null}
-        {panel.permissionsTitle ? (
-          <Group title={panel.permissionsTitle}>
-            {panel.permissions.map((p) => (
+        {panel.permissionsTitle && perms.available ? <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" /> : null}
+        {panel.permissionsTitle && (!perms.available || panel.permissions.some((p) => !GUIDED.has(p.id))) ? (
+          <Group title={perms.available ? "Also in System Settings" : panel.permissionsTitle}>
+            {panel.permissions.filter((p) => !perms.available || !GUIDED.has(p.id)).map((p) => (
               <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
                 {p.settingsUrl ? (
                   <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>

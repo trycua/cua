@@ -3,10 +3,12 @@
 
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MousePointer2Icon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { pointerChange, pointerSettings, POINTER_STYLES, useBridge, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverPermission, type DriverStatus, type PointerSettings } from "@/bridge";
+import { pointerChange, pointerSettings, POINTER_STYLES, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverStatus, type PointerSettings } from "@/bridge";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
+import { AppPermissionList } from "@/components/app-permissions";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -16,6 +18,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
+import { driverUsesAppPermissions } from "@/lib/app-permissions";
 import { cn } from "@/lib/utils";
 import { DRIVER_LINE, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
@@ -55,7 +58,7 @@ function DriverBody({ driver, status }: { driver: DriverHook; status: DriverStat
         {hasPointer ? <PointerSection driver={driver} settings={settings} /> : null}
         <div className="min-w-0">
           {apps ? <AppsSection apps={apps} /> : null}
-          {status.permissions.length > 0 ? <PermissionsSection permissions={status.permissions} /> : null}
+          {status.thisMachine ? <PermissionsSection driver={driver} /> : null}
           {!status.thisMachine ? (
             <GroupedSection title="On that computer" className="mb-8">
               <SettingRow label="Pointer and coding apps" help={`Open Cua Spaces on ${status.machineName} to change them.`} />
@@ -255,34 +258,17 @@ function AppsSection({ apps }: { apps: DriverApp[] }) {
   );
 }
 
-const PERMISSION_WORDS: Record<DriverPermission["id"], { label: string; help: string }> = {
-  screen: { label: "See the screen", help: "Screen Recording, given to Cua Spaces." },
-  accessibility: { label: "Use the mouse and keyboard", help: "Accessibility, given to Cua Spaces." },
-};
-
-function PermissionsSection({ permissions }: { permissions: DriverPermission[] }) {
-  const { data: adapter } = useBridge();
-  return (
-    <GroupedSection title="Permissions" className="mb-8" data-driver-permissions="" footer="Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.">
-      {permissions.map((p) => (
-        <SettingRow
-          key={p.id}
-          data-driver-permission={p.id}
-          data-driver-permission-granted={p.granted ? "" : undefined}
-          label={PERMISSION_WORDS[p.id].label}
-          help={PERMISSION_WORDS[p.id].help}
-          value={p.granted ? "On" : "Missing"}
-          control={
-            p.granted || !p.settingsUrl ? undefined : (
-              <Button variant="outline" size="sm" onClick={() => void adapter?.call("host.openSettings", { url: p.settingsUrl! }).catch(toastError("Couldn't open System Settings"))}>
-                Allow
-              </Button>
-            )
-          }
-        />
-      ))}
-    </GroupedSection>
-  );
+/** Cua Spaces' own two permissions, live (the first run's step shows the same rows); when both come on, the driver's state is read again. */
+function PermissionsSection({ driver }: { driver: DriverHook }) {
+  const perms = useAppPermissions();
+  const { allGranted } = perms;
+  const refresh = useRef(driver.refresh);
+  refresh.current = driver.refresh;
+  useEffect(() => {
+    if (allGranted) void refresh.current().catch(() => {});
+  }, [allGranted]);
+  if (!perms.data) return null;
+  return <AppPermissionList perms={perms} variant="settings" footer={driverUsesAppPermissions(perms.data.appName)} />;
 }
 
 /* ---- The account's other computers -------------------------------------------- */

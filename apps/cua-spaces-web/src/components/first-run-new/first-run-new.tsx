@@ -15,18 +15,21 @@ import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from
 
 import { folderLabel, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import type { HostStatus } from "@/bridge/contracts/host";
+import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { AppPermissionList } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
+  afterWhere,
   agentView,
   chosenAgent,
   dotFor,
@@ -51,12 +54,11 @@ import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { FloatKeys } from "./float-keys";
+import { CARD, GLASS_CHIP, GREY } from "./hero";
 import { OsMark } from "./os-marks";
 
 /* ---- The site's pieces ------------------------------------------------------------------ */
 
-/** The hero's grey for second lines. */
-const GREY = "text-[#8d8d8d]";
 /** The site's white button (the dark hero's Download pill). */
 const WHITE_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
@@ -65,15 +67,9 @@ const WHITE_BUTTON =
 const GLASS_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
   "inline-flex h-12 items-center justify-center rounded-full bg-white/[0.08] px-6 text-[15px] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
-/** The site's Sign up chip (Skip for now, a row's Add). */
-const GLASS_CHIP =
-  "inline-flex items-center justify-center rounded-full bg-white/[0.08] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
 /** The site's underlined text link, in white. */
 // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
 const LINK = "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
-/** The list card: the Sign up glass with the download menu's corners. */
-// design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-const CARD = "w-full max-w-[480px] rounded-[20px] bg-white/[0.08] p-1.5 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md";
 
 function Title({ children }: { children: ReactNode }) {
   return (
@@ -495,27 +491,18 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
   );
 }
 
-/** "Let agents use apps on this Mac", opened: the two permissions, each through the app's guide (PermissionGuide). */
-export function AppsPermissions({ rows, onAllow }: { rows: { id: string; title: string; granted: boolean; url: string }[]; onAllow: (url: string) => void }) {
-  // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-  const box = "mx-3 mb-2 flex flex-col gap-1 border-t border-white/[0.14] pt-2 pl-10";
+/** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
+export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
   return (
-    <div className={box} data-new-run-apps="">
-      {rows.map((r) => (
-        <div key={r.id} className="flex min-h-9 items-center gap-3" data-new-run-permission={r.id} data-granted={String(r.granted)}>
-          <span className="min-w-0 flex-1 text-[14px] font-medium text-white">{r.title}</span>
-          {r.granted ? (
-            <span className="flex items-center gap-1 text-[13.5px] font-medium text-white">
-              <CheckIcon className="size-3.5" /> Allowed
-            </span>
-          ) : (
-            <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={() => onAllow(r.url)}>
-              Allow
-            </button>
-          )}
-        </div>
-      ))}
-      <p className={cn("pb-1 text-[12.5px] font-medium", GREY)}>Allow opens System Settings, where you turn on Cua Spaces.</p>
+    <div data-new-run="permissions">
+      <Title>{view.title}</Title>
+      <Line>{view.line}</Line>
+      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} />
+      <div className="mt-[min(28px,3vh)]">
+        <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
+          {view.primary.label}
+        </button>
+      </div>
     </div>
   );
 }
@@ -524,11 +511,6 @@ export function AppsPermissions({ rows, onAllow }: { rows: { id: string; title: 
 
 /** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
 const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
-
-const PERMISSIONS = [
-  { id: "screen-recording", title: "See the screen", url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" },
-  { id: "accessibility", title: "Use the mouse and keyboard", url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
-];
 
 /** The new first run's whole page. */
 export function NewFirstRun() {
@@ -559,7 +541,6 @@ export function NewFirstRun() {
   const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
-  const [host, setHost] = useState<HostStatus | null>(null);
 
   // A new screen: focus moves to its title, so a screen reader reads it.
   useEffect(() => {
@@ -650,24 +631,13 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // Screen 6's permissions, read while they show.
+  // 2b and screen 6's apps row: Cua Spaces' permissions, read while they show. A host with none to give (not a
+  // Mac, an older app) has no step: it goes on to the coding agent.
+  const perms = useAppPermissions(s.screen === "permissions" || (s.screen === "next" && appsOpen));
   useEffect(() => {
-    if (!appsOpen || !adapter) return;
-    let live = true;
-    const read = () =>
-      void adapter
-        .call("host.status", {})
-        .then((h) => live && setHost(h))
-        .catch(() => {});
-    read();
-    const t = setInterval(read, 2_500);
-    window.addEventListener("focus", read);
-    return () => {
-      live = false;
-      clearInterval(t);
-      window.removeEventListener("focus", read);
-    };
-  }, [appsOpen, adapter]);
+    if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen, perms.loading, perms.available]);
 
   // The separate computer: this page's create, followed in the Spaces list.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
@@ -823,9 +793,12 @@ export function NewFirstRun() {
           onSignIn={startSignIn}
           onAddAnother={() => setAddOpen(true)}
           onSeparate={makeSeparate}
-          onContinue={() => go("agent")}
+          onContinue={() => go(afterWhere(os))}
         />
       );
+      break;
+    case "permissions":
+      body = <PermissionsScreen view={permissionsStepView({ appName: perms.data?.appName ?? "Cua Spaces", allGranted: perms.allGranted })} perms={perms} onContinue={() => go("agent")} />;
       break;
     case "agent":
       body = (
@@ -847,7 +820,6 @@ export function NewFirstRun() {
       ) : null;
       break;
     case "next": {
-      const granted = (id: string) => Boolean(host?.permissions.find((p) => p.id === id)?.granted);
       body = (
         <NextScreen
           view={nextView({ os })}
@@ -858,12 +830,8 @@ export function NewFirstRun() {
           }}
           onDone={() => void finish()}
           apps={
-            appsOpen ? (
-              <AppsPermissions
-                rows={PERMISSIONS.map((p) => ({ ...p, granted: granted(p.id), url: host?.permissions.find((x) => x.id === p.id)?.settingsUrl ?? p.url }))}
-                onAllow={(url) => void adapter?.call("host.openSettings", { url }).catch(() => {})}
-              />
-            ) : null
+            // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+            appsOpen ? <AppPermissionList perms={perms} variant="hero" inset className="mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7" /> : null
           }
         />
       );

@@ -14,10 +14,12 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, NextScreen, ReadyScreen, SignInScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { AgentScreen, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
 import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
-import { agentView, chosenAgent, nextView, readyView, signInView, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
+import type { AppPermissions } from "@/bridge/app-permissions";
+import { permissionsStepView } from "@/lib/app-permissions";
+import { afterWhere, agentView, chosenAgent, dotFor, nextView, readyView, signInView, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -294,6 +296,68 @@ describe("screen 4, Ready", () => {
   });
 });
 
+describe("2b, Cua Spaces' permissions (a Mac only)", () => {
+  const SCREEN = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+  const AX = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+  const data = (screen: boolean, accessibility: boolean, appName = "Cua Spaces"): AppPermissions => ({
+    appName,
+    permissions: [
+      { id: "screen", granted: screen, settingsUrl: SCREEN },
+      { id: "accessibility", granted: accessibility, settingsUrl: AX },
+    ],
+  });
+  const draw = (d: AppPermissions, allow = vi.fn(async () => {}), onContinue = vi.fn()) => {
+    const allGranted = d.permissions.every((p) => p.granted);
+    render(<PermissionsScreen view={permissionsStepView({ appName: d.appName, allGranted })} perms={{ data: d, allow }} onContinue={onContinue} />);
+    return { allow, onContinue };
+  };
+
+  it("comes after picking where agents work, on a Mac only, under the same dot", () => {
+    expect(afterWhere("macos")).toBe("permissions");
+    expect(afterWhere("windows")).toBe("agent");
+    expect(afterWhere("linux")).toBe("agent");
+    expect(dotFor("permissions")).toBe(dotFor("where"));
+  });
+
+  it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers Later", () => {
+    const { allow, onContinue } = draw(data(false, false));
+    expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces see and use apps");
+    expect(text()).toContain("This lets your agents work in the apps on this Mac, in the background.");
+    expect(text()).toContain("Cua Driver uses these same permissions, so there's no second app to allow.");
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-app-permission]")];
+    expect(rows.map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
+    expect(rows[0]!.textContent).toContain("See the screen");
+    expect(rows[0]!.textContent).toContain("Screen Recording, given to Cua Spaces");
+    expect(rows[1]!.textContent).toContain("Use the mouse and keyboard");
+    expect(rows[1]!.textContent).toContain("Accessibility, given to Cua Spaces");
+    fireEvent.click(rows[1]!.querySelector("button")!);
+    expect(allow).toHaveBeenCalledWith("accessibility");
+    // Never blocks: Later goes on.
+    const later = screen.getByRole("button", { name: "Later" });
+    fireEvent.click(later);
+    expect(onContinue).toHaveBeenCalled();
+  });
+
+  it("shows a grant as Allowed, and Continue once both are on", () => {
+    draw(data(true, false));
+    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("Allowed");
+    expect(document.querySelector("[data-app-permission=screen] button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    cleanup();
+    draw(data(true, true));
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(text()).toContain("Both are on.");
+  });
+
+  it("names Cua Spaces Local in the Local build, which has its own grants", () => {
+    draw(data(false, false, "Cua Spaces Local"));
+    expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces Local see and use apps");
+    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("Screen Recording, given to Cua Spaces Local");
+    expect(text()).toContain("Turn on Cua Spaces Local there, then come back.");
+  });
+});
+
 describe("screen 6, next steps", () => {
   it("offers to invite a teammate, add another computer and let agents use apps on this Mac", () => {
     const onRow = vi.fn();
@@ -363,6 +427,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("not added yet");
     click("[data-onboarding-primary]");
+    // On a Mac, Cua Spaces' permissions next: both missing here, so Later goes on without them.
+    await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
+    await waitFor(() => expect(document.querySelectorAll("[data-app-permission]").length).toBe(2));
+    expect(calls.some((c) => c.op === "driver.permissions")).toBe(true);
+    click("[data-new-run-permissions-next=Later]");
     await waitFor(() => expect(heading()).toBe("Your agents will use Codex"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });

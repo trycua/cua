@@ -63,7 +63,7 @@ export const METHODS = [
   "thread.agentAdd", "thread.agentRemove",
   "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
   "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
-  "driver.setup", "driver.setApp",
+  "driver.setup", "driver.setApp", "driver.permissions",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

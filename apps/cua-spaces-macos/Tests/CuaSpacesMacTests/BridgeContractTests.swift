@@ -341,6 +341,7 @@ struct BridgeContractTests {
             ("startup.get", [:]),
             // A test runner carries no Cua Driver: null and an empty list.
             ("driver.status", [:]),
+            ("driver.permissions", [:]),
             ("driver.list", [:]),
         ]
     }

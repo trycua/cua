@@ -248,6 +248,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "driver.setApp": { app: "codex", on: true },
   "driver.setup": {},
   "driver.update": {},
+  "driver.permissions": {},
 };
 
 /** Operations the demo host refuses on purpose, and why. */

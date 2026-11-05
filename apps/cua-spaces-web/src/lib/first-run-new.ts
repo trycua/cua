@@ -10,6 +10,8 @@
  * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish".
  * 2 Pick where your agents work: this Mac, the account's other computers (offline ones can't be
  *   picked), Add another computer you own, and a separate computer on this Mac.
+ * 2b On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
+ *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
  * 3 The coding agent found on this Mac, or Install Claude Code / Install Codex instead.
  * 4 Ready: "<agent> can now use <computers>", one line to try in their own terminal.
  * 6 Next steps: invite a teammate, add another computer, let agents use apps on this Mac.
@@ -18,9 +20,14 @@
 import type { Machine, SignInPhase } from "@/bridge";
 import { relativeTime } from "@/lib/utils";
 
-export type NewRunScreen = "welcome" | "signin" | "where" | "agent" | "ready" | "next";
+export type NewRunScreen = "welcome" | "signin" | "where" | "permissions" | "agent" | "ready" | "next";
 
-export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "agent", "ready", "next"];
+export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "permissions", "agent", "ready", "next"];
+
+/** The screen after 2: the permissions step on a Mac, else the coding agent. */
+export function afterWhere(os: string): NewRunScreen {
+  return os === "macos" ? "permissions" : "agent";
+}
 
 /** What the run keeps between launches (inside the first run's saved record, so Reset & Show clears it). */
 export interface NewRunSaved {
@@ -435,5 +442,5 @@ export function nextView(input: { os: string }): NextView {
 
 /** Which progress dot is lit (screens 1 to 3 have dots; 4 and 6 none). */
 export function dotFor(screen: NewRunScreen): number | null {
-  return screen === "welcome" || screen === "signin" ? 0 : screen === "where" ? 1 : screen === "agent" ? 2 : null;
+  return screen === "welcome" || screen === "signin" ? 0 : screen === "where" || screen === "permissions" ? 1 : screen === "agent" ? 2 : null;
 }

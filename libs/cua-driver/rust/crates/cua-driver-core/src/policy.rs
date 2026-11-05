@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional permission-policy enforcement for MCP tool calls.
 
 use std::path::{Path, PathBuf};

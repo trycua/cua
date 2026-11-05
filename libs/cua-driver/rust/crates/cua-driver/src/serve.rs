@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local daemon server and client for `cua-driver serve`/`stop`/`status`.
 //!
 //! Protocol: line-delimited JSON over a Unix domain socket or Windows named

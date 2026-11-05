@@ -55,6 +55,7 @@ import { AGENT_THREADS_COVERAGE } from "./ops/agent-threads";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
+import { DRIVER_COVERAGE } from "./ops/driver";
 
 export interface OpCoverage {
   webkit: { methods: readonly WebkitMethod[]; byDesign?: string };
@@ -238,6 +239,7 @@ export const HOST_COVERAGE = {
   ...CLOUD_APPROVE_COVERAGE,
   ...AGENT_THREADS_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
+  ...DRIVER_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**

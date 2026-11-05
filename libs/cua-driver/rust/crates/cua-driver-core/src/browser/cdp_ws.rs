@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pooled CDP browser-endpoint WebSocket client.
 //!
 //! v2 demultiplexer: a dedicated reader task owns the receive half of

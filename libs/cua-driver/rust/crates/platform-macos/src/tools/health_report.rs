@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `health_report` provider.
 //!
 //! Implements [`HealthCheckProvider`] for darwin. Reuses the existing

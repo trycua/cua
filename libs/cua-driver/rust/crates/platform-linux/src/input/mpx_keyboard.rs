@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Focus-free keyboard delivery on X11 via XInput2 MPX: a second master
 //! keyboard with its own focus, fed by a uinput slave.
 //!

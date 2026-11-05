@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! A nudge toward `run_steps` for agents that act one call at a time.
 //!
 //! Every single action call costs the agent a model turn, and in recorded runs

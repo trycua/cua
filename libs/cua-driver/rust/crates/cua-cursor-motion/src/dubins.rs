@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Dubins path planner (the `classic` glide) — 1:1 port of the Swift `AgentCursorRenderer` Dubins
 //! implementation (`planPath` / `planDubins` / `DubinsPlannedPath`).
 //!

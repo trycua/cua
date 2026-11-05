@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows platform backend for cua-driver-rs.
 //!
 //! Background automation on Windows via:

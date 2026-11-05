@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared cursor-overlay render state, animation tick, and pixel pipeline.
 //!
 //! Lifts the platform-agnostic render state out of the three per-OS

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS app enumeration via NSWorkspace and NSRunningApplication.
 
 pub mod nsworkspace;

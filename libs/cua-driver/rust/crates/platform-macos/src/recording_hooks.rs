@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use crate::ax::bindings::{element_screen_center, AXUIElementRef};
 use crate::ax::snapshot::AxSnapshot;
 use cua_driver_core::element_token::ResolvedElement;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Windows UIA handling for Chromium's browser-owned debugging consent.
 
 use std::time::{Duration, Instant};

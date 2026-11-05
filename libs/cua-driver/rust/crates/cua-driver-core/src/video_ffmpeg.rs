@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! ffmpeg-subprocess video backend (Windows + Linux).
 //!
 //! macOS uses native ScreenCaptureKit in `platform_macos::video_sckit`

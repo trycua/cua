@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fresh exact-target acquisition for background input decisions.
 //!
 //! Gathers the facts [`cua_driver_core::background_input`] needs about one

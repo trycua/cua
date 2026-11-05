@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Find windows and elements by description, wait for them, and check them.
 //!
 //! Used by `run_steps` steps that name their target (`role`, `name`, `app`,

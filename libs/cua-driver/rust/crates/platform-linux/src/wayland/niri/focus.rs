@@ -116,12 +116,10 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     // The last focus niri reported, `None` until a read-back answers.
     let mut focused: Option<Option<IpcWindow>> = None;
     if interaction::confirm(deadline, |deadline| {
-        let window: Option<IpcWindow> = match ipc.query_until(Request::FocusedWindow, deadline) {
-            Ok(window) => window,
-            // The read-back shares the confirm deadline: one it cut off
-            // means niri did not confirm in time, not that IPC failed.
-            Err(error) if timed_out(&error) => return anyhow::Ok(false),
-            Err(error) => return Err(error),
+        let Some(window) =
+            read_back::<Option<IpcWindow>, _>(ipc, Request::FocusedWindow, deadline)?
+        else {
+            return Ok(false);
         };
         let observed = window.as_ref().map(|window| (window.pid, window.id));
         focused = Some(window);
@@ -140,6 +138,21 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
             Some(Some(focused)) => focused.id.to_string(),
         }
     )))
+}
+
+/// A confirm loop's read-back, `None` when the deadline cut it off. The
+/// read-back shares the confirm deadline, so a cut-off one means niri did
+/// not confirm in time, not that IPC failed.
+fn read_back<T: DeserializeOwned, C: FnMut(Instant) -> Result<UnixStream>>(
+    ipc: &mut Ipc<C>,
+    request: Request,
+    deadline: Instant,
+) -> Result<Option<T>> {
+    match ipc.query_until(request, deadline) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if timed_out(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn timed_out(error: &anyhow::Error) -> bool {
@@ -308,7 +321,10 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     // single-workspace restore does.
     let mut pending = None;
     if interaction::confirm(cleanup, |deadline| {
-        let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
+        let Some(now) = read_back::<Vec<IpcWorkspace>, _>(ipc, Request::Workspaces, deadline)?
+        else {
+            return Ok(false);
+        };
         pending = before
             .iter()
             .filter(|was| was.is_active)
@@ -338,12 +354,12 @@ fn restore_workspace<C: FnMut(Instant) -> Result<UnixStream>>(
 ) -> Result<()> {
     ipc.restore_action(focus_workspace_action(workspace), cleanup)?;
     let focused = interaction::confirm(cleanup, |deadline| {
-        let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
-        anyhow::Ok(
+        let workspaces: Option<Vec<IpcWorkspace>> = read_back(ipc, Request::Workspaces, deadline)?;
+        anyhow::Ok(workspaces.is_some_and(|workspaces| {
             workspaces
                 .iter()
-                .any(|candidate| candidate.id == workspace && candidate.is_focused),
-        )
+                .any(|candidate| candidate.id == workspace && candidate.is_focused)
+        }))
     })?;
     if !focused {
         bail!("niri did not confirm focus on workspace {workspace}");

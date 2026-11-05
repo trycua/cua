@@ -32,6 +32,7 @@ on:
       - "CD: cua-spacesd"
       - "CD: Lume (macOS)"
       - "Release: Prepare component releases"
+      - "Release: Auto-merge release PRs"
       - "Release: installer scripts feed"
     types: [completed]
   schedule:
@@ -67,6 +68,7 @@ jobs:
         CD: cua-spacesd=release
         CD: Lume (macOS)=release
         Release: Prepare component releases=release
+        Release: Auto-merge release PRs=release
         Release: installer scripts feed=release
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}

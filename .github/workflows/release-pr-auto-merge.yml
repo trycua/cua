@@ -17,7 +17,7 @@ name: "Release: Auto-merge release PRs"
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
     branches: [main]
   schedule:
     - cron: "17,47 * * * *"
@@ -52,8 +52,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            release-please-config.json
+            .release-please-manifest.json
           persist-credentials: false
+
+      # Release Please tags from the merged PR body. A body edit (an agent adding
+      # user-impact notes above the version heading) made #6350 tag 15 stray
+      # components. Install the pinned engine so the script can check each body.
+      - name: Install the pinned Release Please engine
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          npm install --prefix "$RUNNER_TEMP/release-please-engine" --ignore-scripts --no-audit --no-fund release-please@17.3.0 > /dev/null
 
       - name: Enable or disable auto-merge, and alert on stale green release PRs
         env:
@@ -62,7 +77,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          args=(--repo "$GITHUB_REPOSITORY")
+          export NODE_PATH="$RUNNER_TEMP/release-please-engine/node_modules"
+          args=(--repo "$GITHUB_REPOSITORY" --guard .github/scripts/release_please_tag_guard.cjs)
           if [ -n "$PR_NUMBER" ]; then
             args+=(--pr "$PR_NUMBER")
           fi

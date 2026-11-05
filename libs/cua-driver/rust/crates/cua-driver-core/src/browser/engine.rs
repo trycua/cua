@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! BrowserEngine — the semantic core behind the five browser tools.
 //!
 //! Owns the target/ref store, the CDP connection pool, and every

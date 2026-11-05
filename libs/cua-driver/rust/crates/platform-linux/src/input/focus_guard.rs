@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background non-invasiveness safety net for X11.
 //!
 //! A `delivery_mode:"background"` action must leave the user's desktop as it

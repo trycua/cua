@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(target_os = "linux")]
 
 use platform_linux::wayland::kwin_helper::{available, parse_snapshot};

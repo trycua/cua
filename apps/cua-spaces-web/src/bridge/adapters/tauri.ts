@@ -62,6 +62,7 @@ import { NUDGES_OPERATIONS } from "../ops/nudges";
 import { AGENT_THREADS_OPERATIONS } from "../ops/agent-threads";
 import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { MACHINES_OPERATIONS } from "../ops/machines";
+import { SPACES_SETTINGS_OPERATIONS } from "../ops/spaces-settings";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { LINKS_OPERATIONS } from "../ops/links";
 import { CLI_OPERATIONS } from "../ops/cli";
@@ -70,6 +71,7 @@ import { THREAD_OPERATIONS } from "../ops/thread";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { cloudApproveTauriOps } from "../ops/cloud-approve";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
+import { DRIVER_OPERATIONS } from "../ops/driver";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -129,6 +131,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...AGENT_THREADS_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
@@ -137,6 +140,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */

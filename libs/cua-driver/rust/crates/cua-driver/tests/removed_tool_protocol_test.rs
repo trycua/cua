@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform protocol coverage for tools removed from the registry.
 
 #![cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::recording::{
     now_ms, set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingCaller,
     RecordingSession,

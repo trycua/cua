@@ -181,8 +181,38 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export {
+  resolveDefaultSpace,
+  useSpacesDefault,
+  type DefaultCandidate,
+  type DefaultSpace,
+  type DefaultSpaceReason,
+  type DefaultSpaceStep,
+  type SpacesDefaultHook,
+  type SpacesSettings,
+  type SpacesSettingsInput,
+} from "./spaces-settings";
 
 export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
+export {
+  pointerChange,
+  pointerSettings,
+  sinceText,
+  useDriver,
+  useDriverMachines,
+  DRIVER_POLL_MS,
+  POINTER_STYLES,
+  type DriverActivity,
+  type DriverApp,
+  type DriverConfig,
+  type DriverHook,
+  type DriverLiveTest,
+  type DriverMachine,
+  type DriverPermission,
+  type DriverStatus,
+  type DriverUpdate,
+  type PointerSettings,
+} from "./driver";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
 export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
@@ -249,7 +279,7 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, type FlagName } from "./flags";
+export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, useSpacesTree, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

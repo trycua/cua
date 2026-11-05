@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The tool call a blocking input worker serves.
 //!
 //! A tool call stops waiting for its blocking worker at its deadline, but

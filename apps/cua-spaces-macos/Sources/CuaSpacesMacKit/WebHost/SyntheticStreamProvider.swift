@@ -250,15 +250,26 @@ extension FixtureSpacesBackend {
                 id: "relay:m1", name: "ellieln", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
-                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
                 power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
             // A Space it provides, for comparison with its desktop row.
             base.append(AppSpaceRow(
                 id: "relay:m1/xm1", name: "0123456789ab", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
-                kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
+                kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: "m1", hostName: "ellieln",
                 power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+        }
+        // `CUA_SPACES_FIXTURE_WARMING_HOME=hidden|visible`: the home that warms for Home's prompt box,
+        // running: `hidden` before a person writes into it (in no top bar view), `visible` after.
+        if let state = environment["CUA_SPACES_FIXTURE_WARMING_HOME"], ["hidden", "visible"].contains(state) {
+            base.append(AppSpaceRow(
+                id: "local:home-claude-code", name: "home-claude-code", displayName: nil, provider: "local",
+                spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: .container, arch: nil, hidden: state == "hidden", reachable: true, error: nil, host: nil,
+                hostName: nil, power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil,
+                stopReason: nil, sharing: nil))
         }
         // `CUA_SPACES_FIXTURE_STOPPED=<n>`: `n` suspended or stopped Spaces that
         // one of your machines provides, with no recorded add date (so they read
@@ -271,7 +282,7 @@ extension FixtureSpacesBackend {
                     id: "relay:ip-172-31-46-222/\(names[i])", name: names[i], displayName: nil, provider: "relay",
                     spacesdVersion: "0.7.0", features: ["desktop_stream"], addedAt: nil,
                     os: .unknown, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
-                    kind: nil, arch: nil, reachable: false, error: nil, host: "ip-172-31-46-222",
+                    kind: nil, arch: nil, hidden: false, reachable: false, error: nil, host: "ip-172-31-46-222",
                     hostName: "ip-172-31-46-222", power: i % 2 == 0 ? "suspend" : "stop", powerState: state,
                     cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
             }

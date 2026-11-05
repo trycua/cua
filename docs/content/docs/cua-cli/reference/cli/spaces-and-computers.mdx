@@ -37,6 +37,7 @@ description: "Your Spaces, and a cua-spacesd by URL."
 | [`cua spaces resize`](#cua-spaces-resize) | Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. |
 | [`cua spaces start`](#cua-spaces-start) | Turn a Space back on: resume a suspended one or boot a stopped one. |
 | [`cua spaces rm`](#cua-spaces-rm) | Forget a registered Space and its stored token. |
+| [`cua spaces default`](#cua-spaces-default) | Your default Space: where "my Space" goes when you do not say. |
 | [`cua spaces rename`](#cua-spaces-rename) | Give a Space a new name; its id stays the same. |
 | [`cua spaces set`](#cua-spaces-set) | Change a setting of a Space. |
 | [`cua spaces share`](#cua-spaces-share) | Let someone in your team watch (viewer) or use (editor) a Space, through the relay. |
@@ -629,11 +630,50 @@ Alias: `cua spaces remove`.
 | --- | --- | --- | --- |
 | `<SPACE>` | string | required | Space id, address or display name (as `cua spaces ls` shows). |
 
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-spaces-rm--delete-spaces"></span>`--delete-spaces` |  | boolean | `false` | For one of your computers: also delete the Spaces it provides and their files (through the computer while it is reachable). Without it they stay on your account, detached, and come back if the computer is added again. |
+| <span id="cua-spaces-rm--yes"></span>`--yes` | `-y` | boolean | `false` | Remove a computer without asking. |
+
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-spaces-rm"
 cua spaces rm direct:10.0.0.5:3211
 cua spaces rm studio
+```
+
+### `cua spaces default`
+
+Your default Space: where "my Space" goes when you do not say. With no argument it prints the Space it resolves to now and the order it tries (online or not); with a Space it sets the default.
+
+```text output
+cua spaces default [OPTIONS] [SPACE]
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | optional | The Space to make your default: a name or id (as `cua spaces ls` shows). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-default--fallback"></span>`--fallback` | string |  | Spaces to try, in this order, when the default is offline (names or ids, comma separated). Repeatable. |
+| <span id="cua-spaces-default--clear"></span>`--clear` | boolean | `false` | Have no default. |
+| <span id="cua-spaces-default--no-fallback"></span>`--no-fallback` | boolean | `false` | When the default is offline, use this computer instead of trying the others. |
+| <span id="cua-spaces-default--fallback-on"></span>`--fallback-on` | boolean | `false` | Try the others again when the default is offline (every online computer, oldest first, unless `--fallback` names an order). |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-default"
+cua spaces default
+cua spaces default studio
+cua spaces default studio --fallback office-pc,relay:0123abcd4567ef89
+
+# Only the default, then this computer
+cua spaces default --no-fallback
+
+# Back to trying every online computer, oldest first
+cua spaces default --fallback-on
+cua spaces default --clear
 ```
 
 ### `cua spaces rename`

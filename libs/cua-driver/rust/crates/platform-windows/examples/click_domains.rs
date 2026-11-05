@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Click the "Domains" hyperlink in Chrome via the daemon pipe.
 
 #[cfg(target_os = "windows")]

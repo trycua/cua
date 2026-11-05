@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded external-process containment for the optional perception worker.
 //!
 //! Containment is reported as platform capabilities rather than one misleading

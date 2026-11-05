@@ -51,6 +51,7 @@ import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
+import { SPACES_SETTINGS_OPERATIONS, type SpacesSettingsOps } from "./ops/spaces-settings";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
 import { CLI_OPERATIONS, type CliOps } from "./ops/cli";
@@ -60,6 +61,7 @@ import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
 import { AGENT_THREADS_OPERATIONS, type AgentThreadsOps } from "./ops/agent-threads";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
+import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import type { TipsState } from "./contracts/spaces-page";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
@@ -246,6 +248,7 @@ export interface HostOperations
     NudgesOps,
     ResourcesOps,
     MachinesOps,
+    SpacesSettingsOps,
     ChecklistOps,
     LinksOps,
     CliOps,
@@ -254,7 +257,8 @@ export interface HostOperations
     PresenceOps,
     CloudApproveOps,
     AgentThreadsOps,
-    RuntimeFixOps {
+    RuntimeFixOps,
+    DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch).
    * `config.children` and `config.labels` (an agent home, CUA-2630) are forwarded to
@@ -550,6 +554,7 @@ export const OPERATIONS = [
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
@@ -559,6 +564,7 @@ export const OPERATIONS = [
   ...CLOUD_APPROVE_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,

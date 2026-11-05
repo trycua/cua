@@ -786,7 +786,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::RemoveSpace>(),
         Spec {
             category: Category::Lifecycle,
-            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
+            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), `parent` (a Space one of your computers provides: that computer's Space id, `relay:<computer>`; null for a computer or any other Space) and `default` (true for the Space the account chose as its default, false for every other; false for all when signed out or the relay does not answer), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
             errors: &["relay", "unauthenticated"],
             instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere). A durable Space (create_space durable=true) carries `durable` (its name, by which it is found wherever it runs now).",
             capabilities: &["space.discover"],
@@ -2010,7 +2010,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Sharing,
             result: "JSON: `space` and `unregistered` (false when it was not on the relay).",
             errors: &["relay", "unauthenticated", "permission_denied", "invalid_argument"],
-            instructions: "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.",
+            instructions: "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead. Removing one of your computers keeps the Spaces it provides on your account, detached (hidden, and refused until the computer registers again with the same id, which brings them back unchanged); `delete_spaces: true` deletes them too, files first (through the computer while it answers), then their records.",
             capabilities: &["space.relay"],
             host_requires: &[host::RELAY_ACCOUNT],
             annotations: Annotations::mutating_idempotent(),
@@ -2018,7 +2018,7 @@ pub fn tools() -> Vec<Tool> {
             rust_symbol: "Spaces::relay_unregister",
             ..Spec::new("relay_unregister_space", "Take a Space off the relay.")
         }
-        .with::<i::SpaceOnly>(),
+        .with::<i::RelayUnregisterSpace>(),
         // --- your cloud ------------------------------------------------------
         Spec {
             category: Category::Cloud,

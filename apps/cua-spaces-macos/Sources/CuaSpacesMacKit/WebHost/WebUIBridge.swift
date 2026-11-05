@@ -132,6 +132,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // The Machines page's rename, Remove from account and each machine's
         // health checks (WebUIBridge+Pages.swift).
         "machines.rename", "machines.remove", "machines.checkHealth",
+        // The account's default Space and where a new task goes now
+        // (WebUIBridge+Pages.swift; the Labs switch for Spaces as a tree).
+        "spaces.settings", "spaces.setSettings", "spaces.resolveDefault",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
         // Links to things you run (WebUIBridge+Pages.swift).
@@ -145,6 +148,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "thread.read", "thread.post", "thread.members", "thread.setRights",
         "thread.agentAdd", "thread.agentRemove",
         "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
+        // Cua Driver inside Cua Spaces: the embedded driver's page (WebUIBridge+Driver.swift).
+        "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
+        "driver.setup", "driver.setApp",
     ]
 
     let model: AppModel
@@ -548,6 +554,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try routeNudges(method, args) { return result }
             if let result = try await routeCli(method, args) { return result }
             if let result = try await routeCi(method, args) { return result }
+            if let result = try await routeDriver(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }

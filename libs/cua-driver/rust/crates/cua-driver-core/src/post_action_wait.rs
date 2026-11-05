@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Whether an action's result waits for its post-action window-change report.
 //!
 //! After an input action the macOS adapter watches the window list for a short

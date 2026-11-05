@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Conservative text insertion for the exact currently focused UIA Document.
 //!
 //! This is a capability probe for no-element foreground typing. It never

@@ -521,9 +521,16 @@ public final class AppModel {
 
     /// Remove from account: `machine` leaves the relay directory, then
     /// `device` is revoked. This Mac's own host setup is the host's
-    /// `remove` instead.
-    public func removeMachine(machine: String?, device: String?) async throws {
-        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+    /// `remove` instead. The Spaces made on the machine are detached (they
+    /// come back when it is added again), or with `deleteSpaces` deleted too.
+    public func removeMachine(machine: String?, device: String?, deleteSpaces: Bool = false) async throws {
+        if let machine {
+            if deleteSpaces {
+                try await backend.relayUnregisterComputer(id: "relay:\(machine)", deleteSpaces: true)
+            } else {
+                try await backend.relayUnregister(id: "relay:\(machine)")
+            }
+        }
         if let device {
             guard let relay = devices.devices else {
                 throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
@@ -557,7 +564,7 @@ public final class AppModel {
 
     /// Your Spaces: neither This machine nor one of your machines.
     var realSpaces: [AppSpace] {
-        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost && !$0.hidden }
     }
 
     /// Where "Add a computer" opens: the New UI's sheet (one row per way to

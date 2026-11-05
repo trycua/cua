@@ -223,17 +223,24 @@ export function taskTitle(prompt: string, max = 80): string {
 
 /**
  * Where the job runs, as picked: a new computer of a kind on this Mac, a Space
- * you already have, or this Mac itself. With the Child Spaces experiment on
+ * you already have (or one on another of your computers, `on`), or this Mac itself. With the Child Spaces experiment on
  * (agent homes, CUA-2630) the agent may also decide (`agent`: it starts in its
  * own home Space and makes what the job needs) or be told one of your machines
  * (`machine`).
  */
 export type TaskWhere =
-  | { kind: "new"; os: SpaceOs }
+  | { kind: "new"; os: SpaceOs; on?: NewSpaceOn }
   | { kind: "space"; space: Space }
   | { kind: "this-mac" }
   | { kind: "agent"; fresh?: boolean }
   | { kind: "machine"; machine: { id: string; name: string } };
+
+/** Another of your computers a new Space is made on ("New Space on Studio Mac mini"); absent: this Mac. */
+export interface NewSpaceOn {
+  /** Its relay machine id (`host:<machine>` in the create's `on`). */
+  machine: string;
+  name: string;
+}
 
 /**
  * What `agents.start` is pointed at. The core's `agent_start` only takes a
@@ -243,7 +250,7 @@ export type TaskWhere =
  * This Mac. The person confirms once that the agent works on their own
  * files and apps.
  */
-export type TaskTarget = { kind: "create"; os: SpaceOs } | { kind: "space"; spaceId: string } | { kind: "host" };
+export type TaskTarget = { kind: "create"; os: SpaceOs; on?: string } | { kind: "space"; spaceId: string } | { kind: "host" };
 
 /** The id of this Mac's own row in the Spaces list. */
 export const THIS_MAC_ID = "this-mac";
@@ -273,7 +280,7 @@ export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "ma
 export function taskTarget(where: TaskWhere): TaskTarget {
   // An agent home is a Linux Space made for the task (`useStartTask` decides whether it is a home).
   if (where.kind === "agent" || where.kind === "machine") return { kind: "create", os: "linux" };
-  if (where.kind === "new") return { kind: "create", os: where.os };
+  if (where.kind === "new") return where.on ? { kind: "create", os: where.os, on: `host:${where.on.machine}` } : { kind: "create", os: where.os };
   if (where.kind === "this-mac" || where.space.id === THIS_MAC_ID) return { kind: "host" };
   return { kind: "space", spaceId: where.space.id };
 }
@@ -310,7 +317,7 @@ export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
 /** The pick if it's still offered, else the default (a picked Space that went away falls back). */
 export function currentWhere(picked: TaskWhere | null, kinds: readonly NewKind[], spaces: readonly Space[]): TaskWhere {
   if (picked?.kind === "this-mac" || picked?.kind === "agent" || picked?.kind === "machine") return picked;
-  if (picked?.kind === "new" && kinds.some((k) => k.os === picked.os && !k.blocked)) return picked;
+  if (picked?.kind === "new" && (picked.on || kinds.some((k) => k.os === picked.os && !k.blocked))) return picked;
   if (picked?.kind === "space") {
     const row = spaces.find((s) => s.id === picked.space.id);
     if (row) return { kind: "space", space: row };

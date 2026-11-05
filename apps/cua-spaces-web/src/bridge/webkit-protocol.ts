@@ -39,6 +39,7 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -199,10 +200,19 @@ export const WEBKIT_METHODS = [
   "relay.usage",
   "nudges.pending",
   "nudges.answer",
+  "driver.status",
+  "driver.list",
+  "driver.config",
+  "driver.setConfig",
+  "driver.test",
+  "driver.pause",
+  "driver.setup",
+  "driver.setApp",
   "resources.get",
   "machines.rename",
   "machines.remove",
   "machines.checkHealth",
+  ...SPACES_SETTINGS_WEBKIT_METHODS,
   "checklist.get",
   "checklist.send",
   "links.list",

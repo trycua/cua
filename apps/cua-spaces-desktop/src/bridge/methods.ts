@@ -53,6 +53,7 @@ export const METHODS = [
   "nudges.pending", "nudges.answer",
   "resources.get",
   "machines.rename", "machines.remove", "machines.checkHealth",
+  "spaces.settings", "spaces.setSettings", "spaces.resolveDefault",
   "checklist.get", "checklist.send",
   "links.list", "links.create", "links.stop", "links.approve", "links.deny",
   "shares.settings.get", "shares.settings.set", "shares.edge.remove",
@@ -61,6 +62,8 @@ export const METHODS = [
   "thread.read", "thread.post", "thread.members", "thread.setRights",
   "thread.agentAdd", "thread.agentRemove",
   "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
+  "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
+  "driver.setup", "driver.setApp",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

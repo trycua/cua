@@ -407,6 +407,7 @@ impl SpacesBuilder {
                 relay: std::sync::RwLock::new(self.relay),
                 resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
+                default_cache: std::sync::Mutex::new(None),
                 team_facts: std::sync::Mutex::new(Default::default()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 reported_saves: Default::default(),
@@ -488,6 +489,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         stop_reason: String::new(),
         volumes: Vec::new(),
         labels: BTreeMap::new(),
+        hidden: false,
         expires_at_unix: 0,
         on_expire: String::new(),
         created_at_unix: 0,
@@ -651,6 +653,9 @@ pub(crate) struct Inner {
     pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    /// The account's default Space as the relay last said (or none), and
+    /// when it was read: lists mark it without asking every time.
+    pub(crate) default_cache: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>>,
     /// Team names and roles from the Spaces API ([`crate::sharing`]).
     pub(crate) team_facts: std::sync::Mutex<crate::sharing::TeamFacts>,
     /// What each relay machine's cua-spacesd said about itself when this
@@ -1318,7 +1323,7 @@ impl Spaces {
             && !m.online
             && crate::relay::is_registered_space(&m)
         {
-            self.forget_relay_machine(machine_id).await?;
+            self.forget_relay_machine(machine_id, false).await?;
         }
         // A Space this device attached to the relay as a machine of its own
         // takes that machine with it (as `delete` does): `rm` must not leave
@@ -1374,6 +1379,7 @@ impl Spaces {
             stop_reason: String::new(),
             volumes: Vec::new(),
             labels: BTreeMap::new(),
+            hidden: false,
             expires_at_unix: 0,
             on_expire: String::new(),
             created_at_unix: 0,
@@ -1423,6 +1429,7 @@ impl Spaces {
                     info.display_name = m.display_name.clone();
                 }
                 info.labels = m.labels.clone();
+                info.hidden = m.labels.contains_key(crate::registry::HIDDEN_LABEL);
                 if m.created_at_unix > 0 {
                     info.created_at_unix = m.created_at_unix;
                 }
@@ -2770,6 +2777,7 @@ impl Spaces {
                 result = Err(e);
             } else if let Ok(SpaceCreated::Ready { info, .. }) = &mut result {
                 info.labels = labels.clone();
+                info.hidden = labels.contains_key(crate::registry::HIDDEN_LABEL);
                 info.created_at_unix = now;
                 info.egress = egress.clone();
                 info.egress_enforced =
@@ -3527,7 +3535,7 @@ impl Spaces {
                     // its record leaves the relay directory.
                     None => match row {
                         Some(m) if m.role == "owner" && crate::relay::is_registered_space(&m) => {
-                            self.forget_relay_machine(machine_id).await?;
+                            self.forget_relay_machine(machine_id, false).await?;
                             format!("Removed {id} from your relay directory.")
                         }
                         Some(m) if m.role != "owner" => format!(

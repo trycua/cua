@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! UIA-based enumeration of top-level windows.
 //!
 //! Walks the UI Automation tree from the desktop root and returns one entry

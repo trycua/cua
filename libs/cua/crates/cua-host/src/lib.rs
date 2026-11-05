@@ -79,9 +79,10 @@ pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };
 pub use relay::{
-    AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch, NoAccount, RelayClient,
-    RelayUsage, RelayUsageTeam, StaticToken, TcpShareRequest, TcpShareView, relay_url_from_env,
+    AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DefaultSpace, DefaultSpaceStep,
+    DeviceListing, DeviceState, DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch,
+    NoAccount, RelayClient, RelayUsage, RelayUsageTeam, SpacesSettings, StaticToken,
+    TcpShareRequest, TcpShareView, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 

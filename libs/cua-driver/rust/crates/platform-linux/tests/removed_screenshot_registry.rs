@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Narrow current-main characterization for backlog #2317.
 //! No desktop, input, clipboard, or user state is accessed.
 #![cfg(not(target_os = "linux"))]

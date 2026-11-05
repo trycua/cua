@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trajectory recording session.
 //!
 //! When enabled, every non-read-only, non-recording tool call writes a
@@ -23,7 +26,7 @@ use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
-// Registered once at startup by each platform crate. Takes (window_id, pid)
+// Installed during tool registration by each platform crate. Takes (window_id, pid)
 // and returns raw PNG bytes, or None if capture fails. The callback is called
 // synchronously from write_turn (a blocking context).
 

@@ -61,7 +61,9 @@ import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailStat
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
 import { demoLinksHandlers, demoLinksState, type DemoLinksState, type DemoSharesPreset } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
+import { demoDriverHandlers, demoDriverState, type DemoDriverState } from "./demo/driver";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
+import { demoSpacesSettingsHandlers, demoSpacesSettingsState, type DemoSpacesSettingsState } from "./demo/spaces-settings";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { createChildrenStore } from "../children";
 import { createDemoChildren } from "./demo/children";
@@ -428,6 +430,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     })(),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    ...demoSpacesSettingsState(),
     links: demoLinksState(now(), options.shares),
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
@@ -437,6 +440,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
+    ...demoDriverState(now(), options.onboarded === false),
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };
@@ -755,6 +759,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "machines.remove": async ({ machine, device }) => {
       await wait(step / 2);
       state.removed = [...state.removed, ...[machine, device].filter((x): x is string => Boolean(x))];
+      // The Spaces made on it leave the list with it: detached, or with `deleteSpaces` forgotten (the same to the list).
+      if (machine) {
+        const before = state.rows.length;
+        state.rows = state.rows.filter((r) => r.host !== machine);
+        if (state.rows.length !== before) emit({ type: "spaces.changed" });
+      }
       emit({ type: "machines.changed" });
       return null;
     },
@@ -1054,6 +1064,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoTelemetryHandlers(ctx),
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
+    ...demoSpacesSettingsHandlers(ctx, () => handlers["machines.list"]({}) as MachineRow[]),
     ...demoLinksHandlers(ctx),
     ...((): ReturnType<typeof demoThreadHandlers> => {
       const h = demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
@@ -1078,6 +1089,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoKeyvaultSetupHandlers(ctx),
     ...demoKeyvaultManageHandlers(ctx, overview),
     ...demoStartupHandlers(ctx),
+    ...demoDriverHandlers(ctx),
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
     ...demoCiHandlers({ state: ciState, now, wait, stepMs: step, signedIn: () => Boolean(state.identity) }),
@@ -1116,7 +1128,7 @@ interface DemoLinksStateField {
   links: DemoLinksState;
 }
 
-export interface DemoState extends DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState extends DemoDriverState, DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoSpacesSettingsState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

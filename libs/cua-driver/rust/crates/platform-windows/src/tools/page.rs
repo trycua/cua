@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows implementation of the cross-platform `PageBackend` trait.
 //!
 //! - `get_text` — find the Document UIA element under the active tab's web-

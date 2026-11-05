@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::authorization::PermissionMode;
 use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;

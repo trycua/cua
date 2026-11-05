@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Independent niri observations over niri's IPC socket. This module never
 //! calls the driver's niri adapter, capture, geometry, or input code.
 //!

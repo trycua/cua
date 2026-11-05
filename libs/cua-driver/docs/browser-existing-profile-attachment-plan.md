@@ -22,6 +22,11 @@ transport for the same public `existing_profile` strategy.
   UIA adapters on Windows. Chrome, Chromium, and Edge have exact product
   descriptors on Linux, with AT-SPI adapters for X11 and the validated native
   Sway route.
+- Dia uses a macOS-only adapter: its AppleScript opens, proves, and closes the
+  setup tab, its checkbox is clicked in the foreground because it exposes no
+  AX press or value, its state is read from its PID-owned listener, and its own
+  consent sheet is accepted. Arc has no descriptor because Chromium denies
+  every connection when no Chromium browser window can host the prompt.
 - Setup is bounded and visible: it opens one fixed internal page in the
   approved window, toggles one exact per-instance control, proves a PID-owned
   loopback endpoint, handles one exact browser-owned consent action, closes the

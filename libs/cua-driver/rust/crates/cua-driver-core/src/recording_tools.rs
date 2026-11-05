@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent recording / replay tools.
 //!
 //! Registered on all platforms via `ToolRegistry::register_recording_tools()`.

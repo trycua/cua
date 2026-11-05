@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Application-state snapshots used by trajectory recording on Linux.
 
 /// Per-turn application state for trajectory recording, walked under the

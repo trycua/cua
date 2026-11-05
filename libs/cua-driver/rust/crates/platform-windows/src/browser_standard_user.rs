@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Win32 side of the standard-user launch for isolated browsers.
 //!
 //! An elevated Driver derives a standard-user token from its own process token

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Detect target processes whose UI toolkit derives pointer-event locations
 //! from the hardware pointer rather than from the delivered event.
 //!

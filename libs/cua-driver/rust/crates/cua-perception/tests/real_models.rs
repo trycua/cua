@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::{env, fs, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};

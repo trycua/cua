@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw FFI bindings to the macOS Accessibility API (AXUIElement).
 //!
 //! We call the C-level AX API directly rather than using a crate wrapper,

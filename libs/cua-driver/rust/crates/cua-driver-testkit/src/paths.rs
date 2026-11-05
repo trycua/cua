@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Filesystem paths, resolved at test runtime from environment overrides or
 //! `CARGO_MANIFEST_DIR`.
 //!

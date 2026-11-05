@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Universal background mouse actuator: coordinate-routed pointer/touch
 //! injection that delivers a click to whatever window sits under a screen
 //! point **without** `SetForegroundWindow` and **without** moving the user's

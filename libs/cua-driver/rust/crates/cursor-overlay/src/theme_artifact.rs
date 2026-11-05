@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded compiled cursor-theme artifacts and the local installed-theme store.
 //!
 //! `.cua-theme` files contain zstd-compressed postcard data behind a fixed

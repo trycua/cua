@@ -38474,7 +38474,11 @@ public struct AppSpace: Equatable, Hashable {
      */
     public var access: AppSpaceAccess?
     /**
-     * The home warming for Home's prompt box until a person writes into it: no list shows it.
+     * The home that warms in the background for Home's prompt box, until a
+     * person writes into it: no list shows it (not the Spaces list, the
+     * sidebar, the palette, the menu bar item or the notch; see
+     * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+     * SDK and `cua spaces ls` still return it, marked.
      */
     public var hidden: Bool
 
@@ -38569,7 +38573,11 @@ public struct AppSpace: Equatable, Hashable {
          * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
          */access: AppSpaceAccess?,
         /**
-         * The home warming for Home's prompt box until a person writes into it: no list shows it.
+         * The home that warms in the background for Home's prompt box, until a
+         * person writes into it: no list shows it (not the Spaces list, the
+         * sidebar, the palette, the menu bar item or the notch; see
+         * [`crate::spaces::openable_spaces`]). Its own page still opens. The
+         * SDK and `cua spaces ls` still return it, marked.
          */hidden: Bool) {
         self.id = id
         self.name = name
@@ -40250,10 +40258,13 @@ public struct AppSpaceRow: Equatable, Hashable {
      */
     public var arch: String?
     /**
-     * Answered the last connect.
-     * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+     * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+     * for Home's prompt box. No list shows it ([`Space::hidden`]).
      */
     public var hidden: Bool
+    /**
+     * Answered the last connect.
+     */
     public var reachable: Bool
     /**
      * Why not.
@@ -40350,9 +40361,12 @@ public struct AppSpaceRow: Equatable, Hashable {
          * `aarch64`, `amd64`, `x86_64`).
          */arch: String?,
         /**
+         * The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+         * for Home's prompt box. No list shows it ([`Space::hidden`]).
+         */hidden: Bool,
+        /**
          * Answered the last connect.
-         * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
-         */hidden: Bool, reachable: Bool,
+         */reachable: Bool,
         /**
          * Why not.
          */error: String?,

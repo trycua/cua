@@ -14,12 +14,12 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { AgentScreen, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WhereScreen } from "@/components/first-run-new/first-run-new";
 import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
-import { afterWhere, agentView, chosenAgent, dotFor, nextView, readyView, signInView, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
+import { afterWhere, agentView, chosenAgent, dotFor, dotStep, nextView, reachedAfter, readyView, signInView, stepDots, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -147,6 +147,9 @@ describe("screen 2, a long list", () => {
     expect(footer.className).toContain("sticky");
     expect(footer.className).toContain("bottom-0");
     expect(footer.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+    // No background of its own (5 Nov: it drew a black box over the stars and cut the keys); the list fades instead.
+    expect(footer.className).not.toMatch(/\bbg-|from-\[/);
+    expect(footer.contains(document.querySelector("[data-new-run-content]"))).toBe(false);
   });
 });
 
@@ -376,6 +379,53 @@ describe("screen 6, next steps", () => {
   });
 });
 
+describe("the step dots", () => {
+  it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
+    const where = stepDots("where", 1)!;
+    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Bring all your computers under one account", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Pick your coding agent"]);
+    expect(where.map((d) => d.to)).toEqual(["welcome", null, null]);
+    expect(where.map((d) => d.current)).toEqual([false, true, false]);
+    // Back on screen 1 after reaching screen 3: both later steps open again.
+    expect(stepDots("welcome", 2)!.map((d) => d.to)).toEqual([null, "where", "agent"]);
+    // On the sign-in, the first dot goes back to its start; nothing past it opens (a dot never skips the sign-in).
+    expect(stepDots("signin", 0)!.map((d) => d.to)).toEqual(["welcome", null, null]);
+    expect(stepDots("ready", 2)).toBeNull();
+  });
+
+  it("count Ready and Next steps as past the last dot, and never go back on how far a run got", () => {
+    expect(reachedAfter(0, "signin")).toBe(0);
+    expect(reachedAfter(0, "where")).toBe(1);
+    expect(reachedAfter(1, "ready")).toBe(2);
+    expect(reachedAfter(2, "welcome")).toBe(2);
+  });
+
+  it("move with the arrow keys to the nearest step that opens", () => {
+    const dots = stepDots("agent", 2)!;
+    expect(dotStep(dots, 2, -1)).toBe(1);
+    expect(dotStep(dots, 2, 1)).toBeNull();
+    expect(dotStep(stepDots("welcome", 0)!, 0, 1)).toBeNull();
+  });
+
+  it("are buttons with their step's name: a click or an arrow key opens a step, a step not reached yet can't be pressed", () => {
+    const onGo = vi.fn();
+    render(<StepDots dots={stepDots("where", 1)!} onGo={onGo} />);
+    const first = screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" });
+    const second = screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" });
+    const third = screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" });
+    expect(second.getAttribute("aria-current")).toBe("step");
+    expect(third.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(third);
+    expect(onGo).not.toHaveBeenCalled();
+    fireEvent.click(first);
+    expect(onGo).toHaveBeenLastCalledWith(0, false);
+    fireEvent.keyDown(second, { key: "ArrowLeft" });
+    expect(onGo).toHaveBeenLastCalledWith(0, true);
+    onGo.mockClear();
+    fireEvent.keyDown(second, { key: "ArrowRight" });
+    expect(onGo).not.toHaveBeenCalled();
+  });
+});
+
 describe("the keys", () => {
   it("put the Apple, Windows and Linux marks on the product keys and keep the keys right of the copy", () => {
     const keys = placeKeys(1366, 982, 544);
@@ -484,5 +534,19 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("the step dots go back to screen 1 and forward again to screen 2, but never past the sign-in", { timeout: 60_000 }, async () => {
+    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    // Screen 2 isn't reached yet: its dot can't be pressed, so it can't skip the sign-in.
+    expect(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }).hasAttribute("disabled")).toBe(true);
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
+    fireEvent.click(screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" }));
+    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    fireEvent.click(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }));
+    await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
+    expect(screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" }).hasAttribute("disabled")).toBe(true);
   });
 });

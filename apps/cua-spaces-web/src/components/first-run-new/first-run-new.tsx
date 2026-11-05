@@ -11,7 +11,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { folderLabel, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
@@ -32,13 +32,15 @@ import {
   afterWhere,
   agentView,
   chosenAgent,
-  dotFor,
+  dotStep,
   INSTALL_PAGES,
   NEW_RUN_EMPTY,
   nextView,
   placeName,
+  reachedAfter,
   readyView,
   signInView,
+  stepDots,
   togglePick,
   WELCOME,
   whereView,
@@ -48,6 +50,7 @@ import {
   type NextView,
   type ReadyView,
   type SignInView,
+  type StepDot,
   type WhereView,
 } from "@/lib/first-run-new";
 import { spaceState } from "@/lib/spaces";
@@ -128,6 +131,89 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
 const Divider = () => <div className="mx-3 my-1.5 h-px bg-white/[0.14]" />;
 const Label = ({ children }: { children: ReactNode }) => <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>;
 
+/** How far above the footer the list fades out. */
+const FADE_PX = 28;
+
+/**
+ * Fades `content` out just above `footer` while the window is too short for both, so the list never runs
+ * under Continue. A mask on the content, never a background on the footer: nothing covers the stars or keys.
+ */
+function useFadeUnder(content: RefObject<HTMLElement | null>, footer: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const c = content.current;
+    const f = footer.current;
+    if (!c || !f) return;
+    const scroller = c.closest("main") ?? c.parentElement;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const box = c.getBoundingClientRect();
+      const cut = f.getBoundingClientRect().top - box.top;
+      const under = box.height > 0 && cut < box.height - 1;
+      const mask = under ? `linear-gradient(to bottom, #000 ${Math.max(0, cut - FADE_PX)}px, transparent ${Math.max(0, cut)}px)` : "";
+      c.style.setProperty("mask-image", mask);
+      c.style.setProperty("-webkit-mask-image", mask);
+      if (under) c.dataset.faded = "";
+      else delete c.dataset.faded;
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    scroller?.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    ro?.observe(c);
+    if (scroller) ro?.observe(scroller);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      scroller?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      ro?.disconnect();
+    };
+  }, [content, footer]);
+}
+
+/**
+ * The step dots under the page. Each is a button: it opens an earlier step, or a later one already reached
+ * (never one past the sign-in). The left and right arrow keys move between the steps that can be opened.
+ */
+export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, viaKey: boolean) => void }) {
+  return (
+    <nav aria-label="Setup steps" className="relative z-20 shrink-0 pb-3.5 pl-[60px]" data-new-run-dots="">
+      <ol className="flex">
+        {dots.map((d, i) => (
+          <li key={i}>
+            <button
+              type="button"
+              aria-label={d.label}
+              aria-current={d.current ? "step" : undefined}
+              disabled={!d.to && !d.current}
+              // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+              className="group flex h-6 items-center rounded-full px-1 outline-none focus-visible:ring-2 focus-visible:ring-[#5ec0e8] enabled:cursor-pointer disabled:cursor-default"
+              onClick={() => d.to && onGo(i, false)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
+                const to = dotStep(dots, i, e.key === "ArrowLeft" ? -1 : 1);
+                if (to !== null) onGo(to, true);
+              }}
+              data-step-dot={i}
+            >
+              <span
+                className={cn(
+                  "block h-1 w-7 rounded-full transition-colors motion-reduce:transition-none",
+                  d.current ? "bg-white" : d.to ? "bg-white/30 group-hover:bg-white/70" : "bg-white/[0.14]",
+                )}
+              />
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
 /* ---- The screens (drawn from their views, so tests draw every state) --------------------- */
 
 export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
@@ -200,128 +286,134 @@ export function WhereScreen({
   const sep = view.separate;
   const fold = view.offlineFold;
   const [showOffline, setShowOffline] = useState(false);
+  const content = useRef<HTMLDivElement>(null);
+  const footer = useRef<HTMLDivElement>(null);
+  useFadeUnder(content, footer);
   const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
   return (
     <div data-new-run="where">
-      <Title>{view.title}</Title>
-      <Line>{view.line}</Line>
-      <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
-        <Row
-          icon={<Mark os={hostOs()} />}
-          name={t.name}
-          sub={
-            <>
-              {t.model && t.modelFirst ? <span>{t.model} ·</span> : null}
-              {t.tick ? <CheckIcon aria-hidden className="size-[13px] text-white" strokeWidth={2.6} /> : null}
-              <span className={t.tick ? "text-white" : undefined} data-new-run-this-status="">
-                {t.status}
-              </span>
-              {t.model && !t.modelFirst ? <span>· {t.model}</span> : null}
-            </>
-          }
-          picked={t.picked}
-          onClick={() => onToggle("this")}
-          extra={
-            t.action ? (
-              <button
-                type="button"
-                className={cn(GLASS_CHIP, "mr-1 h-[30px] px-3.5 text-[13.5px]")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAddThis();
-                }}
-                data-new-run-add-this={t.action.id}
-              >
-                {t.action.label}
-              </button>
-            ) : null
-          }
-          data-new-run-computer="this"
-        />
-        {view.others ? (
-          <>
-            <Label>{view.othersLabel}</Label>
-            {view.others.length ? (
+      <div ref={content} data-new-run-content="">
+        <Title>{view.title}</Title>
+        <Line>{view.line}</Line>
+        <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
+          <Row
+            icon={<Mark os={hostOs()} />}
+            name={t.name}
+            sub={
               <>
-                {(fold ? view.others.filter((o) => !o.offline) : view.others).map(other)}
-                {fold ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-expanded={showOffline}
-                      // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-                      className="flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px] text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]"
-                      onClick={() => setShowOffline((v) => !v)}
-                      data-new-run-offline-fold={fold.rows.length}
-                    >
-                      <span className="flex size-7 shrink-0 items-center justify-center text-white">
-                        <ChevronRightIcon className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")} strokeWidth={2.2} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[15px] leading-5 font-medium text-white">{fold.label}</span>
-                        <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{fold.sub}</span>
-                      </span>
-                    </button>
-                    {showOffline ? fold.rows.map(other) : null}
-                  </>
-                ) : null}
+                {t.model && t.modelFirst ? <span>{t.model} ·</span> : null}
+                {t.tick ? <CheckIcon aria-hidden className="size-[13px] text-white" strokeWidth={2.6} /> : null}
+                <span className={t.tick ? "text-white" : undefined} data-new-run-this-status="">
+                  {t.status}
+                </span>
+                {t.model && !t.modelFirst ? <span>· {t.model}</span> : null}
               </>
-            ) : (
-              <p className={cn("px-3 pt-1 pb-2 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-none="">
-                {view.emptyLine}
-              </p>
-            )}
-          </>
-        ) : null}
-        {view.addAnother ? (
-          <>
-            <Divider />
-            {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-            <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={onAddAnother} data-new-run-add-another="">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
-                <PlusIcon className="size-4" strokeWidth={2.2} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] leading-5 font-medium text-white">{view.addAnother.title}</span>
-                <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{view.addAnother.sub}</span>
-              </span>
-            </button>
-          </>
-        ) : null}
-        {view.signInLine ? (
-          <>
-            <Divider />
-            <p className={cn("px-3 pt-2.5 pb-3 text-[14px] leading-5 font-medium", GREY)} data-new-run-sign-in-line="">
-              <button type="button" className={LINK} onClick={onSignIn}>
-                {view.signInLine.link}
+            }
+            picked={t.picked}
+            onClick={() => onToggle("this")}
+            extra={
+              t.action ? (
+                <button
+                  type="button"
+                  className={cn(GLASS_CHIP, "mr-1 h-[30px] px-3.5 text-[13.5px]")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddThis();
+                  }}
+                  data-new-run-add-this={t.action.id}
+                >
+                  {t.action.label}
+                </button>
+              ) : null
+            }
+            data-new-run-computer="this"
+          />
+          {view.others ? (
+            <>
+              <Label>{view.othersLabel}</Label>
+              {view.others.length ? (
+                <>
+                  {(fold ? view.others.filter((o) => !o.offline) : view.others).map(other)}
+                  {fold ? (
+                    <>
+                      <button
+                        type="button"
+                        aria-expanded={showOffline}
+                        // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px] text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]"
+                        onClick={() => setShowOffline((v) => !v)}
+                        data-new-run-offline-fold={fold.rows.length}
+                      >
+                        <span className="flex size-7 shrink-0 items-center justify-center text-white">
+                          <ChevronRightIcon className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")} strokeWidth={2.2} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] leading-5 font-medium text-white">{fold.label}</span>
+                          <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{fold.sub}</span>
+                        </span>
+                      </button>
+                      {showOffline ? fold.rows.map(other) : null}
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <p className={cn("px-3 pt-1 pb-2 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-none="">
+                  {view.emptyLine}
+                </p>
+              )}
+            </>
+          ) : null}
+          {view.addAnother ? (
+            <>
+              <Divider />
+              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
+              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={onAddAnother} data-new-run-add-another="">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
+                  <PlusIcon className="size-4" strokeWidth={2.2} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] leading-5 font-medium text-white">{view.addAnother.title}</span>
+                  <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{view.addAnother.sub}</span>
+                </span>
               </button>
-              {view.signInLine.rest}
-            </p>
-          </>
-        ) : null}
-      </div>
-      <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
-        <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
-          <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
-          {sep.disabled || sep.state !== "offer" ? (
-            <span>{sep.title}</span>
-          ) : (
-            <button type="button" className={LINK} onClick={onSeparate} data-new-run-separate-open="">
-              {sep.title}
-            </button>
-          )}
+            </>
+          ) : null}
+          {view.signInLine ? (
+            <>
+              <Divider />
+              <p className={cn("px-3 pt-2.5 pb-3 text-[14px] leading-5 font-medium", GREY)} data-new-run-sign-in-line="">
+                <button type="button" className={LINK} onClick={onSignIn}>
+                  {view.signInLine.link}
+                </button>
+                {view.signInLine.rest}
+              </p>
+            </>
+          ) : null}
         </div>
-        <p className={cn("mt-[3px] pl-6 text-[13.5px] leading-[19px] font-medium", GREY)}>{sep.sub}</p>
-        {sep.action ? (
-          <div className="mt-2 pl-6">
-            <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={onSeparate} data-new-run-separate-action="">
-              {sep.action}
-            </button>
+        <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
+          <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
+            <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
+            {sep.disabled || sep.state !== "offer" ? (
+              <span>{sep.title}</span>
+            ) : (
+              <button type="button" className={LINK} onClick={onSeparate} data-new-run-separate-open="">
+                {sep.title}
+              </button>
+            )}
           </div>
-        ) : null}
+          <p className={cn("mt-[3px] pl-6 text-[13.5px] leading-[19px] font-medium", GREY)}>{sep.sub}</p>
+          {sep.action ? (
+            <div className="mt-2 pl-6">
+              <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={onSeparate} data-new-run-separate-action="">
+                {sep.action}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
-      {/* Stays in view at the bottom of the window however long the list is; the fade keeps the list readable under it. */}
-      <div className="sticky bottom-0 z-10 -mx-4 mt-2 bg-linear-to-t from-[#050607] from-60% to-transparent px-4 pt-[min(20px,2.2vh)] pb-3" data-new-run-footer="">
+      {/* Stays in view at the bottom of the window however long the list is. It has no background of its own, so the
+          stars and keys show through; the list fades out just above it instead (`useFadeUnder`). */}
+      <div ref={footer} className="sticky bottom-0 z-10 mt-2 pt-[min(20px,2.2vh)] pb-3" data-new-run-footer="">
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
           Continue
         </button>
@@ -526,7 +618,11 @@ export function NewFirstRun() {
   const offers = useFirstSpaceOffers();
   const savedAll = useFirstRunSaved();
   const s: NewRunSaved = { ...NEW_RUN_EMPTY, ...(savedAll.newRun ?? {}) };
-  const save = (patch: Partial<NewRunSaved>) => writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, ...(readFirstRun().newRun ?? {}), ...patch } });
+  const save = (patch: Partial<NewRunSaved>) => {
+    const prev = { ...NEW_RUN_EMPTY, ...(readFirstRun().newRun ?? {}) };
+    const reached = patch.screen ? reachedAfter(reachedAfter(prev.reached, prev.screen), patch.screen) : prev.reached;
+    writeFirstRun({ newRun: { ...prev, ...patch, reached } });
+  };
   const go = (screen: NewRunScreenName) => save({ screen });
 
   const signedIn = Boolean(session.data?.signedIn);
@@ -542,9 +638,14 @@ export function NewFirstRun() {
   const [addOpen, setAddOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
 
-  // A new screen: focus moves to its title, so a screen reader reads it.
+  // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
+  // step dots, focus stays on the dots instead.
+  const dotFocus = useRef<number | null>(null);
   useEffect(() => {
-    document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
+    const keep = dotFocus.current;
+    dotFocus.current = null;
+    const el = keep !== null ? document.querySelector<HTMLElement>(`[data-step-dot="${keep}"]`) : document.querySelector<HTMLElement>("[data-onboarding-heading]");
+    el?.focus();
   }, [s.screen]);
 
   // Sign-in: started when 1b opens, and over once the session says signed in.
@@ -760,7 +861,14 @@ export function NewFirstRun() {
   };
 
   const accountUrl = settings.data?.accountUrl ?? "https://app.cua.ai";
-  const dot = dotFor(s.screen);
+  const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
+  const goDot = (i: number, viaKey: boolean) => {
+    const to = dots?.[i]?.to;
+    if (!to) return;
+    if (s.screen === "signin") session.cancelSignIn();
+    if (viaKey) dotFocus.current = i;
+    go(to);
+  };
   const showSkip = s.screen === "welcome" || s.screen === "signin" || s.screen === "where" || s.screen === "agent";
 
   let body: ReactNode = null;
@@ -858,12 +966,8 @@ export function NewFirstRun() {
         <div className="flex w-full max-w-[600px] shrink-0 flex-col py-2">{body}</div>
         <div aria-hidden className="min-h-2 shrink-0 grow-[1.4] basis-0" />
       </main>
-      {dot !== null ? (
-        <ol className="relative z-20 flex shrink-0 gap-2 pt-2 pb-6 pl-16" aria-label={`Step ${dot + 1} of 3`}>
-          {[0, 1, 2].map((i) => (
-            <li key={i} aria-current={i === dot ? "step" : undefined} className={cn("h-1 w-7 rounded-full", i === dot ? "bg-white" : "bg-white/30")} />
-          ))}
-        </ol>
+      {dots ? (
+        <StepDots dots={dots} onGo={goDot} />
       ) : (
         <div className="h-8 shrink-0" />
       )}

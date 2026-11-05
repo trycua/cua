@@ -35,7 +35,9 @@ pub struct Fetch<'a> {
     pub bearer: Option<&'a str>,
     /// The size it must have, when known.
     pub size: Option<u64>,
-    /// The SHA-256 (lowercase hex) it must have.
+    /// The SHA-256 (lowercase hex) it must have. Empty: no checksum is
+    /// published for it (Microsoft's evaluation ISOs); the caller records
+    /// the digest of what arrived.
     pub sha256: &'a str,
 }
 
@@ -231,7 +233,7 @@ async fn once(
         return Once::Retry("the connection closed before the end of the file".into());
     }
     let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != f.sha256 {
+    if !f.sha256.is_empty() && digest != f.sha256 {
         return Once::Restart(format!(
             "the file did not match its checksum (got {digest})"
         ));
@@ -290,6 +292,49 @@ pub async fn fetch(
         "download {}: {last}; check the connection and try again{kept}",
         f.url
     ))))
+}
+
+/// A browser-like user agent: Microsoft's download pages answer scripts differently.
+pub const BROWSER_UA: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
+
+/// GETs a web page as text (a few redirects followed).
+pub async fn get_text(url: &str, timeout: Duration) -> Result<String, VmmError> {
+    let c = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(timeout)
+        .build()
+        .map_err(|e| VmmError::other(format!("fetch {url}: {e}")))?;
+    let r = c
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| VmmError::other(format!("fetch {url}: {e}")))?;
+    if !r.status().is_success() {
+        return Err(VmmError::other(format!("fetch {url}: {}", r.status())));
+    }
+    r.text()
+        .await
+        .map_err(|e| VmmError::other(format!("fetch {url}: {e}")))
+}
+
+/// Where `url` ends up after its redirects (a go.microsoft.com link to the
+/// ISO itself), without downloading the body.
+pub async fn final_url(url: &str, timeout: Duration) -> Result<String, VmmError> {
+    let c = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(timeout)
+        .build()
+        .map_err(|e| VmmError::other(format!("resolve {url}: {e}")))?;
+    let r = c
+        .head(url)
+        .send()
+        .await
+        .map_err(|e| VmmError::other(format!("resolve {url}: {e}")))?;
+    if !r.status().is_success() {
+        return Err(VmmError::other(format!("resolve {url}: {}", r.status())));
+    }
+    Ok(r.url().to_string())
 }
 
 #[cfg(test)]
@@ -412,6 +457,28 @@ mod tests {
             r[1].as_deref().unwrap().starts_with("bytes=") && r[1].as_deref() != Some("bytes=0-")
         );
         assert!(r[2].is_some(), "the third request resumed too");
+    }
+
+    #[tokio::test]
+    async fn an_empty_checksum_accepts_what_arrives() {
+        let (b, _) = blob(100_000);
+        let srv = serve(b.clone(), vec![], true).await;
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("f.bin");
+        fetch(
+            &Fetch {
+                url: &srv.url,
+                bearer: None,
+                size: None,
+                sha256: "",
+            },
+            &to,
+            &fast(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b);
     }
 
     #[tokio::test]

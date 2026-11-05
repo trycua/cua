@@ -12,6 +12,7 @@
 //! * [`unattend`] - the answer file, the in-guest setup script, the data ISO.
 //! * [`build`] - the build plan, cache layout and orchestration.
 
+pub mod iso;
 pub mod table;
 
 pub use table::{WindowsArch, WindowsVersion, lookup, normalize_version, versions};

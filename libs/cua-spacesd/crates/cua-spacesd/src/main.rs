@@ -181,11 +181,13 @@ struct ServeArgs {
     #[arg(long, env = "CUA_SPACESD_NO_ACCESS_LOG")]
     no_access_log: bool,
     /// Do not link the cua-driver tool registry (Driver service and /mcp
-    /// report unsupported).
+    /// report unsupported). Remote callers only: the Cua Driver this Mac's
+    /// coding agents use (`embedded_driver`) runs either way.
     #[arg(long, env = "CUA_ENV_NO_DRIVER")]
     no_driver: bool,
     /// Do not serve the desktop services (Computer, Windows, Accessibility,
-    /// Stream, Presence, /media).
+    /// Stream, Presence, /media). The embedded Cua Driver for this Mac's
+    /// coding agents still runs.
     #[arg(long, env = "CUA_ENV_NO_DESKTOP")]
     no_desktop: bool,
     /// Teleport destination (default ~/Downloads).
@@ -957,12 +959,13 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     cua_spacesd::vsock_agent::start();
     // Cua Driver for the coding agents on this Mac, as this process's own
     // child (on unless CUA_SPACESD_EMBEDDED_DRIVER=0; see embedded_driver).
+    // It follows only the person's "Let agents use apps on this Mac"
+    // switch, never `--no-desktop` or `--no-driver`: those are about
+    // remote callers (sharing this desktop, the Driver service and /mcp),
+    // and a Mac that keeps its screen private still lets its own coding
+    // agents use its apps.
     #[cfg(all(target_os = "macos", not(cua_headless)))]
-    let _embedded_driver = if no_desktop {
-        None
-    } else {
-        embedded_driver::spawn(shutdown.clone())
-    };
+    let _embedded_driver = embedded_driver::spawn(shutdown.clone());
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {

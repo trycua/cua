@@ -57,9 +57,15 @@ extension WebUIBridge {
             let driver = try needDriver()
             guard let paused = args["paused"] as? Bool else { throw Failure.badArgs("paused: boolean") }
             try setDriverPaused(driver, paused)
+            // Switched on: a driver that isn't running starts now, also on a
+            // Mac set up earlier without sharing its desktop.
+            if !paused { await startDriverIfNeeded(driver) }
             return NSNull()
         case "driver.setup":
             let driver = try needDriver()
+            // A driver that isn't running starts first, so the page answers
+            // even when connecting the agents fails below.
+            await startDriverIfNeeded(driver)
             try await setUpDriverAgents(driver, agents: driverAgents)
             // A driver whose permission answer is stale starts again.
             await restartDriverIfStale(driver, force: true)
@@ -212,6 +218,48 @@ extension WebUIBridge {
             try? await Task.sleep(for: .milliseconds(500))
             if let meta = await Task.detached(operation: { driver.metadata(timeout: 1) }).value, meta.pid != pid { return }
         }
+    }
+
+    /// Gets a driver that isn't answering running, unless the person paused
+    /// agents: asks cua-spacesd to start it now (it may be waiting out its
+    /// restart backoff), then restarts the host service when that didn't
+    /// work (cua-spacesd isn't running, or it is a build that never started
+    /// a driver on a Mac that keeps its screen private). Returns once the
+    /// driver answers or each step had its time.
+    func startDriverIfNeeded(_ driver: EmbeddedDriver) async {
+        var asked = false
+        while true {
+            let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
+            let answering = await Task.detached { driver.metadata(timeout: 1) != nil }.value
+            let spec = HelperService.specPath(info: Bundle.main.infoDictionary, home: NSHomeDirectory())
+            let setUp = spec.map { FileManager.default.fileExists(atPath: $0) } ?? false
+            switch EmbeddedDriver.startStep(paused: paused, answering: answering, setUp: setUp, askedHostService: asked) {
+            case .none, .needsSetUp:
+                return
+            case .askHostService:
+                asked = true
+                let request = driver.startRequest
+                try? FileManager.default.createDirectory(atPath: (request as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: request, contents: Data())
+                // A running host service with no driver up yet: start it too.
+                _ = await Task.detached { HelperService.kickstart(restart: false) }.value
+                if await waitForDriver(driver, seconds: 10) { return }
+            case .restartHostService:
+                NSLog("cua-spaces: Cua Driver didn't start; restarting the host service")
+                _ = await Task.detached { HelperService.kickstart(restart: true) }.value
+                _ = await waitForDriver(driver, seconds: 20)
+                return
+            }
+        }
+    }
+
+    /// Whether the driver answers within `seconds`.
+    private func waitForDriver(_ driver: EmbeddedDriver, seconds: Int) async -> Bool {
+        for _ in 0..<(seconds * 2) {
+            if await Task.detached(operation: { driver.metadata(timeout: 1) != nil }).value { return true }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
     }
 
     /// "Let agents use apps on this Mac": off writes the file cua-spacesd

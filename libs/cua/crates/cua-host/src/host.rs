@@ -1430,9 +1430,12 @@ impl Host {
             "--data-dir".into(),
             s(p.driver_data.clone()),
         ]);
-        // A machine that does not share its desktop runs no desktop
-        // services, no cua-driver and no /mcp at all: providing Spaces
-        // never needs them (the policy refuses relayed calls to the rest).
+        // A machine that does not share its desktop serves remote callers
+        // no desktop services, no Driver service and no /mcp at all:
+        // providing Spaces never needs them (the policy refuses relayed
+        // calls to the rest). The Cua Driver for this Mac's own coding
+        // agents still runs: cua-spacesd starts it whatever these flags say,
+        // and only "Let agents use apps on this Mac" turns it off.
         if !config.share_desktop {
             args.extend([
                 "--no-desktop".into(),

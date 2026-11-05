@@ -30,6 +30,31 @@ public struct EmbeddedDriver: Sendable {
     /// runs no driver (`embedded_driver::paused_marker`).
     public var pausedMarker: String { ((socket as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cua-driver.off") }
 
+    /// Written to have cua-spacesd start a driver that isn't running now,
+    /// instead of after its restart backoff (`embedded_driver::start_request`).
+    public var startRequest: String { ((socket as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cua-driver.start") }
+
+    /// What Set up, Repair and turning "Let agents use apps on this Mac" on
+    /// do next to get a driver that isn't answering running. The driver's
+    /// lifecycle follows that switch only, never desktop sharing.
+    public enum StartStep: Equatable, Sendable {
+        /// Running, or paused by the person: nothing to do.
+        case none
+        /// This Mac isn't set up yet, so no cua-spacesd runs to start it.
+        case needsSetUp
+        /// Ask cua-spacesd to start it now ([`startRequest`]).
+        case askHostService
+        /// cua-spacesd didn't start it (it isn't running, or it predates
+        /// the request): restart the host service, which starts a driver.
+        case restartHostService
+    }
+
+    public static func startStep(paused: Bool, answering: Bool, setUp: Bool, askedHostService: Bool) -> StartStep {
+        if paused || answering { return .none }
+        if !setUp { return .needsSetUp }
+        return askedHostService ? .restartHostService : .askHostService
+    }
+
     /// This app's embedded driver, or nil when the bundle carries none (a
     /// bare build) or names a channel without a home.
     public static func current(bundle: Bundle = .main) -> EmbeddedDriver? {

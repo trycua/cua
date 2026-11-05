@@ -34,7 +34,7 @@ use crate::settings::{
 };
 
 /// The switches, as stored (`"experiments": {"cuaVolume": true}`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Experiments {
     /// Cua Volume in the first run and Settings, Storage.
@@ -66,21 +66,6 @@ pub struct Experiments {
     /// installed, so the next Create from Home starts at once. Off unless
     /// turned on; the daemon enforces it (the switch is kept in the cua home).
     pub warm_pools: bool,
-}
-
-impl Default for Experiments {
-    fn default() -> Self {
-        Self {
-            cua_volume: false,
-            secure_spaces: false,
-            child_spaces: false,
-            ask_first: false,
-            ci_runners: false,
-            tcp_shares: false,
-            mobile: false,
-            warm_pools: false,
-        }
-    }
 }
 
 /// One experiment.

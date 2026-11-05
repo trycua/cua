@@ -79,7 +79,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     await waitFor(() => expect(features(tracked)).toContain("upsell_plan_card_click"));
   });
 
-  it("Settings shows the usage meter: Pro at 5 of 5 live sessions says so, with Upgrade to Teams", async () => {
+  it("Settings shows the usage meter: Pro at 5 of 5 live sessions gets the sessions card, with Upgrade to Teams", async () => {
     const opened: string[] = [];
     const { router } = await mountApp("/settings", host(idle({ plan: "pro", liveSessions: 5, liveSessionsLimit: 5, hoursUsed: 12, hoursLimit: 200 }), opened));
     await router.load();
@@ -96,14 +96,15 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     expect(document.body.textContent).toContain("Time away from this machine");
     expect(hours.getAttribute("aria-valuenow")).toBe("12");
     expect(hours.hasAttribute("data-full")).toBe(false);
-    const notice = await waitFor(() => {
-      const el = document.querySelector("[data-relay-allowance]");
+    const card = await waitFor(() => {
+      const el = document.querySelector("[data-relay-allowance='limit-card'] [data-upgrade-card]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(notice.textContent).toContain("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.");
-    fireEvent.click(notice.querySelector("[data-relay-upgrade]")!);
-    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_meter"]));
+    expect(card.getAttribute("data-upgrade-card")).toBe("sessions");
+    expect(card.textContent).toContain("You're using 5 of 5 live sessions");
+    fireEvent.click(card.querySelector("[data-upgrade-cta]")!);
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_card_sessions"]));
   });
 
   it("Account on Pro has no Upgrade button, only the web account", async () => {

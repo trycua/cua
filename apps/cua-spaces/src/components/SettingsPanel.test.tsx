@@ -423,10 +423,6 @@ describe("SettingsPanel Experiments", () => {
     await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
     expect(experiments.getByRole("switch", { name: "Cua Volume" })).toHaveAttribute("aria-checked", "false");
-    // Sharing is on by default (cua.ai/pricing lists it), and so is Your cloud (a linked cloud shows under Run on).
-    for (const name of ["Sharing", "Your cloud"]) {
-      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "true");
-    }
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();

@@ -4,7 +4,7 @@
 // A Space's detail as this device sees it (the core's `sidebar::detail_for`,
 // as the SwiftUI app's `AppModel.detail` draws it): a machine on the relay
 // while this device is not enrolled, a machine that keeps its desktop
-// private, and Share only with Settings, Experiments, Sharing on.
+// private, and Share.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -122,15 +122,9 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect(screen.queryByRole("button", { name: /Teleport an app/ })).toBeNull();
   });
 
-  it("shows Share only while Settings, Experiments, Sharing is on", async () => {
-    const off = await mountApp("/spaces/local:design-review", host([]));
-    await off.router.load();
-    await screen.findByRole("button", { name: /^Teleport an app$/ });
-    expect(screen.queryByRole("button", { name: /^Share$/ })).toBeNull();
-    cleanup();
-
-    const on = await mountApp("/spaces/local:design-review", host([]));
-    await on.router.load();
+  it("shows Share", async () => {
+    const view = await mountApp("/spaces/local:design-review", host([]));
+    await view.router.load();
     await screen.findByRole("button", { name: /^Share$/ });
   });
 });

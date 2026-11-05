@@ -1343,9 +1343,28 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def raise_open_file_limit(want: int = 65536) -> None:
+    """macOS shells default to 256 open files; a parallel cargo build under sccache
+    hits "Too many open files" and fails the test checks for no code reason."""
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = want if hard == resource.RLIM_INFINITY else min(want, hard)
+        if soft == resource.RLIM_INFINITY or soft >= target:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        except (ValueError, OSError):  # macOS caps at kern.maxfilesperproc
+            resource.setrlimit(resource.RLIMIT_NOFILE, (10240, hard))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
 def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     os.chdir(ROOT)
+    raise_open_file_limit()
     if args.verify_sync:
         return verify_sync()
     if args.install_hook:

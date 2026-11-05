@@ -74,6 +74,8 @@ pub struct ServiceNames {
     /// This home's host folder (`<home>/host`): what a runner of this home
     /// mentions ([`ServiceNames::owns`]).
     pub host_dir: PathBuf,
+    /// The user's home the cua homes are below.
+    pub user_home: PathBuf,
 }
 
 /// Names of one runner kind: this home's, then the names older builds may
@@ -98,6 +100,7 @@ impl ServiceNames {
             channel,
             suffix: home_suffix(channel, cua_home, user_home),
             host_dir: cua_home.join("host"),
+            user_home: user_home.to_path_buf(),
         }
     }
 
@@ -159,7 +162,14 @@ impl ServiceNames {
     /// home set up without `CUA_HOME`) and the `CUA_HOME` hash (one set up
     /// with it). Retire one only when [`ServiceNames::owns`] its content.
     pub fn legacy(&self) -> LegacyNames {
-        let hash = format!("-{}", home_hash(&self.host_dir_home()));
+        let home = self.host_dir_home();
+        let hash = format!("-{}", home_hash(&home));
+        // The old rule hashed every home but `~/.cua` for systemd, and every
+        // home but the channel's own for launchd.
+        let systemd_hash = (home != self.user_home.join(CuaChannel::Stable.home_dir_name()))
+            .then(|| format!("{SERVICE_NAME}{hash}"));
+        let launchd_hash = (home != self.user_home.join(self.channel.home_dir_name()))
+            .then(|| format!("{}{hash}", self.channel.host_label()));
         let others = |own: String, candidates: Vec<String>| -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             for c in candidates {
@@ -172,14 +182,15 @@ impl ServiceNames {
         LegacyNames {
             systemd: others(
                 self.systemd_unit(),
-                vec![SERVICE_NAME.into(), format!("{SERVICE_NAME}{hash}")],
+                std::iter::once(SERVICE_NAME.to_string())
+                    .chain(systemd_hash)
+                    .collect(),
             ),
             launchd: others(
                 self.launchd_label(),
-                vec![
-                    self.channel.host_label().into(),
-                    format!("{}{hash}", self.channel.host_label()),
-                ],
+                std::iter::once(self.channel.host_label().to_string())
+                    .chain(launchd_hash)
+                    .collect(),
             ),
             windows_task: others(self.windows_task(), vec![WINDOWS_TASK_NAME.into()]),
             windows_run: others(self.windows_run_value(), vec![WINDOWS_RUN_VALUE.into()]),
@@ -1690,7 +1701,8 @@ pub fn helper_spec_path(user_home: &Path) -> PathBuf {
 /// [`helper_spec_path`] for `channel`: [`CuaChannel::helper_spec_path`]
 /// below `user_home`.
 pub fn helper_spec_path_for(channel: CuaChannel, user_home: &Path) -> PathBuf {
-    channel_home_in(channel, user_home)
+    user_home
+        .join(channel.home_dir_name())
         .join("helper")
         .join("service.json")
 }

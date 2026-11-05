@@ -1785,7 +1785,7 @@ impl Host {
         if online_check {
             self.confirm_online(&config, manager.as_ref()).await?;
         }
-        self.restore_default_home(&retired).await;
+        self.restore_default_home(&retired);
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -3013,25 +3013,37 @@ impl Host {
         if config.mode != "relay" || config.relay_url.is_none() || config.machine_id.is_none() {
             return Ok(());
         }
-        let t = self.verify;
+        let mut t = self.verify;
+        // `CUA_HOST_ONLINE_WAIT_SECS`: how long to wait (0: not at all, for
+        // scripted setups against a relay the driver never joins).
+        if let Some(secs) = std::env::var("CUA_HOST_ONLINE_WAIT_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+        {
+            if secs == 0 {
+                return Ok(());
+            }
+            t.timeout = std::time::Duration::from_secs(secs);
+        }
         let start = std::time::Instant::now();
-        let mut last = "the relay did not answer".to_string();
         loop {
-            if !manager.state().running {
-                last = "the host service stopped".into();
+            let last = if !manager.state().running {
+                "the host service stopped"
             } else {
                 match self.relay_session(config).await {
                     Some((true, _)) => return Ok(()),
-                    Some((false, _)) => last = "the relay does not see it yet".into(),
-                    None => last = "the relay did not answer".into(),
+                    Some((false, _)) => "the relay does not see it yet",
+                    None => "the relay did not answer",
                 }
-            }
+            };
             if start.elapsed() >= t.timeout {
                 let tail = log_tail(&self.paths.log());
                 return Err(Error::Service(format!(
                     "the host service started, but this computer did not come online for \
-                     your other devices within {} s ({last}); last log lines: {}",
+                     your other devices within {} s ({last}). It keeps trying; `{} host \
+                     status` shows when it is online. Last log lines: {}",
                     t.timeout.as_secs(),
+                    crate::cli(),
                     if tail.is_empty() { "none" } else { &tail }
                 )));
             }
@@ -3043,7 +3055,7 @@ impl Host {
     /// (a build before CUA-3512 set a staging host up under them and so
     /// replaced the production host), puts the production home's service
     /// back as its own setup made it. Best effort, logged.
-    async fn restore_default_home(&self, retired: &[String]) {
+    fn restore_default_home(&self, retired: &[String]) {
         let names = self.service_names();
         if retired.is_empty() || names.is_default() {
             return;

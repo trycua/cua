@@ -3058,10 +3058,8 @@ async fn setup_waits_until_the_relay_sees_the_machine_online() {
         relay.set_online(&id, true, "test");
         std::time::Instant::now()
     };
-    let (status, online_at) = tokio::join!(
-        host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into())),
-        joined
-    );
+    let token = StaticToken("acct-token".into());
+    let (status, online_at) = tokio::join!(host.setup(f.relay_opts(&relay.url), &token), joined);
     let status = status.unwrap();
     assert!(online_at.elapsed() < std::time::Duration::from_secs(5));
     assert_eq!(status.online, Some(true));

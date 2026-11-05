@@ -119,6 +119,8 @@ impl PolicyEngine {
     /// "no-args" sentinel if finer control is needed.
     pub fn is_potentially_listable(&self, tool: &str) -> bool {
         let tool = canonical_tool_name(tool);
+        #[cfg(not(any(feature = "yaml", feature = "rego")))]
+        let _ = tool;
         match self {
             #[cfg(feature = "yaml")]
             Self::Yaml(policy) => policy.is_potentially_listable(tool),

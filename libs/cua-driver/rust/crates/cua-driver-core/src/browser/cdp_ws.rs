@@ -229,7 +229,9 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                 }
             } else if event.method == "Target.detachedFromTarget" {
                 // A detached session reports nothing more, its dialog close
-                // included, so its dialog record would never clear.
+                // included, and cannot resolve the dialog, so its record
+                // would lock the tab for good. Drop it; the next attach
+                // subscribes a new session.
                 if let Some(session_id) = event.params.get("sessionId").and_then(Value::as_str) {
                     demux.session_targets.lock().unwrap().remove(session_id);
                     demux

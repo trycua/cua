@@ -746,6 +746,17 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl SpaceInfo {
+    /// For a Space one of your computers provides: that computer's Space
+    /// id (`relay:<machine>`, or `direct:<addr>` for a host added by its
+    /// direct address). `None` for a computer and every other Space.
+    pub fn parent_space_id(&self) -> Option<String> {
+        match self.host.as_str() {
+            "" => None,
+            h if h.starts_with("direct:") => Some(h.to_string()),
+            h => Some(format!("relay:{h}")),
+        }
+    }
+
     /// The name people see: [`Self::display_name`] when it was renamed,
     /// else [`Self::name`].
     pub fn shown_name(&self) -> &str {

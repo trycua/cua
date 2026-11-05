@@ -1770,6 +1770,11 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     // `cua spaces rm <computer>`: one of your computers on the relay is
     // taken off it (its Spaces detached); anything else is a registered
     // Space, forgotten as before.
+    if let Command::Machines(host::MachinesCmd::Rm { name, yes }) = &cli.command {
+        let (name, yes) = (name.clone(), *yes);
+        eprintln!("`cua machines` is now `cua spaces`.");
+        return remove_computer(cli, &name, false, yes, json, out).await;
+    }
     let rm = match &cli.command {
         Command::Spaces(host::SpacesCmd::Rm {
             space,
@@ -2022,10 +2027,6 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let cua = open(&rest, false).await?;
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
             return cloud_cmd::run(&cua, cmd, json, out).await;
-        }
-        Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
-            eprintln!("`cua machines` is now `cua spaces`.");
-            return remove_computer(cli, &name, false, yes, json, out).await;
         }
         Command::Spaces(cmd @ host::SpacesCmd::Default { .. }) => {
             let tokens: Option<Arc<dyn cua_host::AccountTokens>> =

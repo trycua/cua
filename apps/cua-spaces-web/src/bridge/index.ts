@@ -181,6 +181,17 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export {
+  resolveDefaultSpace,
+  useSpacesDefault,
+  type DefaultCandidate,
+  type DefaultSpace,
+  type DefaultSpaceReason,
+  type DefaultSpaceStep,
+  type SpacesDefaultHook,
+  type SpacesSettings,
+  type SpacesSettingsInput,
+} from "./spaces-settings";
 
 export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
 export {
@@ -268,7 +279,7 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, type FlagName } from "./flags";
+export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, useSpacesTree, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

@@ -109,6 +109,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// directory (`Spaces.relay_unregister`): Remove from account on the
     /// Machines page. The relay refuses one that is online.
     func relayUnregister(id: String) async throws
+    /// The same for one of your computers, choosing what happens to the
+    /// Spaces made on it (`Spaces.relay_unregister_computer`): detached
+    /// (they come back when it is added again), or with `deleteSpaces`
+    /// deleted too.
+    func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws
     /// A machine's health as its own cua daemon checks it
     /// (`Spaces.machine_health`): `nil` for this Mac, else another of your
     /// machines by id, asked over the relay or mesh. The Machines page
@@ -476,6 +481,9 @@ public extension SpacesBackend {
     func relayUnregister(id: String) async throws {
         throw FixtureError(message: "Machines can't be removed here")
     }
+    func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws {
+        try await relayUnregister(id: id)
+    }
     func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
         throw FixtureError(message: "Machines can't be checked here")
     }
@@ -709,6 +717,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func relayUnregister(id: String) async throws {
         _ = try await cua.spaces().relayUnregister(space: id)
+    }
+
+    public func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws {
+        _ = try await cua.spaces().relayUnregisterComputer(space: id, deleteSpaces: deleteSpaces)
     }
 
     public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
@@ -1476,6 +1488,14 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
             unregistered.append(id)
             fixtureRows.removeAll { $0.id == id }
         }
+    }
+
+    /// The machines taken off the relay with their Spaces deleted too.
+    public private(set) var unregisteredWithSpaces: [String] = []
+
+    public func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws {
+        try await relayUnregister(id: id)
+        if deleteSpaces { await MainActor.run { unregisteredWithSpaces.append(id) } }
     }
 
     /// What `machineHealth` answers, by machine (`""` for this Mac); a

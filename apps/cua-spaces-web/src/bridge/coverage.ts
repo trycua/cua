@@ -44,6 +44,7 @@ import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
 import { NUDGES_COVERAGE } from "./ops/nudges";
 import { RESOURCES_COVERAGE } from "./ops/resources";
 import { MACHINES_COVERAGE } from "./ops/machines";
+import { SPACES_SETTINGS_COVERAGE } from "./ops/spaces-settings";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { CI_COVERAGE } from "./ops/ci";
 import { LINKS_COVERAGE } from "./ops/links";
@@ -230,6 +231,7 @@ export const HOST_COVERAGE = {
   ...NUDGES_COVERAGE,
   ...RESOURCES_COVERAGE,
   ...MACHINES_COVERAGE,
+  ...SPACES_SETTINGS_COVERAGE,
   ...CHECKLIST_COVERAGE,
   ...CI_COVERAGE,
   ...LINKS_COVERAGE,

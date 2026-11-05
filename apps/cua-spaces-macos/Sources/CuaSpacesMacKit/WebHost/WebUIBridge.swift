@@ -132,6 +132,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // The Machines page's rename, Remove from account and each machine's
         // health checks (WebUIBridge+Pages.swift).
         "machines.rename", "machines.remove", "machines.checkHealth",
+        // The account's default Space and where a new task goes now
+        // (WebUIBridge+Pages.swift; the Labs switch for Spaces as a tree).
+        "spaces.settings", "spaces.setSettings", "spaces.resolveDefault",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
         // Links to things you run (WebUIBridge+Pages.swift).

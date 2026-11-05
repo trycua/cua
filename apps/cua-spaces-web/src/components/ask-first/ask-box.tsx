@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 
 import { AgentPicker, type AccountActions } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
+import { TreeWherePicker, whereNode, type TreeWhere } from "./tree-where";
+import { TreeIcon } from "@/components/spaces/tree-parts";
 
 export type { TaskWhere } from "@/lib/ask-first";
 
@@ -26,7 +28,7 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
   if (where.kind === "agent") return { title: where.fresh ? "Agent decides, new Home" : "Agent decides", detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
-  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on This Mac` };
+  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? "This Mac"}` };
   return { title: where.kind === "this-mac" ? "This Mac" : where.space.name, detail: null };
 }
 
@@ -131,6 +133,7 @@ export function AskBox({
   onSubmit,
   compact,
   autoFocus,
+  tree = null,
 }: {
   text: string;
   onText: (t: string) => void;
@@ -167,8 +170,11 @@ export function AskBox({
   onSubmit: () => void;
   compact?: boolean;
   autoFocus?: boolean;
+  /** Spaces as a tree (Labs): the tree picker, starting on your default Space. */
+  tree?: TreeWhere | null;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const treeNode = tree ? whereNode(tree.tree, where) : undefined;
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
@@ -211,9 +217,12 @@ export function AskBox({
             onOpenChange={onWhereOpen}
             kinds={kinds}
             spaces={spaces}
+            tree={tree}
             trigger={
               <button type="button" className={whereButton} data-picker="where">
-                {where.kind === "new" ? (
+                {treeNode ? (
+                  <TreeIcon node={treeNode} />
+                ) : where.kind === "new" ? (
                   <OsIcon os={where.os} className="size-3.5" />
                 ) : where.kind === "this-mac" ? (
                   <LaptopIcon className="size-3.5" />
@@ -221,8 +230,13 @@ export function AskBox({
                   <MonitorIcon className="size-3.5" />
                 )}
                 <span className="max-w-64 truncate" data-ask-where="">
-                  {label.title}
-                  {label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
+                  {treeNode?.name ?? label.title}
+                  {treeNode ? null : label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
+                  {treeNode?.isDefault ? (
+                    <span className="ml-2 text-[13px] text-muted-foreground" data-ask-where-default="">
+                      Default
+                    </span>
+                  ) : null}
                 </span>
                 <ChevronDownIcon className="size-3.5 text-muted-foreground" />
               </button>
@@ -283,6 +297,7 @@ export function WherePicker({
   trigger,
   open,
   onOpenChange,
+  tree = null,
 }: {
   where: TaskWhere | null;
   onWhere: (w: TaskWhere) => void;
@@ -297,7 +312,10 @@ export function WherePicker({
   trigger: ReactElement;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Spaces as a tree (Labs): the tree in place of this list. */
+  tree?: TreeWhere | null;
 }) {
+  if (tree) return <TreeWherePicker tw={tree} where={where} onWhere={onWhere} kinds={kinds} trigger={trigger} open={open} onOpenChange={onOpenChange} />;
   return (
     <Picker title="Where it runs" trigger={trigger} footer={agentHome ? `${WHERE_FOOTER} ${WHERE_FOOTER_HOME}` : WHERE_FOOTER} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (

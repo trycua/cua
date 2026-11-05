@@ -67,6 +67,7 @@ import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DefaultSpace, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
@@ -795,10 +796,15 @@ export function createWebkitAdapter(
       await request("machines.checkHealth");
       return null;
     },
-    "machines.remove": async ({ machine, device }) => {
-      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+    "machines.remove": async ({ machine, device, deleteSpaces }) => {
+      // `deleteSpaces` only when asked: an older host never sees it.
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null, ...(deleteSpaces ? { deleteSpaces: true } : {}) });
       return null;
     },
+    // The default Space (ops/spaces-settings.ts): the relay's own words.
+    "spaces.settings": () => request<SpacesSettings | null>("spaces.settings"),
+    "spaces.setSettings": ({ defaultSpace, fallback, fallbackOn }) => request<SpacesSettings | null>("spaces.setSettings", { defaultSpace, fallback: [...(fallback ?? [])], fallbackOn: fallbackOn ?? true }),
+    "spaces.resolveDefault": () => request<DefaultSpace | null>("spaces.resolveDefault"),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),

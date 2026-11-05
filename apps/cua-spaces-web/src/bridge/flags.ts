@@ -31,10 +31,15 @@ import { useSyncExternalStore } from "react";
  *   once the first run is over. It needs that Home, so it counts only while
  *   `spaces_ask_first_home` is on too (Labs turns both on). Off by default:
  *   the first run stays as it is.
+ * - `spaces_tree`: Spaces as a tree and a default Space (CUA-3413): your
+ *   computers and the Spaces made on them in one list (the sidebar and the
+ *   Spaces page; Machines leaves the sidebar, its page still opens), and Home's
+ *   "in" picker starts on your default Space instead of a new Linux computer.
+ *   Labs turns the new Home on with it.
  */
-export type FlagName = "upsell_cards" | "spaces_ask_first_home" | "spaces_new_onboarding";
+export type FlagName = "upsell_cards" | "spaces_ask_first_home" | "spaces_new_onboarding" | "spaces_tree";
 
-const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_new_onboarding: false };
+const DEFAULTS: Record<FlagName, boolean> = { upsell_cards: false, spaces_ask_first_home: false, spaces_new_onboarding: false, spaces_tree: false };
 
 const key = (name: string) => `cua.flag.${name}`;
 
@@ -115,6 +120,13 @@ export function newOnboardingOn(): boolean {
 
 export function useNewOnboarding(): boolean {
   const own = useFlag("spaces_new_onboarding");
+  const home = useFlag("spaces_ask_first_home");
+  return own && home;
+}
+
+/** Spaces as a tree is on: its own switch and the "Ask first" Home whose picker it changes. */
+export function useSpacesTree(): boolean {
+  const own = useFlag("spaces_tree");
   const home = useFlag("spaces_ask_first_home");
   return own && home;
 }

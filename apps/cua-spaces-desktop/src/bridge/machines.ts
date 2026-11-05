@@ -135,11 +135,14 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
     },
     // Remove from account: the machine leaves the relay directory, then
     // the device on it is revoked; the Spaces and machines are read again.
+    // The Spaces made on it are detached (they come back when it is added
+    // again), or with `deleteSpaces` deleted with it.
     "machines.remove": async (args) => {
       const machine = optionalString(args, "machine");
       const device = optionalString(args, "device");
+      const deleteSpaces = args.deleteSpaces === true;
       if (!machine && !device) throw Failure.badArgs("machine or device");
-      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine));
+      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine, deleteSpaces));
       if (device) await relayCall(model, () => model.devices.revoke(device));
       else await model.devices.refresh();
       await model.refresh();

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -125,6 +126,63 @@ pub struct CdpDialogState {
 enum CallOutcome {
     Result(Value),
     Error { code: Option<i64>, message: String },
+    Undecodable(String),
+}
+
+/// Full-depth `DOM.getDocument` replies nest two JSON levels per DOM level,
+/// so ordinary pages (ChatGPT renders about 70 levels deep) exceed serde_json's
+/// default 128-level recursion limit. Chromium itself refuses to serialize
+/// replies past its CBOR stack limit of 300 levels, so this bound accepts every
+/// reply it sends while still capping parser recursion and stack use.
+const MAX_FRAME_NESTING: usize = 512;
+
+fn decode_frame(text: &str) -> Result<Value, String> {
+    let nesting = json_nesting(text.as_bytes());
+    if nesting > MAX_FRAME_NESTING {
+        return Err(format!(
+            "it nests {nesting} levels deep, above the {MAX_FRAME_NESTING}-level limit"
+        ));
+    }
+    let mut de = serde_json::Deserializer::from_str(text);
+    de.disable_recursion_limit();
+    let value = Value::deserialize(&mut de).map_err(|e| e.to_string())?;
+    de.end().map_err(|e| e.to_string())?;
+    Ok(value)
+}
+
+fn json_nesting(bytes: &[u8]) -> usize {
+    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for &byte in bytes {
+        if in_string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
+}
+
+/// Chromium writes `id` first in every reply, which identifies the caller of a
+/// reply whose body cannot be decoded.
+fn leading_reply_id(text: &str) -> Option<u64> {
+    let rest = text.trim_start().strip_prefix('{')?.trim_start();
+    let rest = rest.strip_prefix("\"id\"")?.trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    rest[..digits].parse().ok()
 }
 
 /// State shared between the caller side and the reader task.
@@ -162,9 +220,18 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
             Message::Close(_) => break,
             _ => continue,
         };
-        let v: Value = match serde_json::from_str(&text) {
+        let v: Value = match decode_frame(&text) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(reason) => {
+                // Fail the caller now; a dropped reply would leave it waiting
+                // out the full CALL_TIMEOUT.
+                if let Some(tx) =
+                    leading_reply_id(&text).and_then(|id| demux.pending.lock().unwrap().remove(&id))
+                {
+                    let _ = tx.send(CallOutcome::Undecodable(reason));
+                }
+                continue;
+            }
         };
         if let Some(id) = v.get("id").and_then(Value::as_u64) {
             let Some(tx) = demux.pending.lock().unwrap().remove(&id) else {
@@ -418,6 +485,9 @@ impl CdpConnection {
                 code: None,
                 message,
             })) => anyhow::bail!("CDP {method} failed: {message}"),
+            Ok(Ok(CallOutcome::Undecodable(reason))) => {
+                anyhow::bail!("CDP {method} reply could not be decoded: {reason}")
+            }
         }
     }
 }
@@ -973,6 +1043,62 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    fn nested_arrays(levels: usize) -> String {
+        format!("{}{}", "[".repeat(levels), "]".repeat(levels))
+    }
+
+    #[tokio::test]
+    async fn deep_replies_up_to_the_frame_bound_are_delivered() {
+        // Chromium sends up to 300 levels; one level is the reply envelope.
+        for levels in [300, MAX_FRAME_NESTING - 1] {
+            let server =
+                MockCdpServer::start(StdArc::new(move |_| MockReply::raw(nested_arrays(levels))))
+                    .await;
+            let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                conn.call(None, "DOM.getDocument", json!({ "depth": -1 })),
+            )
+            .await
+            .expect("a deep reply must not wait for CALL_TIMEOUT")
+            .unwrap();
+            assert!(result.is_array(), "{levels} levels");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_reply_fails_its_call_and_keeps_the_socket() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "DOM.getDocument" => MockReply::raw(nested_arrays(MAX_FRAME_NESTING + 10)),
+            _ => MockReply::ok(json!({ "ok": true })),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            conn.call(None, "DOM.getDocument", json!({ "depth": -1 })),
+        )
+        .await
+        .expect("an undecodable reply must not wait for CALL_TIMEOUT")
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("reply could not be decoded"),
+            "{error}"
+        );
+        let next = conn.call(None, "Page.getLayoutMetrics", json!({})).await;
+        assert_eq!(next.unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn frame_nesting_ignores_brackets_inside_strings() {
+        assert_eq!(json_nesting(br#"{"a":"[[{\"]]","b":[1,[2]]}"#), 3);
+        assert_eq!(leading_reply_id(r#" { "id" : 42, "result": [[["#), Some(42));
+        assert_eq!(
+            leading_reply_id(r#"{"method":"DOM.childNodeInserted"}"#),
+            None
+        );
     }
 
     #[tokio::test]

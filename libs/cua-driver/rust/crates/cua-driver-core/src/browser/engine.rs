@@ -330,6 +330,9 @@ fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
         "object reference chain is too long",
         "message is too large",
         "serialization",
+        // Chromium refuses replies nested past its CBOR stack limit.
+        "stack limit exceeded",
+        "reply could not be decoded",
     ]
     .iter()
     .any(|needle| message.contains(needle))
@@ -3056,6 +3059,21 @@ async fn live_title(conn: &Arc<CdpConnection>, cdp_target_id: &str, fallback: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reply_depth_refusals_take_the_bounded_dom_fallback() {
+        for message in [
+            // Verbatim from Chrome 156 for a page about 150 elements deep.
+            "CDP DOM.getDocument failed (-32000): Failed to convert response to JSON: \
+             CBOR: stack limit exceeded at position 20082",
+            "CDP DOM.getDocument reply could not be decoded: it nests 600 levels deep, \
+             above the 512-level limit",
+        ] {
+            let error = anyhow::anyhow!(message);
+            assert!(is_semantic_document_fallback_error(&error), "{message}");
+            assert!(!is_semantic_document_timeout_error(&error), "{message}");
+        }
+    }
 
     #[test]
     fn endpoint_access_policy_requires_grants_for_standalone_consumers() {

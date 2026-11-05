@@ -6583,14 +6583,17 @@ pub struct AppDriveMountFrame {
     pub arrived: Vec<f64>,
 }
 
-/// Which releases the updater offers.
+/// Which builds the updater offers.
 pub type AppUpdateChannel = core::about::UpdateChannel;
 #[uniffi::remote(Enum)]
 pub enum AppUpdateChannel {
     /// Releases (the default).
     Stable,
-    /// Releases and prereleases (`X.Y.Z-suffix`).
-    Beta,
+    /// A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+    /// its own feed. It replaced the Beta channel, so `beta` (an older
+    /// build's word, and what the settings file still stores, see
+    /// [`crate::settings::save`]) reads as Nightly.
+    Nightly,
 }
 
 /// What the About pane shows.
@@ -6662,12 +6665,21 @@ pub struct AppAboutUpdates {
     pub auto_install: bool,
     /// It can be used (only with automatic checks).
     pub auto_install_enabled: bool,
-    /// "Update to:".
+    /// "Updates".
     pub channel_label: String,
-    /// Stable, Beta.
+    /// Stable, Nightly.
     pub channels: Vec<AppSettingsOption>,
-    /// The channel picker's tooltip.
+    /// What the chosen channel gets, in a line.
     pub channel_help: String,
+    /// A word about the version running on this channel: a nightly build
+    /// back on Stable stays until the next stable release passes it;
+    /// `None`: nothing to say.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+    pub download_label: Option<String>,
+    /// Where [`AboutUpdates::download_label`] goes.
+    pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,
     /// Check Now can be used.

@@ -99,11 +99,14 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(tab("general")!.textContent).toContain("Use Cua from Terminal");
   });
 
-  it("moves Early releases here from About, and drops the Sharing and Your cloud switches", async () => {
+  it("offers Stable or Nightly updates here, and drops the Sharing and Your cloud switches", async () => {
     await mountApp("/settings/advanced", host);
     await waitFor(() => expect(tab("advanced")).not.toBeNull());
-    await waitFor(() => expect(tab("advanced")!.textContent).toContain("Get early releases (Beta)"));
+    await waitFor(() => expect(document.querySelector('[data-setting-row="update-channel"]')).not.toBeNull());
     const text = tab("advanced")!.textContent!;
+    expect(text).toContain("Stable");
+    expect(text).toContain("Nightly");
+    expect(text).not.toContain("Beta");
     expect(text).toContain("Cua Volume");
     expect(text).not.toMatch(/Your cloud|Sharing|Experiments/);
     expect(document.querySelector('[data-setting-row="experiment:sharing"]')).toBeNull();

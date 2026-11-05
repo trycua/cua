@@ -1063,6 +1063,14 @@ pub fn app_about_allowed_channels(channel: AppUpdateChannel) -> Vec<String> {
     core::about::allowed_channels(channel)
 }
 
+/// The appcast a Sparkle updater on `channel` reads, from the app's own
+/// `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+/// keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+#[uniffi::export]
+pub fn app_about_feed_url(channel: AppUpdateChannel, stable_feed: String) -> Option<String> {
+    core::about::feed_url(channel, &stable_feed)
+}
+
 /// What this launch does (refresh after an update; the version to record).
 #[uniffi::export]
 pub fn app_about_after_launch(input: AppLaunchInput) -> AppLaunchPlan {
@@ -2297,7 +2305,7 @@ pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> Ap
 }
 
 /// The update channel of an install's first launch, from the file's
-/// `channel`: Beta for a prerelease, else unchanged.
+/// `channel`: Nightly for a prerelease, else unchanged.
 #[uniffi::export]
 pub fn app_settings_first_launch_channel(
     channel: AppUpdateChannel,

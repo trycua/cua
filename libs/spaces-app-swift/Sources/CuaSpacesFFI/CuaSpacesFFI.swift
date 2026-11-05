@@ -3213,17 +3213,32 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoInstallEnabled: Bool
     /**
-     * "Update to:".
+     * "Updates".
      */
     public var channelLabel: String
     /**
-     * Stable, Beta.
+     * Stable, Nightly.
      */
     public var channels: [AppSettingsOption]
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     public var channelHelp: String
+    /**
+     * A word about the version running on this channel: a nightly build
+     * back on Stable stays until the next stable release passes it;
+     * `None`: nothing to say.
+     */
+    public var channelNote: String?
+    /**
+     * "Download Stable": the way back to Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    public var downloadLabel: String?
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    public var downloadUrl: String?
     /**
      * "Check Now" (or "Checking…").
      */
@@ -3256,14 +3271,26 @@ public struct AppAboutUpdates: Equatable, Hashable {
          * It can be used (only with automatic checks).
          */autoInstallEnabled: Bool,
         /**
-         * "Update to:".
+         * "Updates".
          */channelLabel: String,
         /**
-         * Stable, Beta.
+         * Stable, Nightly.
          */channels: [AppSettingsOption],
         /**
-         * The channel picker's tooltip.
+         * What the chosen channel gets, in a line.
          */channelHelp: String,
+        /**
+         * A word about the version running on this channel: a nightly build
+         * back on Stable stays until the next stable release passes it;
+         * `None`: nothing to say.
+         */channelNote: String?,
+        /**
+         * "Download Stable": the way back to Stable right now
+         * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+         */downloadLabel: String?,
+        /**
+         * Where [`AboutUpdates::download_label`] goes.
+         */downloadUrl: String?,
         /**
          * "Check Now" (or "Checking…").
          */checkLabel: String,
@@ -3281,6 +3308,9 @@ public struct AppAboutUpdates: Equatable, Hashable {
         self.channelLabel = channelLabel
         self.channels = channels
         self.channelHelp = channelHelp
+        self.channelNote = channelNote
+        self.downloadLabel = downloadLabel
+        self.downloadUrl = downloadUrl
         self.checkLabel = checkLabel
         self.checkEnabled = checkEnabled
         self.lastCheck = lastCheck
@@ -3310,6 +3340,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
                 channelLabel: FfiConverterString.read(from: &buf),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from: &buf),
                 channelHelp: FfiConverterString.read(from: &buf),
+                channelNote: FfiConverterOptionString.read(from: &buf),
+                downloadLabel: FfiConverterOptionString.read(from: &buf),
+                downloadUrl: FfiConverterOptionString.read(from: &buf),
                 checkLabel: FfiConverterString.read(from: &buf),
                 checkEnabled: FfiConverterBool.read(from: &buf),
                 lastCheck: FfiConverterString.read(from: &buf)
@@ -3325,6 +3358,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
         FfiConverterString.write(value.channelLabel, into: &buf)
         FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into: &buf)
         FfiConverterString.write(value.channelHelp, into: &buf)
+        FfiConverterOptionString.write(value.channelNote, into: &buf)
+        FfiConverterOptionString.write(value.downloadLabel, into: &buf)
+        FfiConverterOptionString.write(value.downloadUrl, into: &buf)
         FfiConverterString.write(value.checkLabel, into: &buf)
         FfiConverterBool.write(value.checkEnabled, into: &buf)
         FfiConverterString.write(value.lastCheck, into: &buf)
@@ -66772,9 +66808,12 @@ public enum AppUpdateChannel: Equatable, Hashable {
      */
     case stable
     /**
-     * Releases and prereleases (`X.Y.Z-suffix`).
+     * A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+     * its own feed. It replaced the Beta channel, so `beta` (an older
+     * build's word, and what the settings file still stores, see
+     * [`crate::settings::save`]) reads as Nightly.
      */
-    case beta
+    case nightly
 
 
 
@@ -66798,7 +66837,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
 
         case 1: return .stable
 
-        case 2: return .beta
+        case 2: return .nightly
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -66812,7 +66851,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .beta:
+        case .nightly:
             writeInt(&buf, Int32(2))
 
         }
@@ -78548,6 +78587,19 @@ public func appAboutAllowedChannels(channel: AppUpdateChannel) -> [String]  {
 })
 }
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+ */
+public func appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel_lower(channel),
+        FfiConverterString.lower(stableFeed),$0
+    )
+})
+}
+/**
  * The About input from JSON (parity flows).
  */
 public func appAboutInputFromJson(json: String)throws  -> AppAboutInput  {
@@ -80831,7 +80883,7 @@ public func appSettingsDefaults() -> AppSettings  {
 }
 /**
  * The update channel of an install's first launch, from the file's
- * `channel`: Beta for a prerelease, else unchanged.
+ * `channel`: Nightly for a prerelease, else unchanged.
  */
 public func appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel  {
     return try!  FfiConverterTypeAppUpdateChannel_lift(try! rustCall() {
@@ -82334,6 +82386,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() != 59781) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() != 25239) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() != 570) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -82967,7 +83022,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults() != 47096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 11279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 29109) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {

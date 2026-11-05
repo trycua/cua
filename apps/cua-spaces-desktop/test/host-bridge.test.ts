@@ -178,7 +178,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["volume.resolve", { path: "public/plan.md" }],
       ["volume.reveal", { path: "~/Cua Volume/public" }],
       ["about.get", {}],
-      ["about.set", { channel: "beta" }],
+      ["about.set", { channel: "nightly" }],
       ["about.checkNow", {}],
       ["update.get", {}],
       ["update.install", {}],
@@ -703,13 +703,19 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   });
 
   it("reads and chooses the update channel by row, unsupported without an updater", async () => {
+    await call("settings.choose", { row: "update-channel", option: "nightly" });
+    expect(system.updater.channel).toBe("nightly");
+    expect(model.settings.updateChannel).toBe(native.AppUpdateChannel.Nightly);
+    expect(((await call("settings.get")) as { updateChannel: string }).updateChannel).toBe("nightly");
+    // A switch checks the new channel at once.
+    expect(system.updater.checks).toBe(1);
+    // A page from before Nightly asks for Beta: that is Nightly.
+    await call("settings.choose", { row: "update-channel", option: "stable" });
     await call("settings.choose", { row: "update-channel", option: "beta" });
-    expect(system.updater.channel).toBe("beta");
-    expect(model.settings.updateChannel).toBe(native.AppUpdateChannel.Beta);
-    expect(((await call("settings.get")) as { updateChannel: string }).updateChannel).toBe("beta");
+    expect(system.updater.channel).toBe("nightly");
     await make({ system: null });
     expect(((await call("settings.get")) as { updateChannel: unknown }).updateChannel).toBeNull();
-    expect(await code("settings.choose", { row: "update-channel", option: "beta" })).toBe("unsupported");
+    expect(await code("settings.choose", { row: "update-channel", option: "nightly" })).toBe("unsupported");
   });
 
   it("Welcome's Show again makes the first run due", async () => {
@@ -750,14 +756,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   // MARK: About and launch at login
 
   it("About is the updater's input, and Check Now answers before the updater's window", async () => {
-    const a = (await call("about.set", { autoCheck: true, channel: "beta" })) as Record<string, unknown>;
-    expect(a).toMatchObject({ autoCheck: true, channel: "beta", updater: true, platform: "macos", version: "1.2.3" });
+    const a = (await call("about.set", { autoCheck: true, channel: "nightly" })) as Record<string, unknown>;
+    expect(a).toMatchObject({ autoCheck: true, channel: "nightly", updater: true, platform: "macos", version: "1.2.3" });
     expect(String(a.os)).toMatch(/\(/);
+    // Switching to Nightly checked it at once.
+    expect(system.updater.checks).toBe(1);
     const c = (await call("about.checkNow")) as Record<string, unknown>;
     expect(c.checking).toBe(true);
-    expect(system.updater.checks).toBe(0);
-    await tick(5);
     expect(system.updater.checks).toBe(1);
+    await tick(5);
+    expect(system.updater.checks).toBe(2);
     expect(((await call("about.get")) as Record<string, unknown>).lastCheck).toEqual(expect.any(String));
     expect(a.build).toBe("");
     await make({ system: null });

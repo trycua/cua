@@ -17,13 +17,11 @@ import { setThisMacConfirmed, useThisMacConfirmed } from "@/lib/ask-first";
 /** The host form's profile for your own connection server or Direct (`host::SELF_HOSTED_PROFILE`). */
 const SELF_HOSTED = "self-hosted";
 
-const BETA_HELP = "New features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.";
-
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
 const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
 
 /**
- * Settings, Advanced: early releases, Labs, which software runs Spaces on
+ * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
  * this Mac, and your own connection server. For options most people never
  * touch; each says what it does in a line.
  */
@@ -44,7 +42,7 @@ export function AdvancedTab() {
 
   return (
     <div data-settings-tab="advanced">
-      <EarlyReleases />
+      <UpdateChannel />
       <Labs />
       <Sharing />
       {runtimes || autoConnect || overflow ? (
@@ -66,8 +64,13 @@ export function AdvancedTab() {
   );
 }
 
-/** "Get early releases (Beta)": the update channel, moved here from About. */
-function EarlyReleases() {
+/**
+ * Updates: Stable or Nightly, as the core lays them out (`about::view`). The
+ * old "Get early releases (Beta)" switch; whoever had it on is on Nightly.
+ * A prerelease build back on Stable says it stays until the next stable
+ * release, with a link to download Stable now.
+ */
+function UpdateChannel() {
   const { data, setAbout } = useAbout();
   const { mode, core } = useBridge();
   const view = data?.view;
@@ -76,30 +79,30 @@ function EarlyReleases() {
   const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
   const updates = view.updates ?? unavailable;
   if (!updates) return null;
-  const beta = updates.channels.find((c) => c.id === "beta")?.active ?? false;
   const row: CoreRow = {
     id: "update-channel",
-    kind: "toggle",
-    label: "Get early releases (Beta)",
+    kind: "choice",
+    label: updates.channelLabel,
     value: null,
     button: null,
-    options: [
-      { id: "on", label: "On", active: beta },
-      { id: "off", label: "Off", active: !beta },
-    ],
+    options: updates.channels,
     enabled: data.canChange && !unavailable,
     help: null,
     linkLabel: null,
     linkUrl: null,
     placeholder: null,
   };
+  const note: CoreRow | null = updates.channelNote
+    ? { ...row, id: "update-channel-note", kind: "note", label: updates.channelNote, options: [], linkLabel: updates.downloadLabel ?? null, linkUrl: updates.downloadUrl ?? null }
+    : null;
   return (
     <SettingsGroup title="Updates">
       <CoreSettingsRow
         row={row}
-        description={BETA_HELP}
-        onChoose={(_, option) => void setAbout({ channel: option === "on" ? "beta" : "stable" }).catch(toastError("Couldn't change the update channel"))}
+        description={updates.channelHelp}
+        onChoose={(_, option) => void setAbout({ channel: option === "nightly" ? "nightly" : "stable" }).catch(toastError("Couldn't change the update channel"))}
       />
+      {note ? <CoreSettingsRow row={note} /> : null}
     </SettingsGroup>
   );
 }

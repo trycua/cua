@@ -30,6 +30,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
+#[cfg(windows)]
+mod windows_task;
+
 /// Service name / label used everywhere.
 pub const SERVICE_NAME: &str = "cua-spacesd-host";
 /// Windows task name.
@@ -1069,24 +1072,17 @@ impl ServiceManager for WindowsTask {
                 ),
             };
         }
-        let out = no_window(Command::new("schtasks").args([
-            "/Query",
-            "/TN",
-            WINDOWS_TASK_NAME,
-            "/FO",
-            "CSV",
-            "/NH",
-        ]))
-        .output();
-        let (installed, text) = match out {
-            Ok(o) if o.status.success() => (true, String::from_utf8_lossy(&o.stdout).to_string()),
-            _ => (false, String::new()),
-        };
-        ServiceState {
-            installed,
-            running: text.contains("Running"),
-            kind: "windows-task".into(),
-            detail: text.trim().to_string(),
+        #[cfg(windows)]
+        {
+            windows_task::state()
+        }
+        #[cfg(not(windows))]
+        {
+            ServiceState {
+                kind: "windows-task".into(),
+                detail: "Task Scheduler is only available on Windows".into(),
+                ..ServiceState::default()
+            }
         }
     }
     fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {

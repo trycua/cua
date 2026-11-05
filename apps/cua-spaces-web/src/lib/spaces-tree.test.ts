@@ -60,7 +60,14 @@ describe("buildSpacesTree", () => {
     ]);
   });
 
-  it("marks the first computer that isn't this Mac Default while none is set, and the setting once it is", () => {
+  it("while none is set, an offline computer is never marked Default: the first online one is, else This Mac", () => {
+    expect(tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }).defaultKey).toBe("relay:dillon");
+    const allOff = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, { ...DILLON, online: false }] });
+    expect(allOff.defaultKey).toBe("relay:mac-here");
+    expect(treeRows(allOff).filter((n) => n.isDefault).map((n) => n.name)).toEqual(["This Mac"]);
+  });
+
+  it("marks the first online computer that isn't this Mac Default while none is set, and the setting once it is", () => {
     expect(tree().defaultKey).toBe("relay:studio");
     expect(tree().roots[1]!.status).toBe("Online, Default");
     const set = tree({ defaultSpace: "relay:dillon" });
@@ -71,7 +78,8 @@ describe("buildSpacesTree", () => {
   });
 
   it("greys out the Spaces of an offline computer: they wait for it and their tasks are paused", () => {
-    const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] });
+    // Set as the default, it stays marked Default while offline (the fallback line says where tasks go instead).
+    const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], defaultSpace: "relay:studio" });
     const studio = t.roots[1]!;
     expect(studio.status).toBe("Offline, seen 20 minutes ago, Default");
     expect(studio.tasks).toBe("Paused");

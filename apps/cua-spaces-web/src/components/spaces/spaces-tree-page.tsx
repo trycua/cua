@@ -3,7 +3,7 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useMachines, useSpaces } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
@@ -24,7 +24,11 @@ import { cn } from "@/lib/utils";
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
 import { useRunningBySpace, useSpacesTreeData } from "./use-spaces-tree";
 
-const COLS = "grid grid-cols-[minmax(0,1fr)_200px_120px_110px_32px] items-center gap-3";
+// Name gets the most room; Status shares what is left, so neither is cut to a few letters in a narrow window.
+/** How long a click on a name waits for a second one (a double-click renames) before it opens the row. */
+export const DOUBLE_CLICK_MS = 300;
+
+const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_96px_32px] items-center gap-3";
 
 export const RENAME_NOTE = "Renaming changes the name only. Your team sees the new name, and agent tasks and links keep working.";
 
@@ -68,6 +72,13 @@ export function SpacesTreePage() {
   const [editing, setEditing] = useState<{ key: string; name: string } | null>(null);
   const [removing, setRemoving] = useState<TreeNode | null>(null);
   const [deleting, setDeleting] = useState<TreeNode | null>(null);
+  // A click on a name waits out the double-click time before opening (see clickName below).
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClick = () => {
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = null;
+  };
+  useEffect(() => cancelClick, []);
 
   if (!tree || !loaded) return <Page><div aria-busy="true" aria-label="Loading Spaces" /></Page>;
 
@@ -107,6 +118,17 @@ export function SpacesTreePage() {
   }
 
   const open = (n: TreeNode) => (n.space ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } }) : void navigate({ to: "/machines" }));
+  // A click on a name opens it, a double-click renames it. A real double-click starts with a click, so a click waits out
+  // the double-click time before opening, and a double-click cancels it. A keyboard press (detail 0) opens at once.
+  const clickName = (n: TreeNode, detail: number) => {
+    cancelClick();
+    if (detail === 0 || !canRename(n)) return open(n);
+    if (detail > 1) return;
+    clickTimer.current = setTimeout(() => {
+      clickTimer.current = null;
+      open(n);
+    }, DOUBLE_CLICK_MS);
+  };
   const canRename = (n: TreeNode) => (n.kind === "computer" ? Boolean(n.machine) : n.space?.access?.canRename !== false);
   const saveRename = (n: TreeNode, raw: string) => {
     setEditing(null);
@@ -134,7 +156,7 @@ export function SpacesTreePage() {
     const isEditing = editing?.key === n.key;
     return (
       <div key={n.key} role="row" data-tree-row={n.key} data-tree-kind={n.kind} data-dim={n.dim ? "" : undefined} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}>
-        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth === 1 && "pl-8")}>
+        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth === 1 && "pl-8", isEditing && "col-span-2")}>
           {depth === 0 && n.children.length > 0 ? (
             <button
               type="button"
@@ -161,14 +183,15 @@ export function SpacesTreePage() {
               }}
               onBlur={() => setEditing(null)}
               data-tree-rename-input=""
-              className="h-8 w-72 text-[14px]"
+              className="h-8 w-full min-w-0 text-[14px]"
             />
           ) : (
             <button
               type="button"
-              onClick={() => open(n)}
+              onClick={(e) => clickName(n, e.detail)}
               onDoubleClick={(e) => {
                 e.preventDefault();
+                cancelClick();
                 if (canRename(n)) setEditing({ key: n.key, name: n.name });
               }}
               className={cn("min-w-0 truncate text-left outline-none hover:underline focus-visible:underline", n.kind === "computer" && "font-semibold")}
@@ -179,7 +202,7 @@ export function SpacesTreePage() {
           )}
         </div>
         {isEditing ? (
-          <div role="cell" className="col-span-4 text-right text-[13px] text-muted-foreground">
+          <div role="cell" className="col-span-3 text-right text-[13px] text-muted-foreground">
             Enter to save, Esc to cancel
           </div>
         ) : (

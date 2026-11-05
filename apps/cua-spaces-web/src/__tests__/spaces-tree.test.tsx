@@ -15,6 +15,7 @@ import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { MachineRow } from "@/bridge/contracts/host";
 import type { DefaultSpace } from "@/bridge/ops/spaces-settings";
+import { DOUBLE_CLICK_MS } from "@/components/spaces/spaces-tree-page";
 import { resetCollapsed } from "@/components/spaces/tree-parts";
 import { resetAskTasks } from "@/lib/ask-first";
 import { resetPrepare } from "@/lib/prepare/store";
@@ -63,6 +64,13 @@ function host(calls: Call[], opts: { offline?: string[]; resolved?: DefaultSpace
 }
 
 /** The switch on, with the "Ask first" Home it changes (Labs turns both on). */
+/** A double-click as a person makes it: two clicks (detail 1, then 2), then the dblclick. */
+const doubleClick = (el: HTMLElement) => {
+  fireEvent.click(el, { detail: 1 });
+  fireEvent.click(el, { detail: 2 });
+  fireEvent.doubleClick(el, { detail: 2 });
+};
+
 const on = () => {
   setFlagOverride("spaces_tree", true);
   setFlagOverride("spaces_ask_first_home", true);
@@ -115,20 +123,31 @@ describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
   it("renames a Space by double-clicking its name: Enter saves, Esc cancels", { timeout: 30000 }, async () => {
     on();
     const calls: Call[] = [];
-    await mountApp("/spaces", host(calls));
+    const { router } = await mountApp("/spaces", host(calls));
     const name = await found('[data-tree-name="relay:linux-box/ubuntu-build"]');
-    fireEvent.doubleClick(name);
+    doubleClick(name);
     const input = (await found("[data-tree-rename-input]")) as HTMLInputElement;
     expect(document.body.textContent).toContain("Renaming changes the name only.");
     fireEvent.change(input, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(q("[data-tree-rename-input]")).toBeNull();
     expect(calls).toEqual([]);
-    fireEvent.doubleClick(q('[data-tree-name="relay:linux-box/ubuntu-build"]')!);
+    doubleClick(q('[data-tree-name="relay:linux-box/ubuntu-build"]')!);
     const again = (await found("[data-tree-rename-input]")) as HTMLInputElement;
     fireEvent.change(again, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(again, { key: "Enter" });
     await waitFor(() => expect(calls).toEqual([["spaces.rename", { spaceId: "relay:linux-box/ubuntu-build", name: "nightly-builds" }]]));
+    // The clicks that started each double-click never opened the Space.
+    await new Promise((r) => setTimeout(r, DOUBLE_CLICK_MS + 100));
+    expect(router.state.location.pathname).toBe("/spaces");
+  });
+
+  it("a single click on a name opens it once the double-click time has passed", { timeout: 30000 }, async () => {
+    on();
+    const { router } = await mountApp("/spaces", host([]));
+    fireEvent.click(await found('[data-tree-name="relay:linux-box/ubuntu-build"]'), { detail: 1 });
+    expect(router.state.location.pathname).toBe("/spaces");
+    await waitFor(() => expect(decodeURIComponent(router.state.location.pathname)).toBe("/spaces/relay:linux-box/ubuntu-build"));
   });
 
   it("removes a computer: names each Space, deletes nothing unless the box is ticked", { timeout: 40000 }, async () => {

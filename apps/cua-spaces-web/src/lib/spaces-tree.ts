@@ -124,14 +124,15 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
   const others = machines.filter((m) => !m.current && isComputer(m));
   const ordered = [...(here ? [here] : []), ...others];
 
-  // The default: the setting when it's listed, else the first computer that isn't this Mac, else This Mac.
+  // The default: the setting when it's listed, else where a task goes while none is set (the relay's rule): the first
+  // online computer that isn't this Mac, else This Mac. An offline computer is never shown as a default nobody chose.
   const ids = new Set<string>();
   for (const m of ordered) {
     const id = computerSpaceId(m);
     if (id) ids.add(id);
   }
   for (const s of listed) if (relayId(s.id)) ids.add(s.id);
-  const fallbackDefault = others.map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
+  const fallbackDefault = others.filter((m) => m.online).map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
   const defaultKey = defaultSpace && ids.has(defaultSpace) ? defaultSpace : fallbackDefault;
 
   const runningOf = (id: string | null | undefined) => (id ? (running.get(id) ?? 0) : 0);

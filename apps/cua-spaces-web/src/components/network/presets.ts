@@ -20,7 +20,7 @@ export interface PresetInfo {
 export const PRESETS: PresetInfo[] = [
   {
     id: "internet",
-    title: "Internet only (default)",
+    title: "Internet only",
     short: "Internet only",
     description: "Reaches the internet and its own child Spaces. Can't reach this computer, your local network or other Spaces.",
     rank: 1,
@@ -47,9 +47,9 @@ export const PRESETS: PresetInfo[] = [
 
 export const presetInfo = (id: NetworkPreset) => PRESETS.find((p) => p.id === id)!;
 
-/** "Internet only (default)", "No network", "Custom". */
+/** "Internet only", "No network", "Custom". */
 export function networkSummary(n: SpaceNetwork): string {
-  if (n.preset === "internet") return n.inheritedFrom ? "Internet only" : "Internet only (default)";
+  if (n.preset === "internet") return "Internet only";
   return presetInfo(n.preset).short;
 }
 

@@ -62,7 +62,7 @@ jobs:
 
   typescript:
     needs: changes
-    if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -152,7 +152,7 @@ jobs:
 
   swift:
     needs: changes
-    if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 30

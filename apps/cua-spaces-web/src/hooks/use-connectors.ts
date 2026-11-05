@@ -179,13 +179,17 @@ export function useConnectors(): Connectors {
         set({ device: { app, provider, url: started.url, code: started.code } });
         const r = await data.call("agents.signInWait", { id: started.id });
         if (!r.imported) {
-          fail(id, r.line ?? "The sign-in didn't finish. Try again.");
+          const line = r.line ?? "The sign-in didn't finish. Try again.";
+          fail(id, line);
+          fail(`app:${app}`, line);
           return false;
         }
         await reload();
         return true;
       } catch (e) {
+        // The app's row shows its own failure line; the provider sheet shows the provider's.
         fail(id, message(e));
+        fail(`app:${app}`, message(e));
         return false;
       } finally {
         set({ device: null });
